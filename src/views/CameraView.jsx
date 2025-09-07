@@ -1,0 +1,592 @@
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useAnimationFrame, useFrameRate } from '../hooks/useAnimationFrame.js';
+import { useDetection } from '../hooks/useDetection.js';
+import { useNormalEstimation } from '../hooks/useNormalEstimation.js';
+import { SORTTracker } from '../cv/tracker.js';
+import { AnchorStabilityTracker } from '../cv/anchorStability.js';
+import OverlayScene from '../scenes/OverlayScene.jsx';
+
+const CameraView = () => {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const trackerRef = useRef(new SORTTracker(30, 1, 0.3)); // maxAge=30, minHits=1, iouThreshold=0.3
+  const stabilityTrackerRef = useRef(new AnchorStabilityTracker());
+  const frameCountRef = useRef(0);
+  const [cameraState, setCameraState] = useState('idle'); // idle, requesting, active, error
+  const [error, setError] = useState(null);
+  const [stats, setStats] = useState({ fps: 0, frameTime: 0 });
+  const [showStats, setShowStats] = useState(true);
+  const [videoDimensions, setVideoDimensions] = useState({ width: 1280, height: 720 });
+  const [trackedObjects, setTrackedObjects] = useState([]);
+  const [activeTrackId, setActiveTrackId] = useState(null);
+  const [anchorStates, setAnchorStates] = useState(new Map()); // trackId -> {state, metrics}
+  
+  // Detection hook
+  const {
+    detectObjects,
+    detections,
+    isInitialized: detectionInitialized,
+    isModelLoaded,
+    error: detectionError,
+    processingTime
+  } = useDetection();
+  const { estimate: estimateNormal, normal: estimatedNormal, isReady: normalEstimationReady } = useNormalEstimation();
+
+  // Placeholder for camera intrinsics matrix K
+  const getCameraMatrix = (width, height) => {
+    // This should be derived from the Three.js camera's projection matrix
+    // For now, a default assuming ~60deg FOV
+    const fov = 60 * Math.PI / 180;
+    const focalLength = width / (2 * Math.tan(fov / 2));
+    return {
+      fx: focalLength,
+      fy: focalLength,
+      cx: width / 2,
+      cy: height / 2,
+    };
+  };
+
+  
+  const throttledFrame = useFrameRate(30);
+
+  // Update tracked objects when new detections arrive
+  useEffect(() => {
+    console.log('[CameraView] Detection update - detections:', detections.length, 'activeTrackId:', activeTrackId);
+    
+    if (detections.length > 0) {
+      const tracks = trackerRef.current.update(detections);
+      console.log('[CameraView] Updated tracks:', tracks);
+      setTrackedObjects(tracks);
+      
+      // Update anchor stability for locked track
+      if (activeTrackId) {
+        console.log('[CameraView] Looking for active track:', activeTrackId);
+        const activeTrack = tracks.find(t => t.id === activeTrackId);
+        console.log('[CameraView] Found active track:', activeTrack);
+        
+        if (activeTrack) {
+          const timestamp = performance.now();
+          console.log('[CameraView] Updating stability for track:', activeTrackId);
+          
+          const anchorState = stabilityTrackerRef.current.updateTrack(
+            activeTrackId,
+            activeTrack.bbox,
+            activeTrack.confidence,
+            timestamp
+          );
+          
+          const metrics = stabilityTrackerRef.current.getStabilityMetrics(activeTrackId, timestamp);
+          
+          const screenPosition = {
+            x: (activeTrack.bbox.x1 + activeTrack.bbox.x2) / 2,
+            y: (activeTrack.bbox.y1 + activeTrack.bbox.y2) / 2,
+            z: 0
+          };
+          
+          console.log(`[CameraView] Track ${activeTrackId} screen position:`, screenPosition);
+          console.log(`[CameraView] Track ${activeTrackId} state:`, anchorState);
+          console.log(`[CameraView] Track ${activeTrackId} metrics:`, metrics);
+          
+          setAnchorStates(prev => {
+            const newMap = new Map(prev).set(activeTrackId, {
+              state: anchorState,
+              metrics,
+              screenPosition
+            });
+            console.log('[CameraView] Updated anchor states:', Array.from(newMap.entries()));
+            return newMap;
+          });
+        } else {
+          console.log('[CameraView] Active track lost, removing from stability tracker');
+          // Track lost - remove from stability tracker
+          stabilityTrackerRef.current.removeTrack(activeTrackId);
+          setAnchorStates(prev => {
+            const newMap = new Map(prev);
+            newMap.delete(activeTrackId);
+            console.log('[CameraView] Cleared anchor states:', Array.from(newMap.entries()));
+            return newMap;
+          });
+        }
+      } else {
+        console.log('[CameraView] No active track ID set');
+      }
+    } else {
+      console.log('[CameraView] No detections available');
+    }
+  }, [detections, activeTrackId]);
+
+  // Handle tap-to-lock functionality
+  const handleCanvasTap = useCallback((event) => {
+    if (trackedObjects.length === 0) return;
+    
+    const rect = event.target.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * videoDimensions.width;
+    const y = ((event.clientY - rect.top) / rect.height) * videoDimensions.height;
+    
+    // Find the highest confidence object under the tap
+    let bestTrack = null;
+    let bestScore = 0;
+    
+    for (const track of trackedObjects) {
+      const { bbox } = track;
+      if (x >= bbox.x1 && x <= bbox.x2 && y >= bbox.y1 && y <= bbox.y2) {
+        if (track.confidence > bestScore) {
+          bestTrack = track;
+          bestScore = track.confidence;
+        }
+      }
+    }
+    
+    if (bestTrack) {
+      // Clear previous track's stability data
+      if (activeTrackId && activeTrackId !== bestTrack.id) {
+        stabilityTrackerRef.current.removeTrack(activeTrackId);
+        setAnchorStates(prev => {
+          const newMap = new Map(prev);
+          newMap.delete(activeTrackId);
+          return newMap;
+        });
+      }
+      setActiveTrackId(bestTrack.id);
+    }
+  }, [trackedObjects, videoDimensions]);
+  
+  // Draw bounding boxes and track IDs
+  const drawDetectionOverlay = useCallback((ctx, canvas) => {
+    // Clear previous overlays (just detection boxes)
+    ctx.save();
+    
+    // Draw tracked objects
+    for (const track of trackedObjects) {
+      const { bbox, id, confidence, className } = track;
+      const isActive = id === activeTrackId;
+      const anchorState = anchorStates.get(id);
+      const isStable = anchorState?.state === 'stable';
+      
+      // Draw bounding box with different colors for stability
+      let strokeColor = '#00ff00'; // Default green
+      if (isActive) {
+        strokeColor = isStable ? '#ffd700' : '#ff0000'; // Gold for stable, red for tracking
+      }
+      
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = isActive ? 3 : 2;
+      ctx.strokeRect(bbox.x1, bbox.y1, bbox.x2 - bbox.x1, bbox.y2 - bbox.y1);
+      
+      // Draw stability indicators for active track
+      if (isActive && isStable) {
+        // Draw sparkle effect manually (simple version)
+        const centerX = (bbox.x1 + bbox.x2) / 2;
+        const centerY = (bbox.y1 + bbox.y2) / 2;
+        const time = performance.now() * 0.003;
+        
+        for (let i = 0; i < 6; i++) {
+          const angle = (i / 6) * Math.PI * 2 + time;
+          const radius = 20 + Math.sin(time * 2 + i) * 5;
+          const sparkleX = centerX + Math.cos(angle) * radius;
+          const sparkleY = centerY + Math.sin(angle) * radius;
+          
+          ctx.fillStyle = `rgba(255, 215, 0, ${0.7 + Math.sin(time * 4 + i) * 0.3})`;
+          ctx.beginPath();
+          ctx.arc(sparkleX, sparkleY, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      
+      // Draw label background
+      const stabilityText = anchorState ? ` [${anchorState.state.toUpperCase()}]` : '';
+      const labelText = `${className} #${id} (${(confidence * 100).toFixed(0)}%)${stabilityText}`;
+      ctx.font = '14px Arial';
+      const textMetrics = ctx.measureText(labelText);
+      const textWidth = textMetrics.width + 8;
+      const textHeight = 20;
+      
+      let bgColor = 'rgba(0, 255, 0, 0.8)';
+      if (isActive) {
+        bgColor = isStable ? 'rgba(255, 215, 0, 0.8)' : 'rgba(255, 0, 0, 0.8)';
+      }
+      
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(bbox.x1, bbox.y1 - textHeight, textWidth, textHeight);
+      
+      // Draw label text
+      ctx.fillStyle = 'white';
+      ctx.fillText(labelText, bbox.x1 + 4, bbox.y1 - 4);
+    }
+    
+    // Draw lock indicator with stability status
+    if (activeTrackId) {
+      const anchorState = anchorStates.get(activeTrackId);
+      const isStable = anchorState?.state === 'stable';
+      
+      ctx.fillStyle = isStable ? 'rgba(255, 215, 0, 0.9)' : 'rgba(255, 0, 0, 0.9)';
+      ctx.fillRect(10, 60, 280, 120);
+      ctx.fillStyle = 'white';
+      ctx.font = '16px Arial';
+      ctx.fillText(`LOCKED #${activeTrackId}`, 15, 80);
+      ctx.font = '12px Arial';
+      ctx.fillText(`State: ${anchorState?.state?.toUpperCase() || 'TRACKING'}`, 15, 95);
+      
+      // Show detailed stability metrics
+      if (anchorState?.metrics) {
+        const { centerVelocity, areaChangePercent, confidenceRate, sampleCount } = anchorState.metrics;
+        ctx.fillText(`Samples: ${sampleCount}`, 15, 110);
+        ctx.fillText(`Velocity: ${centerVelocity.toFixed(1)} px/s (<30)`, 15, 125);
+        ctx.fillText(`Area Δ: ${areaChangePercent.toFixed(1)}% (<10)`, 15, 140);
+        ctx.fillText(`Confidence: ${(confidenceRate * 100).toFixed(0)}% (≥75)`, 15, 155);
+        
+        // Show timer progress
+        const tracker = stabilityTrackerRef.current;
+        const stats = tracker.trackStats.get(activeTrackId);
+        if (stats && stats.stableStartTime) {
+          const elapsed = performance.now() - stats.stableStartTime;
+          const progress = (elapsed / 1000).toFixed(1);
+          ctx.fillText(`Timer: ${progress}s / 1.0s`, 15, 170);
+        }
+      }
+    }
+    
+    ctx.restore();
+  }, [trackedObjects, activeTrackId, anchorStates]);
+
+  // Camera constraints optimized for mobile
+  const constraints = {
+    video: {
+      facingMode: 'environment', // rear camera
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30 }
+    },
+    audio: false
+  };
+
+  const startCamera = useCallback(async () => {
+    try {
+      setCameraState('requesting');
+      setError(null);
+
+      // Request camera permission and stream
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+
+      const video = videoRef.current;
+      if (video) {
+        video.srcObject = stream;
+        
+        // Handle video load events
+        const onLoadedMetadata = () => {
+          // For iOS, we need to call play() after metadata loads
+          video.play().then(() => {
+            setCameraState('active');
+          }).catch((playError) => {
+            console.error('Video play error:', playError);
+            // Autoplay blocked - user interaction needed
+            setCameraState('blocked');
+          });
+        };
+
+        video.addEventListener('loadedmetadata', onLoadedMetadata);
+        
+        // Cleanup function for event listener
+        return () => {
+          video.removeEventListener('loadedmetadata', onLoadedMetadata);
+        };
+      }
+    } catch (err) {
+      console.error('Camera error:', err);
+      setError(err.message);
+      setCameraState('error');
+    }
+  }, []);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    setCameraState('idle');
+  }, []);
+
+  // Handle user tap to start (required for iOS autoplay)
+  const handleStartClick = useCallback(() => {
+    if (cameraState === 'blocked' && videoRef.current) {
+      videoRef.current.play().then(() => {
+        setCameraState('active');
+      }).catch(console.error);
+    } else {
+      startCamera();
+    }
+  }, [cameraState, startCamera]);
+
+  // Animation loop for canvas updates and FPS tracking
+  useAnimationFrame((deltaTime) => {
+    if (cameraState === 'active' && videoRef.current && canvasRef.current) {
+      throttledFrame(({ fps, frameTime }) => {
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+
+        // Match canvas size to video dimensions
+        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          // Update dimensions state for WebGL overlay
+          setVideoDimensions({ width: video.videoWidth, height: video.videoHeight });
+        }
+
+        // Draw current video frame to canvas
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // Run detection every 4th frame
+        frameCountRef.current++;
+        if (frameCountRef.current % 4 === 0 && isModelLoaded) {
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          detectObjects(imageData);
+        }
+
+        // Draw detection overlay
+        drawDetectionOverlay(ctx, canvas);
+
+        // Draw FPS counter and detection stats
+        if (showStats) {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+          ctx.fillRect(10, 10, 200, 60);
+          ctx.fillStyle = '#00ff00';
+          ctx.font = '12px monospace';
+          ctx.fillText(`FPS: ${fps.toFixed(1)}`, 15, 25);
+          ctx.fillText(`Frame: ${frameTime.toFixed(1)}ms`, 15, 40);
+          ctx.fillText(`Detection: ${processingTime.toFixed(1)}ms`, 15, 55);
+          ctx.fillText(`Objects: ${trackedObjects.length}`, 15, 70);
+        }
+
+        // Update stats for console output
+        setStats({ fps, frameTime });
+      });
+    }
+  });
+
+  // Log performance stats periodically
+  useEffect(() => {
+    if (cameraState === 'active') {
+      const interval = setInterval(() => {
+        console.table({
+          'FPS': stats.fps.toFixed(1),
+          'Frame Time (ms)': stats.frameTime.toFixed(1),
+          'Video Resolution': videoRef.current 
+            ? `${videoRef.current.videoWidth}x${videoRef.current.videoHeight}`
+            : 'N/A'
+        });
+      }, 2000);
+
+      return () => clearInterval(interval);
+    }
+  }, [cameraState, stats]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return stopCamera;
+  }, [stopCamera]);
+
+  return (
+    <div className="camera-view">
+      {/* Video element - full screen */}
+      <video
+        ref={videoRef}
+        className="camera-video"
+        playsInline
+        muted
+        autoPlay
+        style={{
+          width: '100vw',
+          height: '100vh',
+          objectFit: 'cover',
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          zIndex: 1
+        }}
+      />
+      
+      {/* Canvas for CV processing and detection overlay */}
+      <canvas
+        ref={canvasRef}
+        onClick={handleCanvasTap}
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          objectFit: 'cover',
+          zIndex: 2,
+          pointerEvents: cameraState === 'active' ? 'auto' : 'none'
+        }}
+      />
+
+      {/* WebGL Overlay Scene */}
+      {cameraState === 'active' && (() => {
+        const anchorsArray = Array.from(anchorStates.entries()).map(([id, anchorState]) => ({
+          id,
+          state: anchorState.state,
+          screenPosition: anchorState.screenPosition,
+          color: '#FFD700'
+        }));
+        console.log('[CameraView] Creating anchors array for OverlayScene:', anchorsArray);
+        console.log('[CameraView] Raw anchorStates:', Array.from(anchorStates.entries()));
+        
+        return (
+          <OverlayScene 
+            width={videoDimensions.width} 
+            height={videoDimensions.height} 
+            anchors={anchorsArray}
+          />
+        );
+      })()}
+
+      {/* UI Overlay */}
+      <div className="camera-ui" style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 10,
+        pointerEvents: 'none'
+      }}>
+
+        {/* Start button - only show when needed */}
+        {(cameraState === 'idle' || cameraState === 'blocked' || cameraState === 'error') && (
+          <div style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            pointerEvents: 'auto'
+          }}>
+            <button
+              onClick={handleStartClick}
+              style={{
+                padding: '16px 32px',
+                fontSize: '18px',
+                backgroundColor: '#007AFF',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                boxShadow: '0 2px 10px rgba(0,0,0,0.3)'
+              }}
+            >
+              {cameraState === 'blocked' ? 'Start Camera' : 'Enable Camera'}
+            </button>
+          </div>
+        )}
+
+        {/* Detection status */}
+        {cameraState === 'active' && (
+          <div style={{
+            position: 'absolute',
+            top: '20px',
+            left: '20px',
+            backgroundColor: 'rgba(0,0,0,0.7)',
+            color: 'white',
+            padding: '8px 12px',
+            borderRadius: '4px',
+            fontSize: '12px',
+            pointerEvents: 'none'
+          }}>
+            <div>Detection: {detectionInitialized ? '✓' : '⏳'}</div>
+            <div>Model: {isModelLoaded ? '✓' : '⏳'}</div>
+            {detectionError && <div style={{color: '#ff6b6b'}}>Error: {detectionError}</div>}
+          </div>
+        )}
+        
+        {/* Instructions */}
+        {cameraState === 'active' && trackedObjects.length > 0 && !activeTrackId && (
+          <div style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            backgroundColor: 'rgba(0,0,0,0.8)',
+            color: 'white',
+            padding: '16px 24px',
+            borderRadius: '8px',
+            textAlign: 'center',
+            pointerEvents: 'none',
+            fontSize: '16px'
+          }}>
+            Tap on a bottle or cup to select it
+          </div>
+        )}
+
+        {/* Debug controls */}
+        {cameraState === 'active' && (
+          <div style={{
+            position: 'absolute',
+            bottom: '20px',
+            right: '20px',
+            pointerEvents: 'auto'
+          }}>
+            <button
+              onClick={() => setShowStats(!showStats)}
+              style={{
+                padding: '8px 12px',
+                fontSize: '12px',
+                backgroundColor: 'rgba(0,0,0,0.7)',
+                color: 'white',
+                border: '1px solid #333',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                marginRight: '8px'
+              }}
+            >
+              {showStats ? 'Hide Stats' : 'Show Stats'}
+            </button>
+            {activeTrackId && (
+              <button
+                onClick={() => {
+                  stabilityTrackerRef.current.removeTrack(activeTrackId);
+                  setAnchorStates(prev => {
+                    const newMap = new Map(prev);
+                    newMap.delete(activeTrackId);
+                    return newMap;
+                  });
+                  setActiveTrackId(null);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  fontSize: '12px',
+                  backgroundColor: 'rgba(255,165,0,0.7)',
+                  color: 'white',
+                  border: '1px solid #ff8c00',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  marginRight: '8px'
+                }}
+              >
+                Unlock
+              </button>
+            )}
+            <button
+              onClick={stopCamera}
+              style={{
+                padding: '8px 12px',
+                fontSize: '12px',
+                backgroundColor: 'rgba(255,0,0,0.7)',
+                color: 'white',
+                border: '1px solid #600',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              Stop
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default CameraView;
