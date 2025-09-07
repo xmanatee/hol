@@ -3,13 +3,20 @@
 ## Project Structure & Module Organization
 - `src/` – application code
   - `components/` React components (PascalCase filenames)
+    - `ui/` UI components (e.g., `UnifiedControlPanel.jsx`)
+    - `organisms/` complex components (e.g., `HeadAnchor.jsx`)
   - `pages/` top-level routes (e.g., `HomePage.jsx`)
-  - `views/`, `scenes/` rendering/3D views (Three.js + R3F)
+  - `views/` main application views (e.g., `CameraView.jsx`)
+  - `scenes/` 3D rendering views (Three.js + R3F) (e.g., `OverlayScene.jsx`)
+  - `services/` service layer classes for core functionality
+    - `CameraService.js`, `DetectionService.js`, `AnchorManager.js`, etc.
   - `hooks/` reusable hooks (`use*.js`)
+    - `useCameraSystem.js` - main orchestration hook
+    - `useHudMetrics.js` - unified metrics system
   - `cv/` computer-vision logic and web workers (e.g., `detector.worker.js`, filters, tracking)
   - `audio/` TTS and lip‑sync utilities
-  - `services/` integration helpers
-  - `main.jsx`, `index.css` app entry
+  - `utils/` utility functions (e.g., `detectionRenderer.js`)
+  - `main.jsx` app entry
 - `public/` – static assets served at root. Models live in `public/models/` (see `public/models/README.md`).
 - Root: `index.html`, `vite.config.js`, `eslint.config.js`.
 
@@ -25,12 +32,14 @@ Examples:
 
 ## Coding Style & Naming Conventions
 - Language: React + Vite. JavaScript only (JS/JSX). No TypeScript.
+- Styling: Tailwind CSS classes preferred over inline styles. Use utility-first approach.
 - Indentation: 2 spaces; LF line endings.
 - Components: PascalCase (e.g., `HeadAnchor.jsx`), hooks: `useCamelCase` in `hooks/`.
+- Services: PascalCase class names (e.g., `CameraService.js`, `DetectionService.js`).
 - Files: prefer PascalCase for React components, kebab/camel for modules; workers as `*.worker.js`.
 - Linting: ESLint (JS-focused via `eslint.config.js`). Keep `no-unused-vars` clean; leading uppercase or `_` constants are ignored by rule config.
 - Imports: use relative paths within `src/`.
-- Migration: if you modify a `*.js`/`*.jsx` file, convert it to JS/JSX in the same PR.
+- Architecture: Follow service layer pattern for core functionality; use centralized state management via custom hooks.
 
 ## Testing Guidelines
 - No formal test setup yet. If adding tests, prefer Vitest + React Testing Library.

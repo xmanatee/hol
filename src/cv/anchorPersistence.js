@@ -20,18 +20,33 @@ export class AnchorPersistenceTracker {
   }
 
   async initialize() {
-    if (typeof window !== 'undefined' && window.cv) {
+    console.log('[AnchorPersistence] Starting initialization...');
+    console.log('[AnchorPersistence] Checking window.cv:', typeof window !== 'undefined', !!window?.cv, !!window?.cv?.Mat);
+    
+    if (typeof window !== 'undefined' && window.cv && window.cv.Mat) {
       this.cv = window.cv;
-      console.log('[AnchorPersistence] OpenCV.js initialized');
+      console.log('[AnchorPersistence] OpenCV.js already available');
       return true;
     }
     
+    console.log('[AnchorPersistence] Waiting for OpenCV.js to load...');
     // Wait for OpenCV to load
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      let attempts = 0;
+      const maxAttempts = 100; // 10 seconds max
+      
       const checkCV = () => {
+        attempts++;
+        console.log(`[AnchorPersistence] Attempt ${attempts}/${maxAttempts} - checking OpenCV...`);
+        
         if (typeof window !== 'undefined' && window.cv && window.cv.Mat) {
           this.cv = window.cv;
-          console.log('[AnchorPersistence] OpenCV.js loaded');
+          console.log('[AnchorPersistence] OpenCV.js loaded successfully!');
+          resolve(true);
+        } else if (attempts >= maxAttempts) {
+          console.error('[AnchorPersistence] OpenCV.js failed to load after', maxAttempts, 'attempts');
+          // Don't reject - just proceed without OpenCV features
+          console.warn('[AnchorPersistence] Proceeding without OpenCV - some features will be disabled');
           resolve(true);
         } else {
           setTimeout(checkCV, 100);

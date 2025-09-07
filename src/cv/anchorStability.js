@@ -101,9 +101,6 @@ export class AnchorStabilityTracker {
         }
       } else {
         // Reset unstable timer if we're stable again
-        if (stats.unstableStartTime) {
-          console.log(`[Stability] Track ${trackId}: Reset unstable timer (stable again)`);
-        }
         stats.unstableStartTime = null;
       }
     } else {
@@ -111,21 +108,15 @@ export class AnchorStabilityTracker {
       if (meetsStabilityCriteria) {
         if (!stats.stableStartTime) {
           stats.stableStartTime = timestamp;
-          console.log(`[Stability] Track ${trackId}: Started stability timer`);
         } else {
           const stableFor = timestamp - stats.stableStartTime;
-          console.log(`[Stability] Track ${trackId}: Stable for ${stableFor}ms (need ${this.windowDurationMs}ms)`);
           if (stableFor >= this.windowDurationMs) {
-            console.log(`[Stability] Track ${trackId}: TRACKING → STABLE! ✨`);
             stats.currentState = 'stable';
             stats.unstableStartTime = null;
           }
         }
       } else {
         // Reset stability timer
-        if (stats.stableStartTime) {
-          console.log(`[Stability] Track ${trackId}: Reset stability timer (criteria not met)`);
-        }
         stats.stableStartTime = null;
         stats.unstableStartTime = null;
       }

@@ -1,4 +1,4 @@
-/* global importScripts, cv */
+/* global cv */
 
 let cvLoaded = false;
 
@@ -8,36 +8,30 @@ let cvLoaded = false;
 self.onmessage = async (e) => {
   const { type, payload } = e.data;
 
-  if (type === 'load') {
+  if (type === 'initialize' || type === 'load') {
     try {
-      // Load OpenCV.js from local file (more reliable than CDN)
-      console.log('[NormalWorker] Loading OpenCV.js from local file');
-      importScripts('/opencv.js');
+      console.log('[NormalWorker] Loading OpenCV.js');
       
-      // Wait for OpenCV to initialize
-      if (typeof cv !== 'undefined') {
-        cv.onRuntimeInitialized = () => {
+      // Set up Module object BEFORE loading OpenCV.js
+      self.Module = {
+        onRuntimeInitialized: () => {
           cvLoaded = true;
-          self.postMessage({ type: 'loaded' });
-        };
-      } else {
-        // Wait for cv to be available
-        const checkCV = () => {
-          if (typeof cv !== 'undefined') {
-            cv.onRuntimeInitialized = () => {
-              cvLoaded = true;
-              self.postMessage({ type: 'loaded' });
-            };
-          } else {
-            setTimeout(checkCV, 100);
-          }
-        };
-        checkCV();
-      }
+          console.log('[NormalWorker] OpenCV.js runtime initialized');
+          self.postMessage({ type: 'ready' });
+        }
+      };
+      
+      // Load OpenCV.js with proper error handling
+      const response = await fetch('/opencv.js');
+      const code = await response.text();
+      
+      // Create a function to evaluate the code with proper scope
+      const loadOpenCV = new Function('Module', code);
+      loadOpenCV(self.Module);
       
     } catch (err) {
-      console.error('[NormalWorker] OpenCV loading failed:', err);
-      self.postMessage({ type: 'error', message: 'Failed to load OpenCV: ' + err.message });
+      console.error('[NormalWorker] Initialization failed:', err);
+      self.postMessage({ type: 'error', message: 'Initialization failed: ' + err.message });
     }
     return;
   }
@@ -49,7 +43,6 @@ self.onmessage = async (e) => {
     }
     
     try {
-      // Convert array back to ImageData-like object
       const imageData = {
         data: new Uint8ClampedArray(payload.imageData.data),
         width: payload.imageData.width,
@@ -57,7 +50,7 @@ self.onmessage = async (e) => {
       };
       
       console.log('[NormalWorker] Starting normal estimation for bbox:', payload.bbox);
-      const result = estimateNormalSimple(imageData, payload.bbox, payload.cameraMatrix);
+      const result = estimateNormal(imageData, payload.bbox);
       
       if (result) {
         console.log('[NormalWorker] Normal estimation successful:', result);
@@ -73,30 +66,28 @@ self.onmessage = async (e) => {
   }
 };
 
-// Simplified normal estimation function (inlined to avoid ES module issues)
-function estimateNormalSimple(imageData, bbox, cameraMatrix) {
+function estimateNormal(imageData, bbox) {
   try {
-    // Extract ROI with 15% inflation
-    const roi = getROI(imageData, bbox);
+    const roi = extractROI(imageData, bbox);
     if (!roi) return null;
 
     const gray = new cv.Mat();
     cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
 
-    // Try cylindrical approach (simpler and more reliable)
-    const result = estimateCylindricalNormalSimple(gray);
+    // Try cylindrical approach for bottles/cans
+    const result = estimateCylindricalNormal(gray);
     
     gray.delete();
     roi.delete();
     
     if (result) {
       return {
-        position_px: { 
-          x: bbox.x1 + (bbox.x2 - bbox.x1) / 2, 
-          y: bbox.y1 + (bbox.y2 - bbox.y1) / 2 
+        position_px: {
+          x: bbox.x1 + (bbox.x2 - bbox.x1) / 2,
+          y: bbox.y1 + (bbox.y2 - bbox.y1) / 2
         },
         normal_camSpace: result.normal,
-        confidence: result.score,
+        confidence: result.score
       };
     }
     
@@ -107,89 +98,88 @@ function estimateNormalSimple(imageData, bbox, cameraMatrix) {
   }
 }
 
-function getROI(imageData, bbox) {
+function extractROI(imageData, bbox) {
   const width = imageData.width;
   const height = imageData.height;
-
-  const roiWidth = (bbox.x2 - bbox.x1);
-  const roiHeight = (bbox.y2 - bbox.y1);
   const inflation = 0.15;
-
+  
+  const roiWidth = bbox.x2 - bbox.x1;
+  const roiHeight = bbox.y2 - bbox.y1;
+  
   const inflatedBbox = {
     x1: Math.max(0, bbox.x1 - roiWidth * inflation),
     y1: Math.max(0, bbox.y1 - roiHeight * inflation),
     x2: Math.min(width, bbox.x2 + roiWidth * inflation),
-    y2: Math.min(height, bbox.y2 + roiHeight * inflation),
+    y2: Math.min(height, bbox.y2 + roiHeight * inflation)
   };
-
+  
   if (inflatedBbox.x1 >= inflatedBbox.x2 || inflatedBbox.y1 >= inflatedBbox.y2) {
     return null;
   }
   
-  const src = cv.matFromImageData(imageData);
-  const rect = new cv.Rect(
-    inflatedBbox.x1, 
-    inflatedBbox.y1, 
-    inflatedBbox.x2 - inflatedBbox.x1, 
-    inflatedBbox.y2 - inflatedBbox.y1
-  );
-  const roi = src.roi(rect);
-  src.delete();
+  const mat = cv.matFromImageData(imageData);
+  const rect = new cv.Rect(inflatedBbox.x1, inflatedBbox.y1, 
+                          inflatedBbox.x2 - inflatedBbox.x1, 
+                          inflatedBbox.y2 - inflatedBbox.y1);
+  const roi = mat.roi(rect);
+  mat.delete();
+  
   return roi;
 }
 
-function estimateCylindricalNormalSimple(gray) {
+function estimateCylindricalNormal(grayMat) {
   try {
-    const canny = new cv.Mat();
-    cv.Canny(gray, canny, 50, 100);
-
+    const edges = new cv.Mat();
+    cv.Canny(grayMat, edges, 50, 100);
+    
     const contours = new cv.MatVector();
     const hierarchy = new cv.Mat();
-    cv.findContours(canny, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
+    cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    
     let bestResult = null;
-    let maxScore = 0;
-
+    let bestScore = 0;
+    
     for (let i = 0; i < contours.size(); ++i) {
       const contour = contours.get(i);
+      
       if (contour.rows < 5) {
         contour.delete();
         continue;
       }
-
-      const rotatedRect = cv.fitEllipse(contour);
-      const ellipseArea = Math.PI * (rotatedRect.size.width / 2) * (rotatedRect.size.height / 2);
-      const roiArea = gray.rows * gray.cols;
-
-      const minorMajorRatio = Math.min(rotatedRect.size.width, rotatedRect.size.height) / 
-                             Math.max(rotatedRect.size.width, rotatedRect.size.height);
-      const areaRatio = ellipseArea / roiArea;
-
-      if (minorMajorRatio >= 0.35 && areaRatio >= 0.015 && areaRatio <= 0.25) {
-        const score = minorMajorRatio * areaRatio;
-
-        if (score > maxScore) {
-          maxScore = score;
-          const tilt = Math.acos(minorMajorRatio);
-          const inPlaneAngle = rotatedRect.angle * (Math.PI / 180);
+      
+      const ellipse = cv.fitEllipse(contour);
+      const area = Math.PI * (ellipse.size.width / 2) * (ellipse.size.height / 2);
+      const imageArea = grayMat.rows * grayMat.cols;
+      const areaRatio = area / imageArea;
+      const aspectRatio = Math.min(ellipse.size.width, ellipse.size.height) / 
+                         Math.max(ellipse.size.width, ellipse.size.height);
+      
+      if (aspectRatio >= 0.35 && areaRatio >= 0.015 && areaRatio <= 0.25) {
+        const score = aspectRatio * areaRatio;
+        if (score > bestScore) {
+          bestScore = score;
+          
+          const tilt = Math.acos(aspectRatio);
+          const angle = ellipse.angle * (Math.PI / 180);
           
           bestResult = {
             normal: {
-              x: Math.sin(tilt) * Math.cos(inPlaneAngle),
-              y: Math.sin(tilt) * Math.sin(inPlaneAngle),
-              z: Math.cos(tilt),
+              x: Math.sin(tilt) * Math.cos(angle),
+              y: Math.sin(tilt) * Math.sin(angle), 
+              z: Math.cos(tilt)
             },
-            score: maxScore,
+            score: score
           };
         }
       }
+      
       contour.delete();
     }
-
-    canny.delete();
+    
+    edges.delete();
     contours.delete();
     hierarchy.delete();
-
+    
     return bestResult;
   } catch (err) {
     console.error('[NormalWorker] Cylindrical estimation error:', err);

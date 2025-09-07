@@ -1,0 +1,129 @@
+export class CameraService {
+  constructor() {
+    this.stream = null;
+    this.videoElement = null;
+    this.state = 'idle'; // idle, requesting, active, blocked, error
+    this.constraints = {
+      video: {
+        facingMode: 'environment',
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30 }
+      },
+      audio: false
+    };
+    this.listeners = new Set();
+  }
+
+  addListener(listener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  _notifyStateChange(newState, data = {}) {
+    const oldState = this.state;
+    this.state = newState;
+    this.listeners.forEach(listener => {
+      if (listener.onStateChange) {
+        listener.onStateChange(newState, oldState, data);
+      }
+    });
+  }
+
+  async start(videoElement) {
+    if (this.state === 'active') {
+      return true;
+    }
+
+    try {
+      this._notifyStateChange('requesting');
+      this.videoElement = videoElement;
+
+      this.stream = await navigator.mediaDevices.getUserMedia(this.constraints);
+      videoElement.srcObject = this.stream;
+
+      return new Promise((resolve, reject) => {
+        const onLoadedMetadata = () => {
+          videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+          
+          videoElement.play()
+            .then(() => {
+              this._notifyStateChange('active', {
+                width: videoElement.videoWidth,
+                height: videoElement.videoHeight
+              });
+              resolve(true);
+            })
+            .catch((playError) => {
+              this._notifyStateChange('blocked', { error: playError.message });
+              resolve(false);
+            });
+        };
+
+        videoElement.addEventListener('loadedmetadata', onLoadedMetadata);
+        
+        // Fallback timeout
+        setTimeout(() => {
+          if (this.state === 'requesting') {
+            videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+            this._notifyStateChange('error', { error: 'Camera start timeout' });
+            reject(new Error('Camera start timeout'));
+          }
+        }, 5000);
+      });
+    } catch (err) {
+      this._notifyStateChange('error', { error: err.message });
+      throw err;
+    }
+  }
+
+  async resume() {
+    if (this.state === 'blocked' && this.videoElement) {
+      try {
+        await this.videoElement.play();
+        this._notifyStateChange('active', {
+          width: this.videoElement.videoWidth,
+          height: this.videoElement.videoHeight
+        });
+        return true;
+      } catch (err) {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  stop() {
+    if (this.stream) {
+      this.stream.getTracks().forEach(track => track.stop());
+      this.stream = null;
+    }
+    if (this.videoElement) {
+      this.videoElement.srcObject = null;
+      this.videoElement = null;
+    }
+    this._notifyStateChange('idle');
+  }
+
+  getState() {
+    return this.state;
+  }
+
+  isActive() {
+    return this.state === 'active';
+  }
+
+  getVideoElement() {
+    return this.videoElement;
+  }
+
+  getDimensions() {
+    if (this.videoElement && this.state === 'active') {
+      return {
+        width: this.videoElement.videoWidth,
+        height: this.videoElement.videoHeight
+      };
+    }
+    return null;
+  }
+}

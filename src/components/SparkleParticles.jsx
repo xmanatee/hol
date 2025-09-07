@@ -238,15 +238,11 @@ export function SparkleParticles({
  * Sparkle manager that handles multiple sparkle effects
  */
 export function SparkleManager({ anchors = [] }) {
-  console.log('[SparkleManager] Anchors:', anchors);
-  
   const stableAnchors = anchors.filter(anchor => anchor.state === 'stable');
-  console.log('[SparkleManager] Stable anchors:', stableAnchors);
   
   return (
     <>
       {stableAnchors.map((anchor) => {
-        console.log('[SparkleManager] Rendering sparkles for anchor:', anchor.id, anchor.screenPosition);
         return (
           <SparkleParticles
             key={anchor.id}

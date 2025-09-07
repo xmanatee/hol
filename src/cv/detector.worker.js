@@ -1,4 +1,8 @@
+console.log('[Worker] Starting detector worker...');
 import * as ort from 'onnxruntime-web';
+
+console.log('[Worker] ONNX Runtime imported successfully');
+postMessage({ type: 'worker_loaded', message: 'Worker script executed successfully' });
 
 let session = null;
 let isInitialized = false;
@@ -16,6 +20,13 @@ const COCO_CLASSES = [
 const TARGET_CLASSES = new Set([0, 39, 41]); // person, bottle, cup
 
 async function initializeONNX() {
+  console.log('[Worker] initializeONNX called, current state:', isInitialized);
+  if (isInitialized) {
+    console.log('[Worker] Already initialized, sending initialized message');
+    postMessage({ type: 'initialized' });
+    return;
+  }
+  
   try {
     // Configure ONNX Runtime Web environment
     ort.env.wasm.simd = true;
@@ -27,35 +38,35 @@ async function initializeONNX() {
       'ort-wasm-threaded.wasm': '/ort-wasm-simd-threaded.wasm',
       'ort-wasm-simd.wasm': '/ort-wasm-simd-threaded.wasm',
       'ort-wasm-simd-threaded.wasm': '/ort-wasm-simd-threaded.wasm',
+      'ort-wasm-simd-threaded.jsep.wasm': '/ort-wasm-simd-threaded.jsep.wasm'
     };
+    console.log('[Worker] WASM paths configured');
     
-    postMessage({ type: 'log', message: 'ONNX Runtime WASM paths configured' });
     
     // Try WebGPU first if available, but prefer WASM for stability
     const executionProviders = ['wasm'];
     
     if ('gpu' in navigator) {
-      try {
-        ort.env.webgpu = { 
-          powerPreference: 'high-performance' 
-        };
-        executionProviders.unshift('webgpu');
-        postMessage({ type: 'log', message: 'WebGPU available as option' });
-      } catch (e) {
-        postMessage({ type: 'warning', message: 'WebGPU configuration failed, using WASM only' });
-      }
+      console.log('[Worker] WebGPU available, configuring...');
+      ort.env.webgpu = { 
+        powerPreference: 'high-performance' 
+      };
+      executionProviders.unshift('webgpu');
     } else {
-      postMessage({ type: 'log', message: 'WebGPU not available, using WASM' });
+      console.log('[Worker] WebGPU not available, using WASM only');
     }
     
     isInitialized = true;
+    console.log('[Worker] ONNX initialization complete');
     postMessage({ type: 'initialized', executionProviders });
   } catch (error) {
+    console.error('[Worker] ONNX initialization failed:', error);
     postMessage({ type: 'error', message: `ONNX initialization failed: ${error.message}` });
   }
 }
 
 async function loadModel(modelPath) {
+  console.log('[Worker] Loading model:', modelPath);
   try {
     // Create session with explicit execution provider configuration
     const sessionOptions = {
@@ -64,17 +75,17 @@ async function loadModel(modelPath) {
     
     // Try WebGPU first, fallback to WASM
     if ('gpu' in navigator) {
-      try {
+      if ('gpu' in navigator) {
         sessionOptions.executionProviders.push('webgpu');
-      } catch (e) {
-        // WebGPU not available
       }
     }
     
     // Always add WASM as fallback
     sessionOptions.executionProviders.push('wasm');
     
+    console.log('[Worker] Creating inference session with providers:', sessionOptions.executionProviders);
     session = await ort.InferenceSession.create(modelPath, sessionOptions);
+    console.log('[Worker] Model loaded successfully. Inputs:', session.inputNames, 'Outputs:', session.outputNames);
     postMessage({ 
       type: 'modelLoaded', 
       inputNames: session.inputNames,
@@ -82,6 +93,7 @@ async function loadModel(modelPath) {
       executionProviders: sessionOptions.executionProviders
     });
   } catch (error) {
+    console.error('[Worker] Model loading failed:', error);
     postMessage({ type: 'error', message: `Model loading failed: ${error.message}` });
   }
 }
@@ -136,13 +148,9 @@ function postprocessDetections(output, preprocessInfo, confidenceThreshold = 0.1
   const { scale, padX, padY, originalWidth, originalHeight } = preprocessInfo;
   const detections = [];
   
-  // YOLO11n output format: [1, 84, 8400] where 84 = [x, y, w, h, ...80 class scores]
-  // Note: No objectness score in YOLO11, just class scores
-  const outputTensor = Object.values(output)[0]; // Get the first (and likely only) output
+  const outputTensor = Object.values(output)[0];
   const outputData = outputTensor.data;
   const dims = outputTensor.dims;
-  
-  console.log('[Worker] YOLO11n output dims:', dims);
   
   let numClasses, numDetections;
   let dataFormat;
@@ -161,7 +169,6 @@ function postprocessDetections(output, preprocessInfo, confidenceThreshold = 0.1
     }
   }
   
-  console.log('[Worker] Detected format:', dataFormat, 'detections:', numDetections);
   
   let totalDetectionsAboveThreshold = 0;
   let bottleCupDetections = 0;
@@ -245,32 +252,13 @@ function postprocessDetections(output, preprocessInfo, confidenceThreshold = 0.1
     const isValidSize = bboxWidth > 10 && bboxHeight > 10;
     const isValidCoords = bbox.x1 >= 0 && bbox.y1 >= 0 && bbox.x2 <= originalWidth && bbox.y2 <= originalHeight;
     
-    // console.log(`[Worker] Bbox candidate: ${COCO_CLASSES[bestClass]} conf=${maxClassScore.toFixed(3)} size=${bboxWidth.toFixed(0)}x${bboxHeight.toFixed(0)} coords=[${bbox.x1.toFixed(0)},${bbox.y1.toFixed(0)},${bbox.x2.toFixed(0)},${bbox.y2.toFixed(0)}] valid=${isValidSize && isValidCoords}`);
     
     if (isValidSize && isValidCoords) {
       detections.push(bbox);
     }
   }
   
-  console.log('[Worker] Detection summary:', {
-    totalAboveThreshold: totalDetectionsAboveThreshold,
-    bottleCupCandidates: bottleCupDetections, 
-    rawDetections: detections.length
-  });
-  
-  console.log('[Worker] Class statistics:', classStats);
-  
-  // Show top detection confidences for debugging
-  if (detections.length > 0) {
-    const sortedDets = [...detections].sort((a, b) => b.confidence - a.confidence);
-    console.log('[Worker] Top 3 raw detections:', sortedDets.slice(0, 3).map(d => 
-      `${d.className}: ${d.confidence.toFixed(3)}`
-    ));
-  }
-  
-  // Sort by confidence and apply NMS
   const filteredDetections = applyNMS(detections, 0.4);
-  console.log('[Worker] Final detections after NMS:', filteredDetections.length);
   
   return filteredDetections;
 }
@@ -320,6 +308,7 @@ function calculateIoU(box1, box2) {
 
 async function detectObjects(imageData) {
   if (!session || !isInitialized) {
+    console.error('[Worker] Detection called but not ready. Session:', !!session, 'Initialized:', isInitialized);
     postMessage({ type: 'error', message: 'Model not loaded' });
     return;
   }
@@ -333,10 +322,6 @@ async function detectObjects(imageData) {
     // Create input tensor
     const inputTensor = new ort.Tensor('float32', preprocessed.tensor, [1, 3, 480, 480]);
     
-    // console.log('[Worker] Input tensor shape:', inputTensor.dims);
-    // console.log('[Worker] Session input names:', session.inputNames);
-    // console.log('[Worker] Session output names:', session.outputNames);
-    // console.log('[Worker] Input image dimensions:', imageData.width, 'x', imageData.height);
     
     // Run inference - use the actual input name from the model
     const inputName = session.inputNames[0];
@@ -345,12 +330,12 @@ async function detectObjects(imageData) {
     
     const outputs = await session.run(inputs);
     
-    // console.log('[Worker] Inference completed, output keys:', Object.keys(outputs));
     
     // Postprocess results
     const detections = postprocessDetections(outputs, preprocessed);
     
     const processingTime = performance.now() - startTime;
+    console.log('[Worker] Detection complete:', detections.length, 'objects in', processingTime.toFixed(1), 'ms');
     
     postMessage({
       type: 'detections',
@@ -358,23 +343,29 @@ async function detectObjects(imageData) {
       processingTime,
       timestamp: Date.now()
     });
-    
   } catch (error) {
     console.error('[Worker] Detection error:', error);
     postMessage({ type: 'error', message: `Detection failed: ${error.message}` });
   }
 }
 
-// Message handler
 self.onmessage = async (event) => {
   const { type, ...data } = event.data;
+  console.log('[Worker] Received message:', type);
   
   switch (type) {
+    case 'test':
+      console.log('[Worker] Test message received');
+      postMessage({ type: 'test_response', message: 'Worker is alive' });
+      break;
+      
     case 'initialize':
+      console.log('[Worker] Initialize message received');
       await initializeONNX();
       break;
       
     case 'loadModel':
+      console.log('[Worker] Load model message received:', data.modelPath);
       await loadModel(data.modelPath);
       break;
       
@@ -383,6 +374,7 @@ self.onmessage = async (event) => {
       break;
       
     default:
+      console.warn('[Worker] Unknown message type:', type);
       postMessage({ type: 'error', message: `Unknown message type: ${type}` });
   }
 };

@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 
 const METRIC_DEFINITIONS = {
   // Phase 1
@@ -24,6 +24,11 @@ const METRIC_DEFINITIONS = {
     isRed: (value) => value < 90,
     unit: '%',
   },
+  'Object Count': {
+    target: 1,
+    isRed: (value) => value === 0,
+    unit: '',
+  },
   // Phase 4
   'Stability score': {
     target: 0.75,
@@ -43,7 +48,7 @@ const METRIC_DEFINITIONS = {
   },
   'Mode confidence': { // This is more about display than a numerical target for red/green
     target: null,
-    isRed: (value) => false, // No red condition based on the description
+    isRed: () => false, // No red condition based on the description
     unit: '',
   },
   // Phase 6
@@ -179,7 +184,6 @@ export const useHudMetrics = () => {
 
   const updateMetric = useCallback((name, value) => {
     if (!METRIC_DEFINITIONS[name]) {
-      console.warn(`Metric "${name}" not defined.`);
       return;
     }
 

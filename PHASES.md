@@ -511,26 +511,78 @@ These metrics make each phase objectively testable and demo-friendly.
 
 ---
 
-### Minimal folder structure (create up front)
+### Current folder structure (refactored for better maintainability)
 
 ```
 /src
+  /pages
+    HomePage.jsx           # Top-level route
+  /views  
+    CameraView.jsx         # Main camera interface (refactored)
+  /scenes
+    OverlayScene.jsx       # R3F WebGL overlay
   /components
-    CameraView.jsx
-    OverlayScene.jsx
-    HeadAnchor.jsx
+    /ui
+      UnifiedControlPanel.jsx  # Combined metrics, controls, config, and alerts
+    /organisms
+      HeadAnchor.jsx       # 3D head positioning
+    CameraVideo.jsx        # Video element component
+    DetectionCanvas.jsx    # Canvas for CV processing overlay
+    SparkleParticles.jsx   # Stability effect particles
+  /services
+    CameraService.js       # Camera stream management
+    DetectionService.js    # YOLO detection abstraction
+    NormalEstimationService.js  # Surface normal estimation
+    AnchorManager.js       # Integrated tracking and stability
   /cv
-    detector.worker.js
-    tracker.sort.js
-    anchor.normal.js
-    mask.grabcut.js
+    detector.worker.js     # YOLO ONNX detection worker
+    normal.worker.js       # OpenCV normal estimation worker  
+    tracker.sort.js        # SORT multi-object tracking
+    tracker.js             # Main tracker interface
+    anchorStability.js     # Stability criteria tracker
+    anchorPersistence.js   # Persistence and re-acquisition
+    anchor.normal.js       # Normal estimation utilities
+    mask.grabcut.js        # Segmentation masking
+    oneEuroFilter.js       # Temporal smoothing
   /audio
-    ttsClient.js
-    lipSync.js
+    ttsClient.js           # ElevenLabs TTS proxy client
+    lipSync.js             # Morph target lip-sync
   /hooks
-    useAnimationFrame.js
-    usePerfHud.js
-  /backend (if Next.js /api; else separate)
+    useAnimationFrame.js   # 30 FPS render loop utilities
+    useDetection.js        # Detection hook (legacy)
+    useNormalEstimation.js # Normal estimation hook (legacy) 
+    usePerfHud.js          # Performance monitoring
+    useHudMetrics.js       # Unified metrics system
+    useCameraSystem.js     # Main camera system orchestration
+  /utils
+    detectionRenderer.js   # Canvas rendering utilities
 ```
+
+### Key Architectural Improvements
+
+**Service Layer Pattern**: Core functionality abstracted into service classes:
+- `CameraService`: Stream management with event listeners
+- `DetectionService`: ONNX detection with configurable intervals  
+- `NormalEstimationService`: OpenCV-based surface analysis
+- `AnchorManager`: Integrated tracking, stability, and persistence
+
+**Component Separation**: UI broken into focused, reusable components:
+- `UnifiedControlPanel`: Single interface for all controls/metrics/config
+- `CameraVideo`: Pure video element wrapper
+- `DetectionCanvas`: Canvas with tap handling
+- Styling migrated to Tailwind CSS classes
+
+**State Management**: Centralized via `useCameraSystem` hook:
+- Orchestrates all services with proper initialization
+- Manages cross-service communication
+- Provides unified interface to UI components  
+- Handles cleanup and resource management
+
+**Developer Experience**: 
+- All linting errors resolved
+- Modern React patterns (hooks, functional components)
+- Proper separation of concerns
+- Configurable detection intervals and features
+- Collapsible UI sections to reduce screen clutter
 
 This plan is intentionally specific so a junior can implement each phase independently and you can demo at the end of **Phase 9** with a single witty line; Phases 10–12 add personality + voice + lip-sync; 13–15 polish behavior and perf.

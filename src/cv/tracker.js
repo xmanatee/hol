@@ -296,7 +296,7 @@ function calculateIoU(box1, box2) {
 }
 
 export class SORTTracker {
-  constructor(maxAge = 30, minHits = 3, iouThreshold = 0.3) {
+  constructor(maxAge = 30, minHits = 1, iouThreshold = 0.3) {
     this.maxAge = maxAge;
     this.minHits = minHits;
     this.iouThreshold = iouThreshold;
@@ -305,8 +305,6 @@ export class SORTTracker {
   }
   
   update(detections) {
-    console.log(`[SORTTracker] Update called with ${detections.length} detections, ${this.tracks.length} existing tracks`);
-    console.log(`[SORTTracker] Detections:`, detections);
     
     // Predict existing tracks
     const predictions = this.tracks.map(track => ({
@@ -327,7 +325,6 @@ export class SORTTracker {
     
     // Solve assignment problem
     const assignments = hungarianAssignment(costMatrix);
-    console.log(`[SORTTracker] Assignments:`, assignments);
     
     // Update matched tracks
     const matchedTracks = new Set();
@@ -339,7 +336,6 @@ export class SORTTracker {
         predictions[trackIdx].track.update(detections[detectionIdx]);
         matchedTracks.add(trackIdx);
         matchedDetections.add(detectionIdx);
-        console.log(`[SORTTracker] Matched track ${trackIdx} to detection ${detectionIdx} (IoU: ${iou.toFixed(3)})`);
       }
     }
     
@@ -348,7 +344,6 @@ export class SORTTracker {
       if (!matchedDetections.has(i)) {
         const newTrack = new Track(detections[i], this.nextId++);
         this.tracks.push(newTrack);
-        console.log(`[SORTTracker] Created new track ${newTrack.id} from detection ${i}`);
       }
     }
     
@@ -366,11 +361,8 @@ export class SORTTracker {
     const activeTracks = this.tracks.filter(track => {
       const isRecent = track.timeSinceUpdate < 1;
       const hasMinHits = track.hitStreak >= this.minHits;
-      console.log(`[SORTTracker] Track ${track.id}: timeSinceUpdate=${track.timeSinceUpdate}, hitStreak=${track.hitStreak}, minHits=${this.minHits}, recent=${isRecent}, hasHits=${hasMinHits}`);
       return isRecent && hasMinHits;
     });
-    
-    console.log(`[SORTTracker] Returning ${activeTracks.length} active tracks:`, activeTracks.map(t => t.id));
     
     return activeTracks.map(track => ({
       id: track.id,
@@ -383,6 +375,24 @@ export class SORTTracker {
     }));
   }
   
+  getActiveTracks() {
+    const activeTracks = this.tracks.filter(track => {
+      const isRecent = track.timeSinceUpdate <= 1;
+      const hasMinHits = track.hitStreak >= this.minHits;
+      return isRecent && hasMinHits;
+    });
+    
+    return activeTracks.map(track => ({
+      id: track.id,
+      bbox: track.getBbox(),
+      confidence: track.confidence,
+      className: track.className,
+      class: track.class,
+      age: track.age,
+      hitStreak: track.hitStreak
+    }));
+  }
+
   getTrackById(id) {
     const track = this.tracks.find(t => t.id === id);
     return track ? {
