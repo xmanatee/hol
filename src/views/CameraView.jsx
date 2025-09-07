@@ -67,7 +67,7 @@ const CameraView = () => {
     setCurrentCanvas
   } = useCameraSystem();
 
-  const { updateMetric } = useHudMetrics();
+  const { metrics, updateMetric } = useHudMetrics();
   const throttledFrame = useFrameRate(30);
 
   // Handle camera start/resume
@@ -179,10 +179,67 @@ const CameraView = () => {
         });
 
         // Update HUD metrics
-        updateMetric('Capture FPS', fps);
-        updateMetric('Render frame time', frameTime);
-        updateMetric('Detection amortized cost', detectionState.processingTime);
-        updateMetric('Object Count', anchorData.trackedObjects.length);
+        const processingTime = detectionState.processingTime || 0;
+        const objectCount = anchorData.trackedObjects?.length || 0;
+        
+        // Debug: console.log('[Metrics] Updating:', { fps, frameTime, processingTime, objectCount });
+        
+        if (typeof fps === 'number' && !isNaN(fps)) {
+          updateMetric('Capture FPS', fps);
+        }
+        if (typeof frameTime === 'number' && !isNaN(frameTime)) {
+          updateMetric('Render frame time', frameTime);
+        }
+        updateMetric('Detection amortized cost', processingTime);
+        updateMetric('Object Count', objectCount);
+        
+        // Update Phase 4 stability metrics for active track
+        if (anchorData.activeTrackId) {
+          const anchorState = anchorData.anchorStates.get(anchorData.activeTrackId);
+          if (anchorState?.metrics) {
+            const { centerVelocity, areaChangePercent, confidenceRate } = anchorState.metrics;
+            
+            // Calculate stability score as per Phase 4 spec
+            const v_norm = Math.min(centerVelocity / 30, 1);
+            const area_delta = Math.min(Math.abs(areaChangePercent) / 10, 1);
+            const conf_norm = confidenceRate;
+            const stabilityScore = Math.max(0, (1 - v_norm) * (1 - area_delta) * conf_norm);
+            
+            updateMetric('Stability score', stabilityScore);
+            
+            // Calculate lock time if stability score is good
+            if (stabilityScore >= 0.75) {
+              const tracker = services.anchor.stabilityTracker;
+              const stats = tracker?.trackStats?.get(anchorData.activeTrackId);
+              if (stats?.stableStartTime) {
+                const lockTime = (performance.now() - stats.stableStartTime) / 1000;
+                updateMetric('lock time', lockTime);
+              }
+            }
+          }
+        }
+        
+        // Update Phase 3 Track ID persistence metric
+        // This measures % of frames where the active trackId remains unchanged
+        // For now, we'll use a simple heuristic: if we have an active track with detections, it's persistent
+        if (anchorData.activeTrackId && anchorData.trackedObjects.length > 0) {
+          const activeTrack = anchorData.trackedObjects.find(t => t.id === anchorData.activeTrackId);
+          if (activeTrack) {
+            // If we found the active track in current detections, it's persistent
+            updateMetric('Track ID persistence', 100);
+          } else {
+            // Active track not found in current detections
+            updateMetric('Track ID persistence', 0);
+          }
+        }
+        
+        // TODO: Phase 5 Normal estimation metrics (when implemented)
+        // updateMetric('Normal jitter', normalJitter);
+        // updateMetric('Mode confidence', modeConfidence);
+        
+        // TODO: Phase 6 Persistence metrics (when implemented) 
+        // updateMetric('Short-loss survival', survivalRate);
+        // updateMetric('Reattach latency', reattachTime);
 
         // Only draw debug stats on canvas if showStats is enabled
         if (showStats) {
@@ -249,6 +306,7 @@ const CameraView = () => {
           onUnlock={clearActiveTrack}
           onStop={stopCamera}
           onConfigChange={handleConfigChange}
+          metrics={metrics}
         />
       )}
     </div>

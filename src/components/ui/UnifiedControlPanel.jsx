@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useHudMetrics } from '../../hooks/useHudMetrics.js';
 
 const CollapsibleSection = ({ title, isExpanded, onToggle, children }) => (
   <div className="mb-2 border border-gray-600 rounded">
@@ -194,9 +193,9 @@ const UnifiedControlPanel = ({
   onToggleStats,
   onUnlock,
   onStop,
-  onConfigChange
+  onConfigChange,
+  metrics
 }) => {
-  const { metrics } = useHudMetrics();
   const [isVisible, setIsVisible] = useState(false); // Minimized by default
   const [expandedSections, setExpandedSections] = useState({
     status: false, // Collapsed by default
