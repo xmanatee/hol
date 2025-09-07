@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useAnimationFrame, useFrameRate } from '../hooks/useAnimationFrame.js';
 import { useDetection } from '../hooks/useDetection.js';
 import { useNormalEstimation } from '../hooks/useNormalEstimation.js';
@@ -14,7 +14,6 @@ const CameraView = () => {
   const stabilityTrackerRef = useRef(new AnchorStabilityTracker());
   const frameCountRef = useRef(0);
   const [cameraState, setCameraState] = useState('idle'); // idle, requesting, active, error
-  const [error, setError] = useState(null);
   const [stats, setStats] = useState({ fps: 0, frameTime: 0 });
   const [showStats, setShowStats] = useState(true);
   const [videoDimensions, setVideoDimensions] = useState({ width: 1280, height: 720 });
@@ -116,13 +115,52 @@ const CameraView = () => {
     }
   }, [detections, activeTrackId]);
 
+  // Update anchor state with the latest estimated normal
+  useEffect(() => {
+    if (activeTrackId && estimatedNormal) {
+      setAnchorStates(prev => {
+        const newMap = new Map(prev);
+        const currentAnchor = newMap.get(activeTrackId);
+        if (currentAnchor) {
+          newMap.set(activeTrackId, { ...currentAnchor, normal: estimatedNormal });
+        }
+        return newMap;
+      });
+    }
+  }, [estimatedNormal, activeTrackId]);
+
   // Handle tap-to-lock functionality
   const handleCanvasTap = useCallback((event) => {
-    if (trackedObjects.length === 0) return;
+    console.log('[CameraView] Canvas tap detected!', { 
+      x: event.clientX, 
+      y: event.clientY, 
+      target: event.target.tagName,
+      trackedObjects: trackedObjects.length 
+    });
+    
+    if (trackedObjects.length === 0) {
+      console.log('[CameraView] No tracked objects to tap on');
+      return;
+    }
     
     const rect = event.target.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * videoDimensions.width;
-    const y = ((event.clientY - rect.top) / rect.height) * videoDimensions.height;
+    const tapX = event.clientX - rect.left;
+    const tapY = event.clientY - rect.top;
+    
+    // Convert tap coordinates from display space to canvas space
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const x = (tapX / rect.width) * canvas.width;
+    const y = (tapY / rect.height) * canvas.height;
+    
+    console.log('[CameraView] Tap event:', {
+      display: { tapX, tapY },
+      displaySize: { width: rect.width, height: rect.height },
+      canvasSize: { width: canvas.width, height: canvas.height },
+      videoDimensions,
+      converted: { x, y }
+    });
     
     // Find the highest confidence object under the tap
     let bestTrack = null;
@@ -130,15 +168,20 @@ const CameraView = () => {
     
     for (const track of trackedObjects) {
       const { bbox } = track;
-      if (x >= bbox.x1 && x <= bbox.x2 && y >= bbox.y1 && y <= bbox.y2) {
-        if (track.confidence > bestScore) {
-          bestTrack = track;
-          bestScore = track.confidence;
-        }
+      const isInside = x >= bbox.x1 && x <= bbox.x2 && y >= bbox.y1 && y <= bbox.y2;
+      
+      console.log(`[CameraView] Track ${track.id} bbox:`, bbox, 'tap inside:', isInside);
+      
+      if (isInside && track.confidence > bestScore) {
+        bestTrack = track;
+        bestScore = track.confidence;
       }
     }
     
+    console.log('[CameraView] Best track found:', bestTrack?.id || 'none');
+    
     if (bestTrack) {
+      console.log('[CameraView] Setting active track to:', bestTrack.id);
       // Clear previous track's stability data
       if (activeTrackId && activeTrackId !== bestTrack.id) {
         stabilityTrackerRef.current.removeTrack(activeTrackId);
@@ -149,11 +192,13 @@ const CameraView = () => {
         });
       }
       setActiveTrackId(bestTrack.id);
+    } else {
+      console.log('[CameraView] No track found at tap location');
     }
-  }, [trackedObjects, videoDimensions]);
+  }, [trackedObjects, videoDimensions, activeTrackId]);
   
   // Draw bounding boxes and track IDs
-  const drawDetectionOverlay = useCallback((ctx, canvas) => {
+  const drawDetectionOverlay = useCallback((ctx) => {
     // Clear previous overlays (just detection boxes)
     ctx.save();
     
@@ -251,7 +296,7 @@ const CameraView = () => {
   }, [trackedObjects, activeTrackId, anchorStates]);
 
   // Camera constraints optimized for mobile
-  const constraints = {
+  const constraints = useMemo(() => ({
     video: {
       facingMode: 'environment', // rear camera
       width: { ideal: 1280 },
@@ -259,12 +304,12 @@ const CameraView = () => {
       frameRate: { ideal: 30 }
     },
     audio: false
-  };
+  }), []);
 
   const startCamera = useCallback(async () => {
     try {
       setCameraState('requesting');
-      setError(null);
+      // setError(null);
 
       // Request camera permission and stream
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -295,10 +340,10 @@ const CameraView = () => {
       }
     } catch (err) {
       console.error('Camera error:', err);
-      setError(err.message);
+      // setError(err.message);
       setCameraState('error');
     }
-  }, []);
+  }, [constraints]);
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -320,7 +365,7 @@ const CameraView = () => {
   }, [cameraState, startCamera]);
 
   // Animation loop for canvas updates and FPS tracking
-  useAnimationFrame((deltaTime) => {
+  useAnimationFrame(() => {
     if (cameraState === 'active' && videoRef.current && canvasRef.current) {
       throttledFrame(({ fps, frameTime }) => {
         const video = videoRef.current;
@@ -343,6 +388,19 @@ const CameraView = () => {
         if (frameCountRef.current % 4 === 0 && isModelLoaded) {
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           detectObjects(imageData);
+        }
+
+        // Run normal estimation for stable track
+        if (activeTrackId && normalEstimationReady) {
+          const anchorState = anchorStates.get(activeTrackId);
+          if (anchorState?.state === 'stable') {
+            const activeTrack = trackedObjects.find(t => t.id === activeTrackId);
+            if (activeTrack) {
+              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              const cameraMatrix = getCameraMatrix(canvas.width, canvas.height);
+              estimateNormal(imageData, activeTrack.bbox, cameraMatrix);
+            }
+          }
         }
 
         // Draw detection overlay
@@ -389,7 +447,16 @@ const CameraView = () => {
   }, [stopCamera]);
 
   return (
-    <div className="camera-view">
+    <div 
+      className="camera-view"
+      onClick={(e) => {
+        console.log('[CameraView] Click on container:', e.target.tagName, e.target.className);
+        // If click is on canvas, call the canvas tap handler directly
+        if (e.target.tagName === 'CANVAS') {
+          console.log('[CameraView] Calling handleCanvasTap from container click');
+          handleCanvasTap(e);
+        }
+      }}>
       {/* Video element - full screen */}
       <video
         ref={videoRef}
@@ -412,6 +479,9 @@ const CameraView = () => {
       <canvas
         ref={canvasRef}
         onClick={handleCanvasTap}
+        onTouchEnd={handleCanvasTap}
+        onMouseDown={(e) => console.log('[CameraView] MouseDown on canvas:', e.target.tagName)}
+        onPointerDown={(e) => console.log('[CameraView] PointerDown on canvas:', e.target.tagName)}
         style={{
           position: 'fixed',
           top: 0,
@@ -419,8 +489,12 @@ const CameraView = () => {
           width: '100vw',
           height: '100vh',
           objectFit: 'cover',
-          zIndex: 2,
-          pointerEvents: cameraState === 'active' ? 'auto' : 'none'
+          zIndex: 5, // Higher than R3F overlay
+          pointerEvents: cameraState === 'active' ? 'auto' : 'none',
+          background: 'transparent',
+          cursor: cameraState === 'active' ? 'pointer' : 'default',
+          touchAction: 'manipulation', // Better touch handling on mobile
+          border: '2px solid rgba(255,0,0,0.3)' // Debug: red border to see canvas bounds
         }}
       />
 

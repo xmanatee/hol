@@ -1,3 +1,21 @@
-import react from '@vitejs/plugin-react'   // or '@vitejs/plugin-react-swc'
+import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-export default defineConfig({ plugins: [react()] })
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    headers: {
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Opener-Policy': 'same-origin',
+    },
+    fs: {
+      allow: ['..']
+    }
+  },
+  optimizeDeps: {
+    exclude: ['onnxruntime-web']
+  },
+  define: {
+    global: 'globalThis',
+  }
+})

@@ -55,46 +55,10 @@ const AxisGizmo = () => {
   )
 }
 
-// Utility functions for world ↔ NDC conversion
-export const useProjection = (camera) => {
-  const [projectionMatrix, setProjectionMatrix] = useState(new THREE.Matrix4())
-  const [viewMatrix, setViewMatrix] = useState(new THREE.Matrix4())
 
-  useEffect(() => {
-    if (camera) {
-      setProjectionMatrix(camera.projectionMatrix.clone())
-      setViewMatrix(camera.matrixWorldInverse.clone())
-    }
-  }, [camera])
-
-  const worldToNDC = (worldPos) => {
-    const ndc = worldPos.clone()
-    ndc.applyMatrix4(viewMatrix)
-    ndc.applyMatrix4(projectionMatrix)
-    return ndc
-  }
-
-  const ndcToWorld = (ndcPos, depth = 1.0) => {
-    const world = ndcPos.clone()
-    world.z = depth
-    world.applyMatrix4(projectionMatrix.clone().invert())
-    world.applyMatrix4(viewMatrix.clone().invert())
-    return world
-  }
-
-  const screenToWorld = (screenX, screenY, canvasWidth, canvasHeight, depth = 1.0) => {
-    // Convert screen coordinates to NDC (-1 to 1)
-    const ndcX = (screenX / canvasWidth) * 2 - 1
-    const ndcY = -(screenY / canvasHeight) * 2 + 1
-    return ndcToWorld(new THREE.Vector3(ndcX, ndcY, 0), depth)
-  }
-
-  return { worldToNDC, ndcToWorld, screenToWorld }
-}
 
 const OverlayScene = ({ width, height, anchors = [] }) => {
   const canvasRef = useRef()
-  const [camera, setCamera] = useState(null)
   const [dpr, setDpr] = useState(1)
 
   // iPhone wide camera approximation
@@ -116,7 +80,7 @@ const OverlayScene = ({ width, height, anchors = [] }) => {
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  const projection = useProjection(camera)
+
 
   return (
     <div 
@@ -142,7 +106,6 @@ const OverlayScene = ({ width, height, anchors = [] }) => {
           position: [0, 0, 0]
         }}
         onCreated={(state) => {
-          setCamera(state.camera)
           // Make canvas background transparent
           state.gl.setClearColor(0x000000, 0)
           // Disable depth testing for overlay rendering

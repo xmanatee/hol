@@ -1,7 +1,5 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 
-const YOLO_MODEL_URL = 'https://github.com/onnx/models/raw/main/validated/vision/object_detection_segmentation/yolov4/model/yolov4.onnx';
-
 export function useDetection() {
   const workerRef = useRef(null);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -71,48 +69,30 @@ export function useDetection() {
   // Load model after initialization
   useEffect(() => {
     if (isInitialized && !isModelLoaded && workerRef.current) {
-      // For testing without a model, we'll use mock detections
-      // In production, use: const modelUrl = '/models/yolov8n.onnx';
+      const modelUrl = '/models/yolo11n_480.onnx';
+      console.log('Loading YOLO11n model from:', modelUrl);
       
-      // Simulate model loading for testing
-      setTimeout(() => {
-        setIsModelLoaded(true);
-        console.log('Mock model loaded for testing (no real YOLO model)');
-      }, 1000);
+      workerRef.current.postMessage({ 
+        type: 'loadModel', 
+        modelPath: modelUrl 
+      });
     }
   }, [isInitialized, isModelLoaded]);
 
   const detectObjects = useCallback((imageData) => {
-    if (!isModelLoaded) {
+    if (!isModelLoaded || !workerRef.current) {
       return false;
     }
 
-    // For testing without a real model, generate mock detections
-    setTimeout(() => {
-      const mockDetections = [
-        {
-          x1: imageData.width * 0.2,
-          y1: imageData.height * 0.3,
-          x2: imageData.width * 0.4,
-          y2: imageData.height * 0.7,
-          confidence: 0.85,
-          class: 39,
-          className: 'bottle'
-        },
-        {
-          x1: imageData.width * 0.6,
-          y1: imageData.height * 0.2,
-          x2: imageData.width * 0.8,
-          y2: imageData.height * 0.5,
-          confidence: 0.72,
-          class: 41,
-          className: 'cup'
-        }
-      ];
-      
-      setDetections(mockDetections);
-      setProcessingTime(Math.random() * 5 + 2); // 2-7ms mock processing time
-    }, 10);
+    // Send image data to worker for real YOLO inference
+    workerRef.current.postMessage({
+      type: 'detect',
+      imageData: {
+        data: Array.from(imageData.data), // Convert Uint8ClampedArray to regular array for transfer
+        width: imageData.width,
+        height: imageData.height
+      }
+    });
     
     return true;
   }, [isModelLoaded]);

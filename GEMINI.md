@@ -22,8 +22,9 @@
 - 2-space indent; functional components; hooks in `src/hooks/` as `use*.js`.
 - Workers named `*.worker.js`; import via `new URL('path', import.meta.url)`.
 - Keep heavy CV in WebWorkers; main thread stays responsive.
+- **No Mocking Logic**: All critical logic must be fully implemented. Only cosmetic changes or follow-ups can be omitted with a `#todo` tag in comments.
 
 ## PR Tips
-- JS-only: convert any `*.ts`/`*.tsx` you touch to JS/JSX.
+- JS-only: convert any `*.js`/`*.jsx` you touch to JS/JSX.
 - Include repro steps and, for UI changes, screenshots/video.
 - Note any new files in `public/models/` in the PR description.

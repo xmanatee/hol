@@ -7,19 +7,21 @@ export function useNormalEstimation() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const worker = new Worker(new URL('../cv/normal.worker.js', import.meta.url), {
-      type: 'module',
-    });
+    const worker = new Worker(new URL('../cv/normal.worker.js', import.meta.url));
 
     worker.onmessage = (e) => {
       const { type, payload, message } = e.data;
       if (type === 'loaded') {
+        console.log('[NormalEstimation] OpenCV worker loaded successfully');
         setIsReady(true);
       } else if (type === 'result') {
+        console.log('[NormalEstimation] Normal estimation result:', payload);
         setNormal(payload);
       } else if (type === 'no_result') {
+        console.log('[NormalEstimation] No normal estimation result');
         setNormal(null);
       } else if (type === 'error') {
+        console.error('[NormalEstimation] Worker error:', message);
         setError(message);
       }
     };
@@ -34,7 +36,24 @@ export function useNormalEstimation() {
 
   const estimate = useCallback((imageData, bbox, cameraMatrix) => {
     if (isReady && workerRef.current) {
-      workerRef.current.postMessage({ type: 'estimate', payload: { imageData, bbox, cameraMatrix } });
+      // Convert ImageData to transferable format
+      const transferableImageData = {
+        data: Array.from(imageData.data),
+        width: imageData.width,
+        height: imageData.height
+      };
+      
+      console.log('[NormalEstimation] Starting estimation for bbox:', bbox);
+      workerRef.current.postMessage({ 
+        type: 'estimate', 
+        payload: { 
+          imageData: transferableImageData, 
+          bbox, 
+          cameraMatrix 
+        } 
+      });
+    } else {
+      console.log('[NormalEstimation] Cannot estimate - worker not ready:', { isReady, hasWorker: !!workerRef.current });
     }
   }, [isReady]);
 

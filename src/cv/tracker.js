@@ -267,7 +267,7 @@ function hungarianAssignment(costMatrix) {
   
   flatCosts.sort((a, b) => a.cost - b.cost);
   
-  for (const { cost, row, col } of flatCosts) {
+  for (const { row, col } of flatCosts) {
     if (!usedRows.has(row) && !usedCols.has(col)) {
       assignments.push([row, col]);
       usedRows.add(row);

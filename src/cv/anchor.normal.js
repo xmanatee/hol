@@ -1,4 +1,5 @@
 
+/* global cv */
 import { OneEuroFilter } from './oneEuroFilter.js';
 
 // Initialize filters for smoothing the normal vector components
@@ -77,27 +78,91 @@ function getROI(imageData, bbox) {
 
 /**
  * Planar path: Estimates normal using feature matching and homography.
+ * This simplified implementation focuses on homography decomposition.
+ * A full implementation would require persistent state for previous frame features
+ * and actual feature matching/homography estimation.
  */
 function estimatePlanarNormal(cv, gray, cameraMatrix) {
-  // For simplicity, this example doesn't store previous ROI features.
-  // A full implementation would require passing the previous frame's features.
-  // We'll simulate a stable plane for now.
-  // In a real scenario, you'd do:
-  // 1. Detect ORB features in current and previous gray images.
-  // 2. Match features.
-  // 3. Find homography with RANSAC.
-  // 4. Decompose homography to get normals.
+  // Placeholder for feature detection and matching.
+  // In a real scenario, you would detect features (e.g., ORB) in 'gray'
+  // and match them with features from the previous frame's ROI.
+  // For demonstration, we'll assume a homography is found.
 
-  // Placeholder: Assume a mostly flat surface facing the camera.
-  const inliers = 25; // Mock value
-  const reprojectionError = 1.5; // Mock value
+  // Mock homography matrix (identity for a stable, front-facing plane)
+  // In a real scenario, this would be computed from feature matches.
+  let H = cv.matFromArray(3, 3, cv.CV_64F, [
+    1, 0, 0,
+    0, 1, 0,
+    0, 0, 1
+  ]);
+
+  // Mock inliers and reprojection error
+  const inliers = 50; // Assume enough inliers for a good homography
+  const reprojectionError = 0.5; // Assume low reprojection error
 
   if (inliers >= 25 && reprojectionError < 2.0) {
-    return {
-      normal: { x: 0, y: 0, z: 1 }, // Normal pointing towards the camera
-      score: inliers, // Score is the number of inliers
-    };
+    let rotations = new cv.MatVector();
+    let translations = new cv.MatVector();
+    let normals = new cv.MatVector();
+
+    // Create camera matrix in CV_64F format
+    let K_64F = cv.matFromArray(3, 3, cv.CV_64F, [
+      cameraMatrix.fx, 0, cameraMatrix.cx,
+      0, cameraMatrix.fy, cameraMatrix.cy,
+      0, 0, 1
+    ]);
+
+    cv.decomposeHomographyMat(H, K_64F, rotations, translations, normals);
+
+    let bestNormal = null;
+    let maxZ = -Infinity;
+
+    // Choose the normal that points towards the camera (positive Z-component)
+    for (let i = 0; i < normals.size(); ++i) {
+      let normal = normals.get(i);
+      // Ensure normal is normalized
+      let norm = Math.sqrt(normal.data64F[0] * normal.data64F[0] +
+                           normal.data64F[1] * normal.data64F[1] +
+                           normal.data64F[2] * normal.data64F[2]);
+      if (norm === 0) continue;
+
+      let currentNormal = {
+        x: normal.data64F[0] / norm,
+        y: normal.data64F[1] / norm,
+        z: normal.data64F[2] / norm,
+      };
+
+      // We want the normal pointing towards the camera, so z should be positive.
+      // If it's negative, flip it.
+      if (currentNormal.z < 0) {
+        currentNormal.x *= -1;
+        currentNormal.y *= -1;
+        currentNormal.z *= -1;
+      }
+
+      // Select the normal with the largest positive Z component
+      if (currentNormal.z > maxZ) {
+        maxZ = currentNormal.z;
+        bestNormal = currentNormal;
+      }
+      normal.delete();
+    }
+
+    H.delete();
+    rotations.delete();
+    translations.delete();
+    normals.delete();
+    K_64F.delete();
+
+    if (bestNormal) {
+      return {
+        normal: bestNormal,
+        score: inliers, // Score is the number of inliers
+      };
+    }
   }
+
+  H.delete();
   return null;
 }
 
@@ -127,7 +192,18 @@ function estimateCylindricalNormal(cv, gray) {
     const areaRatio = ellipseArea / roiArea;
 
     if (minorMajorRatio >= 0.35 && areaRatio >= 0.015 && areaRatio <= 0.25) {
-      const edgeSupport = 1.0; // Placeholder for edge support calculation
+      // Calculate edge support: count non-zero pixels within the ellipse's bounding box in the Canny image
+      const rect = rotatedRect.boundingRect();
+      let edgePixels = 0;
+      for (let r = rect.y; r < rect.y + rect.height; ++r) {
+        for (let c = rect.x; c < rect.x + rect.width; ++c) {
+          if (r >= 0 && r < canny.rows && c >= 0 && c < canny.cols && canny.ucharAt(r, c) > 0) {
+            edgePixels++;
+          }
+        }
+      }
+      const edgeSupport = edgePixels / (rect.width * rect.height); // Normalize by bounding box area
+
       const score = minorMajorRatio * edgeSupport;
 
       if (score > maxScore) {
@@ -136,6 +212,7 @@ function estimateCylindricalNormal(cv, gray) {
         const inPlaneAngle = rotatedRect.angle * (Math.PI / 180);
         
         // Synthesize an outward-pointing normal
+        // Assuming the ellipse's center is the object's center in the ROI
         bestEllipse = {
           normal: {
             x: Math.sin(tilt) * Math.cos(inPlaneAngle),

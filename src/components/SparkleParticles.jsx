@@ -225,7 +225,9 @@ export function SparkleParticles({
           time: { value: 0 }
         }}
         onBeforeRender={(renderer, scene, camera, geometry, material) => {
-          material.uniforms.time.value = performance.now() * 0.001;
+          if (material.uniforms && material.uniforms.time) {
+            material.uniforms.time.value = performance.now() * 0.001;
+          }
         }}
       />
     </instancedMesh>

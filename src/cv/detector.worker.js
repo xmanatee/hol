@@ -13,7 +13,7 @@ const COCO_CLASSES = [
   'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple'
 ];
 
-const TARGET_CLASSES = new Set([39, 41]); // bottle, cup
+const TARGET_CLASSES = new Set([0, 39, 41]); // person, bottle, cup
 
 async function initializeONNX() {
   try {
@@ -21,22 +21,35 @@ async function initializeONNX() {
     ort.env.wasm.simd = true;
     ort.env.wasm.numThreads = 1;
     
-    // Try WebGPU first if available
+    // Set WASM paths to public directory
+    ort.env.wasm.wasmPaths = {
+      'ort-wasm.wasm': '/ort-wasm-simd-threaded.wasm',
+      'ort-wasm-threaded.wasm': '/ort-wasm-simd-threaded.wasm',
+      'ort-wasm-simd.wasm': '/ort-wasm-simd-threaded.wasm',
+      'ort-wasm-simd-threaded.wasm': '/ort-wasm-simd-threaded.wasm',
+    };
+    
+    postMessage({ type: 'log', message: 'ONNX Runtime WASM paths configured' });
+    
+    // Try WebGPU first if available, but prefer WASM for stability
+    const executionProviders = ['wasm'];
+    
     if ('gpu' in navigator) {
       try {
         ort.env.webgpu = { 
           powerPreference: 'high-performance' 
         };
-        postMessage({ type: 'log', message: 'WebGPU configured for ONNX' });
+        executionProviders.unshift('webgpu');
+        postMessage({ type: 'log', message: 'WebGPU available as option' });
       } catch (e) {
-        postMessage({ type: 'warning', message: 'WebGPU configuration failed, using WASM' });
+        postMessage({ type: 'warning', message: 'WebGPU configuration failed, using WASM only' });
       }
     } else {
-      postMessage({ type: 'warning', message: 'WebGPU not available, using WASM' });
+      postMessage({ type: 'log', message: 'WebGPU not available, using WASM' });
     }
     
     isInitialized = true;
-    postMessage({ type: 'initialized' });
+    postMessage({ type: 'initialized', executionProviders });
   } catch (error) {
     postMessage({ type: 'error', message: `ONNX initialization failed: ${error.message}` });
   }
@@ -73,8 +86,10 @@ async function loadModel(modelPath) {
   }
 }
 
-function preprocessImage(imageData, targetSize = 512) {
-  const { data, width, height } = imageData;
+function preprocessImage(imageData, targetSize = 480) {
+  // Handle both direct ImageData and transferred array data
+  const data = imageData.data instanceof Array ? new Uint8ClampedArray(imageData.data) : imageData.data;
+  const { width, height } = imageData;
   
   // Calculate scale to fit targetSize while maintaining aspect ratio
   const scale = targetSize / Math.max(width, height);
@@ -117,45 +132,101 @@ function preprocessImage(imageData, targetSize = 512) {
   };
 }
 
-function postprocessDetections(output, preprocessInfo, confidenceThreshold = 0.5) {
+function postprocessDetections(output, preprocessInfo, confidenceThreshold = 0.1) {
   const { scale, padX, padY, originalWidth, originalHeight } = preprocessInfo;
   const detections = [];
   
-  // Output format: [1, num_detections, 85] where 85 = [x, y, w, h, conf, ...80 class scores]
-  const outputData = output[0];
-  const numDetections = outputData.dims[1];
-  const numClasses = outputData.dims[2] - 5; // 80 classes for COCO
+  // YOLO11n output format: [1, 84, 8400] where 84 = [x, y, w, h, ...80 class scores]
+  // Note: No objectness score in YOLO11, just class scores
+  const outputTensor = Object.values(output)[0]; // Get the first (and likely only) output
+  const outputData = outputTensor.data;
+  const dims = outputTensor.dims;
+  
+  console.log('[Worker] YOLO11n output dims:', dims);
+  
+  let numClasses, numDetections;
+  let dataFormat;
+  
+  if (dims.length === 3 && dims[0] === 1) {
+    if (dims[1] === 84) {
+      // Format: [1, 84, 8400] - standard YOLO11n
+      numClasses = 80;
+      numDetections = dims[2];
+      dataFormat = 'channels_first';
+    } else if (dims[2] === 84) {
+      // Format: [1, 8400, 84] - transposed
+      numClasses = 80;
+      numDetections = dims[1];
+      dataFormat = 'channels_last';
+    }
+  }
+  
+  console.log('[Worker] Detected format:', dataFormat, 'detections:', numDetections);
+  
+  let totalDetectionsAboveThreshold = 0;
+  let bottleCupDetections = 0;
+  let classStats = {};
   
   for (let i = 0; i < numDetections; i++) {
-    const detection = outputData.data.slice(i * (5 + numClasses), (i + 1) * (5 + numClasses));
+    let centerX, centerY, width, height;
+    let classScores = [];
     
-    const [centerX, centerY, width, height, objectConfidence] = detection;
-    
-    if (objectConfidence < confidenceThreshold) continue;
+    if (dataFormat === 'channels_first') {
+      // [1, 84, 8400] format
+      centerX = outputData[0 * numDetections + i];
+      centerY = outputData[1 * numDetections + i];
+      width = outputData[2 * numDetections + i];
+      height = outputData[3 * numDetections + i];
+      
+      for (let c = 0; c < numClasses; c++) {
+        classScores[c] = outputData[(4 + c) * numDetections + i];
+      }
+    } else {
+      // [1, 8400, 84] format  
+      const offset = i * 84;
+      centerX = outputData[offset + 0];
+      centerY = outputData[offset + 1];
+      width = outputData[offset + 2];
+      height = outputData[offset + 3];
+      
+      for (let c = 0; c < numClasses; c++) {
+        classScores[c] = outputData[offset + 4 + c];
+      }
+    }
     
     // Find best class
     let maxClassScore = 0;
     let bestClass = -1;
     
     for (let c = 0; c < numClasses; c++) {
-      const classScore = detection[5 + c];
-      if (classScore > maxClassScore) {
-        maxClassScore = classScore;
+      if (classScores[c] > maxClassScore) {
+        maxClassScore = classScores[c];
         bestClass = c;
       }
     }
     
-    // Only keep bottles and cups
-    if (!TARGET_CLASSES.has(bestClass)) continue;
+    // Count all detections above threshold for debugging
+    if (maxClassScore >= confidenceThreshold) {
+      totalDetectionsAboveThreshold++;
+      
+      // Track class statistics
+      const className = COCO_CLASSES[bestClass] || `class_${bestClass}`;
+      classStats[className] = (classStats[className] || 0) + 1;
+      
+      if (TARGET_CLASSES.has(bestClass)) {
+        bottleCupDetections++;
+      }
+    }
     
-    const finalConfidence = objectConfidence * maxClassScore;
-    if (finalConfidence < confidenceThreshold) continue;
+    // Only keep person, bottles and cups above threshold
+    if (!TARGET_CLASSES.has(bestClass) || maxClassScore < confidenceThreshold) continue;
     
-    // Convert from normalized coordinates back to original image space
-    const x1 = ((centerX - width / 2) * 512 - padX) / scale;
-    const y1 = ((centerY - height / 2) * 512 - padY) / scale;
-    const x2 = ((centerX + width / 2) * 512 - padX) / scale;
-    const y2 = ((centerY + height / 2) * 512 - padY) / scale;
+    // YOLO11n outputs coordinates in pixel space for the 480x480 input
+    // Convert back to original image space
+    const x1 = (centerX - width / 2 - padX) / scale;
+    const y1 = (centerY - height / 2 - padY) / scale;
+    const x2 = (centerX + width / 2 - padX) / scale;
+    const y2 = (centerY + height / 2 - padY) / scale;
     
     // Clamp to image bounds
     const bbox = {
@@ -163,19 +234,45 @@ function postprocessDetections(output, preprocessInfo, confidenceThreshold = 0.5
       y1: Math.max(0, Math.min(originalHeight, y1)),
       x2: Math.max(0, Math.min(originalWidth, x2)),
       y2: Math.max(0, Math.min(originalHeight, y2)),
-      confidence: finalConfidence,
+      confidence: maxClassScore,
       class: bestClass,
       className: COCO_CLASSES[bestClass]
     };
     
-    // Filter out very small bboxes
-    if (bbox.x2 - bbox.x1 > 10 && bbox.y2 - bbox.y1 > 10) {
+    // Check bbox validity and size
+    const bboxWidth = bbox.x2 - bbox.x1;
+    const bboxHeight = bbox.y2 - bbox.y1;
+    const isValidSize = bboxWidth > 10 && bboxHeight > 10;
+    const isValidCoords = bbox.x1 >= 0 && bbox.y1 >= 0 && bbox.x2 <= originalWidth && bbox.y2 <= originalHeight;
+    
+    // console.log(`[Worker] Bbox candidate: ${COCO_CLASSES[bestClass]} conf=${maxClassScore.toFixed(3)} size=${bboxWidth.toFixed(0)}x${bboxHeight.toFixed(0)} coords=[${bbox.x1.toFixed(0)},${bbox.y1.toFixed(0)},${bbox.x2.toFixed(0)},${bbox.y2.toFixed(0)}] valid=${isValidSize && isValidCoords}`);
+    
+    if (isValidSize && isValidCoords) {
       detections.push(bbox);
     }
   }
   
+  console.log('[Worker] Detection summary:', {
+    totalAboveThreshold: totalDetectionsAboveThreshold,
+    bottleCupCandidates: bottleCupDetections, 
+    rawDetections: detections.length
+  });
+  
+  console.log('[Worker] Class statistics:', classStats);
+  
+  // Show top detection confidences for debugging
+  if (detections.length > 0) {
+    const sortedDets = [...detections].sort((a, b) => b.confidence - a.confidence);
+    console.log('[Worker] Top 3 raw detections:', sortedDets.slice(0, 3).map(d => 
+      `${d.className}: ${d.confidence.toFixed(3)}`
+    ));
+  }
+  
   // Sort by confidence and apply NMS
-  return applyNMS(detections, 0.4);
+  const filteredDetections = applyNMS(detections, 0.4);
+  console.log('[Worker] Final detections after NMS:', filteredDetections.length);
+  
+  return filteredDetections;
 }
 
 function applyNMS(boxes, iouThreshold) {
@@ -230,17 +327,28 @@ async function detectObjects(imageData) {
   try {
     const startTime = performance.now();
     
-    // Preprocess image
-    const preprocessed = preprocessImage(imageData, 512);
+    // Preprocess image for YOLO11n (480x480)
+    const preprocessed = preprocessImage(imageData, 480);
     
     // Create input tensor
-    const inputTensor = new ort.Tensor('float32', preprocessed.tensor, [1, 3, 512, 512]);
+    const inputTensor = new ort.Tensor('float32', preprocessed.tensor, [1, 3, 480, 480]);
     
-    // Run inference
-    const outputs = await session.run({ images: inputTensor });
+    // console.log('[Worker] Input tensor shape:', inputTensor.dims);
+    // console.log('[Worker] Session input names:', session.inputNames);
+    // console.log('[Worker] Session output names:', session.outputNames);
+    // console.log('[Worker] Input image dimensions:', imageData.width, 'x', imageData.height);
+    
+    // Run inference - use the actual input name from the model
+    const inputName = session.inputNames[0];
+    const inputs = {};
+    inputs[inputName] = inputTensor;
+    
+    const outputs = await session.run(inputs);
+    
+    // console.log('[Worker] Inference completed, output keys:', Object.keys(outputs));
     
     // Postprocess results
-    const detections = postprocessDetections(outputs.output0, preprocessed);
+    const detections = postprocessDetections(outputs, preprocessed);
     
     const processingTime = performance.now() - startTime;
     
@@ -252,6 +360,7 @@ async function detectObjects(imageData) {
     });
     
   } catch (error) {
+    console.error('[Worker] Detection error:', error);
     postMessage({ type: 'error', message: `Detection failed: ${error.message}` });
   }
 }

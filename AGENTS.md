@@ -30,7 +30,7 @@ Examples:
 - Files: prefer PascalCase for React components, kebab/camel for modules; workers as `*.worker.js`.
 - Linting: ESLint (JS-focused via `eslint.config.js`). Keep `no-unused-vars` clean; leading uppercase or `_` constants are ignored by rule config.
 - Imports: use relative paths within `src/`.
-- Migration: if you modify a `*.ts`/`*.tsx` file, convert it to JS/JSX in the same PR.
+- Migration: if you modify a `*.js`/`*.jsx` file, convert it to JS/JSX in the same PR.
 
 ## Testing Guidelines
 - No formal test setup yet. If adding tests, prefer Vitest + React Testing Library.

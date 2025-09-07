@@ -82,3 +82,4 @@ npm run preview      # Preview build
 - WebWorkers for heavy CV operations
 - Proper cleanup for WebGL/audio resources
 - Avoid defensive logic, try-catch blocks, and ambiguous inputs; everything should be predictable and work as expected.
+- **No Mocking Logic**: All critical logic must be fully implemented. Only cosmetic changes or follow-ups can be omitted with a `#todo` tag in comments.
