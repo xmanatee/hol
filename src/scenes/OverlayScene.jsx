@@ -2,6 +2,7 @@ import { Canvas } from '@react-three/fiber'
 import { useRef, useEffect, useState } from 'react'
 import * as THREE from 'three'
 import { SparkleManager } from '../components/SparkleParticles.jsx'
+import HeadAnchor from '../components/organisms/HeadAnchor.jsx'
 
 // Axis gizmo component for testing alignment
 const AxisGizmo = () => {
@@ -61,6 +62,12 @@ const OverlayScene = ({ width, height, anchors = [] }) => {
   const canvasRef = useRef()
   const [dpr, setDpr] = useState(1)
 
+  // Debug logging
+  console.log('[OverlayScene] Rendering with:', { width, height, anchorsCount: anchors.length });
+  anchors.forEach(anchor => {
+    console.log(`[OverlayScene] Anchor ${anchor.id}: ${anchor.state} at`, anchor.screenPosition);
+  });
+
   // iPhone wide camera approximation
   const fov = 63
   const aspect = width / height
@@ -86,41 +93,55 @@ const OverlayScene = ({ width, height, anchors = [] }) => {
     <div 
       className="overlay-scene"
       style={{
-        position: 'absolute',
+        position: 'fixed',
         top: 0,
         left: 0,
-        width: '100%',
-        height: '100%',
-        pointerEvents: 'none', // Allow touch events to pass through when needed
-        zIndex: 5
+        width: '100vw',
+        height: '100vh',
+        pointerEvents: 'none',
+        zIndex: 15,
+        boxSizing: 'border-box',
+        border: '5px solid orange', // Verify the container is visible
+        backgroundColor: 'rgba(255, 165, 0, 0.2)' // Orange tint to verify container
       }}
     >
+      {/* Test if the div container is working */}
+      <div style={{
+        position: 'absolute',
+        top: '200px',
+        left: '200px',
+        backgroundColor: 'purple',
+        padding: '20px',
+        color: 'white',
+        fontSize: '24px',
+        fontWeight: 'bold'
+      }}>
+        OVERLAY CONTAINER TEST
+      </div>
+      
+      {/* Minimal Canvas test */}
+      <div style={{
+        position: 'absolute',
+        bottom: 0,
+        right: 0,
+        backgroundColor: 'blue',
+        color: 'white',
+        padding: '5px'
+      }}>
+        About to render Canvas...
+      </div>
+      
       <Canvas
-        ref={canvasRef}
-        dpr={dpr}
-        camera={{
-          fov,
-          aspect,
-          near,
-          far,
-          position: [0, 0, 0]
+        style={{
+          width: '100%',
+          height: '100%',
+          border: '3px solid yellow'
         }}
         onCreated={(state) => {
-          // Make canvas background transparent
-          state.gl.setClearColor(0x000000, 0)
-          // Disable depth testing for overlay rendering
-          state.gl.sortObjects = false
+          console.log('[OverlayScene] Canvas created successfully!');
+          state.gl.setClearColor(0xff0000, 1.0); // Solid red background
         }}
-        style={{
-          background: 'transparent',
-          width: '100%',
-          height: '100%'
-        }}
-        gl={{
-          alpha: true,
-          antialias: true,
-          powerPreference: "high-performance"
-        }}
+        camera={{ position: [0, 0, 5] }}
       >
         {/* Ambient light for visibility */}
         <ambientLight intensity={0.5} />
@@ -128,22 +149,32 @@ const OverlayScene = ({ width, height, anchors = [] }) => {
         {/* Directional light */}
         <directionalLight position={[1, 1, 1]} intensity={0.5} />
         
-        {/* Axis gizmo at screen center for testing */}
-        <AxisGizmo />
+        {/* Test: Fixed red cross at screen center */}
+        <mesh position={[0, 0, -0.5]}>
+          <planeGeometry args={[0.3, 0.06]} />
+          <meshBasicMaterial color="red" side={THREE.DoubleSide} />
+        </mesh>
+        <mesh position={[0, 0, -0.5]} rotation={[0, 0, Math.PI / 2]}>
+          <planeGeometry args={[0.3, 0.06]} />
+          <meshBasicMaterial color="red" side={THREE.DoubleSide} />
+        </mesh>
+        
+        {/* Test: Fixed blue box at different position */}
+        <mesh position={[0.3, 0.3, -0.5]}>
+          <boxGeometry args={[0.1, 0.1, 0.1]} />
+          <meshBasicMaterial color="blue" />
+        </mesh>
         
         {/* Sparkle effects for stable anchors */}
         <SparkleManager anchors={anchors} />
         
-        {/* Test objects at different positions */}
-        <mesh position={[0.2, 0, -1]}>
-          <boxGeometry args={[0.05, 0.05, 0.05]} />
-          <meshStandardMaterial color="orange" />
-        </mesh>
-        
-        <mesh position={[-0.2, 0, -1]}>
-          <sphereGeometry args={[0.025]} />
-          <meshStandardMaterial color="cyan" />
-        </mesh>
+        {/* Test HeadAnchor in top right corner */}
+        <HeadAnchor 
+          position_px={[width * 0.8, height * 0.2]} 
+          normal_camSpace={[0, 0, 1]} 
+          depthHint={2.0}
+          visible={true}
+        />
       </Canvas>
       
       {/* Debug info */}

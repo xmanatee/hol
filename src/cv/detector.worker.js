@@ -17,7 +17,7 @@ const COCO_CLASSES = [
   'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple'
 ];
 
-const TARGET_CLASSES = new Set([0, 39, 41]); // person, bottle, cup
+const TARGET_CLASSES = new Set([0, 39, 41, 73]); // person, bottle, cup, book
 
 async function initializeONNX() {
   console.log('[Worker] initializeONNX called, current state:', isInitialized);

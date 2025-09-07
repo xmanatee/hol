@@ -135,6 +135,11 @@ export class NormalEstimationService {
         console.log('[NormalEstimationService] Worker:', data.message);
         break;
 
+      case 'no_result':
+        // Normal estimation worker found no valid result - this is expected behavior
+        console.log('[NormalEstimationService] No normal estimation result available');
+        break;
+
       default:
         console.warn('[NormalEstimationService] Unknown worker message type:', type);
     }

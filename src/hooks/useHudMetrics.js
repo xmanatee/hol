@@ -29,6 +29,11 @@ const METRIC_DEFINITIONS = {
     isRed: (value) => value === 0,
     unit: '',
   },
+  'Stable Anchors': {
+    target: 1,
+    isRed: (value) => value === 0,
+    unit: '',
+  },
   // Phase 4
   'Stability score': {
     target: 0.75,

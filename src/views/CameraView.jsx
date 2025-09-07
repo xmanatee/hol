@@ -2,6 +2,7 @@ import { useRef, useCallback, useState } from 'react';
 import { useAnimationFrame, useFrameRate } from '../hooks/useAnimationFrame.js';
 import { useCameraSystem } from '../hooks/useCameraSystem.js';
 import { useHudMetrics } from '../hooks/useHudMetrics.js';
+import { Canvas } from '@react-three/fiber';
 
 import CameraVideo from '../components/CameraVideo.jsx';
 import DetectionCanvas from '../components/DetectionCanvas.jsx';
@@ -138,8 +139,11 @@ const CameraView = () => {
     const tapY = event.clientY - rect.top;
 
     // Convert tap coordinates to canvas space
-    const x = (tapX / rect.width) * canvas.width;
+    let x = (tapX / rect.width) * canvas.width;
     const y = (tapY / rect.height) * canvas.height;
+
+    // Display is mirrored horizontally; flip X for hit-testing
+    x = canvas.width - x;
 
     const position = { x, y };
     const bestTrack = findTrackAtPosition(position);
@@ -235,6 +239,10 @@ const CameraView = () => {
         updateMetric('Detection amortized cost', processingTime);
         updateMetric('Object Count', objectCount);
         
+        // Debug: Count stable anchors for sparkles
+        const stableAnchorCount = Array.from(anchorData.anchorStates.values()).filter(state => state?.state === 'stable').length;
+        updateMetric('Stable Anchors', stableAnchorCount);
+        
         // Update Phase 4 stability metrics for active track
         if (anchorData.activeTrackId) {
           const anchorState = anchorData.anchorStates.get(anchorData.activeTrackId);
@@ -318,7 +326,7 @@ const CameraView = () => {
   }, [setCurrentCanvas]);
 
   return (
-    <div className="camera-view fixed top-0 left-0 w-screen h-screen overflow-hidden">
+    <div className="camera-view fixed top-0 left-0 w-screen h-screen" style={{ overflow: 'visible' }}>
       {/* Video element - hidden when active since canvas shows the processed image */}
       <CameraVideo ref={videoRef} isVisible={cameraState === 'idle' || cameraState === 'blocked'} />
       
@@ -327,18 +335,19 @@ const CameraView = () => {
         cameraState={cameraState}
         onTap={handleCanvasTap}
         onDraw={handleCanvasDraw}
+        style={{ transform: 'scaleX(-1)', transformOrigin: 'center' }}
       />
 
-      {/* WebGL Overlay Scene - only when camera is active */}
-      {cameraState === 'active' && !needsRestart && anchorData.anchorStates && (
-        <OverlayScene 
-          width={videoDimensions.width} 
-          height={videoDimensions.height} 
-          anchors={Array.from(anchorData.anchorStates.entries()).map(([id, anchorState]) => ({
+      {/* WebGL Overlay Scene - restored with working Canvas */}
+      {cameraState === 'active' && !needsRestart && (
+        <OverlayScene
+          width={videoDimensions?.width || 1280}
+          height={videoDimensions?.height || 720}
+          anchors={Array.from(anchorData.anchorStates.entries()).map(([id, state]) => ({
             id,
-            state: anchorState?.state || 'tracking',
-            screenPosition: anchorState?.screenPosition || { x: 0, y: 0, z: 0 },
-            color: '#FFD700'
+            state: state.state,
+            screenPosition: state.screenPosition,
+            color: state.state === 'stable' ? '#FFD700' : '#FF6B6B'
           }))}
         />
       )}

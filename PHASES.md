@@ -2,7 +2,7 @@ Below is a **sequential, copy-pasteable** plan. Each phase contains: **Context �
 
 ---
 
-## Phase 1 — Rear-camera capture (mobile-web)
+## DONE Phase 1 — Rear-camera capture (mobile-web)
 
 **Context**
 Provide a full-screen, low-latency rear-camera feed that works on iOS Safari/Chrome.
@@ -35,7 +35,7 @@ React 18, pure JS (js + jsx), Vite/Next, modern mobile Safari/Chrome.
 
 ---
 
-## Phase 2 — R3F overlay scene
+## DONE Phase 2 — R3F overlay scene
 
 **Context**
 We need a WebGL layer over the video for 3D content.
@@ -67,7 +67,7 @@ three, @react-three/fiber.
 
 ---
 
-## Phase 3 — Detector + tracker + tap-to-lock
+## DONE Phase 3 — Detector + tracker + tap-to-lock
 
 **Context**
 Detect bottles/cups, track them, and let user lock one instance.
@@ -103,7 +103,7 @@ onnxruntime-web (webgpu build), a small YOLO ONNX, `offscreenCanvas` (fallback t
 
 ---
 
-## Phase 4 — Anchor stability + visual confirmation
+## DONE Phase 4 — Anchor stability + visual confirmation
 
 **Context**
 We need a robust “anchor locked” signal before any 3D.
@@ -136,7 +136,7 @@ None beyond previous.
 
 ---
 
-## Phase 5 — Surface orientation (normal) estimation
+## DONE Phase 5 — Surface orientation (normal) estimation
 
 **Context**
 Orient the head correctly using a local surface normal; choose best of planar/cylindrical.
@@ -169,7 +169,7 @@ opencv.js (WASM), camera intrinsics K (compute from `fov`, viewport).
 
 ---
 
-## Phase 6 — Anchor persistence & re-acquisition
+## FIXING Phase 6 — Anchor persistence & re-acquisition
 
 **Context**
 Keep the anchor alive through brief losses; reattach when it returns.
@@ -234,7 +234,7 @@ opencv.js, WebGL texture upload path.
 
 ---
 
-## Phase 8 — Load face model & attach to surface
+## FIXING Phase 8 — Load face model & attach to surface
 
 **Context**
 We have a **glTF face with 52 blendshapes** (OK; treat as morph targets).
@@ -300,7 +300,7 @@ R3F custom shader material (ShaderMaterial), video texture from `<video>` elemen
 
 ---
 
-## Phase 10 — Personality bootstrap (vision + LLM)
+## DOING Phase 10 — Personality bootstrap (vision + LLM)
 
 **Context**
 Detect object identity and generate a persona.
@@ -308,7 +308,7 @@ Detect object identity and generate a persona.
 **Steps**
 
 1. Capture a sharp ROI frame (pause head animation for 1 frame); upload to your backend.
-2. calls a **vision API** (e.g., Google Vision label + text detection). Return `{category, brandOrTitle, textSnippets}`.
+2. calls a **vision API** (e.g., use image to text OpenAI model). Return `{category, brandOrTitle, textSnippets}`.
 3. prompts LLM with a strict schema (JSON) to produce: `{voiceStyle, tone, quirks, 3 one-liners}`. Keep it < 300 tokens.
 4. Store persona JSON on client; pick a one-liner as the **greeting**.
 
@@ -322,8 +322,7 @@ Detect object identity and generate a persona.
 
 **Metric (HUD):**
 
-* **Persona RTT (ms):** vision + LLM end-to-end latency (client→backend→client). Target ≤ 1500 ms.
-* **Confidence tag:** top vision label confidence (0–1). Target ≥ 0.6; else flag “fallback persona”.
+* **Persona RTT (ms):** vision + LLM end-to-end latency. Target ≤ 1500 ms.
 
 ---
 
