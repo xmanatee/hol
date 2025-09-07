@@ -535,9 +535,7 @@ These metrics make each phase objectively testable and demo-friendly.
     ttsClient.js           # ElevenLabs WebSocket agent mode client
     lipSync.js             # Morph target lip-sync
   /hooks
-    useAnimationFrame.js   # 30 FPS render loop utilities
-    useDetection.js        # Detection hook (legacy)
-    useNormalEstimation.js # Normal estimation hook (legacy) 
+    useAnimationFrame.js   # 30 FPS render loop utilities 
     usePerfHud.js          # Performance monitoring
     useHudMetrics.js       # Unified metrics system
     useCameraSystem.js     # Main camera system orchestration
