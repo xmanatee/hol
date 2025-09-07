@@ -10,8 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@elevenlabs/client": "^0.6.1",
+    "@elevenlabs/react": "^0.6.1",
     "@react-three/fiber": "^9.3.0",
     "onnxruntime-web": "^1.22.0",
+    "openai": "^5.19.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "three": "^0.180.0",

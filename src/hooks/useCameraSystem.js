@@ -3,6 +3,8 @@ import { CameraService } from '../services/CameraService.js';
 import { DetectionService } from '../services/DetectionService.js';
 import { NormalEstimationService } from '../services/NormalEstimationService.js';
 import { AnchorManager } from '../services/AnchorManager.js';
+import { PersonalityService } from '../services/PersonalityService.js';
+import { TTSClient } from '../audio/ttsClient.js';
 import { useHudMetrics } from './useHudMetrics.js';
 
 export const useCameraSystem = (config = {}) => {
@@ -11,6 +13,8 @@ export const useCameraSystem = (config = {}) => {
   const detectionServiceRef = useRef(new DetectionService());
   const normalServiceRef = useRef(new NormalEstimationService());
   const anchorManagerRef = useRef(new AnchorManager(config));
+  const personalityServiceRef = useRef(new PersonalityService(config.personality));
+  const ttsClientRef = useRef(new TTSClient(config.tts));
   const currentCanvasRef = useRef(null);
   const [_initialized, setInitialized] = useState(false);
 
@@ -31,6 +35,21 @@ export const useCameraSystem = (config = {}) => {
     trackedObjects: [],
     activeTrackId: null,
     anchorStates: new Map()
+  });
+  
+  const [personalityData, setPersonalityData] = useState({
+    isProcessing: false,
+    currentPersona: null,
+    error: null,
+    lastRTT: 0
+  });
+
+  const [ttsData, setTTSData] = useState({
+    isSynthesizing: false,
+    isPlaying: false,
+    currentAnalyser: null,
+    error: null,
+    lastLatency: 0
   });
 
   const { updateMetric } = useHudMetrics();
@@ -68,13 +87,15 @@ export const useCameraSystem = (config = {}) => {
           if (!isMounted) return;
         }
 
+        // Initialize TTS client
+        const ttsClient = ttsClientRef.current;
+        await ttsClient.initialize();
+
         if (isMounted) {
           console.log('[CameraSystem] All services initialized successfully');
           setDetectionState(prev => ({ ...prev, isInitialized: true, isModelLoaded: detectionService.isModelLoaded }));
           setInitialized(true);
         }
-
-        setInitialized(true);
       } catch (error) {
         console.error('[CameraSystem] Service initialization failed:', error);
         setDetectionState(prev => ({ ...prev, error: error.message }));
@@ -179,11 +200,71 @@ export const useCameraSystem = (config = {}) => {
       }
     });
 
+    // Personality service listeners
+    const personalityService = personalityServiceRef.current;
+    const removePersonalityListener = personalityService.addListener({
+      onPersonalityStart: ({ requestId }) => {
+        console.log('[CameraSystem] Personality generation started for request:', requestId);
+        setPersonalityData(prev => ({ ...prev, isProcessing: true, error: null }));
+      },
+      onPersonalityGenerated: ({ persona, rtt, success, error }) => {
+        console.log('[CameraSystem] Personality generated:', { persona, rtt, success });
+        setPersonalityData(prev => ({ 
+          ...prev, 
+          isProcessing: false, 
+          currentPersona: persona,
+          lastRTT: rtt,
+          error: error || null
+        }));
+        updateMetric('Persona RTT', rtt);
+      }
+    });
+
+    // TTS client listeners
+    const ttsClient = ttsClientRef.current;
+    const removeTTSListener = ttsClient.addListener({
+      onSynthesisStart: ({ text, voiceStyle, requestId }) => {
+        console.log('[CameraSystem] TTS synthesis started:', { text, voiceStyle, requestId });
+        setTTSData(prev => ({ ...prev, isSynthesizing: true, error: null }));
+      },
+      onAudioStart: ({ duration, analyser, latencyToFirstAudio }) => {
+        console.log('[CameraSystem] TTS audio started, latency:', latencyToFirstAudio, 'ms');
+        setTTSData(prev => ({ 
+          ...prev, 
+          isSynthesizing: false, 
+          isPlaying: true, 
+          currentAnalyser: analyser,
+          lastLatency: latencyToFirstAudio 
+        }));
+        updateMetric('TTS latency to first audio', latencyToFirstAudio);
+      },
+      onAudioAnalysis: ({ energy, centroid, spectrum }) => {
+        // Forward lip-sync data to lip-sync system (Phase 12)
+        // For now just update metrics
+        updateMetric('Audio energy', energy);
+        updateMetric('Audio centroid', centroid);
+      },
+      onPlaybackComplete: () => {
+        console.log('[CameraSystem] TTS playback completed');
+        setTTSData(prev => ({ ...prev, isPlaying: false, currentAnalyser: null }));
+      },
+      onSynthesisComplete: ({ text, voiceStyle, latency }) => {
+        console.log('[CameraSystem] TTS synthesis completed:', { text, voiceStyle, latency });
+        updateMetric('TTS total latency', latency);
+      },
+      onError: ({ error }) => {
+        console.error('[CameraSystem] TTS error:', error);
+        setTTSData(prev => ({ ...prev, isSynthesizing: false, isPlaying: false, error }));
+      }
+    });
+
     return () => {
       removeCameraListener();
       removeDetectionListener();
       removeNormalListener();
       removeAnchorListener();
+      removePersonalityListener();
+      removeTTSListener();
     };
   }, [updateMetric]);
 
@@ -231,6 +312,32 @@ export const useCameraSystem = (config = {}) => {
     return normalServiceRef.current.estimateNormal(imageData, bbox, cameraMatrix);
   }, []);
 
+  // Personality generation
+  const generatePersonality = useCallback((imageData, bbox) => {
+    return personalityServiceRef.current.generatePersonality(imageData, bbox);
+  }, []);
+
+  // TTS controls
+  const synthesizeSpeech = useCallback((text, voiceStyle) => {
+    return ttsClientRef.current.synthesizeSpeech(text, voiceStyle);
+  }, []);
+
+  const stopTTS = useCallback(() => {
+    ttsClientRef.current.stopCurrentAudio();
+  }, []);
+
+  const speakGreeting = useCallback(async () => {
+    if (personalityData.currentPersona && personalityData.currentPersona.oneLiners) {
+      const greeting = personalityData.currentPersona.oneLiners[0]; // First one-liner is greeting
+      const voiceStyle = personalityData.currentPersona.voiceStyle || 'cheerful';
+      
+      console.log('[CameraSystem] Speaking greeting:', greeting, 'with voice style:', voiceStyle);
+      return await synthesizeSpeech(greeting, voiceStyle);
+    } else {
+      console.warn('[CameraSystem] No persona available for greeting');
+    }
+  }, [personalityData.currentPersona, synthesizeSpeech]);
+
 
   // Set current canvas for detection processing
   const setCurrentCanvas = useCallback((canvas) => {
@@ -256,13 +363,17 @@ export const useCameraSystem = (config = {}) => {
     videoDimensions,
     detectionState,
     anchorData,
+    personalityData,
+    ttsData,
 
     // Services refs for direct access if needed
     services: {
       camera: cameraServiceRef.current,
       detection: detectionServiceRef.current,
       normal: normalServiceRef.current,
-      anchor: anchorManagerRef.current
+      anchor: anchorManagerRef.current,
+      personality: personalityServiceRef.current,
+      tts: ttsClientRef.current
     },
 
     // Camera controls
@@ -282,6 +393,14 @@ export const useCameraSystem = (config = {}) => {
 
     // Normal estimation
     estimateNormal,
+
+    // Personality generation
+    generatePersonality,
+
+    // TTS controls
+    synthesizeSpeech,
+    stopTTS,
+    speakGreeting,
 
     // Utilities
     getCameraMatrix,

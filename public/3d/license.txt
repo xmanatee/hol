@@ -1,0 +1,11 @@
+Model Information:
+* title:	Blender Sushi Virtual Journal, 16th April 2020
+* source:	https://sketchfab.com/3d-models/blender-sushi-virtual-journal-16th-april-2020-634af2ae983f4fb8a9295e6b1b3d5c74
+* author:	Jimmy Gunawan (https://sketchfab.com/jimmygunawan)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Blender Sushi Virtual Journal, 16th April 2020" (https://sketchfab.com/3d-models/blender-sushi-virtual-journal-16th-april-2020-634af2ae983f4fb8a9295e6b1b3d5c74) by Jimmy Gunawan (https://sketchfab.com/jimmygunawan) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

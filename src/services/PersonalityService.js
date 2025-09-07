@@ -1,11 +1,25 @@
+import { VisionClient } from '../api/visionClient.js';
+import { LLMClient } from '../api/llmClient.js';
+
 export class PersonalityService {
   constructor(config = {}) {
     this.config = {
-      apiEndpoint: config.apiEndpoint || '/api/personality',
-      maxRetries: config.maxRetries || 2,
-      fallbackPersonas: config.fallbackPersonas || this.getDefaultFallbacks(),
       ...config
     };
+    
+    try {
+      this.visionClient = new VisionClient({
+        ...config.vision,
+        apiKey: config.apiKey || config.vision?.apiKey
+      });
+      this.llmClient = new LLMClient({
+        ...config.llm,
+        apiKey: config.apiKey || config.llm?.apiKey
+      });
+    } catch (error) {
+      console.error('[PersonalityService] Failed to initialize API clients:', error.message);
+      this.initializationError = error.message;
+    }
     
     this.listeners = new Set();
     this.isProcessing = false;
@@ -13,6 +27,7 @@ export class PersonalityService {
     this.metrics = {
       totalRequests: 0,
       successfulRequests: 0,
+      failedRequests: 0,
       averageRTT: 0,
       lastRTT: 0
     };
@@ -35,32 +50,37 @@ export class PersonalityService {
     });
   }
 
-  async generatePersonality(imageData, bbox, objectInfo = {}) {
-    if (this.isProcessing) {
-      console.warn('[PersonalityService] Already processing personality request');
-      return this.lastPersona;
+  async generatePersonality(imageData, bbox) {
+    // Check for initialization errors
+    if (this.initializationError) {
+      const error = `API client initialization failed: ${this.initializationError}`;
+      this.emit('onPersonalityGenerated', {
+        persona: null,
+        rtt: 0,
+        success: false,
+        error: error
+      });
+      throw new Error(error);
     }
 
     this.isProcessing = true;
     const startTime = performance.now();
     
-    try {
-      this.metrics.totalRequests++;
-      
-      this.emit('onPersonalityStart', { 
-        bbox, 
-        objectInfo,
-        requestId: this.metrics.totalRequests 
-      });
+    this.metrics.totalRequests++;
+    
+    this.emit('onPersonalityStart', { 
+      requestId: this.metrics.totalRequests 
+    });
 
+    try {
       // Step 1: Extract sharp ROI crop
-      const roiImageData = this.extractROI(imageData, bbox);
+      const roiImageBlob = await this.extractROI(imageData, bbox);
       
-      // Step 2: Vision API call for object identification
-      const visionResult = await this.identifyObject(roiImageData, objectInfo);
+      // Step 2: Vision API call for object description
+      const visionResult = await this.visionClient.identifyObject(roiImageBlob);
       
       // Step 3: LLM call for persona generation
-      const persona = await this.generatePersona(visionResult);
+      const persona = await this.llmClient.generatePersona(visionResult);
       
       const endTime = performance.now();
       const rtt = endTime - startTime;
@@ -82,37 +102,47 @@ export class PersonalityService {
         success: true
       });
 
+      this.isProcessing = false;
       return this.lastPersona;
 
     } catch (error) {
-      console.error('[PersonalityService] Personality generation failed:', error);
-      
-      const fallbackPersona = this.getFallbackPersona(objectInfo);
       const endTime = performance.now();
       const rtt = endTime - startTime;
       
       this.metrics.lastRTT = rtt;
+      this.metrics.failedRequests++;
+      
+      let userFriendlyError = 'Failed to generate personality';
+      
+      if (error.message.includes('API key')) {
+        userFriendlyError = 'OpenAI API key not configured. Please check your environment variables.';
+      } else if (error.message.includes('quota') || error.message.includes('rate limit')) {
+        userFriendlyError = 'OpenAI API quota exceeded or rate limited. Please try again later.';
+      } else if (error.message.includes('network') || error.message.includes('fetch')) {
+        userFriendlyError = 'Network error. Please check your internet connection.';
+      } else if (error.message.includes('Vision API') || error.message.includes('Chat API')) {
+        userFriendlyError = 'OpenAI API error. Please try again.';
+      }
+
+      console.error('[PersonalityService] Generation failed:', error);
       
       this.emit('onPersonalityGenerated', {
-        persona: fallbackPersona,
+        persona: null,
         rtt: rtt,
         success: false,
-        error: error.message
+        error: userFriendlyError
       });
 
-      return fallbackPersona;
-      
-    } finally {
       this.isProcessing = false;
+      throw new Error(userFriendlyError);
     }
   }
 
   extractROI(imageData, bbox) {
-    // Create canvas to extract the bounding box region
-    const canvas = new OffscreenCanvas || document.createElement('canvas');
+    const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
-    // Add 15% padding around bbox as specified in Phase 10
+    // Add 15% padding around bbox
     const padding = 0.15;
     const paddedWidth = bbox.width * (1 + padding);
     const paddedHeight = bbox.height * (1 + padding);
@@ -123,7 +153,7 @@ export class PersonalityService {
     canvas.height = Math.round(paddedHeight);
     
     // Create ImageData from input
-    const sourceCanvas = new OffscreenCanvas || document.createElement('canvas');
+    const sourceCanvas = document.createElement('canvas');
     sourceCanvas.width = imageData.width;
     sourceCanvas.height = imageData.height;
     const sourceCtx = sourceCanvas.getContext('2d');
@@ -139,161 +169,8 @@ export class PersonalityService {
       canvas.width, canvas.height
     );
     
-    return ctx.getImageData(0, 0, canvas.width, canvas.height);
-  }
-
-  async identifyObject(imageData, objectInfo = {}) {
-    const canvas = new OffscreenCanvas || document.createElement('canvas');
-    canvas.width = imageData.width;
-    canvas.height = imageData.height;
-    const ctx = canvas.getContext('2d');
-    ctx.putImageData(imageData, 0, 0);
-    
     // Convert to blob for API upload
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
-    
-    const formData = new FormData();
-    formData.append('image', blob, 'roi.jpg');
-    formData.append('objectInfo', JSON.stringify(objectInfo));
-    
-    const response = await this.retryRequest(async () => {
-      const res = await fetch(`${this.config.apiEndpoint}/identify`, {
-        method: 'POST',
-        body: formData,
-      });
-      
-      if (!res.ok) {
-        throw new Error(`Vision API error: ${res.status} ${res.statusText}`);
-      }
-      
-      return res.json();
-    });
-    
-    return {
-      category: response.category || 'unknown',
-      brandOrTitle: response.brandOrTitle || '',
-      textSnippets: response.textSnippets || [],
-      confidence: response.confidence || 0.5
-    };
-  }
-
-  async generatePersona(visionResult) {
-    const prompt = this.buildPersonaPrompt(visionResult);
-    
-    const response = await this.retryRequest(async () => {
-      const res = await fetch(`${this.config.apiEndpoint}/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          prompt: prompt,
-          visionResult: visionResult
-        }),
-      });
-      
-      if (!res.ok) {
-        throw new Error(`LLM API error: ${res.status} ${res.statusText}`);
-      }
-      
-      return res.json();
-    });
-    
-    return this.validatePersona(response);
-  }
-
-  buildPersonaPrompt(visionResult) {
-    return `
-Based on this object analysis: ${JSON.stringify(visionResult)}, generate a fun personality for this object inspired by the game "High on Life".
-
-Return a JSON object with exactly these fields:
-{
-  "voiceStyle": "one of: cheerful, sassy, wise, gruff, bubbly, sarcastic, dramatic",
-  "tone": "brief description of personality tone",
-  "quirks": ["unique trait 1", "unique trait 2", "unique trait 3"],
-  "oneLiners": ["greeting line", "idle comment", "departure line"]
-}
-
-Keep it under 300 tokens total. Make it witty and distinctive based on the object type.
-    `.trim();
-  }
-
-  validatePersona(response) {
-    const defaults = {
-      voiceStyle: 'cheerful',
-      tone: 'friendly and upbeat',
-      quirks: ['loves to chat', 'always optimistic', 'surprisingly wise'],
-      oneLiners: ['Hey there!', 'Life is good!', 'See ya later!']
-    };
-    
-    return {
-      voiceStyle: response.voiceStyle || defaults.voiceStyle,
-      tone: response.tone || defaults.tone,
-      quirks: Array.isArray(response.quirks) ? response.quirks : defaults.quirks,
-      oneLiners: Array.isArray(response.oneLiners) ? response.oneLiners : defaults.oneLiners
-    };
-  }
-
-  getFallbackPersona(objectInfo = {}) {
-    const fallbacks = this.config.fallbackPersonas;
-    const category = objectInfo.category || objectInfo.class || 'bottle';
-    
-    return fallbacks[category] || fallbacks.default;
-  }
-
-  getDefaultFallbacks() {
-    return {
-      bottle: {
-        voiceStyle: 'bubbly',
-        tone: 'excited and energetic',
-        quirks: ['loves being recycled', 'dreams of becoming a rocket ship', 'always half full, never half empty'],
-        oneLiners: [
-          'Pop! Hey there, gorgeous!',
-          'I may be empty, but my spirit is full!',
-          'Remember to recycle me, will ya?'
-        ]
-      },
-      cup: {
-        voiceStyle: 'wise',
-        tone: 'philosophical and calm',
-        quirks: ['has held many stories', 'believes in the power of pause', 'thinks steam is just liquid meditation'],
-        oneLiners: [
-          'Greetings, fellow traveler.',
-          'Every sip is a moment of zen.',
-          'Until we meet again over coffee.'
-        ]
-      },
-      default: {
-        voiceStyle: 'cheerful',
-        tone: 'friendly and curious',
-        quirks: ['loves meeting new people', 'always ready for an adventure', 'believes everything has a story'],
-        oneLiners: [
-          'Well hello there!',
-          'Isn\'t life fascinating?',
-          'Keep being awesome!'
-        ]
-      }
-    };
-  }
-
-  async retryRequest(requestFn) {
-    let lastError;
-    
-    for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
-      try {
-        return await requestFn();
-      } catch (error) {
-        lastError = error;
-        
-        if (attempt < this.config.maxRetries) {
-          const delay = Math.pow(2, attempt) * 1000; // Exponential backoff
-          await new Promise(resolve => setTimeout(resolve, delay));
-          console.warn(`[PersonalityService] Request failed, retrying in ${delay}ms...`, error.message);
-        }
-      }
-    }
-    
-    throw lastError;
+    return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
   }
 
   calculateMovingAverage(currentAvg, newValue, alpha = 0.15) {

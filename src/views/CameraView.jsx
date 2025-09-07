@@ -57,6 +57,8 @@ const CameraView = () => {
     videoDimensions,
     detectionState,
     anchorData,
+    personalityData,
+    ttsData,
     services,
     startCamera,
     resumeCamera,
@@ -68,6 +70,10 @@ const CameraView = () => {
     clearActiveTrack,
     findTrackAtPosition,
     estimateNormal,
+    generatePersonality,
+    synthesizeSpeech,
+    stopTTS,
+    speakGreeting,
     getCameraMatrix,
     setCurrentCanvas
   } = useCameraSystem(cameraSystemConfig);
@@ -101,6 +107,29 @@ const CameraView = () => {
       }
     }
   }, [services.detection, cameraSystemConfig]);
+
+  const handleGeneratePersonality = useCallback(async () => {
+    if (!anchorData.activeTrackId || !canvasRef.current) {
+      console.warn('No active track or canvas available for personality generation');
+      return;
+    }
+
+    const activeTrack = anchorData.trackedObjects.find(t => t.id === anchorData.activeTrackId);
+    if (!activeTrack) {
+      console.warn('Active track not found');
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    
+    try {
+      await generatePersonality(imageData, activeTrack.bbox);
+    } catch (error) {
+      console.error('Failed to generate personality:', error);
+    }
+  }, [anchorData.activeTrackId, anchorData.trackedObjects, generatePersonality]);
 
   // Handle restart for configuration changes
   const handleRestart = useCallback(async () => {
@@ -376,6 +405,10 @@ const CameraView = () => {
           needsRestart={needsRestart}
           currentConfig={cameraSystemConfig}
           metrics={metrics}
+          personalityData={personalityData}
+          ttsData={ttsData}
+          onGeneratePersonality={handleGeneratePersonality}
+          onSpeakGreeting={speakGreeting}
         />
       )}
     </div>

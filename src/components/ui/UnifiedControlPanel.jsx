@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { PersonalityPanel } from './PersonalityPanel.jsx';
 
 const CollapsibleSection = ({ title, isExpanded, onToggle, children }) => (
   <div className="mb-2 border border-gray-600 rounded">
@@ -231,12 +232,17 @@ const UnifiedControlPanel = ({
   onRestart,
   needsRestart,
   currentConfig,
-  metrics
+  metrics,
+  personalityData,
+  ttsData,
+  onGeneratePersonality,
+  onSpeakGreeting
 }) => {
   const [isVisible, setIsVisible] = useState(false); // Minimized by default
   const [expandedSections, setExpandedSections] = useState({
     status: false, // Collapsed by default
     controls: true,
+    personality: false,
     metrics: false,
     config: false
   });
@@ -311,6 +317,20 @@ const UnifiedControlPanel = ({
           onToggleStats={onToggleStats}
           onUnlock={onUnlock}
           onStop={onStop}
+        />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title="Personality"
+        isExpanded={expandedSections.personality}
+        onToggle={() => toggleSection('personality')}
+      >
+        <PersonalityPanel
+          personalityData={personalityData}
+          ttsData={ttsData}
+          onGeneratePersonality={onGeneratePersonality}
+          onSpeakGreeting={onSpeakGreeting}
+          hasActiveTrack={!!activeTrackId}
         />
       </CollapsibleSection>
 

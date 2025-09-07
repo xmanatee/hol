@@ -67,137 +67,186 @@ three, @react-three/fiber.
 
 ---
 
-## DONE Phase 3 — Detector + tracker + tap-to-lock
+## DONE Phase 3 — Initial object detection for tap-to-select
 
 **Context**
-Detect bottles/cups, track them, and let user lock one instance.
+Use YOLO detection initially to identify objects, then transition to image-based anchoring on user tap.
 
 **Steps**
 
 1. Install `onnxruntime-web` (WebGPU build). Enable WebGPU feature check; fallback to WASM with warning.
 2. Load a tiny YOLO-N ONNX model (COCO classes). Pre/postprocess in a WebWorker to avoid main-thread stalls.
 3. Run detection every **N=4** frames on the **canvas** at 512 px long side. Filter classes {bottle, cup}.
-4. Implement **SORT** tracker (Kalman + Hungarian). Persist `trackId` across frames.
-5. Draw bboxes with track IDs.
-6. On user tap, choose the highest-score bbox under the tap; set `activeTrackId`.
-7. While locked, keep detection cadence; update lock to the matching track only.
+4. Draw bboxes with confidence scores for user selection.
+5. On user tap, choose the highest-score bbox under the tap and **STOP detection**.
+6. **Switch to image-based anchoring mode** - detector is no longer needed after tap.
 
 **Dependencies**
 onnxruntime-web (webgpu build), a small YOLO ONNX, `offscreenCanvas` (fallback to main thread if not available).
 
 **Expected result**
 
-* Multiple bottles are detected; IDs are stable across motion.
-* Tapping a bbox locks selection; a badge “LOCKED #id” appears.
+* Multiple bottles are detected and displayed as selectable regions.
+* Tapping a bbox stops detection and switches to anchor mode.
 
 **Acceptance**
 
 * ≥20 FPS with detection every 4th frame on iPhone 16 Pro.
-* Lock persists when another bottle enters frame.
+* Clean transition from detection mode to anchor mode on tap.
 
 **Metric (HUD):**
 
 * **Detection amortized cost (ms/frame):** `(sum(detector_ms) / totalFrames)`;
-* **Track ID persistence (%):** % of frames where locked `trackId` unchanged while object visible.
-  Target: detect cost ≤ 4 ms/frame amortized; persistence ≥ 90%.
+* **Detection active time (%):** % of session time spent in detection mode vs anchor mode.
+  Target: detect cost ≤ 4 ms/frame amortized; detection time ≤ 20% after initial selection.
 
 ---
 
-## DONE Phase 4 — Anchor stability + visual confirmation
+## REWORK Phase 4 — Template capture & keypoint extraction  
 
 **Context**
-We need a robust “anchor locked” signal before any 3D.
+On user tap, stop detection and create a robust image-based anchor using keypoints from the tapped region.
 
 **Steps**
 
-1. Maintain rolling stats for the locked track: center velocity (px/s), area change %, bbox IoU to EMA.
-2. Define stable criteria for 1.0 s window: velocity < 30 px/s AND area delta < 10% AND detection confidence > 0.5 for ≥ 75% of frames.
-3. When stable, emit `anchor.state = 'stable'` and spawn **sparkles** (R3F particles) centered on bbox center.
-4. If criteria fail for 300 ms, revert `anchor.state = 'tracking'`.
+1. **Template Capture**: Capture high-resolution crop of tapped region (inflate by 20% for context).
+2. **Library Setup**: Add OpenCV.js dependency (WebAssembly build ~2MB) for feature detection.
+3. **Keypoint Extraction**: Extract 100-500 AKAZE/ORB keypoints from template region using WebWorker.
+4. **Template Storage**: Store template image + keypoint descriptors + spatial layout for matching.
+5. **Initial Tracking Setup**: Initialize Lucas-Kanade optical flow tracker with subset of strongest keypoints.
+6. **Anchor State**: Mark anchor as `initializing` → `tracking` once keypoints are extracted.
 
 **Dependencies**
-None beyond previous.
+OpenCV.js (WebAssembly), template storage, WebWorker for heavy computation.
 
 **Expected result**
 
-* Visual sparkles appear only after \~1 s of steadiness.
-* Stability toggles correctly when user jiggles camera.
+* High-quality template with 100+ keypoints extracted from tapped region.
+* Smooth transition from detection mode to keypoint tracking mode.
 
 **Acceptance**
 
-* No false positives during motion; recovery within 300 ms after motion stops.
+* Template extraction completes in <500ms; keypoints distributed across object features.
+* No UI blocking during keypoint extraction.
 
 **Metric (HUD):**
 
-* **Stability score (0–1):** product of normalized signals over last 1s:
-  `S = clamp( 1 - v_norm ) * clamp( 1 - area_delta ) * conf_norm`
-  where `v_norm = min(velocity/30pxs,1)`, `area_delta = min(|dA|/0.1,1)`, `conf_norm = conf/1.0`.
-  Show **lock time (s)** when `S ≥ 0.75`. Target: S≥0.75 for ≥1.0s before “stable”.
+* **Template quality score:** `keypoint_count * spatial_distribution_score * descriptor_uniqueness`
+  where spatial_distribution prevents clustering, uniqueness measures descriptor variance.
+  Target: Quality score ≥ 0.7.
+* **Extraction time (ms):** Template capture + keypoint extraction time. Target ≤ 500ms.
 
 ---
 
-## DONE Phase 5 — Surface orientation (normal) estimation
+## REWORK Phase 5 — Keypoint tracking & stability detection
 
 **Context**
-Orient the head correctly using a local surface normal; choose best of planar/cylindrical.
+Track template keypoints frame-to-frame and determine when anchor is stable enough for 3D attachment.
 
 **Steps**
 
-1. Crop ROI = bbox inflated by 15%. Use OpenCV.js on a **WebWorker**.
-2. **Planar path:** detect FAST/ORB features; estimate homography H to previous ROI using RANSAC. If inliers ≥ 25 and reprojection err < 2.0, compute plane normal from `decomposeHomographyMat(H, K)`.
-3. **Cylindrical path:** run Canny → findContours → fitEllipse. If ellipse valid (minor/major ≥ 0.35; area within \[1.5%, 25%] of ROI), derive tilt `acos(b/a)` and in-plane angle; synthesize an outward normal at bbox center.
-4. Choose path by score: planar score = inliers; cylindrical score = `b/a * edgeSupport`. Keep winner; low-pass filter the normal (One-Euro filter).
-5. Expose `{position_px, normal_camSpace, confidence}` to R3F.
+1. **Optical Flow Tracking**: Use Lucas-Kanade pyramid to track 50-100 strongest keypoints from template.
+2. **Outlier Filtering**: Remove keypoints with high tracking error or inconsistent motion (RANSAC consensus).
+3. **Anchor Position**: Compute anchor center as median of tracked keypoint positions (robust to outliers).
+4. **Stability Criteria**: Monitor keypoint cluster coherence, velocity, and tracking success rate:
+   - ≥70% keypoints tracked successfully
+   - Median keypoint velocity < 20 px/s  
+   - Cluster standard deviation < 5% of template size
+5. **Visual Confirmation**: Show **sparkles** when stable criteria met for 1.0s window.
+6. **Keypoint Re-detection**: Re-detect keypoints every 15 frames to refresh tracking pool.
 
 **Dependencies**
-opencv.js (WASM), camera intrinsics K (compute from `fov`, viewport).
+OpenCV.js Lucas-Kanade, keypoint clustering algorithms, template from Phase 4.
 
 **Expected result**
 
-* For books/labels, planar wins; for cans, ellipse wins.
-* Normal is temporally smooth; no wild flips.
+* Smooth keypoint tracking with <30% tracking failures per frame.
+* Stable anchor detection within 1s of object steadiness.
 
 **Acceptance**
 
-* Normal jitter (angle stddev) < 6° during “stable” anchor.
+* Tracking survives 30° object rotation; sparkles appear reliably when object is steady.
 
 **Metric (HUD):**
 
-* **Normal jitter (°):** stddev of normal direction over last 1s.
-  `σθ = std( acos( n_t · mean(n) ) ) * 57.3`. Target ≤ 6°.
-* **Mode confidence:** `planar_inliers` or `ellipse_score` shown; highlight chosen mode.
+* **Tracking success rate (%):** % of keypoints tracked successfully each frame. Target ≥ 70%.
+* **Anchor stability score (0-1):** Combined metric of velocity, coherence, tracking rate. Target ≥ 0.8 for "stable".
 
 ---
 
-## FIXING Phase 6 — Anchor persistence & re-acquisition
+## REWORK Phase 6 — Homography estimation & surface normal recovery
 
 **Context**
-Keep the anchor alive through brief losses; reattach when it returns.
+Estimate object pose and surface normal from tracked keypoints for 3D head attachment.
 
 **Steps**
 
-1. Inside locked ROI, seed 80 Shi-Tomasi points; track with `calcOpticalFlowPyrLK` between frames.
-2. If detector misses for ≤10 frames but flow keeps ≥35 points with low error, keep anchor “valid”.
-3. If both miss, mark “lost”, freeze the last pose, and show a soft UI hint.
-4. Run global detector; for each candidate, match ORB features to the last **template crop**; accept candidate if homography inliers ≥ 30 and IOU with predicted bbox ≥ 0.3; on accept, restore lock and re-init ROI.
+1. **Homography Estimation**: Use tracked keypoints to compute homography between current frame and template.
+   - Require minimum 8 keypoint matches for robust estimation
+   - Use RANSAC to filter outliers (threshold: 2.5px reprojection error)
+   - Accept homography if ≥30 inlier matches found
+2. **Surface Normal Recovery**: Decompose homography to recover surface orientation:
+   - **Planar objects**: Use `cv.decomposeHomographyMat()` to get plane normal
+   - **Cylindrical objects**: Combine homography with ellipse fitting for curved surface normal
+   - **Assumption**: Initial template captured with object facing camera (normal ≈ [0,0,1])
+3. **Pose Smoothing**: Apply One-Euro filter to position and normal to reduce jitter.
+4. **Quality Assessment**: Monitor homography condition number and inlier ratio for stability.
 
 **Dependencies**
-opencv.js LK/ORB, existing detector/tracker worker.
+OpenCV.js homography estimation, decomposition functions, One-Euro filter.
 
 **Expected result**
 
-* Short occlusions (<⅓ s) don’t drop the anchor.
-* After leaving/returning, the same object re-locks within \~1 s.
+* Stable 3D pose estimation surviving 45° object rotations.
+* Surface normal pointing approximately toward camera initially.
 
 **Acceptance**
 
-* Reacquisition success ≥90% in controlled tests (exit/enter frame).
+* Normal estimation error <10° for planar objects; position jitter <3px during stability.
 
 **Metric (HUD):**
 
-* **Short-loss survival (%):** fraction of ≤10-frame drops bridged by LK (last 30 events).
-* **Reattach latency (ms):** mean time from “lost”→“found” (last 10 events).
-  Targets: survival ≥ 85%; reattach ≤ 1000 ms.
+* **Homography inliers:** Number of RANSAC inlier keypoints. Target ≥ 30.
+* **Normal stability (°):** Standard deviation of surface normal over 1s window. Target ≤ 5°.
+
+---
+
+## NEW Phase 6.5 — Anchor persistence & recovery system
+
+**Context**
+Maintain anchor through occlusions and handle re-acquisition when object returns.
+
+**Steps**
+
+1. **Tracking Loss Detection**: Monitor keypoint tracking quality and homography estimation.
+   - Mark anchor "lost" if <50% keypoints tracked or homography estimation fails
+   - Maintain last known pose and template for recovery
+2. **Template Matching Fallback**: When keypoint tracking fails:
+   - Use normalized cross-correlation with stored template
+   - Multi-scale search in expanded region around last known position
+   - Accept match if correlation > 0.7 and position within reasonable bounds
+3. **Re-acquisition Strategy**: For complete object loss:
+   - Keep template active for 5 seconds after loss
+   - Periodically attempt template matching in full frame
+   - Re-initialize keypoint tracking when object found
+4. **State Management**: Handle anchor states: `tracking` → `degraded` → `lost` → `recovered`.
+
+**Dependencies**
+Template storage, correlation matching, state machine from previous phases.
+
+**Expected result**
+
+* Brief occlusions (<1s) maintain anchor through fallback tracking.
+* Object can be re-acquired after leaving and returning to frame.
+
+**Acceptance**
+
+* 90% success rate for recovery after 2-second occlusion in controlled tests.
+
+**Metric (HUD):**
+
+* **Recovery success rate (%):** Successful re-acquisitions / total loss events. Target ≥ 85%.
+* **Persistence time (s):** Average time anchor maintained during partial occlusion. Target ≥ 3s.
 
 ---
 
@@ -234,7 +283,7 @@ opencv.js, WebGL texture upload path.
 
 ---
 
-## FIXING Phase 8 — Load face model & attach to surface
+## DONE Phase 8 — Load face model & attach to surface
 
 **Context**
 We have a **glTF face with 52 blendshapes** (OK; treat as morph targets).
@@ -300,7 +349,7 @@ R3F custom shader material (ShaderMaterial), video texture from `<video>` elemen
 
 ---
 
-## DOING Phase 10 — Personality bootstrap (vision + LLM)
+## DONE Phase 10 — Personality bootstrap (vision + LLM)
 
 **Context**
 Detect object identity and generate a persona.
@@ -449,11 +498,12 @@ Hit consistent real-time budgets on iPhone.
 
 1. Budget per frame (target 30–60 FPS):
 
-   * Detector (every 4th frame): 8–16 ms amortized → 2–4 ms/frame
-   * Tracking + LK/ORB: ≤ 4 ms
-   * OpenCV ellipse/GrabCut: ≤ 6 ms
+   * **Detection mode** (initial): YOLO every 4th frame: 2–4 ms/frame amortized  
+   * **Anchor mode** (post-tap): Keypoint tracking + homography: ≤ 6 ms/frame
+   * Template matching fallback: ≤ 8 ms (when needed)
+   * OpenCV operations (segmentation): ≤ 4 ms
    * R3F render + lip-sync: ≤ 6 ms
-   * Margin: ≥ 4 ms
+   * Margin: ≥ 2 ms
 2. Add a perf HUD (stats of each stage).
 3. Implement feature flags to disable GrabCut or depth if budgets are exceeded.
 4. Memory: ensure workers and textures are disposed on unmount; prevent WebGL context loss.
@@ -479,9 +529,26 @@ Perf HUD (tiny overlay), metrics timers.
 
 ### Notes / Non-goals kept out of MVP
 
-* Monocular depth normals (MiDaS/Depth-Anything) are optional; add later only if normals are too jittery.
-* Multi-object simultaneous faces: out of scope for MVP; support one active head.
-* Cloud keys always via backend; no keys in client code.
+* **Monocular depth estimation**: MiDaS/Depth-Anything optional; homography-based normals should suffice.
+* **Multi-object anchoring**: Single anchor only for MVP; multiple faces out of scope.  
+* **Advanced CV libraries**: Speedy Vision could replace OpenCV.js later for performance gains.
+* **Deep learning tracking**: Classical keypoint methods sufficient; avoid neural trackers for complexity.
+* **Cloud keys**: All API keys via backend; no secrets in client code.
+
+### New System Architecture - Image-Based Anchoring
+
+**Key Changes from Original Plan:**
+1. **YOLO Detection**: Only used for initial object selection, then disabled
+2. **Keypoint Tracking**: Primary anchor mechanism using AKAZE/ORB + Lucas-Kanade
+3. **Template Matching**: Fallback system for recovery and persistence  
+4. **Homography Estimation**: Replaces bbox tracking for pose estimation
+5. **Surface Normal**: Derived from homography decomposition, not ellipse fitting alone
+
+**Performance Implications:**
+- **Memory**: +2MB for OpenCV.js, +template storage per anchor
+- **CPU**: Keypoint operations in WebWorker to avoid main thread blocking  
+- **Robustness**: Much better survival of object movement, rotation, partial occlusion
+- **Accuracy**: True object tracking vs bbox-based approximation
 
 ---
 
@@ -517,17 +584,18 @@ These metrics make each phase objectively testable and demo-friendly.
     SparkleParticles.jsx   # Stability effect particles
   /services
     CameraService.js       # Camera stream management
-    DetectionService.js    # YOLO detection abstraction
-    NormalEstimationService.js  # Surface normal estimation
-    AnchorManager.js       # Integrated tracking and stability
+    DetectionService.js    # YOLO detection (initial selection only)
+    ImageAnchorService.js  # Image-based keypoint anchoring  
+    AnchorManager.js       # Integrated anchor state management
   /cv
-    detector.worker.js     # YOLO ONNX detection worker
-    normal.worker.js       # OpenCV normal estimation worker  
-    tracker.sort.js        # SORT multi-object tracking
-    tracker.js             # Main tracker interface
-    anchorStability.js     # Stability criteria tracker
-    anchorPersistence.js   # Persistence and re-acquisition
-    anchor.normal.js       # Normal estimation utilities
+    detector.worker.js     # YOLO ONNX detection worker (initial)
+    keypoint.worker.js     # OpenCV keypoint extraction and tracking
+    template.worker.js     # Template matching and correlation
+    anchor.keypoints.js    # AKAZE/ORB keypoint detection
+    anchor.tracking.js     # Lucas-Kanade optical flow tracking
+    anchor.homography.js   # Homography estimation and decomposition  
+    anchor.persistence.js  # Template matching fallback system
+    anchor.normal.js       # Surface normal from homography
     mask.grabcut.js        # Segmentation masking
     oneEuroFilter.js       # Temporal smoothing
   /audio
@@ -546,9 +614,9 @@ These metrics make each phase objectively testable and demo-friendly.
 
 **Service Layer Pattern**: Core functionality abstracted into service classes:
 - `CameraService`: Stream management with event listeners
-- `DetectionService`: ONNX detection with configurable intervals  
-- `NormalEstimationService`: OpenCV-based surface analysis
-- `AnchorManager`: Integrated tracking, stability, and persistence
+- `DetectionService`: YOLO detection for initial object selection only
+- `ImageAnchorService`: Keypoint-based anchor tracking and pose estimation  
+- `AnchorManager`: State management for anchor lifecycle and recovery
 
 **Component Separation**: UI broken into focused, reusable components:
 - `UnifiedControlPanel`: Single interface for all controls/metrics/config
@@ -569,4 +637,42 @@ These metrics make each phase objectively testable and demo-friendly.
 - Configurable detection intervals and features
 - Collapsible UI sections to reduce screen clutter
 
-This plan is intentionally specific so a junior can implement each phase independently and you can demo at the end of **Phase 9** with a single witty line; Phases 10–12 add personality + voice + lip-sync; 13–15 polish behavior and perf.
+### Technical Advantages of Image-Based Anchoring
+
+**Robustness:**
+- Survives object rotation up to 45-60° (vs 10-15° for bbox tracking)  
+- Handles partial occlusion through keypoint redundancy
+- Tracks actual object features, not just detection boundaries
+- Recovery possible after complete loss using template matching
+
+**Accuracy:**
+- True 3D pose estimation via homography decomposition
+- Surface normal derived from actual object geometry  
+- Sub-pixel tracking precision with Lucas-Kanade
+- Reduced dependency on detection model accuracy
+
+**Performance:**
+- YOLO detection only needed for initial selection (not continuous)
+- Keypoint tracking ~6ms/frame vs detection ~12ms/frame  
+- Better cache locality with template-based operations
+- Graceful degradation through multiple fallback layers
+
+### Key Challenges and Mitigations
+
+**Texture Dependency:**
+- Challenge: Plain/textureless objects fail keypoint detection
+- Mitigation: Template matching fallback + multi-scale correlation
+
+**Lighting Invariance:**  
+- Challenge: Illumination changes break tracking
+- Mitigation: AKAZE descriptors + normalized correlation + histogram equalization
+
+**Memory Usage:**
+- Challenge: Template storage + keypoint descriptors + OpenCV.js
+- Mitigation: Single anchor limit + template compression + worker isolation
+
+**Initial Assumption:**
+- Challenge: Requires frontal object view for normal estimation  
+- Mitigation: Clear UI guidance + validation of initial pose quality
+
+This plan transitions from detection-based to image-based anchoring after user interaction, providing significantly more robust tracking while maintaining real-time performance constraints.

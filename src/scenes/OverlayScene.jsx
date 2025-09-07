@@ -99,80 +99,50 @@ const OverlayScene = ({ width, height, anchors = [] }) => {
         width: '100vw',
         height: '100vh',
         pointerEvents: 'none',
-        zIndex: 15,
-        boxSizing: 'border-box',
-        border: '5px solid orange', // Verify the container is visible
-        backgroundColor: 'rgba(255, 165, 0, 0.2)' // Orange tint to verify container
+        zIndex: 25,
+        boxSizing: 'border-box'
       }}
     >
-      {/* Test if the div container is working */}
-      <div style={{
-        position: 'absolute',
-        top: '200px',
-        left: '200px',
-        backgroundColor: 'purple',
-        padding: '20px',
-        color: 'white',
-        fontSize: '24px',
-        fontWeight: 'bold'
-      }}>
-        OVERLAY CONTAINER TEST
-      </div>
-      
-      {/* Minimal Canvas test */}
-      <div style={{
-        position: 'absolute',
-        bottom: 0,
-        right: 0,
-        backgroundColor: 'blue',
-        color: 'white',
-        padding: '5px'
-      }}>
-        About to render Canvas...
-      </div>
       
       <Canvas
+        gl={{ alpha: true, antialias: true }}
         style={{
           width: '100%',
           height: '100%',
-          border: '3px solid yellow'
+          transform: 'scaleX(-1)',
+          transformOrigin: 'center',
+          pointerEvents: 'none'
         }}
         onCreated={(state) => {
           console.log('[OverlayScene] Canvas created successfully!');
-          state.gl.setClearColor(0xff0000, 1.0); // Solid red background
+          state.gl.setClearColor(0x000000, 0.0); // Transparent background
+          state.gl.alpha = true; // Enable alpha blending
         }}
-        camera={{ position: [0, 0, 5] }}
+        camera={{ 
+          position: [0, 0, 3], 
+          fov: fov,
+          aspect: aspect,
+          near: near,
+          far: far
+        }}
       >
-        {/* Ambient light for visibility */}
-        <ambientLight intensity={0.5} />
+        {/* Enhanced lighting for model visibility */}
+        <ambientLight intensity={0.8} />
         
-        {/* Directional light */}
-        <directionalLight position={[1, 1, 1]} intensity={0.5} />
+        {/* Multiple directional lights for better illumination */}
+        <directionalLight position={[1, 1, 1]} intensity={0.8} />
+        <directionalLight position={[-1, -1, -1]} intensity={0.4} />
+        <directionalLight position={[0, 0, 1]} intensity={0.6} />
         
-        {/* Test: Fixed red cross at screen center */}
-        <mesh position={[0, 0, -0.5]}>
-          <planeGeometry args={[0.3, 0.06]} />
-          <meshBasicMaterial color="red" side={THREE.DoubleSide} />
-        </mesh>
-        <mesh position={[0, 0, -0.5]} rotation={[0, 0, Math.PI / 2]}>
-          <planeGeometry args={[0.3, 0.06]} />
-          <meshBasicMaterial color="red" side={THREE.DoubleSide} />
-        </mesh>
-        
-        {/* Test: Fixed blue box at different position */}
-        <mesh position={[0.3, 0.3, -0.5]}>
-          <boxGeometry args={[0.1, 0.1, 0.1]} />
-          <meshBasicMaterial color="blue" />
-        </mesh>
         
         {/* Sparkle effects for stable anchors */}
         <SparkleManager anchors={anchors} />
         
-        {/* Test HeadAnchor in top right corner */}
+        {/* HeadAnchor in top left corner */}
         <HeadAnchor 
-          position_px={[width * 0.8, height * 0.2]} 
+          position_px={[width * 0.2, height * 0.8]} 
           normal_camSpace={[0, 0, 1]} 
-          depthHint={2.0}
+          depthHint={1.0}
           visible={true}
         />
       </Canvas>
