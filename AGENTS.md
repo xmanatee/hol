@@ -1,25 +1,5 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-- `src/` – application code
-  - `components/` React components (PascalCase filenames)
-    - `ui/` UI components (e.g., `UnifiedControlPanel.jsx`)
-    - `organisms/` complex components (e.g., `HeadAnchor.jsx`)
-  - `pages/` top-level routes (e.g., `HomePage.jsx`)
-  - `views/` main application views (e.g., `CameraView.jsx`)
-  - `scenes/` 3D rendering views (Three.js + R3F) (e.g., `OverlayScene.jsx`)
-  - `services/` service layer classes for core functionality
-    - `CameraService.js`, `DetectionService.js`, `AnchorManager.js`, etc.
-  - `hooks/` reusable hooks (`use*.js`)
-    - `useCameraSystem.js` - main orchestration hook
-    - `useHudMetrics.js` - unified metrics system
-  - `cv/` computer-vision logic and web workers (e.g., `detector.worker.js`, filters, tracking)
-  - `audio/` TTS and lip‑sync utilities
-  - `utils/` utility functions (e.g., `detectionRenderer.js`)
-  - `main.jsx` app entry
-- `public/` – static assets served at root. Models live in `public/models/` (see `public/models/README.md`).
-- Root: `index.html`, `vite.config.js`, `eslint.config.js`.
-
 ## Build, Test, and Development Commands
 - `npm run dev` – start Vite dev server with HMR.
 - `npm run build` – production build to `dist/`.

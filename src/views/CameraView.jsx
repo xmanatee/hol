@@ -107,13 +107,24 @@ const CameraView = () => {
     
     // Stop current camera and clear state
     stopCamera();
+    
+    // Clear canvas context to prevent WebGL issues
+    if (canvasRef.current) {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+    ctxRef.current = null;
+    
     setNeedsRestart(false);
     
     // Small delay to allow cleanup
     setTimeout(() => {
       // The camera system will be recreated with new config on next render
       console.log('[CameraView] Camera system restarted');
-    }, 100);
+    }, 200); // Slightly longer delay for WebGL cleanup
   }, [stopCamera]);
 
   // Handle canvas tap for track selection
@@ -319,14 +330,14 @@ const CameraView = () => {
       />
 
       {/* WebGL Overlay Scene - only when camera is active */}
-      {cameraState === 'active' && (
+      {cameraState === 'active' && !needsRestart && anchorData.anchorStates && (
         <OverlayScene 
           width={videoDimensions.width} 
           height={videoDimensions.height} 
           anchors={Array.from(anchorData.anchorStates.entries()).map(([id, anchorState]) => ({
             id,
-            state: anchorState.state,
-            screenPosition: anchorState.screenPosition,
+            state: anchorState?.state || 'tracking',
+            screenPosition: anchorState?.screenPosition || { x: 0, y: 0, z: 0 },
             color: '#FFD700'
           }))}
         />

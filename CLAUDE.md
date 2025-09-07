@@ -7,33 +7,8 @@ A fun viral web app inspired by the "High on Life" game where everyday objects g
 - **Frontend**: React 19 + Vite
 - **3D Graphics**: Three.js + React Three Fiber (R3F)
 - **Computer Vision**: ONNX Runtime Web (WebGPU/WASM) + OpenCV.js
-- **Audio**: Web Audio API + ElevenLabs TTS (via backend proxy)
+- **Audio**: Web Audio API + ElevenLabs WebSocket agent mode
 - **Camera**: getUserMedia with rear camera focus for mobile
-
-## Architecture
-```
-/src
-  /pages
-    HomePage.jsx           # Top-level route
-  /views
-    CameraView.jsx         # Camera capture + canvas overlay
-  /scenes
-    OverlayScene.jsx       # R3F WebGL overlay
-  /components
-    /organisms
-      HeadAnchor.jsx       # 3D head positioning
-  /cv
-    detector.worker.js     # Object detection (YOLO)
-    tracker.sort.js        # Multi-object tracking
-    anchor.normal.js       # Surface normal estimation
-    mask.grabcut.js        # Segmentation masking
-  /audio
-    ttsClient.js           # ElevenLabs backend proxy
-    lipSync.js             # Morph target lip-sync
-  /hooks
-    useAnimationFrame.js   # 30 FPS render loop
-    usePerfHud.js          # Performance monitoring
-```
 
 ## Development Phases
 Following the 15-phase plan:
@@ -64,7 +39,7 @@ npm run preview      # Preview build
 - Verify WebGL context stability during orientation changes
 
 ## API Integration
-- Backend proxy for ElevenLabs TTS (no client-side keys)
+- ElevenLabs WebSocket agent mode
 - Vision API for object identification and personality generation
 - Rate limiting and error handling for external services
 

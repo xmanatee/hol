@@ -107,7 +107,7 @@ const METRIC_DEFINITIONS = {
     unit: '',
   },
   // Phase 11
-  'TTS start latency': {
+  'Agent start latency': {
     target: 700,
     isRed: (value) => value > 700,
     unit: 'ms',

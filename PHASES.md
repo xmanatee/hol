@@ -308,12 +308,9 @@ Detect object identity and generate a persona.
 **Steps**
 
 1. Capture a sharp ROI frame (pause head animation for 1 frame); upload to your backend.
-2. Backend calls a **vision API** (e.g., Google Vision label + text detection). Return `{category, brandOrTitle, textSnippets}`.
-3. Backend prompts LLM with a strict schema (JSON) to produce: `{voiceStyle, tone, quirks, 3 one-liners}`. Keep it < 300 tokens.
+2. calls a **vision API** (e.g., Google Vision label + text detection). Return `{category, brandOrTitle, textSnippets}`.
+3. prompts LLM with a strict schema (JSON) to produce: `{voiceStyle, tone, quirks, 3 one-liners}`. Keep it < 300 tokens.
 4. Store persona JSON on client; pick a one-liner as the **greeting**.
-
-**Dependencies**
-Your minimal backend (Next API route/Cloud Function) with API keys; fetch wrapper.
 
 **Expected result**
 
@@ -330,34 +327,24 @@ Your minimal backend (Next API route/Cloud Function) with API keys; fetch wrappe
 
 ---
 
-## Phase 11 — Voice synthesis (ElevenLabs) with backend proxy
+## Phase 11 — Voice synthesis (ElevenLabs)
 
 **Context**
 Give the persona a voice; avoid exposing keys.
 
 **Steps**
 
-1. Backend: implement `/api/tts` → forwards text + voice params to ElevenLabs TTS; returns audio **stream** (or signed URL). Add simple rate limiting.
-2. Client: on entering face mode, call `/api/tts` with the greeting.
+1. Use ElevenLabs WebSocket agent mode
 3. Play via WebAudio; create an `AudioContext`, `MediaElementSource` or `AudioBufferSource`, and also a **ScriptProcessor/Analyser** for lip-sync signals (energy + rough spectrum).
 4. Handle iOS autoplay by ensuring playback is triggered from the original tap.
 
 **Dependencies**
-ElevenLabs API, backend proxy route, WebAudio.
+ElevenLabs API, WebAudio.
 
 **Expected result**
 
 * You hear the greeting in ≤ 700 ms after request.
 * Audio plays reliably on iOS.
-
-**Acceptance**
-
-* No CORS/key leaks; < 100 ms jitter once playback starts.
-
-**Metric (HUD):**
-
-* **TTS start latency (ms):** tap→first audible sample (streaming). Target ≤ 700 ms.
-* **Audio underruns (#):** buffer starvation count during playback. Target = 0.
 
 ---
 
@@ -503,7 +490,7 @@ Perf HUD (tiny overlay), metrics timers.
 
 * Add a tiny `useHudMetrics()` store (Zustand or Context) with `tick(name, value)` helpers; render HUD top-left as fixed monospace.
 * Use **EMA** (α≈0.15) for smoothing, and short rolling windows (1–2s) for stability/jitter metrics.
-* Timestamp phases: store `performance.now()` at key events (tap, TTS request, first audio callback).
+* Timestamp phases: store `performance.now()` at key events (tap, ElevenLabs WebSocket request, first audio callback).
 * For A/V sync: compute per-frame mouth openness `M(t)=Σ visemeWeights` and use a 1D normalized audio envelope from `AnalyserNode`; a simple lag search over ±200 ms (step 10 ms) is sufficient.
 * For seam contrast: sample along a precomputed ring UV set at the attachment area (N≈64 samples), avoid reading back the whole framebuffer—sample video texture + head albedo in shader with `EXT_disjoint_timer_query` off; or approximate in CPU using ROI readPixels at low resolution.
 
@@ -545,7 +532,7 @@ These metrics make each phase objectively testable and demo-friendly.
     mask.grabcut.js        # Segmentation masking
     oneEuroFilter.js       # Temporal smoothing
   /audio
-    ttsClient.js           # ElevenLabs TTS proxy client
+    ttsClient.js           # ElevenLabs WebSocket agent mode client
     lipSync.js             # Morph target lip-sync
   /hooks
     useAnimationFrame.js   # 30 FPS render loop utilities

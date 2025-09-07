@@ -131,6 +131,13 @@ export const useCameraSystem = (config = {}) => {
     const removeNormalListener = normalService.addListener({
       onNormal: ({ normal, confidence, method }) => {
         console.log('[CameraSystem] Normal estimated:', normal, 'confidence:', confidence, 'method:', method);
+        
+        // Validate normal data before processing
+        if (!normal || typeof normal !== 'object' || typeof normal.x !== 'number' || typeof normal.y !== 'number' || typeof normal.z !== 'number') {
+          console.warn('[CameraSystem] Invalid normal data received:', normal);
+          return;
+        }
+        
         anchorManager.updateNormal(normal);
         updateMetric('Mode confidence', method === 'planar' ? 'Planar' : 'Cylindrical');
         

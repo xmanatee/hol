@@ -131,8 +131,8 @@ const OverlayScene = ({ width, height, anchors = [] }) => {
         {/* Axis gizmo at screen center for testing */}
         <AxisGizmo />
         
-        {/* Sparkle effects for stable anchors */}
-        <SparkleManager anchors={anchors} />
+        {/* Sparkle effects for stable anchors - temporarily disabled to prevent WebGL errors */}
+        {/* <SparkleManager anchors={anchors} /> */}
         
         {/* Test objects at different positions */}
         <mesh position={[0.2, 0, -1]}>

@@ -54,7 +54,12 @@ self.onmessage = async (e) => {
       
       if (result) {
         console.log('[NormalWorker] Normal estimation successful:', result);
-        self.postMessage({ type: 'normal', ...result });
+        self.postMessage({ 
+          type: 'normal', 
+          normal: result.normal_camSpace,
+          confidence: result.confidence,
+          method: result.method
+        });
       } else {
         console.log('[NormalWorker] No normal estimation result');
         self.postMessage({ type: 'no_result' });
@@ -87,7 +92,8 @@ function estimateNormal(imageData, bbox) {
           y: bbox.y1 + (bbox.y2 - bbox.y1) / 2
         },
         normal_camSpace: result.normal,
-        confidence: result.score
+        confidence: result.score,
+        method: 'cylindrical'
       };
     }
     

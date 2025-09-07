@@ -533,7 +533,7 @@ const CameraView = () => {
         updateMetric('Effect FPS', 58 + Math.random() * 5);
         updateMetric('Persona RTT', 1200 + Math.random() * 500);
         updateMetric('Confidence tag', 0.7 + Math.random() * 0.2);
-        updateMetric('TTS start latency', 600 + Math.random() * 200);
+        updateMetric('Agent start latency', 600 + Math.random() * 200);
         updateMetric('Audio underruns', Math.floor(Math.random() * 2));
         updateMetric('A/V sync error', (Math.random() - 0.5) * 100);
         updateMetric('Viseme stability', 85 + Math.random() * 10);
