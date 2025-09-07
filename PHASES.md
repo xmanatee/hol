@@ -28,6 +28,11 @@ React 18, pure JS (js + jsx), Vite/Next, modern mobile Safari/Chrome.
 
 * On iPhone, tapping “Start” begins stream; no permission loops; no mirrored feed.
 
+**Metric (HUD):**
+
+* **Capture FPS:** frames drawn to CV canvas per second.
+  `fps = framesCount / elapsedSeconds` (rolling 2s). Target ≥ 28 FPS (720p).
+
 ---
 
 ## Phase 2 — R3F overlay scene
@@ -54,6 +59,11 @@ three, @react-three/fiber.
 **Acceptance**
 
 * No WebGL context loss; no scroll jank; < 2 ms/frame render cost idle.
+
+**Metric (HUD):**
+
+* **Render frame time (ms):** average R3F render duration.
+  `t_render_avg = EMA( now() - lastFrameTime )`. Target ≤ 2.5 ms.
 
 ---
 
@@ -85,6 +95,12 @@ onnxruntime-web (webgpu build), a small YOLO ONNX, `offscreenCanvas` (fallback t
 * ≥20 FPS with detection every 4th frame on iPhone 16 Pro.
 * Lock persists when another bottle enters frame.
 
+**Metric (HUD):**
+
+* **Detection amortized cost (ms/frame):** `(sum(detector_ms) / totalFrames)`;
+* **Track ID persistence (%):** % of frames where locked `trackId` unchanged while object visible.
+  Target: detect cost ≤ 4 ms/frame amortized; persistence ≥ 90%.
+
 ---
 
 ## Phase 4 — Anchor stability + visual confirmation
@@ -110,6 +126,13 @@ None beyond previous.
 **Acceptance**
 
 * No false positives during motion; recovery within 300 ms after motion stops.
+
+**Metric (HUD):**
+
+* **Stability score (0–1):** product of normalized signals over last 1s:
+  `S = clamp( 1 - v_norm ) * clamp( 1 - area_delta ) * conf_norm`
+  where `v_norm = min(velocity/30pxs,1)`, `area_delta = min(|dA|/0.1,1)`, `conf_norm = conf/1.0`.
+  Show **lock time (s)** when `S ≥ 0.75`. Target: S≥0.75 for ≥1.0s before “stable”.
 
 ---
 
@@ -138,6 +161,12 @@ opencv.js (WASM), camera intrinsics K (compute from `fov`, viewport).
 
 * Normal jitter (angle stddev) < 6° during “stable” anchor.
 
+**Metric (HUD):**
+
+* **Normal jitter (°):** stddev of normal direction over last 1s.
+  `σθ = std( acos( n_t · mean(n) ) ) * 57.3`. Target ≤ 6°.
+* **Mode confidence:** `planar_inliers` or `ellipse_score` shown; highlight chosen mode.
+
 ---
 
 ## Phase 6 — Anchor persistence & re-acquisition
@@ -164,6 +193,12 @@ opencv.js LK/ORB, existing detector/tracker worker.
 
 * Reacquisition success ≥90% in controlled tests (exit/enter frame).
 
+**Metric (HUD):**
+
+* **Short-loss survival (%):** fraction of ≤10-frame drops bridged by LK (last 30 events).
+* **Reattach latency (ms):** mean time from “lost”→“found” (last 10 events).
+  Targets: survival ≥ 85%; reattach ≤ 1000 ms.
+
 ---
 
 ## Phase 7 — Mask/seam (fast segmentation)
@@ -189,6 +224,13 @@ opencv.js, WebGL texture upload path.
 **Acceptance**
 
 * Visual seam hides minor misalignments; CPU stays < 70% total.
+
+
+**Metric (HUD):**
+
+* **Mask IoU stability (%):** IoU between current mask and previous mask warped, over last 1s.
+  `IoU = |M_t ∩ W(M_{t-1})| / |M_t ∪ W(M_{t-1})|`. Target ≥ 0.85.
+* **Mask cost (ms):** per-frame GrabCut/ellipse SDF time. Target ≤ 6 ms.
 
 ---
 
@@ -219,6 +261,12 @@ three, GLTFLoader.
 
 * Head lateral drift < 5% of bbox width during “stable” anchor.
 
+**Metric (HUD):**
+
+* **Attachment drift (% bbox):** pixel distance between head base and anchor center, normalized by bbox width.
+  `drift = ||p_head - p_anchor|| / bbox_w`. Target ≤ 0.05 (5%).
+* **Pose solve time (ms):** head pose update cost. Target ≤ 1.5 ms.
+
 ---
 
 ## Phase 9 — “Grow from surface” intro (continuation effect v1)
@@ -243,6 +291,12 @@ R3F custom shader material (ShaderMaterial), video texture from `<video>` elemen
 **Acceptance**
 
 * No visible hard seam; animation completes <1 s; 60 FPS during effect.
+
+**Metric (HUD):**
+
+* **Seam contrast ratio:** mean absolute color diff across seam ring (object side vs head side), 0–1.
+  `C = mean( |videoRGB - headRGB| ) / 255` on a thin ring. Target ≤ 0.15 by end of animation.
+* **Effect FPS:** average during 0–1s animation. Target ≥ 55 FPS.
 
 ---
 
@@ -269,6 +323,11 @@ Your minimal backend (Next API route/Cloud Function) with API keys; fetch wrappe
 
 * Round-trip < 1.5 s on Wi-Fi; graceful fallback persona if vision fails.
 
+**Metric (HUD):**
+
+* **Persona RTT (ms):** vision + LLM end-to-end latency (client→backend→client). Target ≤ 1500 ms.
+* **Confidence tag:** top vision label confidence (0–1). Target ≥ 0.6; else flag “fallback persona”.
+
 ---
 
 ## Phase 11 — Voice synthesis (ElevenLabs) with backend proxy
@@ -294,6 +353,11 @@ ElevenLabs API, backend proxy route, WebAudio.
 **Acceptance**
 
 * No CORS/key leaks; < 100 ms jitter once playback starts.
+
+**Metric (HUD):**
+
+* **TTS start latency (ms):** tap→first audible sample (streaming). Target ≤ 700 ms.
+* **Audio underruns (#):** buffer starvation count during playback. Target = 0.
 
 ---
 
@@ -325,6 +389,11 @@ WebAudio AnalyserNode; model morph indices.
 
 * Audio-video offset |Δ| < 80 ms; idle noise does not trigger mouth.
 
+**Metric (HUD):**
+
+* **A/V sync error (ms):** cross-corr peak between envelope(audio) and mouth-open curve. Target |Δ| ≤ 80 ms.
+* **Viseme stability (%):** % frames where only 1–2 visemes active (>0.1). Target ≥ 90% (low “mush”).
+
 ---
 
 ## Phase 13 — Face gaze + head follow
@@ -349,6 +418,11 @@ R3F scene graph, lip-sync energy.
 
 * No gimbal flips; motion bounded; 60 FPS maintained.
 
+**Metric (HUD):**
+
+* **Gaze error (°):** angle between head forward and camera direction (clamped). Target ≤ 8° during speech.
+* **Micro-motion energy:** RMS of head pitch/yaw during speech, degrees. Target 1–3° (natural).
+
 ---
 
 ## Phase 14 — Anchor loss & recovery UX
@@ -372,6 +446,11 @@ Existing anchor manager from Phases 3–6.
 **Acceptance**
 
 * Re-attach in ≤1 s when object returns; otherwise exit in 5 s.
+
+**Metric (HUD):**
+
+* **Lost time ratio (%):** time in “lost” / total face-mode time (session). Target ≤ 10%.
+* **Exit recovery path:** categorical status: `re-attach <1s` / `exit at 5s`. Target ≥ 80% re-attach.
 
 ---
 
@@ -404,6 +483,12 @@ Perf HUD (tiny overlay), metrics timers.
 
 * 95th percentile frame time < 22 ms; no leaks after 5 minutes.
 
+**Metric (HUD):**
+
+* **95p frame time (ms):** 95th percentile end-to-end per-frame time. Target ≤ 22 ms.
+* **Thermal headroom:** average CPU (%) and GPU load proxy (RAF drift or WebGL timer ext), show warning if sustained >80% for 60s.
+* **GC pressure:** JS heap used (MB), show delta/min over 5 min; Target: Δ ≤ +30 MB.
+
 ---
 
 ### Notes / Non-goals kept out of MVP
@@ -411,6 +496,18 @@ Perf HUD (tiny overlay), metrics timers.
 * Monocular depth normals (MiDaS/Depth-Anything) are optional; add later only if normals are too jittery.
 * Multi-object simultaneous faces: out of scope for MVP; support one active head.
 * Cloud keys always via backend; no keys in client code.
+
+---
+
+### Implementation notes for metrics
+
+* Add a tiny `useHudMetrics()` store (Zustand or Context) with `tick(name, value)` helpers; render HUD top-left as fixed monospace.
+* Use **EMA** (α≈0.15) for smoothing, and short rolling windows (1–2s) for stability/jitter metrics.
+* Timestamp phases: store `performance.now()` at key events (tap, TTS request, first audio callback).
+* For A/V sync: compute per-frame mouth openness `M(t)=Σ visemeWeights` and use a 1D normalized audio envelope from `AnalyserNode`; a simple lag search over ±200 ms (step 10 ms) is sufficient.
+* For seam contrast: sample along a precomputed ring UV set at the attachment area (N≈64 samples), avoid reading back the whole framebuffer—sample video texture + head albedo in shader with `EXT_disjoint_timer_query` off; or approximate in CPU using ROI readPixels at low resolution.
+
+These metrics make each phase objectively testable and demo-friendly.
 
 ---
 

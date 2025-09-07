@@ -2,4 +2,4 @@
 - full screen mode
 - intro screen
 - context menu which can enable/disable dev mode and direct to explanation page.
-
+- check my plan in @PHASES.md . I want you to restructure and refactor my code to make it more usable and simpler. Each class should have a specific responsibility. Modern web and design patterns and best practices must be followed. Make these changes to improve my codebase. but be careful not to break anything. check that everything compiles (and linter) after every change.
