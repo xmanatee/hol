@@ -1,28 +1,40 @@
 import { SORTTracker } from '../cv/tracker.js';
 import { AnchorStabilityTracker } from '../cv/anchorStability.js';
-import { AnchorPersistenceTracker } from '../cv/anchorPersistence.js';
+import { SimpleAnchorPersistence } from '../cv/SimpleAnchorPersistence.js';
+import { WorkerAnchorPersistence } from '../cv/WorkerAnchorPersistence.js';
 
 export class AnchorManager {
-  constructor() {
+  constructor(config = {}) {
     this.tracker = new SORTTracker(30, 1, 0.3);
     this.stabilityTracker = new AnchorStabilityTracker();
-    this.persistenceTracker = new AnchorPersistenceTracker();
+    
+    // Factory pattern: choose persistence implementation based on config
+    const useWorkerPersistence = config.useWorkerPersistence ?? false; // Default to simple for Phase 1-6
+    
+    if (useWorkerPersistence) {
+      console.log('[AnchorManager] Using WorkerAnchorPersistence for heavy OpenCV operations');
+      this.persistenceTracker = new WorkerAnchorPersistence();
+    } else {
+      console.log('[AnchorManager] Using SimpleAnchorPersistence for Phase 1-6 compatibility');
+      this.persistenceTracker = new SimpleAnchorPersistence();
+    }
+    
     this.activeTrackId = null;
     this.anchorStates = new Map();
     this.listeners = new Set();
     this.initialized = false;
+    this.config = config;
   }
 
   async initialize() {
     if (!this.initialized) {
       console.log('[AnchorManager] Starting initialization...');
       try {
-        // For Phase 1-4, we can skip persistence tracker initialization
-        // and just do basic SORT tracking with stability
-        console.log('[AnchorManager] Skipping persistence tracker for Phase 1-4...');
-        // await this.persistenceTracker.initialize();
+        console.log(`[AnchorManager] Initializing ${this.config.useWorkerPersistence ? 'worker-based' : 'simple'} persistence tracker...`);
+        await this.persistenceTracker.initialize();
         this.initialized = true;
-        console.log('[AnchorManager] Successfully initialized (basic mode)');
+        const mode = this.config.useWorkerPersistence ? 'worker-based persistence' : 'Phase 1-6 compatibility';
+        console.log(`[AnchorManager] Successfully initialized (${mode})`);
       } catch (error) {
         console.error('[AnchorManager] Initialization failed:', error);
         throw error;
@@ -58,9 +70,7 @@ export class AnchorManager {
     }
 
     // Process detections through persistence tracker
-    // For Phase 1-4, just pass through detections without persistence processing
-    const enhancedDetections = detections;
-    // TODO Phase 6: const enhancedDetections = this.persistenceTracker.processWithDetections(detections, imageData);
+    const enhancedDetections = this.persistenceTracker.processWithDetections(detections, imageData);
     
     const tracks = this.tracker.update(enhancedDetections);
     console.log('[AnchorManager] SORT tracker returned', tracks.length, 'tracks');
@@ -77,15 +87,14 @@ export class AnchorManager {
       return [];
     }
 
-    // For Phase 1-4, just update tracker with empty detections
-    // This allows SORT to predict object positions
-    const tracks = this.tracker.update([]);
+    // Try persistence recovery
+    const recoveredDetections = this.persistenceTracker.processWithoutDetections(imageData);
+    
+    // Update tracker with recovered detections or empty array
+    const tracks = this.tracker.update(recoveredDetections);
     this._updateActiveAnchor(tracks, imageData);
     this._notifyUpdate();
     return tracks;
-    
-    // TODO Phase 6: Try persistence recovery
-    // const recoveredDetections = this.persistenceTracker.processWithoutDetections(imageData);
   }
 
   selectTrack(trackId) {
@@ -147,13 +156,13 @@ export class AnchorManager {
         timestamp
       );
 
-      // TODO Phase 6: Update persistence tracking
-      // this.persistenceTracker.updateAnchor(
-      //   this.activeTrackId,
-      //   activeTrack.bbox,
-      //   imageData,
-      //   anchorState
-      // );
+      // Update persistence tracking
+      this.persistenceTracker.updateAnchor(
+        this.activeTrackId,
+        activeTrack.bbox,
+        imageData,
+        anchorState
+      );
 
       const metrics = this.stabilityTracker.getStabilityMetrics(this.activeTrackId, timestamp);
 
@@ -176,18 +185,18 @@ export class AnchorManager {
       console.log('[AnchorManager] Active track lost, clearing...');
       this._clearTrack(this.activeTrackId);
       
-      // TODO Phase 6: Check persistence
-      // const persistenceStats = this.persistenceTracker.getAnchorStats();
-      // const persistentAnchor = persistenceStats.find(a => a.trackId === this.activeTrackId);
-      // if (!persistentAnchor || persistentAnchor.missCount > 10) {
-      //   this._clearTrack(this.activeTrackId);
-      // }
+      // Check persistence
+      const persistenceStats = this.persistenceTracker.getAnchorStats();
+      const persistentAnchor = persistenceStats.find(a => a.trackId === this.activeTrackId);
+      if (!persistentAnchor || persistentAnchor.missCount > 10) {
+        this._clearTrack(this.activeTrackId);
+      }
     }
   }
 
   _clearTrack(trackId) {
     this.stabilityTracker.removeTrack(trackId);
-    // TODO Phase 6: this.persistenceTracker.removeAnchor(trackId);
+    this.persistenceTracker.removeAnchor(trackId);
     this.anchorStates.delete(trackId);
   }
 

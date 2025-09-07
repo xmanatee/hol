@@ -5,14 +5,17 @@ import { NormalEstimationService } from '../services/NormalEstimationService.js'
 import { AnchorManager } from '../services/AnchorManager.js';
 import { useHudMetrics } from './useHudMetrics.js';
 
-export const useCameraSystem = () => {
+export const useCameraSystem = (config = {}) => {
   // Services
   const cameraServiceRef = useRef(new CameraService());
   const detectionServiceRef = useRef(new DetectionService());
   const normalServiceRef = useRef(new NormalEstimationService());
-  const anchorManagerRef = useRef(new AnchorManager());
+  const anchorManagerRef = useRef(new AnchorManager(config));
   const currentCanvasRef = useRef(null);
-  const [initialized, setInitialized] = useState(false);
+  const [_initialized, setInitialized] = useState(false);
+
+  // Normal history for jitter calculation
+  const normalHistoryRef = useRef([]);
 
   // State
   const [cameraState, setCameraState] = useState('idle');
@@ -91,6 +94,7 @@ export const useCameraSystem = () => {
     const cameraService = cameraServiceRef.current;
     const detectionService = detectionServiceRef.current;
     const anchorManager = anchorManagerRef.current;
+    const normalService = normalServiceRef.current;
 
     // Camera service listeners
     const removeCameraListener = cameraService.addListener({
@@ -123,6 +127,44 @@ export const useCameraSystem = () => {
       }
     });
 
+    // Normal estimation service listeners
+    const removeNormalListener = normalService.addListener({
+      onNormal: ({ normal, confidence, method }) => {
+        console.log('[CameraSystem] Normal estimated:', normal, 'confidence:', confidence, 'method:', method);
+        anchorManager.updateNormal(normal);
+        updateMetric('Mode confidence', method === 'planar' ? 'Planar' : 'Cylindrical');
+        
+        // Calculate normal jitter (Phase 5 metric)
+        const history = normalHistoryRef.current;
+        history.push({ normal, timestamp: performance.now() });
+        
+        // Keep only last 1 second of history
+        const oneSecondAgo = performance.now() - 1000;
+        normalHistoryRef.current = history.filter(entry => entry.timestamp > oneSecondAgo);
+        
+        // Calculate jitter if we have enough history
+        if (normalHistoryRef.current.length >= 5) {
+          const normals = normalHistoryRef.current.map(entry => entry.normal);
+          const meanNormal = {
+            x: normals.reduce((sum, n) => sum + n.x, 0) / normals.length,
+            y: normals.reduce((sum, n) => sum + n.y, 0) / normals.length,
+            z: normals.reduce((sum, n) => sum + n.z, 0) / normals.length
+          };
+          
+          const angleDiffs = normals.map(n => {
+            const dot = n.x * meanNormal.x + n.y * meanNormal.y + n.z * meanNormal.z;
+            return Math.acos(Math.max(-1, Math.min(1, dot))) * 180 / Math.PI; // Convert to degrees
+          });
+          
+          const jitterStd = Math.sqrt(angleDiffs.reduce((sum, diff) => sum + diff * diff, 0) / angleDiffs.length);
+          updateMetric('Normal jitter', jitterStd);
+        }
+      },
+      onError: ({ error }) => {
+        console.error('[CameraSystem] Normal estimation error:', error);
+      }
+    });
+
     // Anchor manager listeners
     const removeAnchorListener = anchorManager.addListener({
       onAnchorUpdate: ({ trackedObjects, activeTrackId, anchorStates }) => {
@@ -133,6 +175,7 @@ export const useCameraSystem = () => {
     return () => {
       removeCameraListener();
       removeDetectionListener();
+      removeNormalListener();
       removeAnchorListener();
     };
   }, [updateMetric]);

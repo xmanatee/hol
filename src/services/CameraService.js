@@ -86,7 +86,7 @@ export class CameraService {
           height: this.videoElement.videoHeight
         });
         return true;
-      } catch (err) {
+      } catch {
         return false;
       }
     }

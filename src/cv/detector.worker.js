@@ -170,8 +170,8 @@ function postprocessDetections(output, preprocessInfo, confidenceThreshold = 0.1
   }
   
   
-  let totalDetectionsAboveThreshold = 0;
-  let bottleCupDetections = 0;
+  let _totalDetectionsAboveThreshold = 0;
+  let _bottleCupDetections = 0;
   let classStats = {};
   
   for (let i = 0; i < numDetections; i++) {
@@ -214,14 +214,14 @@ function postprocessDetections(output, preprocessInfo, confidenceThreshold = 0.1
     
     // Count all detections above threshold for debugging
     if (maxClassScore >= confidenceThreshold) {
-      totalDetectionsAboveThreshold++;
+      _totalDetectionsAboveThreshold++;
       
       // Track class statistics
       const className = COCO_CLASSES[bestClass] || `class_${bestClass}`;
       classStats[className] = (classStats[className] || 0) + 1;
       
       if (TARGET_CLASSES.has(bestClass)) {
-        bottleCupDetections++;
+        _bottleCupDetections++;
       }
     }
     

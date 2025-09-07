@@ -126,10 +126,11 @@ const StatusSection = ({
   </div>
 );
 
-const ConfigSection = ({ onConfigChange }) => {
+const ConfigSection = ({ onConfigChange, currentConfig, needsRestart, onRestart }) => {
   const [detectionInterval, setDetectionInterval] = useState(4);
   const [showSparkles, setShowSparkles] = useState(true);
   const [normalEstimation, setNormalEstimation] = useState(true);
+  const [useWorkerPersistence, setUseWorkerPersistence] = useState(currentConfig?.useWorkerPersistence || false);
   
   return (
     <div className="text-xs">
@@ -177,6 +178,39 @@ const ConfigSection = ({ onConfigChange }) => {
           />
           Enable normal estimation
         </label>
+
+        <label className="flex items-center text-gray-300">
+          <input
+            type="checkbox"
+            checked={useWorkerPersistence}
+            onChange={(e) => {
+              setUseWorkerPersistence(e.target.checked);
+              onConfigChange?.({ useWorkerPersistence: e.target.checked });
+            }}
+            className="mr-1.5"
+          />
+          Use worker-based persistence (OpenCV)
+        </label>
+        
+        {useWorkerPersistence && !needsRestart && (
+          <div className="ml-4 text-green-400 text-[10px]">
+            ✓ Worker persistence enabled
+          </div>
+        )}
+        
+        {needsRestart && (
+          <div className="ml-4 mt-2">
+            <div className="text-yellow-400 text-[10px] mb-1">
+              ⚠️ Configuration changed - restart recommended
+            </div>
+            <button
+              onClick={onRestart}
+              className="px-2 py-1 text-xs bg-blue-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-blue-500"
+            >
+              Restart Camera System
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -194,6 +228,9 @@ const UnifiedControlPanel = ({
   onUnlock,
   onStop,
   onConfigChange,
+  onRestart,
+  needsRestart,
+  currentConfig,
   metrics
 }) => {
   const [isVisible, setIsVisible] = useState(false); // Minimized by default
@@ -225,9 +262,21 @@ const UnifiedControlPanel = ({
   return (
     <div className="fixed top-4 right-4 w-72 max-h-96 bg-black border border-gray-600 rounded p-3 text-sm z-50 overflow-y-auto pointer-events-auto">
       <div className="flex justify-between items-center mb-3 pb-2 border-b border-gray-600">
-        <h3 className="text-base font-medium text-white">
-          Control Panel
-        </h3>
+        <div>
+          <h3 className="text-base font-medium text-white">
+            Control Panel
+          </h3>
+          {currentConfig?.useWorkerPersistence && (
+            <div className="text-xs text-blue-400">
+              Worker Persistence Mode
+            </div>
+          )}
+          {needsRestart && (
+            <div className="text-xs text-yellow-400 animate-pulse">
+              ⚠️ Restart Needed
+            </div>
+          )}
+        </div>
         <button
           onClick={() => setIsVisible(false)}
           className="px-2 py-1 text-xs bg-gray-700 text-white border border-gray-600 rounded cursor-pointer hover:bg-gray-600"
@@ -278,7 +327,12 @@ const UnifiedControlPanel = ({
         isExpanded={expandedSections.config}
         onToggle={() => toggleSection('config')}
       >
-        <ConfigSection onConfigChange={onConfigChange} />
+        <ConfigSection 
+          onConfigChange={onConfigChange}
+          currentConfig={currentConfig}
+          needsRestart={needsRestart}
+          onRestart={onRestart}
+        />
       </CollapsibleSection>
     </div>
   );

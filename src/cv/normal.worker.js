@@ -6,7 +6,7 @@ let cvLoaded = false;
 // Since we can't import ES modules, we'll inline the essential functions
 
 self.onmessage = async (e) => {
-  const { type, payload } = e.data;
+  const { type } = e.data;
 
   if (type === 'initialize' || type === 'load') {
     try {
@@ -36,7 +36,7 @@ self.onmessage = async (e) => {
     return;
   }
 
-  if (type === 'estimate') {
+  if (type === 'estimateNormal') {
     if (!cvLoaded || !cv) {
       self.postMessage({ type: 'error', message: 'OpenCV not loaded' });
       return;
@@ -44,17 +44,17 @@ self.onmessage = async (e) => {
     
     try {
       const imageData = {
-        data: new Uint8ClampedArray(payload.imageData.data),
-        width: payload.imageData.width,
-        height: payload.imageData.height
+        data: new Uint8ClampedArray(e.data.imageData.data),
+        width: e.data.imageData.width,
+        height: e.data.imageData.height
       };
       
-      console.log('[NormalWorker] Starting normal estimation for bbox:', payload.bbox);
-      const result = estimateNormal(imageData, payload.bbox);
+      console.log('[NormalWorker] Starting normal estimation for bbox:', e.data.bbox);
+      const result = estimateNormal(imageData, e.data.bbox);
       
       if (result) {
         console.log('[NormalWorker] Normal estimation successful:', result);
-        self.postMessage({ type: 'result', payload: result });
+        self.postMessage({ type: 'normal', ...result });
       } else {
         console.log('[NormalWorker] No normal estimation result');
         self.postMessage({ type: 'no_result' });

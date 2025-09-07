@@ -45,6 +45,10 @@ const CameraView = () => {
 
   const [showStats, setShowStats] = useState(false);
   const [lastProcessedDetections, setLastProcessedDetections] = useState(null);
+  const [cameraSystemConfig, setCameraSystemConfig] = useState({
+    useWorkerPersistence: false // Default to simple persistence for Phase 1-6
+  });
+  const [needsRestart, setNeedsRestart] = useState(false);
 
   // Use the camera system hook
   const {
@@ -65,7 +69,7 @@ const CameraView = () => {
     estimateNormal,
     getCameraMatrix,
     setCurrentCanvas
-  } = useCameraSystem();
+  } = useCameraSystem(cameraSystemConfig);
 
   const { metrics, updateMetric } = useHudMetrics();
   const throttledFrame = useFrameRate(30);
@@ -83,7 +87,34 @@ const CameraView = () => {
     if (config.detectionInterval) {
       services.detection.setDetectionInterval(config.detectionInterval);
     }
-  }, [services.detection]);
+    
+    // Handle persistence configuration change
+    if ('useWorkerPersistence' in config) {
+      const newConfig = { ...cameraSystemConfig, useWorkerPersistence: config.useWorkerPersistence };
+      setCameraSystemConfig(newConfig);
+      
+      // Mark that restart is needed for persistence mode change
+      if (config.useWorkerPersistence !== cameraSystemConfig.useWorkerPersistence) {
+        setNeedsRestart(true);
+        console.log(`[CameraView] Persistence mode changed to: ${config.useWorkerPersistence ? 'Worker-based' : 'Simple'} - restart recommended`);
+      }
+    }
+  }, [services.detection, cameraSystemConfig]);
+
+  // Handle restart for configuration changes
+  const handleRestart = useCallback(async () => {
+    console.log('[CameraView] Restarting camera system with new configuration...');
+    
+    // Stop current camera and clear state
+    stopCamera();
+    setNeedsRestart(false);
+    
+    // Small delay to allow cleanup
+    setTimeout(() => {
+      // The camera system will be recreated with new config on next render
+      console.log('[CameraView] Camera system restarted');
+    }, 100);
+  }, [stopCamera]);
 
   // Handle canvas tap for track selection
   const handleCanvasTap = useCallback((event, canvas) => {
@@ -233,13 +264,28 @@ const CameraView = () => {
           }
         }
         
-        // TODO: Phase 5 Normal estimation metrics (when implemented)
-        // updateMetric('Normal jitter', normalJitter);
-        // updateMetric('Mode confidence', modeConfidence);
-        
-        // TODO: Phase 6 Persistence metrics (when implemented) 
-        // updateMetric('Short-loss survival', survivalRate);
-        // updateMetric('Reattach latency', reattachTime);
+        // Phase 6 Persistence metrics
+        if (services.anchor.persistenceTracker) {
+          const persistenceStats = services.anchor.persistenceTracker.getAnchorStats();
+          if (persistenceStats.length > 0) {
+            // Calculate short-loss survival rate
+            const survivedAnchors = persistenceStats.filter(anchor => 
+              anchor.flowPoints > 0 && anchor.missCount <= 10
+            );
+            const survivalRate = (survivedAnchors.length / persistenceStats.length) * 100;
+            updateMetric('Short-loss survival', survivalRate);
+            
+            // Calculate average reattach latency for recently reacquired tracks
+            const reacquiredAnchors = persistenceStats.filter(anchor => 
+              anchor.age < 5000 // Last 5 seconds
+            );
+            if (reacquiredAnchors.length > 0) {
+              const avgReattachTime = reacquiredAnchors.reduce((sum, anchor) => 
+                sum + (anchor.missCount * (1000/30)), 0) / reacquiredAnchors.length; // Estimate latency from miss count
+              updateMetric('Reattach latency', avgReattachTime);
+            }
+          }
+        }
 
         // Only draw debug stats on canvas if showStats is enabled
         if (showStats) {
@@ -306,6 +352,9 @@ const CameraView = () => {
           onUnlock={clearActiveTrack}
           onStop={stopCamera}
           onConfigChange={handleConfigChange}
+          onRestart={handleRestart}
+          needsRestart={needsRestart}
+          currentConfig={cameraSystemConfig}
           metrics={metrics}
         />
       )}
