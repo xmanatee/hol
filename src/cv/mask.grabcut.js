@@ -1,6 +1,8 @@
 
 // src/cv/mask.grabcut.js
 
+import { logger } from '../utils/logger.js';
+
 class MaskService {
   constructor() {
     this.isCvReady = false;
@@ -16,7 +18,7 @@ class MaskService {
     } else {
       // If not, assume it will be loaded globally later.
       // In a real app, you might want a more robust loading mechanism.
-      console.warn("OpenCV.js (cv) not found. MaskService will wait for it.");
+      logger.warn('MaskService', 'OpenCV.js (cv) not found. MaskService will wait for it.');
     }
   }
 
@@ -28,7 +30,7 @@ class MaskService {
    */
   initGrabCut(image, box) {
     if (!this.isCvReady) {
-      console.error("OpenCV.js is not ready.");
+      logger.error('MaskService', 'OpenCV.js is not ready.');
       return false;
     }
 
@@ -48,7 +50,7 @@ class MaskService {
       this.prevMask = this.mask.clone(); // Store initial mask for warping
       return true;
     } catch (e) {
-      console.error("Error initializing GrabCut:", e);
+      logger.error('MaskService', 'Error initializing GrabCut:', e);
       this.disposeMats();
       return false;
     }
@@ -62,7 +64,7 @@ class MaskService {
    */
   refineGrabCut(image, currentBox) {
     if (!this.isCvReady || !this.mask || !this.bgdModel || !this.fgdModel) {
-      console.error("GrabCut not initialized or OpenCV.js not ready.");
+      logger.error('MaskService', 'GrabCut not initialized or OpenCV.js not ready.');
       return null;
     }
 
@@ -99,7 +101,7 @@ class MaskService {
 
       return this.mask;
     } catch (e) {
-      console.error("Error refining GrabCut:", e);
+      logger.error('MaskService', 'Error refining GrabCut:', e);
       return null;
     }
   }
@@ -113,7 +115,7 @@ class MaskService {
    */
   createFeatheredMask(grabCutMask, width, height) {
     if (!this.isCvReady || !grabCutMask) {
-      console.error("OpenCV.js not ready or grabCutMask is null.");
+      logger.error('MaskService', 'OpenCV.js not ready or grabCutMask is null.');
       return null;
     }
 
@@ -139,7 +141,7 @@ class MaskService {
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      console.error("Could not get 2D context for canvas.");
+      logger.error('MaskService', 'Could not get 2D context for canvas.');
       displayMask.delete();
       resizedMask.delete();
       kernel.delete();
@@ -181,7 +183,7 @@ class MaskService {
     canvas.height = outputHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      console.error("Could not get 2D context for canvas.");
+      logger.error('MaskService', 'Could not get 2D context for canvas.');
       return canvas; // Return empty canvas
     }
 
@@ -216,7 +218,7 @@ class MaskService {
    */
   calculateIoU(mask1, mask2) {
     if (!this.isCvReady || !mask1 || !mask2 || mask1.empty() || mask2.empty()) {
-      console.error("OpenCV.js not ready or masks are invalid for IoU calculation.");
+      logger.error('MaskService', 'OpenCV.js not ready or masks are invalid for IoU calculation.');
       return 0;
     }
 
@@ -273,7 +275,7 @@ class MaskService {
    */
   setCvReady() {
     this.isCvReady = true;
-    console.log("OpenCV.js is now ready for MaskService.");
+    logger.info('MaskService', 'OpenCV.js is now ready for MaskService.');
   }
 }
 

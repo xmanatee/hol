@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { PersonalityPanel } from './PersonalityPanel.jsx';
+import { logger } from '../../utils/logger.js';
 
 const CollapsibleSection = ({ title, isExpanded, onToggle, children }) => (
   <div className="mb-2 border border-gray-600 rounded">
@@ -127,6 +128,194 @@ const StatusSection = ({
   </div>
 );
 
+const LogsSection = () => {
+  const [discoveredTags, setDiscoveredTags] = useState([]);
+  const [enabledTags, setEnabledTags] = useState([]);
+
+  useEffect(() => {
+    const updateTags = (discovered, enabled) => {
+      setDiscoveredTags(discovered);
+      setEnabledTags(enabled);
+    };
+
+    updateTags(logger.getAllTags(), logger.getEnabledTags());
+    
+    const removeListener = logger.addListener(updateTags);
+    return removeListener;
+  }, []);
+
+  const handleTagToggle = (tag) => {
+    logger.toggleTag(tag);
+  };
+
+  const handleEnableAll = () => {
+    discoveredTags.forEach(tag => logger.enableTag(tag));
+  };
+
+  const handleDisableAll = () => {
+    discoveredTags.forEach(tag => logger.disableTag(tag));
+  };
+
+  return (
+    <div className="text-xs">
+      <div className="flex gap-2 mb-2">
+        <button
+          onClick={handleEnableAll}
+          className="px-2 py-1 text-[10px] bg-green-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-green-500"
+        >
+          Enable All
+        </button>
+        <button
+          onClick={handleDisableAll}
+          className="px-2 py-1 text-[10px] bg-red-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-red-500"
+        >
+          Disable All
+        </button>
+      </div>
+      
+      <div className="max-h-32 overflow-y-auto">
+        {discoveredTags.length === 0 ? (
+          <div className="text-gray-400 text-[10px]">
+            No log tags discovered yet. Tags appear as code executes.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-1">
+            {discoveredTags.map(tag => (
+              <label key={tag} className="flex items-center text-gray-300 hover:text-white">
+                <input
+                  type="checkbox"
+                  checked={enabledTags.includes(tag)}
+                  onChange={() => handleTagToggle(tag)}
+                  className="mr-1.5"
+                />
+                <span className="text-[10px] font-mono">{tag}</span>
+                {enabledTags.includes(tag) && (
+                  <span className="ml-auto text-green-400 text-[8px]">✓</span>
+                )}
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+      
+      <div className="mt-2 pt-2 border-t border-gray-700 text-[10px] text-gray-400">
+        Note: Error logs always show regardless of tag settings
+      </div>
+    </div>
+  );
+};
+
+const MeshControlsSection = ({ discoveredMeshes, hiddenMeshes, onMeshVisibilityChange, onRotationChange }) => {
+  const [rotation, setRotation] = useState({ x: 0, y: 0, z: 0 });
+
+  const handleToggle = (meshName) => {
+    const isCurrentlyVisible = !hiddenMeshes.has(meshName);
+    onMeshVisibilityChange(meshName, !isCurrentlyVisible);
+  };
+
+  const handleShowAll = () => {
+    discoveredMeshes.forEach(meshName => {
+      onMeshVisibilityChange(meshName, true);
+    });
+  };
+
+  const handleHideAll = () => {
+    discoveredMeshes.forEach(meshName => {
+      onMeshVisibilityChange(meshName, false);
+    });
+  };
+
+  const handleRotationChange = (axis, value) => {
+    const newRotation = { ...rotation, [axis]: value };
+    setRotation(newRotation);
+    onRotationChange?.(newRotation);
+  };
+
+  const resetRotation = () => {
+    const resetRot = { x: 0, y: 0, z: 0 };
+    setRotation(resetRot);
+    onRotationChange?.(resetRot);
+  };
+
+  if (discoveredMeshes.length === 0) {
+    return (
+      <div className="text-xs text-gray-400">
+        No meshes discovered yet. Meshes will appear when the 3D model loads.
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-xs">
+      <div className="flex gap-2 mb-2">
+        <button
+          onClick={handleShowAll}
+          className="px-2 py-1 text-[10px] bg-green-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-green-500"
+        >
+          Show All
+        </button>
+        <button
+          onClick={handleHideAll}
+          className="px-2 py-1 text-[10px] bg-red-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-red-500"
+        >
+          Hide All
+        </button>
+      </div>
+
+      {/* Rotation Controls */}
+      <div className="mb-3 pb-2 border-b border-gray-700">
+        <div className="flex justify-between items-center mb-2">
+          <span className="text-gray-300 text-[10px] font-medium">Manual Rotation</span>
+          <button
+            onClick={resetRotation}
+            className="px-1.5 py-0.5 text-[9px] bg-gray-600 text-white border border-gray-500 rounded cursor-pointer hover:bg-gray-500"
+          >
+            Reset
+          </button>
+        </div>
+        
+        {['x', 'y', 'z'].map(axis => (
+          <div key={axis} className="mb-1">
+            <label className="block text-gray-300 mb-0.5 text-[10px]">
+              {axis.toUpperCase()}: {(rotation[axis] * 180 / Math.PI).toFixed(0)}°
+            </label>
+            <input
+              type="range"
+              min={-Math.PI}
+              max={Math.PI}
+              step={0.1}
+              value={rotation[axis]}
+              onChange={(e) => handleRotationChange(axis, parseFloat(e.target.value))}
+              className="w-full h-1"
+            />
+          </div>
+        ))}
+      </div>
+      
+      <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
+        {discoveredMeshes.map(meshName => (
+          <label key={meshName} className="flex items-center text-gray-300">
+            <input
+              type="checkbox"
+              checked={!hiddenMeshes.has(meshName)}
+              onChange={() => handleToggle(meshName)}
+              className="mr-1.5"
+            />
+            <span className="font-mono text-[10px]">{meshName}</span>
+            {!hiddenMeshes.has(meshName) && (
+              <span className="ml-auto text-green-400 text-[8px]">✓</span>
+            )}
+          </label>
+        ))}
+      </div>
+      
+      <div className="mt-2 pt-2 border-t border-gray-700 text-[10px] text-gray-400">
+        {discoveredMeshes.length} mesh{discoveredMeshes.length !== 1 ? 'es' : ''} discovered
+      </div>
+    </div>
+  );
+};
+
 const ConfigSection = ({ onConfigChange, currentConfig, needsRestart, onRestart }) => {
   const [detectionInterval, setDetectionInterval] = useState(4);
   const [showSparkles, setShowSparkles] = useState(true);
@@ -236,14 +425,20 @@ const UnifiedControlPanel = ({
   personalityData,
   ttsData,
   onGeneratePersonality,
-  onSpeakGreeting
+  onSpeakGreeting,
+  discoveredMeshes,
+  hiddenMeshes,
+  onMeshVisibilityChange,
+  onRotationChange
 }) => {
   const [isVisible, setIsVisible] = useState(false); // Minimized by default
   const [expandedSections, setExpandedSections] = useState({
     status: false, // Collapsed by default
     controls: true,
     personality: false,
+    meshControls: false,
     metrics: false,
+    logs: false,
     config: false
   });
 
@@ -266,7 +461,7 @@ const UnifiedControlPanel = ({
   }
 
   return (
-    <div className="fixed top-4 right-4 w-72 max-h-96 bg-black border border-gray-600 rounded p-3 text-sm z-50 overflow-y-auto pointer-events-auto">
+    <div className="fixed top-4 right-4 w-72 max-h-full bg-black border border-gray-600 rounded p-3 text-sm z-50 overflow-y-auto pointer-events-auto">
       <div className="flex justify-between items-center mb-3 pb-2 border-b border-gray-600">
         <div>
           <h3 className="text-base font-medium text-white">
@@ -335,11 +530,32 @@ const UnifiedControlPanel = ({
       </CollapsibleSection>
 
       <CollapsibleSection
+        title="Mesh Controls"
+        isExpanded={expandedSections.meshControls}
+        onToggle={() => toggleSection('meshControls')}
+      >
+        <MeshControlsSection
+          discoveredMeshes={discoveredMeshes}
+          hiddenMeshes={hiddenMeshes}
+          onMeshVisibilityChange={onMeshVisibilityChange}
+          onRotationChange={onRotationChange}
+        />
+      </CollapsibleSection>
+
+      <CollapsibleSection
         title={`Metrics (${Object.keys(metrics).length})`}
         isExpanded={expandedSections.metrics}
         onToggle={() => toggleSection('metrics')}
       >
         <MetricsSection metrics={metrics} />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title="Logs"
+        isExpanded={expandedSections.logs}
+        onToggle={() => toggleSection('logs')}
+      >
+        <LogsSection />
       </CollapsibleSection>
 
       <CollapsibleSection

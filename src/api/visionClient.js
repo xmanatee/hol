@@ -48,19 +48,9 @@ export class VisionClient {
       max_tokens: this.config.maxTokens,
     });
 
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error('No response from OpenAI Vision API');
-    }
-
-    // Parse JSON response
-    try {
-      const result = JSON.parse(content);
-      return this.validateVisionResult(result);
-    } catch {
-      console.warn('Failed to parse JSON response, creating fallback result:', content);
-      return this.createFallbackResult(content);
-    }
+    const content = response.choices[0].message.content;
+    const result = JSON.parse(content);
+    return this.validateVisionResult(result);
   }
 
   buildVisionPrompt(objectInfo = {}) {
@@ -84,27 +74,16 @@ Focus on details that would help create a unique personality for this object. Re
 
   validateVisionResult(result) {
     return {
-      category: result.category || 'unknown_object',
-      brandOrTitle: result.brandOrTitle || result.brand || result.title || '',
-      textSnippets: Array.isArray(result.textSnippets) ? result.textSnippets : [],
-      confidence: typeof result.confidence === 'number' ? result.confidence : 0.5,
-      description: result.description || 'An unidentified object',
-      colors: Array.isArray(result.colors) ? result.colors : [],
-      materials: Array.isArray(result.materials) ? result.materials : []
+      category: result.category,
+      brandOrTitle: result.brandOrTitle || result.brand || result.title,
+      textSnippets: result.textSnippets,
+      confidence: result.confidence,
+      description: result.description,
+      colors: result.colors,
+      materials: result.materials
     };
   }
 
-  createFallbackResult(content) {
-    return {
-      category: 'unknown_object',
-      brandOrTitle: '',
-      textSnippets: [],
-      confidence: 0.3,
-      description: content.substring(0, 100) + (content.length > 100 ? '...' : ''),
-      colors: [],
-      materials: []
-    };
-  }
 
   async blobToBase64(blob) {
     return new Promise((resolve, reject) => {

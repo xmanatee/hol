@@ -1,7 +1,14 @@
-console.log('[Worker] Starting detector worker...');
+// Message-based logger for worker context - forwards to main thread
+const log = {
+  info: (tag, ...args) => postMessage({ type: 'log', level: 'info', tag, args }),
+  error: (tag, ...args) => postMessage({ type: 'log', level: 'error', tag, args }),
+  warn: (tag, ...args) => postMessage({ type: 'log', level: 'warn', tag, args })
+};
+
+log.info('Worker', 'Starting detector worker...');
 import * as ort from 'onnxruntime-web';
 
-console.log('[Worker] ONNX Runtime imported successfully');
+log.info('Worker', 'ONNX Runtime imported successfully');
 postMessage({ type: 'worker_loaded', message: 'Worker script executed successfully' });
 
 let session = null;
@@ -20,9 +27,9 @@ const COCO_CLASSES = [
 const TARGET_CLASSES = new Set([0, 39, 41, 73]); // person, bottle, cup, book
 
 async function initializeONNX() {
-  console.log('[Worker] initializeONNX called, current state:', isInitialized);
+  log.info('Worker', 'initializeONNX called, current state:', isInitialized);
   if (isInitialized) {
-    console.log('[Worker] Already initialized, sending initialized message');
+    log.info('Worker', 'Already initialized, sending initialized message');
     postMessage({ type: 'initialized' });
     return;
   }
@@ -40,33 +47,33 @@ async function initializeONNX() {
       'ort-wasm-simd-threaded.wasm': '/ort-wasm-simd-threaded.wasm',
       'ort-wasm-simd-threaded.jsep.wasm': '/ort-wasm-simd-threaded.jsep.wasm'
     };
-    console.log('[Worker] WASM paths configured');
+    log.info('Worker', 'WASM paths configured');
     
     
     // Try WebGPU first if available, but prefer WASM for stability
     const executionProviders = ['wasm'];
     
     if ('gpu' in navigator) {
-      console.log('[Worker] WebGPU available, configuring...');
+      log.info('Worker', 'WebGPU available, configuring...');
       ort.env.webgpu = { 
         powerPreference: 'high-performance' 
       };
       executionProviders.unshift('webgpu');
     } else {
-      console.log('[Worker] WebGPU not available, using WASM only');
+      log.info('Worker', 'WebGPU not available, using WASM only');
     }
     
     isInitialized = true;
-    console.log('[Worker] ONNX initialization complete');
+    log.info('Worker', 'ONNX initialization complete');
     postMessage({ type: 'initialized', executionProviders });
   } catch (error) {
-    console.error('[Worker] ONNX initialization failed:', error);
+    log.error('Worker', 'ONNX initialization failed:', error);
     postMessage({ type: 'error', message: `ONNX initialization failed: ${error.message}` });
   }
 }
 
 async function loadModel(modelPath) {
-  console.log('[Worker] Loading model:', modelPath);
+  log.info('Worker', 'Loading model:', modelPath);
   try {
     // Create session with explicit execution provider configuration
     const sessionOptions = {
@@ -83,9 +90,9 @@ async function loadModel(modelPath) {
     // Always add WASM as fallback
     sessionOptions.executionProviders.push('wasm');
     
-    console.log('[Worker] Creating inference session with providers:', sessionOptions.executionProviders);
+    log.info('Worker', 'Creating inference session with providers:', sessionOptions.executionProviders);
     session = await ort.InferenceSession.create(modelPath, sessionOptions);
-    console.log('[Worker] Model loaded successfully. Inputs:', session.inputNames, 'Outputs:', session.outputNames);
+    log.info('Worker', 'Model loaded successfully. Inputs:', session.inputNames, 'Outputs:', session.outputNames);
     postMessage({ 
       type: 'modelLoaded', 
       inputNames: session.inputNames,
@@ -93,7 +100,7 @@ async function loadModel(modelPath) {
       executionProviders: sessionOptions.executionProviders
     });
   } catch (error) {
-    console.error('[Worker] Model loading failed:', error);
+    log.error('Worker', 'Model loading failed:', error);
     postMessage({ type: 'error', message: `Model loading failed: ${error.message}` });
   }
 }
@@ -308,7 +315,7 @@ function calculateIoU(box1, box2) {
 
 async function detectObjects(imageData) {
   if (!session || !isInitialized) {
-    console.error('[Worker] Detection called but not ready. Session:', !!session, 'Initialized:', isInitialized);
+    log.error('Worker', 'Detection called but not ready. Session:', !!session, 'Initialized:', isInitialized);
     postMessage({ type: 'error', message: 'Model not loaded' });
     return;
   }
@@ -335,7 +342,7 @@ async function detectObjects(imageData) {
     const detections = postprocessDetections(outputs, preprocessed);
     
     const processingTime = performance.now() - startTime;
-    console.log('[Worker] Detection complete:', detections.length, 'objects in', processingTime.toFixed(1), 'ms');
+    log.info('Worker', 'Detection complete:', detections.length, 'objects in', processingTime.toFixed(1), 'ms');
     
     postMessage({
       type: 'detections',
@@ -344,28 +351,28 @@ async function detectObjects(imageData) {
       timestamp: Date.now()
     });
   } catch (error) {
-    console.error('[Worker] Detection error:', error);
+    log.error('Worker', 'Detection error:', error);
     postMessage({ type: 'error', message: `Detection failed: ${error.message}` });
   }
 }
 
 self.onmessage = async (event) => {
   const { type, ...data } = event.data;
-  console.log('[Worker] Received message:', type);
+  log.info('Worker', 'Received message:', type);
   
   switch (type) {
     case 'test':
-      console.log('[Worker] Test message received');
+      log.info('Worker', 'Test message received');
       postMessage({ type: 'test_response', message: 'Worker is alive' });
       break;
       
     case 'initialize':
-      console.log('[Worker] Initialize message received');
+      log.info('Worker', 'Initialize message received');
       await initializeONNX();
       break;
       
     case 'loadModel':
-      console.log('[Worker] Load model message received:', data.modelPath);
+      log.info('Worker', 'Load model message received:', data.modelPath);
       await loadModel(data.modelPath);
       break;
       
@@ -374,7 +381,7 @@ self.onmessage = async (event) => {
       break;
       
     default:
-      console.warn('[Worker] Unknown message type:', type);
+      log.warn('Worker', 'Unknown message type:', type);
       postMessage({ type: 'error', message: `Unknown message type: ${type}` });
   }
 };

@@ -9,7 +9,8 @@ import DetectionCanvas from '../components/DetectionCanvas.jsx';
 import UnifiedControlPanel from '../components/ui/UnifiedControlPanel.jsx';
 import OverlayScene from '../scenes/OverlayScene.jsx';
 
-import { renderDetectionOverlay, renderDebugStats } from '../utils/detectionRenderer.js';
+import { renderDetectionOverlay, renderDebugStats, renderKeypoints } from '../utils/detectionRenderer.js';
+import { logger } from '../utils/logger.js';
 
 // Start Screen Component - separate from control panel
 const StartScreen = ({ cameraState, onStartCamera }) => {
@@ -50,26 +51,58 @@ const CameraView = () => {
     useWorkerPersistence: false // Default to simple persistence for Phase 1-6
   });
   const [needsRestart, setNeedsRestart] = useState(false);
+  const [discoveredMeshes, setDiscoveredMeshes] = useState([]);
+  const [hiddenMeshes, setHiddenMeshes] = useState(new Set());
+  const [manualRotation, setManualRotation] = useState({ x: 0, y: 0, z: 0 });
 
-  // Use the camera system hook
+  // Handle mesh discovery from HeadAnchor
+  const handleMeshNamesDiscovered = useCallback((meshNames) => {
+    logger.info('CameraView', 'Discovered meshes:', meshNames);
+    setDiscoveredMeshes(meshNames);
+  }, []);
+
+  // Toggle mesh visibility
+  const handleMeshVisibilityChange = useCallback((meshName, isVisible) => {
+    setHiddenMeshes(prev => {
+      const newSet = new Set(prev);
+      if (isVisible) {
+        newSet.delete(meshName);
+      } else {
+        newSet.add(meshName);
+      }
+      return newSet;
+    });
+  }, []);
+
+  // Handle manual rotation changes from sliders
+  const handleRotationChange = useCallback((rotation) => {
+    setManualRotation(rotation);
+    logger.info('CameraView', 'Manual rotation changed to:', {
+      x: `${(rotation.x * 180 / Math.PI).toFixed(1)}°`,
+      y: `${(rotation.y * 180 / Math.PI).toFixed(1)}°`, 
+      z: `${(rotation.z * 180 / Math.PI).toFixed(1)}°`
+    });
+  }, []);
+
+  // Use the camera system hook with new image-based anchor system
   const {
     cameraState,
     videoDimensions,
     detectionState,
-    anchorData,
+    anchorSystemState,
     personalityData,
     ttsData,
+    cvLoaded,
     services,
     startCamera,
     resumeCamera,
     stopCamera,
     detectObjects,
     processDetections,
-    processWithoutDetections,
-    selectTrack,
-    clearActiveTrack,
-    findTrackAtPosition,
-    estimateNormal,
+    updateAnchor,
+    createAnchorFromTap,
+    clearAnchor,
+    findDetectionAtPosition,
     generatePersonality,
     synthesizeSpeech,
     stopTTS,
@@ -103,37 +136,40 @@ const CameraView = () => {
       // Mark that restart is needed for persistence mode change
       if (config.useWorkerPersistence !== cameraSystemConfig.useWorkerPersistence) {
         setNeedsRestart(true);
-        console.log(`[CameraView] Persistence mode changed to: ${config.useWorkerPersistence ? 'Worker-based' : 'Simple'} - restart recommended`);
+        logger.info('CameraView', `Persistence mode changed to: ${config.useWorkerPersistence ? 'Worker-based' : 'Simple'} - restart recommended`);
       }
     }
   }, [services.detection, cameraSystemConfig]);
 
   const handleGeneratePersonality = useCallback(async () => {
-    if (!anchorData.activeTrackId || !canvasRef.current) {
-      console.warn('No active track or canvas available for personality generation');
-      return;
-    }
-
-    const activeTrack = anchorData.trackedObjects.find(t => t.id === anchorData.activeTrackId);
-    if (!activeTrack) {
-      console.warn('Active track not found');
+    if (anchorSystemState.mode !== 'anchor' || !anchorSystemState.activeAnchor || !canvasRef.current) {
+      logger.warn('CameraView', 'No active anchor or canvas available for personality generation');
       return;
     }
 
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     
+    // Create a mock bbox from anchor position for personality generation
+    const position = anchorSystemState.activeAnchor.position;
+    const mockBbox = {
+      x1: position.x - 50,
+      y1: position.y - 50,
+      x2: position.x + 50,
+      y2: position.y + 50
+    };
+    
     try {
-      await generatePersonality(imageData, activeTrack.bbox);
+      await generatePersonality(imageData, mockBbox);
     } catch (error) {
-      console.error('Failed to generate personality:', error);
+      logger.error('CameraView', 'Failed to generate personality:', error);
     }
-  }, [anchorData.activeTrackId, anchorData.trackedObjects, generatePersonality]);
+  }, [anchorSystemState, generatePersonality]);
 
   // Handle restart for configuration changes
   const handleRestart = useCallback(async () => {
-    console.log('[CameraView] Restarting camera system with new configuration...');
+    logger.info('CameraView', 'Restarting camera system with new configuration...');
     
     // Stop current camera and clear state
     stopCamera();
@@ -153,13 +189,13 @@ const CameraView = () => {
     // Small delay to allow cleanup
     setTimeout(() => {
       // The camera system will be recreated with new config on next render
-      console.log('[CameraView] Camera system restarted');
+      logger.info('CameraView', 'Camera system restarted');
     }, 200); // Slightly longer delay for WebGL cleanup
   }, [stopCamera]);
 
-  // Handle canvas tap for track selection
-  const handleCanvasTap = useCallback((event, canvas) => {
-    if (!canvas || anchorData.trackedObjects.length === 0) {
+  // Handle canvas tap for detection selection or anchor clearing
+  const handleCanvasTap = useCallback(async (event, canvas) => {
+    if (!canvas || !cvLoaded || !anchorSystemState.initialized) {
       return;
     }
 
@@ -168,19 +204,66 @@ const CameraView = () => {
     const tapY = event.clientY - rect.top;
 
     // Convert tap coordinates to canvas space
-    let x = (tapX / rect.width) * canvas.width;
+    const x = (tapX / rect.width) * canvas.width;
     const y = (tapY / rect.height) * canvas.height;
 
-    // Display is mirrored horizontally; flip X for hit-testing
-    x = canvas.width - x;
-
     const position = { x, y };
-    const bestTrack = findTrackAtPosition(position);
 
-    if (bestTrack) {
-      selectTrack(bestTrack.id);
+    if (anchorSystemState.mode === 'detection') {
+      // In detection mode: create anchor from tap
+      if (anchorSystemState.detections.length === 0) {
+        logger.info('CameraView', 'No detections available for anchor creation');
+        return;
+      }
+
+      const detection = findDetectionAtPosition(position);
+      if (detection) {
+        try {
+          // Get current image data
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          
+          logger.info('CameraView', `Creating anchor at (${position.x.toFixed(1)}, ${position.y.toFixed(1)}) on detection:`, {
+            detection: {
+              class: detection.class,
+              confidence: detection.confidence?.toFixed(3),
+              bbox: `${detection.x1?.toFixed(1)},${detection.y1?.toFixed(1)} -> ${detection.x2?.toFixed(1)},${detection.y2?.toFixed(1)}`
+            },
+            imageSize: `${imageData.width}x${imageData.height}`,
+            canvasSize: `${canvas.width}x${canvas.height}`
+          });
+          
+          const result = await createAnchorFromTap(position, imageData);
+          
+          if (result.success) {
+            logger.info('CameraView', `Anchor created successfully:`, {
+              keypoints: result.keypoints,
+              quality: result.quality?.toFixed(3),
+              method: result.method,
+              position: result.position
+            });
+          } else {
+            logger.error('CameraView', 'Anchor creation failed:', result);
+          }
+        } catch (error) {
+          logger.error('CameraView', 'Failed to create anchor:', error);
+        }
+      } else {
+        logger.warn('CameraView', 'No detection found at tap position:', {
+          tapPosition: position,
+          availableDetections: anchorSystemState.detections?.map(d => ({
+            class: d.class,
+            bbox: `${d.x1?.toFixed(1)},${d.y1?.toFixed(1)} -> ${d.x2?.toFixed(1)},${d.y2?.toFixed(1)}`,
+            confidence: d.confidence?.toFixed(3)
+          }))
+        });
+      }
+    } else if (anchorSystemState.mode === 'anchor') {
+      // In anchor mode: clear anchor on tap
+      logger.info('CameraView', 'Clearing anchor to return to detection mode');
+      clearAnchor();
     }
-  }, [anchorData.trackedObjects, findTrackAtPosition, selectTrack]);
+  }, [cvLoaded, anchorSystemState, findDetectionAtPosition, createAnchorFromTap, clearAnchor]);
 
   // Main animation frame loop
   useAnimationFrame(() => {
@@ -203,61 +286,71 @@ const CameraView = () => {
           ctxRef.current = canvas.getContext('2d', { willReadFrequently: true });
         }
 
-        // Draw current video frame to canvas
+        // Draw current video frame to canvas with horizontal mirroring
+        ctx.save();
+        ctx.scale(-1, 1);
+        ctx.translate(-canvas.width, 0);
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
 
-        // Run detection every 4th frame
-        frameCountRef.current++;
-        const shouldDetect = frameCountRef.current % 4 === 0 && detectionState.isModelLoaded;
+        // Get current frame data
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-        if (shouldDetect) {
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          detectObjects(imageData);
-        }
-        
-        // Process new detections if available
-        if (detectionState.lastDetections && detectionState.lastDetections !== lastProcessedDetections) {
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          processDetections(detectionState.lastDetections, imageData);
-          setLastProcessedDetections(detectionState.lastDetections);
-        }
+        if (anchorSystemState.mode === 'detection') {
+          // Detection mode: run YOLO detection periodically
+          frameCountRef.current++;
+          const shouldDetect = frameCountRef.current % 4 === 0 && detectionState.isModelLoaded && detectionState.detectionEnabled;
 
-        // Handle detections or recovery
-        if (anchorData.trackedObjects.length > 0) {
-          // We have tracks, continue processing
-        } else if (anchorData.activeTrackId) {
-          // No detections but we have an active track - try recovery
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          processWithoutDetections(imageData);
-        }
-
-        // Run normal estimation for stable track
-        if (anchorData.activeTrackId) {
-          const anchorState = anchorData.anchorStates.get(anchorData.activeTrackId);
-          if (anchorState?.state === 'stable') {
-            const activeTrack = anchorData.trackedObjects.find(t => t.id === anchorData.activeTrackId);
-            if (activeTrack) {
-              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-              const cameraMatrix = getCameraMatrix(canvas.width, canvas.height);
-              estimateNormal(imageData, activeTrack.bbox, cameraMatrix);
-            }
+          if (shouldDetect) {
+            detectObjects(imageData);
+          }
+          
+          // Process new detections if available
+          if (detectionState.lastDetections && detectionState.lastDetections !== lastProcessedDetections) {
+            processDetections(detectionState.lastDetections, imageData);
+            setLastProcessedDetections(detectionState.lastDetections);
+          }
+        } else if (anchorSystemState.mode === 'anchor') {
+          // Anchor mode: update image-based anchor tracking
+          const updateResult = updateAnchor(imageData);
+          
+          // Log tracking updates every 30 frames (~1s at 30fps) to avoid spam
+          if (frameCountRef.current % 30 === 0) {
+            logger.info('CameraView', 'Anchor tracking update:', {
+              success: updateResult?.success,
+              reason: updateResult?.reason,
+              method: updateResult?.method,
+              confidence: updateResult?.confidence?.toFixed(3),
+              position: updateResult?.position,
+              anchorState: anchorSystemState.anchorState?.state,
+              activeAnchor: !!anchorSystemState.activeAnchor
+            });
           }
         }
 
-        // Draw detection overlay
-        renderDetectionOverlay(ctx, {
-          trackedObjects: anchorData.trackedObjects,
-          activeTrackId: anchorData.activeTrackId,
-          anchorStates: anchorData.anchorStates,
-          stabilityTrackerRef: { current: services.anchor.stabilityTracker },
-          persistenceTrackerRef: { current: services.anchor.persistenceTracker }
-        });
+        // Draw overlay based on current mode
+        if (anchorSystemState.mode === 'detection') {
+          // Draw detection boxes
+          renderDetectionOverlay(ctx, {
+            detections: anchorSystemState.detections,
+            mode: 'detection'
+          });
+        } else if (anchorSystemState.mode === 'anchor' && anchorSystemState.activeAnchor) {
+          // Draw anchor visualization
+          renderDetectionOverlay(ctx, {
+            anchor: anchorSystemState.activeAnchor,
+            anchorState: anchorSystemState.anchorState,
+            mode: 'anchor'
+          });
+        }
 
         // Update HUD metrics
         const processingTime = detectionState.processingTime || 0;
-        const objectCount = anchorData.trackedObjects?.length || 0;
+        const objectCount = anchorSystemState.mode === 'detection' ? 
+          anchorSystemState.detections?.length || 0 : 
+          (anchorSystemState.activeAnchor ? 1 : 0);
         
-        // Debug: console.log('[Metrics] Updating:', { fps, frameTime, processingTime, objectCount });
+        // Debug: logger.info('Metrics', 'Updating:', { fps, frameTime, processingTime, objectCount });
         
         if (typeof fps === 'number' && !isNaN(fps)) {
           updateMetric('Capture FPS', fps);
@@ -269,46 +362,33 @@ const CameraView = () => {
         updateMetric('Object Count', objectCount);
         
         // Debug: Count stable anchors for sparkles
-        const stableAnchorCount = Array.from(anchorData.anchorStates.values()).filter(state => state?.state === 'stable').length;
+        const stableAnchorCount = anchorSystemState?.anchorState?.state === 'stable' ? 1 : 0;
         updateMetric('Stable Anchors', stableAnchorCount);
         
-        // Update Phase 4 stability metrics for active track
-        if (anchorData.activeTrackId) {
-          const anchorState = anchorData.anchorStates.get(anchorData.activeTrackId);
-          if (anchorState?.metrics) {
-            const { centerVelocity, areaChangePercent, confidenceRate } = anchorState.metrics;
+        // Update Phase 4 stability metrics for active anchor
+        if (anchorSystemState?.activeAnchor) {
+          const anchorState = anchorSystemState.anchorState;
+          if (anchorState) {
+            // Update metrics based on new anchor system structure
+            const stabilityScore = anchorState.confidence || 0;
+            updateMetric('Stability score', stabilityScore.toFixed(3));
             
-            // Calculate stability score as per Phase 4 spec
-            const v_norm = Math.min(centerVelocity / 30, 1);
-            const area_delta = Math.min(Math.abs(areaChangePercent) / 10, 1);
-            const conf_norm = confidenceRate;
-            const stabilityScore = Math.max(0, (1 - v_norm) * (1 - area_delta) * conf_norm);
-            
-            updateMetric('Stability score', stabilityScore);
-            
-            // Calculate lock time if stability score is good
-            if (stabilityScore >= 0.75) {
-              const tracker = services.anchor.stabilityTracker;
-              const stats = tracker?.trackStats?.get(anchorData.activeTrackId);
-              if (stats?.stableStartTime) {
-                const lockTime = (performance.now() - stats.stableStartTime) / 1000;
-                updateMetric('lock time', lockTime);
-              }
+            if (anchorState.normal) {
+              updateMetric('Normal (X,Y,Z)', `${anchorState.normal.x.toFixed(2)}, ${anchorState.normal.y.toFixed(2)}, ${anchorState.normal.z.toFixed(2)}`);
             }
+            
+            updateMetric('Anchor State', anchorState.state || 'unknown');
           }
         }
         
-        // Update Phase 3 Track ID persistence metric
-        // This measures % of frames where the active trackId remains unchanged
-        // For now, we'll use a simple heuristic: if we have an active track with detections, it's persistent
-        if (anchorData.activeTrackId && anchorData.trackedObjects.length > 0) {
-          const activeTrack = anchorData.trackedObjects.find(t => t.id === anchorData.activeTrackId);
-          if (activeTrack) {
-            // If we found the active track in current detections, it's persistent
-            updateMetric('Track ID persistence', 100);
+        // Update anchor persistence metric
+        // For image-based anchors, persistence is based on anchor state
+        if (anchorSystemState?.activeAnchor && anchorSystemState?.mode === 'anchor') {
+          const anchorState = anchorSystemState.anchorState;
+          if (anchorState?.state === 'stable' || anchorState?.state === 'tracking') {
+            updateMetric('Anchor persistence', 100);
           } else {
-            // Active track not found in current detections
-            updateMetric('Track ID persistence', 0);
+            updateMetric('Anchor persistence', 0);
           }
         }
         
@@ -341,8 +421,14 @@ const CameraView = () => {
             fps,
             frameTime,
             processingTime: detectionState.processingTime,
-            objectCount: anchorData.trackedObjects.length
+            objectCount: anchorSystemState?.mode === 'detection' ? (detectionState.detections?.length || 0) : 
+                        anchorSystemState?.activeAnchor ? 1 : 0
           });
+        }
+        
+        // Render tracked keypoints if anchor is active  
+        if (anchorSystemState?.anchorState?.anchored) {
+          renderKeypoints(ctx, services.anchor?.imageAnchorService);
         }
       });
     }
@@ -364,7 +450,6 @@ const CameraView = () => {
         cameraState={cameraState}
         onTap={handleCanvasTap}
         onDraw={handleCanvasDraw}
-        style={{ transform: 'scaleX(-1)', transformOrigin: 'center' }}
       />
 
       {/* WebGL Overlay Scene - restored with working Canvas */}
@@ -372,12 +457,19 @@ const CameraView = () => {
         <OverlayScene
           width={videoDimensions?.width || 1280}
           height={videoDimensions?.height || 720}
-          anchors={Array.from(anchorData.anchorStates.entries()).map(([id, state]) => ({
-            id,
-            state: state.state,
-            screenPosition: state.screenPosition,
-            color: state.state === 'stable' ? '#FFD700' : '#FF6B6B'
-          }))}
+          anchors={anchorSystemState?.anchorState ? [{
+            id: 'main',
+            state: anchorSystemState.anchorState.state,
+            screenPosition: anchorSystemState.anchorState.position ? {
+              x: anchorSystemState.anchorState.position.x, 
+              y: anchorSystemState.anchorState.position.y
+            } : { x: 0, y: 0 },
+            color: anchorSystemState.anchorState.state === 'stable' ? '#FFD700' : '#FF6B6B'
+          }] : []}
+          isAgentSpeaking={ttsData.isPlaying}
+          hiddenMeshes={hiddenMeshes}
+          manualRotation={manualRotation}
+          onMeshNamesDiscovered={handleMeshNamesDiscovered}
         />
       )}
 
@@ -394,11 +486,12 @@ const CameraView = () => {
           detectionInitialized={detectionState.isInitialized}
           isModelLoaded={detectionState.isModelLoaded}
           detectionError={detectionState.error}
-          trackedObjects={anchorData.trackedObjects}
-          activeTrackId={anchorData.activeTrackId}
+          trackedObjects={anchorSystemState?.mode === 'detection' ? (detectionState.detections || []) : []}
+          activeTrackId={anchorSystemState?.activeAnchor ? 'anchor' : null}
+          activeAnchor={anchorSystemState?.activeAnchor}
           showStats={showStats}
           onToggleStats={() => setShowStats(!showStats)}
-          onUnlock={clearActiveTrack}
+          onUnlock={clearAnchor}
           onStop={stopCamera}
           onConfigChange={handleConfigChange}
           onRestart={handleRestart}
@@ -409,6 +502,10 @@ const CameraView = () => {
           ttsData={ttsData}
           onGeneratePersonality={handleGeneratePersonality}
           onSpeakGreeting={speakGreeting}
+          discoveredMeshes={discoveredMeshes}
+          hiddenMeshes={hiddenMeshes}
+          onMeshVisibilityChange={handleMeshVisibilityChange}
+          onRotationChange={handleRotationChange}
         />
       )}
     </div>

@@ -7,19 +7,14 @@ export class PersonalityService {
       ...config
     };
     
-    try {
-      this.visionClient = new VisionClient({
-        ...config.vision,
-        apiKey: config.apiKey || config.vision?.apiKey
-      });
-      this.llmClient = new LLMClient({
-        ...config.llm,
-        apiKey: config.apiKey || config.llm?.apiKey
-      });
-    } catch (error) {
-      console.error('[PersonalityService] Failed to initialize API clients:', error.message);
-      this.initializationError = error.message;
-    }
+    this.visionClient = new VisionClient({
+      ...config.vision,
+      apiKey: config.apiKey || config.vision?.apiKey
+    });
+    this.llmClient = new LLMClient({
+      ...config.llm,
+      apiKey: config.apiKey || config.llm?.apiKey
+    });
     
     this.listeners = new Set();
     this.isProcessing = false;
@@ -41,28 +36,12 @@ export class PersonalityService {
   emit(event, data) {
     this.listeners.forEach(listener => {
       if (listener[event]) {
-        try {
-          listener[event](data);
-        } catch (error) {
-          console.error(`[PersonalityService] Listener error for ${event}:`, error);
-        }
+        listener[event](data);
       }
     });
   }
 
   async generatePersonality(imageData, bbox) {
-    // Check for initialization errors
-    if (this.initializationError) {
-      const error = `API client initialization failed: ${this.initializationError}`;
-      this.emit('onPersonalityGenerated', {
-        persona: null,
-        rtt: 0,
-        success: false,
-        error: error
-      });
-      throw new Error(error);
-    }
-
     this.isProcessing = true;
     const startTime = performance.now();
     
@@ -72,70 +51,32 @@ export class PersonalityService {
       requestId: this.metrics.totalRequests 
     });
 
-    try {
-      // Step 1: Extract sharp ROI crop
-      const roiImageBlob = await this.extractROI(imageData, bbox);
-      
-      // Step 2: Vision API call for object description
-      const visionResult = await this.visionClient.identifyObject(roiImageBlob);
-      
-      // Step 3: LLM call for persona generation
-      const persona = await this.llmClient.generatePersona(visionResult);
-      
-      const endTime = performance.now();
-      const rtt = endTime - startTime;
-      
-      this.metrics.lastRTT = rtt;
-      this.metrics.averageRTT = this.calculateMovingAverage(this.metrics.averageRTT, rtt);
-      this.metrics.successfulRequests++;
-      
-      this.lastPersona = {
-        ...persona,
-        visionData: visionResult,
-        generatedAt: Date.now(),
-        rtt: rtt
-      };
+    const roiImageBlob = await this.extractROI(imageData, bbox);
+    const visionResult = await this.visionClient.identifyObject(roiImageBlob);
+    const persona = await this.llmClient.generatePersona(visionResult);
+    
+    const endTime = performance.now();
+    const rtt = endTime - startTime;
+    
+    this.metrics.lastRTT = rtt;
+    this.metrics.averageRTT = this.calculateMovingAverage(this.metrics.averageRTT, rtt);
+    this.metrics.successfulRequests++;
+    
+    this.lastPersona = {
+      ...persona,
+      visionData: visionResult,
+      generatedAt: Date.now(),
+      rtt: rtt
+    };
 
-      this.emit('onPersonalityGenerated', {
-        persona: this.lastPersona,
-        rtt: rtt,
-        success: true
-      });
+    this.emit('onPersonalityGenerated', {
+      persona: this.lastPersona,
+      rtt: rtt,
+      success: true
+    });
 
-      this.isProcessing = false;
-      return this.lastPersona;
-
-    } catch (error) {
-      const endTime = performance.now();
-      const rtt = endTime - startTime;
-      
-      this.metrics.lastRTT = rtt;
-      this.metrics.failedRequests++;
-      
-      let userFriendlyError = 'Failed to generate personality';
-      
-      if (error.message.includes('API key')) {
-        userFriendlyError = 'OpenAI API key not configured. Please check your environment variables.';
-      } else if (error.message.includes('quota') || error.message.includes('rate limit')) {
-        userFriendlyError = 'OpenAI API quota exceeded or rate limited. Please try again later.';
-      } else if (error.message.includes('network') || error.message.includes('fetch')) {
-        userFriendlyError = 'Network error. Please check your internet connection.';
-      } else if (error.message.includes('Vision API') || error.message.includes('Chat API')) {
-        userFriendlyError = 'OpenAI API error. Please try again.';
-      }
-
-      console.error('[PersonalityService] Generation failed:', error);
-      
-      this.emit('onPersonalityGenerated', {
-        persona: null,
-        rtt: rtt,
-        success: false,
-        error: userFriendlyError
-      });
-
-      this.isProcessing = false;
-      throw new Error(userFriendlyError);
-    }
+    this.isProcessing = false;
+    return this.lastPersona;
   }
 
   extractROI(imageData, bbox) {

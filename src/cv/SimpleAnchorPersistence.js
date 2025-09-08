@@ -3,6 +3,8 @@
  * Lightweight implementation using basic algorithms without OpenCV
  */
 
+import { logger } from '../utils/logger.js';
+
 export class SimpleAnchorPersistence {
   constructor() {
     this.anchors = new Map(); // trackId -> AnchorState
@@ -14,7 +16,7 @@ export class SimpleAnchorPersistence {
   }
 
   async initialize() {
-    console.log('[SimpleAnchorPersistence] Initialized (basic mode - no OpenCV dependency)');
+    logger.info('SimpleAnchorPersistence', 'Initialized (basic mode - no OpenCV dependency)');
     return true;
   }
 
@@ -32,7 +34,7 @@ export class SimpleAnchorPersistence {
       // Create new anchor
       anchor = new SimpleAnchorState(trackId, bbox);
       this.anchors.set(trackId, anchor);
-      console.log(`[SimpleAnchorPersistence] Created anchor for track ${trackId}`);
+      logger.info('SimpleAnchorPersistence', `Created anchor for track ${trackId}`);
     }
 
     // Update anchor state
@@ -43,7 +45,7 @@ export class SimpleAnchorPersistence {
     // Basic anchor tracking
     if (state === 'stable') {
       anchor.roiBounds = bbox;
-      console.log(`[SimpleAnchorPersistence] Updated stable anchor ${trackId}`);
+      logger.info('SimpleAnchorPersistence', `Updated stable anchor ${trackId}`);
     }
 
     // Store frame reference for basic processing
@@ -96,11 +98,11 @@ export class SimpleAnchorPersistence {
     for (const [trackId, anchor] of this.anchors) {
       if (!matchedTracks.has(trackId)) {
         anchor.missCount++;
-        console.log(`[SimpleAnchorPersistence] Track ${trackId} missed detection (${anchor.missCount}/${this.MAX_DETECTOR_MISSES})`);
+        logger.info('SimpleAnchorPersistence', `Track ${trackId} missed detection (${anchor.missCount}/${this.MAX_DETECTOR_MISSES})`);
         
         // Simple prediction based on last bbox
         if (anchor.missCount <= 5) { // Keep alive for 5 frames
-          console.log(`[SimpleAnchorPersistence] Track ${trackId} kept alive by prediction`);
+          logger.info('SimpleAnchorPersistence', `Track ${trackId} kept alive by prediction`);
           enhancedDetections.push({
             ...anchor.lastDetection,
             trackId: trackId,

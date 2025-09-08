@@ -3,6 +3,8 @@
  * Maintains rolling statistics for locked tracks to determine when they're stable enough for 3D anchoring
  */
 
+import { logger } from '../utils/logger.js';
+
 export class AnchorStabilityTracker {
   constructor(windowDurationMs = 1000, unstableThresholdMs = 300) {
     this.windowDurationMs = windowDurationMs;
@@ -63,7 +65,7 @@ export class AnchorStabilityTracker {
     
     // Check if we have enough samples in the window
     if (metrics.sampleCount < 5) {
-      console.log(`[Stability] Track ${trackId}: Not enough samples (${metrics.sampleCount}/5)`);
+      logger.info('Stability', `Track ${trackId}: Not enough samples (${metrics.sampleCount}/5)`);
       return 'tracking';
     }
 
@@ -74,7 +76,7 @@ export class AnchorStabilityTracker {
 
     const meetsStabilityCriteria = isVelocityStable && isAreaStable && isConfidenceStable;
 
-    console.log(`[Stability] Track ${trackId}:`, {
+    logger.info('Stability', `Track ${trackId}:`, {
       samples: metrics.sampleCount,
       velocity: metrics.centerVelocity.toFixed(1),
       areaChange: metrics.areaChangePercent.toFixed(1),
@@ -92,9 +94,9 @@ export class AnchorStabilityTracker {
       if (!meetsStabilityCriteria) {
         if (!stats.unstableStartTime) {
           stats.unstableStartTime = timestamp;
-          console.log(`[Stability] Track ${trackId}: Started unstable timer`);
+          logger.info('Stability', `Track ${trackId}: Started unstable timer`);
         } else if (timestamp - stats.unstableStartTime > this.unstableThresholdMs) {
-          console.log(`[Stability] Track ${trackId}: STABLE → TRACKING (unstable for ${timestamp - stats.unstableStartTime}ms)`);
+          logger.info('Stability', `Track ${trackId}: STABLE → TRACKING (unstable for ${timestamp - stats.unstableStartTime}ms)`);
           stats.currentState = 'tracking';
           stats.unstableStartTime = null;
           stats.stableStartTime = null;

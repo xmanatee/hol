@@ -1,3 +1,5 @@
+import { logger } from '../utils/logger.js';
+
 export class DetectionService {
   constructor() {
     this.worker = null;
@@ -8,6 +10,7 @@ export class DetectionService {
     this.listeners = new Set();
     this.frameCounter = 0;
     this.detectionInterval = 4; // Run detection every 4th frame
+    this.detectionEnabled = true; // Can disable detection for anchor mode
   }
 
   addListener(listener) {
@@ -26,30 +29,30 @@ export class DetectionService {
 
   async initialize() {
     if (this.isInitialized) {
-      console.log('[DetectionService] Already initialized');
+      logger.info('Detection', 'Already initialized');
       return true;
     }
 
     if (this.initPromise) {
-      console.log('[DetectionService] Initialization in progress');
+      logger.info('Detection', 'Initialization in progress');
       return this.initPromise;
     }
 
-    console.log('[DetectionService] Starting initialization...');
+    logger.info('Detection', 'Starting initialization...');
     if (typeof Worker === 'undefined') {
       const error = new Error('Web Workers are not supported in this browser');
       this.error = error.message;
-      console.error('[DetectionService] Worker not supported:', this.error);
+      logger.error('Detection', 'Worker not supported:', this.error);
       this._notifyListeners('error', { error: this.error });
       throw error;
     }
     
     this.initPromise = new Promise((resolve, reject) => {
-      console.log('[DetectionService] Creating worker...');
+      logger.info('Detection', 'Creating worker...');
       this.worker = new Worker(new URL('../cv/detector.worker.js', import.meta.url), {
         type: 'module'
       });
-      console.log('[DetectionService] Worker created');
+      logger.info('Detection', 'Worker created');
 
       this.worker.onmessage = (event) => {
         this._handleWorkerMessage(event.data);
@@ -57,14 +60,14 @@ export class DetectionService {
 
       this.worker.onerror = (error) => {
         this.error = `Worker error: ${error.message}`;
-        console.error('[DetectionService] Worker error:', this.error);
+        logger.error('Detection', 'Worker error:', this.error);
         this._notifyListeners('error', { error: this.error });
         reject(error);
       };
 
       this.worker.onmessageerror = (error) => {
         this.error = `Worker message error: ${error.message}`;
-        console.error('[DetectionService] Worker message error:', this.error);
+        logger.error('Detection', 'Worker message error:', this.error);
         this._notifyListeners('error', { error: this.error });
         reject(error);
       };
@@ -88,9 +91,9 @@ export class DetectionService {
 
       this.addListener({ onInitialized: checkReady });
       
-      console.log('[DetectionService] Sending test message...');
+      logger.info('Detection', 'Sending test message...');
       this.worker.postMessage({ type: 'test' });
-      console.log('[DetectionService] Sending initialize message...');
+      logger.info('Detection', 'Sending initialize message...');
       this.worker.postMessage({ type: 'initialize' });
     });
 
@@ -100,16 +103,16 @@ export class DetectionService {
   async loadModel(modelPath = '/models/yolo11n_480.onnx') {
     if (!this.isInitialized) {
       const error = new Error('Detection service not initialized');
-      console.error('[DetectionService] Cannot load model:', error.message);
+      logger.error('Detection', 'Cannot load model:', error.message);
       throw error;
     }
 
     if (this.isModelLoaded) {
-      console.log('[DetectionService] Model already loaded');
+      logger.info('Detection', 'Model already loaded');
       return true;
     }
 
-    console.log('[DetectionService] Loading model:', modelPath);
+    logger.info('Detection', 'Loading model:', modelPath);
     this.worker.postMessage({ 
       type: 'loadModel', 
       modelPath 
@@ -117,20 +120,20 @@ export class DetectionService {
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        console.error('[DetectionService] Model loading timeout');
+        logger.error('Detection', 'Model loading timeout');
         reject(new Error('Model loading timeout'));
       }, 30000);
 
       const checkLoaded = () => {
         if (this.isModelLoaded) {
-          console.log('[DetectionService] Model loading promise resolved');
+          logger.info('Detection', 'Model loading promise resolved');
           clearTimeout(timeout);
           resolve(true);
         }
       };
 
       const checkError = (errorData) => {
-        console.error('[DetectionService] Model loading failed:', errorData.error);
+        logger.error('Detection', 'Model loading failed:', errorData.error);
         clearTimeout(timeout);
         reject(new Error(errorData.error));
       };
@@ -143,7 +146,7 @@ export class DetectionService {
   }
 
   detectObjects(imageData, forceDetection = false) {
-    if (!this.isModelLoaded || !this.worker) {
+    if (!this.isModelLoaded || !this.worker || !this.detectionEnabled) {
       return false;
     }
 
@@ -166,6 +169,23 @@ export class DetectionService {
     return true;
   }
 
+  /**
+   * Enable or disable detection (for switching between detection and anchor modes)
+   * @param {boolean} enabled - Whether detection should be enabled
+   */
+  setDetectionEnabled(enabled) {
+    this.detectionEnabled = enabled;
+    logger.info('Detection', `Detection ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
+  /**
+   * Check if detection is currently enabled
+   * @returns {boolean} Detection enabled state
+   */
+  isDetectionEnabled() {
+    return this.detectionEnabled;
+  }
+
   setDetectionInterval(interval) {
     this.detectionInterval = Math.max(1, interval);
   }
@@ -174,6 +194,7 @@ export class DetectionService {
     return {
       isInitialized: this.isInitialized,
       isModelLoaded: this.isModelLoaded,
+      detectionEnabled: this.detectionEnabled,
       error: this.error,
       processingTime: this.lastProcessingTime
     };
@@ -182,20 +203,20 @@ export class DetectionService {
   _handleWorkerMessage({ type, ...data }) {
     switch (type) {
       case 'initialized':
-        console.log('[DetectionService] Worker initialized successfully');
+        logger.info('Detection', 'Worker initialized successfully');
         this.isInitialized = true;
         this.error = null;
         this._notifyListeners('initialized');
         break;
 
       case 'modelLoaded':
-        console.log('[DetectionService] Model loaded successfully');
+        logger.info('Detection', 'Model loaded successfully');
         this.isModelLoaded = true;
         this._notifyListeners('modelLoaded');
         break;
 
       case 'detections':
-        console.log('[DetectionService] Received detections:', data.detections?.length || 0, 'objects');
+        logger.info('Detection', 'Received detections:', data.detections?.length || 0, 'objects');
         this.lastProcessingTime = data.processingTime || 0;
         this._notifyListeners('detections', {
           detections: data.detections,
@@ -207,7 +228,7 @@ export class DetectionService {
         break;
 
       case 'error':
-        console.error('[DetectionService] Worker error:', data.message);
+        logger.error('Detection', 'Worker error:', data.message);
         this.error = data.message;
         this._notifyListeners('error', { error: this.error });
         break;
@@ -217,6 +238,12 @@ export class DetectionService {
         break;
 
       case 'log':
+        // Forward worker logs to main logger with tag filtering
+        if (data.level && data.tag && data.args) {
+          logger[data.level](data.tag, ...data.args);
+        }
+        break;
+        
       case 'worker_loaded':
         break;
 

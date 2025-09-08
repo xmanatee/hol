@@ -1,42 +1,41 @@
-import { SORTTracker } from '../cv/tracker.js';
-import { AnchorStabilityTracker } from '../cv/anchorStability.js';
-import { SimpleAnchorPersistence } from '../cv/SimpleAnchorPersistence.js';
-import { WorkerAnchorPersistence } from '../cv/WorkerAnchorPersistence.js';
+import { ImageAnchorService } from './ImageAnchorService.js';
+import { HomographyEstimator } from '../cv/anchor.homography.js';
+import { logger } from '../utils/logger.js';
 
 export class AnchorManager {
   constructor(config = {}) {
-    this.tracker = new SORTTracker(30, 1, 0.3);
-    this.stabilityTracker = new AnchorStabilityTracker();
+    this.imageAnchorService = new ImageAnchorService();
+    this.config = config;
     
-    // Factory pattern: choose persistence implementation based on config
-    const useWorkerPersistence = config.useWorkerPersistence ?? false; // Default to simple for Phase 1-6
-    
-    if (useWorkerPersistence) {
-      console.log('[AnchorManager] Using WorkerAnchorPersistence for heavy OpenCV operations');
-      this.persistenceTracker = new WorkerAnchorPersistence();
-    } else {
-      console.log('[AnchorManager] Using SimpleAnchorPersistence for Phase 1-6 compatibility');
-      this.persistenceTracker = new SimpleAnchorPersistence();
-    }
-    
-    this.activeTrackId = null;
-    this.anchorStates = new Map();
+    // State management
+    this.mode = 'detection'; // 'detection' or 'anchor'
+    this.detections = []; // Store last detections for tap selection
+    this.activeAnchor = null;
+    this.anchorState = null;
     this.listeners = new Set();
     this.initialized = false;
-    this.config = config;
+    
+    // Camera parameters for homography estimation
+    this.cameraParams = null;
   }
 
-  async initialize() {
+  async initialize(cv, viewportWidth, viewportHeight, fov = 63) {
     if (!this.initialized) {
-      console.log('[AnchorManager] Starting initialization...');
+      logger.info('AnchorManager', 'Starting initialization...');
       try {
-        console.log(`[AnchorManager] Initializing ${this.config.useWorkerPersistence ? 'worker-based' : 'simple'} persistence tracker...`);
-        await this.persistenceTracker.initialize();
+        // Calculate camera parameters from viewport and FOV
+        this.cameraParams = HomographyEstimator.createCameraMatrix(fov, viewportWidth, viewportHeight);
+        
+        // Initialize image anchor service
+        await this.imageAnchorService.initialize(cv, this.cameraParams);
+        
+        // Listen to anchor updates
+        this.imageAnchorService.addListener(this._onAnchorUpdate.bind(this));
+        
         this.initialized = true;
-        const mode = this.config.useWorkerPersistence ? 'worker-based persistence' : 'Phase 1-6 compatibility';
-        console.log(`[AnchorManager] Successfully initialized (${mode})`);
+        logger.info('AnchorManager', 'Successfully initialized image-based anchor system');
       } catch (error) {
-        console.error('[AnchorManager] Initialization failed:', error);
+        logger.error('AnchorManager', 'Initialization failed:', error);
         throw error;
       }
     }
@@ -47,175 +46,219 @@ export class AnchorManager {
     return () => this.listeners.delete(listener);
   }
 
-  _notifyUpdate() {
-    const trackedObjects = this.tracker.getActiveTracks();
-    console.log('[AnchorManager] Notifying UI with', trackedObjects.length, 'active tracks');
-    
-    this.listeners.forEach(listener => {
-      if (listener.onAnchorUpdate) {
-        listener.onAnchorUpdate({
-          trackedObjects: trackedObjects,
-          activeTrackId: this.activeTrackId,
-          anchorStates: new Map(this.anchorStates)
-        });
-      }
-    });
-  }
-
+  /**
+   * Process detections from YOLO (only used in detection mode)
+   * @param {Array} detections - Detection results
+   * @param {ImageData} imageData - Current frame
+   * @returns {Array} Processed detections for UI display
+   */
   processDetections(detections, imageData) {
-    console.log('[AnchorManager] processDetections called with', detections.length, 'detections');
-    if (!this.initialized) {
-      console.log('[AnchorManager] Not initialized, returning empty');
+    if (!this.initialized || this.mode !== 'detection') {
       return [];
     }
 
-    // Process detections through persistence tracker
-    const enhancedDetections = this.persistenceTracker.processWithDetections(detections, imageData);
-    
-    const tracks = this.tracker.update(enhancedDetections);
-    console.log('[AnchorManager] SORT tracker returned', tracks.length, 'tracks');
-    
-    // Update anchor states for active track
-    this._updateActiveAnchor(tracks, imageData);
-    
+    // Store detections for potential tap selection
+    this.detections = detections.map(detection => ({
+      ...detection,
+      id: Math.random().toString(36).substr(2, 9) // Generate temporary ID
+    }));
+
+    logger.info('AnchorManager', `Processed ${detections.length} detections in detection mode`);
     this._notifyUpdate();
-    return tracks;
+    return this.detections;
   }
 
-  processWithoutDetections(imageData) {
-    if (!this.initialized || !this.activeTrackId) {
-      return [];
+  /**
+   * Handle anchor updates in anchor mode
+   * @param {ImageData} imageData - Current frame
+   * @returns {Object} Update result
+   */
+  updateAnchor(imageData) {
+    if (!this.initialized || this.mode !== 'anchor') {
+      return { success: false, reason: 'Not in anchor mode' };
     }
 
-    // Try persistence recovery
-    const recoveredDetections = this.persistenceTracker.processWithoutDetections(imageData);
+    const result = this.imageAnchorService.updateAnchor(imageData);
     
-    // Update tracker with recovered detections or empty array
-    const tracks = this.tracker.update(recoveredDetections);
-    this._updateActiveAnchor(tracks, imageData);
-    this._notifyUpdate();
-    return tracks;
+    // The anchor service will notify via _onAnchorUpdate callback
+    return result;
   }
 
-  selectTrack(trackId) {
-    if (this.activeTrackId && this.activeTrackId !== trackId) {
-      this._clearTrack(this.activeTrackId);
+  /**
+   * Select detection and create image-based anchor
+   * @param {Object} tapPosition - {x, y} coordinates
+   * @param {ImageData} imageData - Current frame
+   * @returns {Object} Creation result
+   */
+  async createAnchorFromTap(tapPosition, imageData) {
+    if (!this.initialized || this.mode !== 'detection') {
+      throw new Error('Can only create anchor in detection mode');
+    }
+
+    // Find detection at tap position
+    const selectedDetection = this.findDetectionAtPosition(tapPosition);
+    
+    try {
+      // Create image-based anchor
+      const result = await this.imageAnchorService.createAnchor(
+        imageData, 
+        tapPosition, 
+        selectedDetection
+      );
+
+      if (result.success) {
+        // Switch to anchor mode
+        this.mode = 'anchor';
+        this.detections = []; // Clear detection results
+        this.activeAnchor = {
+          position: result.position,
+          keypoints: result.keypoints,
+          quality: result.quality,
+          method: result.method,
+          createdAt: Date.now()
+        };
+        
+        logger.info('AnchorManager', `Created anchor with ${result.keypoints} keypoints (quality: ${result.quality.toFixed(2)})`);
+        this._notifyUpdate();
+      }
+
+      return result;
+      
+    } catch (error) {
+      logger.error('AnchorManager', 'Failed to create anchor:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Find detection at tap position
+   * @param {Object} position - {x, y} coordinates
+   * @returns {Object|null} Detection or null
+   */
+  findDetectionAtPosition(position) {
+    let bestDetection = null;
+    let bestScore = 0;
+
+    for (const detection of this.detections) {
+      const { x1, y1, x2, y2 } = detection;
+      const isInside = position.x >= x1 && position.x <= x2 && 
+                      position.y >= y1 && position.y <= y2;
+      
+      if (isInside && detection.confidence > bestScore) {
+        bestDetection = detection;
+        bestScore = detection.confidence;
+      }
     }
     
-    this.activeTrackId = trackId;
-    this._notifyUpdate();
+    return bestDetection;
   }
 
-  clearActiveTrack() {
-    if (this.activeTrackId) {
-      this._clearTrack(this.activeTrackId);
-      this.activeTrackId = null;
+  /**
+   * Clear current anchor and return to detection mode
+   */
+  clearAnchor() {
+    if (this.mode === 'anchor') {
+      this.imageAnchorService.clearAnchor();
+      this.mode = 'detection';
+      this.activeAnchor = null;
+      this.anchorState = null;
+      
+      logger.info('AnchorManager', 'Cleared anchor, returned to detection mode');
       this._notifyUpdate();
     }
   }
 
-  findTrackAtPosition(tracks, position) {
-    let bestTrack = null;
-    let bestScore = 0;
+  /**
+   * Get current system state
+   * @returns {Object} Current state
+   */
+  getState() {
+    return {
+      mode: this.mode,
+      detections: this.detections,
+      activeAnchor: this.activeAnchor,
+      anchorState: this.anchorState,
+      initialized: this.initialized
+    };
+  }
 
-    for (const track of tracks) {
-      const { bbox } = track;
-      const isInside = position.x >= bbox.x1 && position.x <= bbox.x2 && 
-                      position.y >= bbox.y1 && position.y <= bbox.y2;
-      
-      if (isInside && track.confidence > bestScore) {
-        bestTrack = track;
-        bestScore = track.confidence;
-      }
+  /**
+   * Handle anchor service updates
+   * @private
+   */
+  _onAnchorUpdate(anchorServiceState) {
+    logger.debug('AnchorManager', 'Received anchor service state update:', {
+      anchored: anchorServiceState.anchored,
+      state: anchorServiceState.state,
+      position: anchorServiceState.position,
+      hasMetrics: !!anchorServiceState.metrics
+    });
+    
+    const previousState = this.anchorState?.state;
+    this.anchorState = anchorServiceState;
+    
+    // CRITICAL FIX: Synchronize activeAnchor position with live tracking
+    if (this.activeAnchor && anchorServiceState.position) {
+      this.activeAnchor.position = {
+        x: anchorServiceState.position.x,
+        y: anchorServiceState.position.y,
+        z: anchorServiceState.position.z || 0
+      };
+      logger.debug('AnchorManager', 'Updated activeAnchor position:', this.activeAnchor.position);
     }
     
-    return bestTrack;
+    if (previousState !== anchorServiceState.state) {
+      logger.info('AnchorManager', `Anchor state changed: ${previousState} -> ${anchorServiceState.state}`);
+    }
+    
+    this._notifyUpdate();
   }
 
+  /**
+   * Notify all listeners of state changes
+   * @private
+   */
+  _notifyUpdate() {
+    const state = this.getState();
+    
+    this.listeners.forEach(listener => {
+      try {
+        if (typeof listener === 'function') {
+          listener(state);
+        } else if (listener.onAnchorUpdate) {
+          listener.onAnchorUpdate(state);
+        }
+      } catch (error) {
+        logger.error('AnchorManager', 'Listener error:', error);
+      }
+    });
+  }
+
+  /**
+   * Legacy compatibility methods (deprecated)
+   */
+  
+  // For backward compatibility with existing UI
   getActiveTrackState() {
-    if (!this.activeTrackId) return null;
-    return this.anchorStates.get(this.activeTrackId);
+    return this.anchorState;
   }
 
-  getAnchorStates() {
-    return new Map(this.anchorStates);
-  }
-
-  _updateActiveAnchor(tracks, imageData) {
-    if (!this.activeTrackId) return;
-
-    const activeTrack = tracks.find(t => t.id === this.activeTrackId);
-    const timestamp = performance.now();
-
-    if (activeTrack) {
-      // Update stability tracking
-      const anchorState = this.stabilityTracker.updateTrack(
-        this.activeTrackId,
-        activeTrack.bbox,
-        activeTrack.confidence,
-        timestamp
-      );
-
-      // Update persistence tracking
-      this.persistenceTracker.updateAnchor(
-        this.activeTrackId,
-        activeTrack.bbox,
-        imageData,
-        anchorState
-      );
-
-      const metrics = this.stabilityTracker.getStabilityMetrics(this.activeTrackId, timestamp);
-
-      const screenPosition = {
-        x: (activeTrack.bbox.x1 + activeTrack.bbox.x2) / 2,
-        y: (activeTrack.bbox.y1 + activeTrack.bbox.y2) / 2,
-        z: 0
-      };
-
-      this.anchorStates.set(this.activeTrackId, {
-        state: anchorState,
-        metrics,
-        screenPosition,
-        persistent: activeTrack.persistent || false,
-        synthetic: activeTrack.synthetic || false,
-        reacquired: activeTrack.reacquired || false
-      });
-    } else {
-      // Track lost - for Phase 1-4, just clear after a few frames
-      console.log('[AnchorManager] Active track lost, clearing...');
-      this._clearTrack(this.activeTrackId);
-      
-      // Check persistence
-      const persistenceStats = this.persistenceTracker.getAnchorStats();
-      const persistentAnchor = persistenceStats.find(a => a.trackId === this.activeTrackId);
-      if (!persistentAnchor || persistentAnchor.missCount > 10) {
-        this._clearTrack(this.activeTrackId);
-      }
-    }
-  }
-
-  _clearTrack(trackId) {
-    this.stabilityTracker.removeTrack(trackId);
-    this.persistenceTracker.removeAnchor(trackId);
-    this.anchorStates.delete(trackId);
-  }
-
-  updateNormal(normal) {
-    if (this.activeTrackId && normal) {
-      const currentAnchor = this.anchorStates.get(this.activeTrackId);
-      if (currentAnchor) {
-        this.anchorStates.set(this.activeTrackId, { ...currentAnchor, normal });
-        this._notifyUpdate();
-      }
-    }
+  // For backward compatibility 
+  processWithoutDetections(imageData) {
+    return this.updateAnchor(imageData);
   }
 
   dispose() {
-    this.tracker = null;
-    this.stabilityTracker = null;
-    this.persistenceTracker = null;
-    this.anchorStates.clear();
+    if (this.imageAnchorService) {
+      this.imageAnchorService.dispose();
+    }
+    
     this.listeners.clear();
+    this.detections = [];
+    this.activeAnchor = null;
+    this.anchorState = null;
     this.initialized = false;
+    
+    logger.info('AnchorManager', 'Disposed');
   }
 }

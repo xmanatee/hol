@@ -4,6 +4,7 @@
  */
 
 import { SimpleAnchorPersistence } from './SimpleAnchorPersistence.js';
+import { logger } from '../utils/logger.js';
 
 export class WorkerAnchorPersistence {
   constructor() {
@@ -29,7 +30,7 @@ export class WorkerAnchorPersistence {
 
   async initialize() {
     try {
-      console.log('[WorkerAnchorPersistence] Initializing worker...');
+      logger.info('WorkerAnchorPersistence', 'Initializing worker...');
       
       // Initialize worker
       this.worker = new Worker(new URL('./persistence.worker.js', import.meta.url), {
@@ -41,14 +42,14 @@ export class WorkerAnchorPersistence {
       };
 
       this.worker.onerror = (error) => {
-        console.error('[WorkerAnchorPersistence] Worker error:', error);
+        logger.error('WorkerAnchorPersistence', 'Worker error:', error);
         this._enableFallback();
       };
 
       // Wait for worker to be ready
       const initPromise = new Promise((resolve) => {
         const timeout = setTimeout(() => {
-          console.warn('[WorkerAnchorPersistence] Worker initialization timeout, using fallback');
+          logger.warn('WorkerAnchorPersistence', 'Worker initialization timeout, using fallback');
           this._enableFallback();
           resolve(true);
         }, 10000);
@@ -74,17 +75,17 @@ export class WorkerAnchorPersistence {
         this.useFallback = true;
       }
       
-      console.log(`[WorkerAnchorPersistence] Initialized successfully (worker: ${this.isReady}, fallback: ${this.useFallback})`);
+      logger.info('WorkerAnchorPersistence', `Initialized successfully (worker: ${this.isReady}, fallback: ${this.useFallback})`);
       return result;
     } catch (error) {
-      console.error('[WorkerAnchorPersistence] Initialization failed:', error);
+      logger.error('WorkerAnchorPersistence', 'Initialization failed:', error);
       await this._enableFallback();
       return true;
     }
   }
 
   async _enableFallback() {
-    console.log('[WorkerAnchorPersistence] Enabling fallback to SimpleAnchorPersistence');
+    logger.info('WorkerAnchorPersistence', 'Enabling fallback to SimpleAnchorPersistence');
     this.useFallback = true;
     await this.fallback.initialize();
   }
@@ -103,7 +104,7 @@ export class WorkerAnchorPersistence {
       // Create new anchor
       anchor = new WorkerAnchorState(trackId, bbox);
       this.anchors.set(trackId, anchor);
-      console.log(`[WorkerAnchorPersistence] Created anchor for track ${trackId}`);
+      logger.info('WorkerAnchorPersistence', `Created anchor for track ${trackId}`);
     }
 
     // Update anchor state
@@ -178,11 +179,11 @@ export class WorkerAnchorPersistence {
     for (const [trackId, anchor] of this.anchors) {
       if (!matchedTracks.has(trackId)) {
         anchor.missCount++;
-        console.log(`[WorkerAnchorPersistence] Track ${trackId} missed detection (${anchor.missCount}/${this.MAX_DETECTOR_MISSES})`);
+        logger.info('WorkerAnchorPersistence', `Track ${trackId} missed detection (${anchor.missCount}/${this.MAX_DETECTOR_MISSES})`);
         
         // Check if flow tracking can keep it alive
         if (anchor.flowPoints && anchor.flowPoints.length >= this.MIN_FLOW_POINTS) {
-          console.log(`[WorkerAnchorPersistence] Track ${trackId} kept alive by optical flow (${anchor.flowPoints.length} points)`);
+          logger.info('WorkerAnchorPersistence', `Track ${trackId} kept alive by optical flow (${anchor.flowPoints.length} points)`);
           
           // Create synthetic detection from flow
           const flowBbox = this._estimateBboxFromFlow(anchor);
@@ -234,7 +235,7 @@ export class WorkerAnchorPersistence {
       if (anchor.flowPoints && anchor.flowPoints.length >= this.MIN_FLOW_POINTS) {
         const flowBbox = this._estimateBboxFromFlow(anchor);
         if (flowBbox) {
-          console.log(`[WorkerAnchorPersistence] Track ${trackId} maintained by flow (${anchor.flowPoints.length} points)`);
+          logger.info('WorkerAnchorPersistence', `Track ${trackId} maintained by flow (${anchor.flowPoints.length} points)`);
           reacquiredDetections.push({
             ...anchor.lastDetection,
             ...flowBbox,
@@ -253,7 +254,7 @@ export class WorkerAnchorPersistence {
         try {
           const reacquisition = await this._attemptReacquisition(anchor, currentFrame);
           if (reacquisition) {
-            console.log(`[WorkerAnchorPersistence] Track ${trackId} re-acquired via ORB matching!`);
+            logger.info('WorkerAnchorPersistence', `Track ${trackId} re-acquired via ORB matching!`);
             reacquiredDetections.push({
               ...reacquisition,
               trackId: trackId,
@@ -268,13 +269,13 @@ export class WorkerAnchorPersistence {
             this._initializeROITracking(anchor, currentFrame, reacquisition);
           }
         } catch (error) {
-          console.error(`[WorkerAnchorPersistence] Reacquisition failed for track ${trackId}:`, error);
+          logger.error('WorkerAnchorPersistence', `Reacquisition failed for track ${trackId}:`, error);
         }
       }
 
       // Clean up anchors that are lost for too long
       if (anchor.missCount > this.MAX_DETECTOR_MISSES * 2) {
-        console.log(`[WorkerAnchorPersistence] Removing lost anchor ${trackId}`);
+        logger.info('WorkerAnchorPersistence', `Removing lost anchor ${trackId}`);
         this.removeAnchor(trackId);
       }
     }
@@ -434,7 +435,7 @@ export class WorkerAnchorPersistence {
 
     const anchor = this.anchors.get(trackId);
     if (anchor) {
-      console.log(`[WorkerAnchorPersistence] Removing anchor ${trackId}`);
+      logger.info('WorkerAnchorPersistence', `Removing anchor ${trackId}`);
     }
     this.anchors.delete(trackId);
   }
@@ -468,7 +469,7 @@ export class WorkerAnchorPersistence {
     switch (type) {
       case 'ready':
         this.isReady = true;
-        console.log('[WorkerAnchorPersistence] Worker ready');
+        logger.info('WorkerAnchorPersistence', 'Worker ready');
         if (this.readyCallback) {
           this.readyCallback();
         }
@@ -479,7 +480,7 @@ export class WorkerAnchorPersistence {
         if (roiAnchor) {
           roiAnchor.flowPoints = data.flowPoints;
           roiAnchor.roiBounds = data.roiBounds;
-          console.log(`[WorkerAnchorPersistence] ROI initialized for track ${data.trackId} with ${data.flowPoints.length} points`);
+          logger.info('WorkerAnchorPersistence', `ROI initialized for track ${data.trackId} with ${data.flowPoints.length} points`);
         }
         break;
       }
@@ -496,7 +497,7 @@ export class WorkerAnchorPersistence {
         const templateAnchor = this.anchors.get(data.trackId);
         if (templateAnchor) {
           templateAnchor.template = data.template;
-          console.log(`[WorkerAnchorPersistence] Template extracted for track ${data.trackId}:`, !!data.template);
+          logger.info('WorkerAnchorPersistence', `Template extracted for track ${data.trackId}:`, !!data.template);
         }
         break;
       }
@@ -512,13 +513,20 @@ export class WorkerAnchorPersistence {
         break;
       }
 
+      case 'log':
+        // Forward worker logs to main logger with tag filtering
+        if (data.level && data.tag && data.args) {
+          logger[data.level](data.tag, ...data.args);
+        }
+        break;
+
       case 'error':
-        console.error('[WorkerAnchorPersistence] Worker error:', data.message);
+        logger.error('WorkerAnchorPersistence', 'Worker error:', data.message);
         // Don't switch to fallback on individual operation errors
         break;
 
       default:
-        console.warn('[WorkerAnchorPersistence] Unknown worker message type:', type);
+        logger.warn('WorkerAnchorPersistence', 'Unknown worker message type:', type);
     }
   }
 
@@ -543,7 +551,7 @@ export class WorkerAnchorPersistence {
       this.fallback.dispose();
     }
     
-    console.log('[WorkerAnchorPersistence] Disposed');
+    logger.info('WorkerAnchorPersistence', 'Disposed');
   }
 }
 

@@ -40,18 +40,9 @@ export class LLMClient {
       response_format: { type: "json_object" }
     });
 
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error('No response from OpenAI Chat API');
-    }
-
-    try {
-      const result = JSON.parse(content);
-      return this.validatePersona(result);
-    } catch {
-      console.warn('Failed to parse JSON response, creating fallback persona:', content);
-      return this.createFallbackPersona(visionResult);
-    }
+    const content = response.choices[0].message.content;
+    const result = JSON.parse(content);
+    return this.validatePersona(result);
   }
 
   buildPersonaPrompt(visionResult) {
@@ -77,43 +68,12 @@ Make it witty, distinctive, and based on the object's specific characteristics. 
   }
 
   validatePersona(result) {
-    const voiceStyles = ['cheerful', 'sassy', 'wise', 'gruff', 'bubbly', 'sarcastic', 'dramatic'];
-    
     return {
-      voiceStyle: voiceStyles.includes(result.voiceStyle) ? result.voiceStyle : 'cheerful',
-      tone: result.tone || 'friendly and upbeat',
-      quirks: Array.isArray(result.quirks) && result.quirks.length >= 3 ? result.quirks.slice(0, 3) : ['loves to chat', 'always optimistic', 'surprisingly wise'],
-      oneLiners: Array.isArray(result.oneLiners) && result.oneLiners.length >= 3 ? result.oneLiners.slice(0, 3) : ['Hey there!', 'Life is good!', 'See ya later!']
+      voiceStyle: result.voiceStyle,
+      tone: result.tone,
+      quirks: result.quirks.slice(0, 3),
+      oneLiners: result.oneLiners.slice(0, 3)
     };
   }
 
-  createFallbackPersona(visionResult) {
-    const categoryPersonas = {
-      water_bottle: {
-        voiceStyle: 'bubbly',
-        tone: 'excited and energetic',
-        quirks: ['loves being recycled', 'dreams of becoming a rocket ship', 'always half full, never half empty'],
-        oneLiners: ['Pop! Hey there, gorgeous!', 'I may be empty, but my spirit is full!', 'Remember to recycle me, will ya?']
-      },
-      coffee_mug: {
-        voiceStyle: 'wise',
-        tone: 'philosophical and warm',
-        quirks: ['has held many stories', 'believes in the power of pause', 'thinks steam is just liquid meditation'],
-        oneLiners: ['Greetings, fellow traveler.', 'Every sip is a moment of zen.', 'Until we meet again over coffee.']
-      },
-      beer_can: {
-        voiceStyle: 'sassy',
-        tone: 'confident and relaxed',
-        quirks: ['knows all the best jokes', 'has been to the wildest parties', 'believes life should be enjoyed'],
-        oneLiners: ['Well well, look who needs a friend!', "I've got stories that would blow your mind.", 'Stay cool, my friend.']
-      }
-    };
-
-    return categoryPersonas[visionResult.category] || {
-      voiceStyle: 'cheerful',
-      tone: 'friendly and curious',
-      quirks: ['loves meeting new people', 'always ready for an adventure', 'believes everything has a story'],
-      oneLiners: ['Well hello there!', "Isn't life fascinating?", 'Keep being awesome!']
-    };
-  }
 }

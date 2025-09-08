@@ -375,7 +375,7 @@ Detect object identity and generate a persona.
 
 ---
 
-## Phase 11 — Voice synthesis (ElevenLabs)
+## DONE Phase 11 — Voice synthesis (ElevenLabs)
 
 **Context**
 Give the persona a voice; avoid exposing keys.
@@ -396,7 +396,7 @@ ElevenLabs API, WebAudio.
 
 ---
 
-## Phase 12 — Lip-sync (52 morphs)
+## DONE Phase 12 — Lip-sync (52 morphs)
 
 **Context**
 Animate mouth shapes from audio in real time.

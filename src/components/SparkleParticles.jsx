@@ -1,6 +1,7 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { logger } from '../utils/logger.js';
 
 /**
  * Simple sparkle particle effect for stable anchors
@@ -100,10 +101,10 @@ export function SparkleParticles({
       
       // Log more frequently for debugging
       if (Math.random() < 0.1) { // 10% chance per frame
-        console.log('[SparkleParticles] Raw position:', position.x, position.y);
-        console.log('[SparkleParticles] Canvas dimensions used:', canvasWidth, 'x', canvasHeight);
-        console.log('[SparkleParticles] Position as % of canvas:', (position.x/canvasWidth*100).toFixed(1), '%, ', (position.y/canvasHeight*100).toFixed(1), '%');
-        console.log('[SparkleParticles] Calculated NDC position:', { ndcX, ndcY });
+        logger.info('SparkleParticles', 'Raw position:', position.x, position.y);
+        logger.info('SparkleParticles', 'Canvas dimensions used:', canvasWidth, 'x', canvasHeight);
+        logger.info('SparkleParticles', 'Position as % of canvas:', (position.x/canvasWidth*100).toFixed(1), '%, ', (position.y/canvasHeight*100).toFixed(1), '%');
+        logger.info('SparkleParticles', 'Calculated NDC position:', { ndcX, ndcY });
       }
       
       groupRef.current.position.set(ndcX, ndcY, -0.5);
@@ -118,21 +119,21 @@ export function SparkleParticles({
         <mesh key={i} position={particle.basePosition}>
           {/* Star-shaped sparkle using crossed planes */}
           <group>
-            {/* HUGE sparkle for testing - horizontal cross */}
+            {/* Horizontal cross */}
             <mesh>
-              <planeGeometry args={[0.2, 0.04]} />
+              <planeGeometry args={[0.08, 0.02]} />
               <meshBasicMaterial
-                color="red"
-                transparent={false}
+                color={color}
+                transparent={true}
                 side={THREE.DoubleSide}
               />
             </mesh>
-            {/* HUGE sparkle for testing - vertical cross */}
+            {/* Vertical cross */}
             <mesh rotation={[0, 0, Math.PI / 2]}>
-              <planeGeometry args={[0.2, 0.04]} />
+              <planeGeometry args={[0.08, 0.02]} />
               <meshBasicMaterial
-                color="red"
-                transparent={false}
+                color={color}
+                transparent={true}
                 side={THREE.DoubleSide}
               />
             </mesh>
@@ -147,26 +148,29 @@ export function SparkleParticles({
  * Sparkle manager that handles multiple sparkle effects
  */
 export function SparkleManager({ anchors = [] }) {
-  const stableAnchors = anchors.filter(anchor => anchor.state === 'stable');
+  // Show sparkles for tracking and stable anchors (not just stable)
+  const trackingAnchors = anchors.filter(anchor => 
+    anchor.state === 'stable' || anchor.state === 'tracking'
+  );
   
   // Debug: temporarily show sparkles for ALL anchors to test visibility  
-  const debugShowAllAnchors = true; // Enable for positioning test
-  const anchorsToRender = debugShowAllAnchors ? anchors : stableAnchors;
+  const debugShowAllAnchors = true; // Enabled - show sparkles for all states to debug
+  const anchorsToRender = debugShowAllAnchors ? anchors : trackingAnchors;
   
   // Debug logging
   if (anchors.length > 0) {
-    console.log('[SparkleManager] Total anchors:', anchors.length);
-    console.log('[SparkleManager] Stable anchors:', stableAnchors.length);
-    console.log('[SparkleManager] Debug mode - rendering for all anchors:', debugShowAllAnchors);
+    logger.info('SparkleManager', 'Total anchors:', anchors.length);
+    logger.info('SparkleManager', 'Tracking anchors:', trackingAnchors.length);
+    logger.info('SparkleManager', 'Debug mode - rendering for all anchors:', debugShowAllAnchors);
     anchors.forEach(anchor => {
-      console.log(`[SparkleManager] Anchor ${anchor.id}: state=${anchor.state}, position=`, anchor.screenPosition);
+      logger.info('SparkleManager', `Anchor ${anchor.id}: state=${anchor.state}, position=`, anchor.screenPosition);
     });
   }
   
   return (
     <>
       {anchorsToRender.map((anchor) => {
-        console.log(`[SparkleManager] Rendering sparkles for anchor ${anchor.id} at position:`, anchor.screenPosition);
+        logger.info('SparkleManager', `Rendering sparkles for anchor ${anchor.id} at position:`, anchor.screenPosition);
         return (
           <SparkleParticles
             key={anchor.id}

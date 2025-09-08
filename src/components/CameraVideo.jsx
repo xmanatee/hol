@@ -7,7 +7,7 @@ const CameraVideo = forwardRef(({ isVisible = true, style = {}, ...props }, ref)
       className={`camera-video fixed top-0 left-0 w-screen h-screen object-cover z-10 ${
         isVisible ? 'block' : 'hidden'
       }`}
-      style={{ transform: 'scaleX(-1)', transformOrigin: 'center', ...style }}
+      style={style}
       playsInline
       muted
       autoPlay

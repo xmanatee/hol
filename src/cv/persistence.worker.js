@@ -1,5 +1,12 @@
 /* global cv */
 
+// Message-based logger for worker context - forwards to main thread
+const log = {
+  info: (tag, ...args) => postMessage({ type: 'log', level: 'info', tag, args }),
+  error: (tag, ...args) => postMessage({ type: 'log', level: 'error', tag, args }),
+  warn: (tag, ...args) => postMessage({ type: 'log', level: 'warn', tag, args })
+};
+
 let cvLoaded = false;
 
 // Persistence-specific constants
@@ -13,13 +20,13 @@ self.onmessage = async (e) => {
 
   if (type === 'initialize') {
     try {
-      console.log('[PersistenceWorker] Loading OpenCV.js');
+      log.info('PersistenceWorker', 'Loading OpenCV.js');
       
       // Set up Module object BEFORE loading OpenCV.js
       self.Module = {
         onRuntimeInitialized: () => {
           cvLoaded = true;
-          console.log('[PersistenceWorker] OpenCV.js runtime initialized');
+          log.info('PersistenceWorker', 'OpenCV.js runtime initialized');
           self.postMessage({ type: 'ready' });
         }
       };
@@ -33,7 +40,7 @@ self.onmessage = async (e) => {
       loadOpenCV(self.Module);
       
     } catch (err) {
-      console.error('[PersistenceWorker] Initialization failed:', err);
+      log.error('PersistenceWorker', 'Initialization failed:', err);
       self.postMessage({ type: 'error', message: 'Initialization failed: ' + err.message });
     }
     return;
@@ -59,17 +66,17 @@ self.onmessage = async (e) => {
         handleAttemptReacquisition(e.data);
         break;
       default:
-        console.warn('[PersistenceWorker] Unknown message type:', type);
+        log.warn('PersistenceWorker', 'Unknown message type:', type);
     }
   } catch (err) {
-    console.error('[PersistenceWorker] Operation failed:', err);
+    log.error('PersistenceWorker', 'Operation failed:', err);
     self.postMessage({ type: 'error', message: 'Operation failed: ' + err.message });
   }
 };
 
 function handleInitializeROI({ trackId, imageData, bbox }) {
   try {
-    console.log('[PersistenceWorker] Initializing ROI for track', trackId);
+    log.info('PersistenceWorker', 'Initializing ROI for track', trackId);
     
     const mat = cv.matFromImageData(convertImageData(imageData));
     const gray = new cv.Mat();
@@ -109,7 +116,7 @@ function handleInitializeROI({ trackId, imageData, bbox }) {
       ]);
     }
 
-    console.log(`[PersistenceWorker] Initialized ${points.length} flow points for track ${trackId}`);
+    log.info('PersistenceWorker', `Initialized ${points.length} flow points for track ${trackId}`);
 
     // Cleanup
     corners.delete();
@@ -124,14 +131,14 @@ function handleInitializeROI({ trackId, imageData, bbox }) {
       roiBounds: bbox
     });
   } catch (error) {
-    console.error('[PersistenceWorker] ROI initialization failed:', error);
+    log.error('PersistenceWorker', 'ROI initialization failed:', error);
     self.postMessage({ type: 'error', message: 'ROI initialization failed: ' + error.message });
   }
 }
 
 function handleUpdateOpticalFlow({ trackId, prevImageData, currImageData, flowPoints }) {
   try {
-    console.log(`[PersistenceWorker] Updating optical flow for track ${trackId} with ${flowPoints.length} points`);
+    log.info('PersistenceWorker', `Updating optical flow for track ${trackId} with ${flowPoints.length} points`);
     
     const prevMat = cv.matFromImageData(convertImageData(prevImageData));
     const currMat = cv.matFromImageData(convertImageData(currImageData));
@@ -177,7 +184,7 @@ function handleUpdateOpticalFlow({ trackId, prevImageData, currImageData, flowPo
       }
     }
 
-    console.log(`[PersistenceWorker] Flow updated: ${goodPoints.length}/${flowPoints.length} points tracked`);
+    log.info('PersistenceWorker', `Flow updated: ${goodPoints.length}/${flowPoints.length} points tracked`);
 
     // Cleanup
     prevPts.delete();
@@ -195,14 +202,14 @@ function handleUpdateOpticalFlow({ trackId, prevImageData, currImageData, flowPo
       flowPoints: goodPoints
     });
   } catch (error) {
-    console.error('[PersistenceWorker] Optical flow update failed:', error);
+    log.error('PersistenceWorker', 'Optical flow update failed:', error);
     self.postMessage({ type: 'error', message: 'Optical flow update failed: ' + error.message });
   }
 }
 
 function handleExtractTemplate({ trackId, imageData, bbox }) {
   try {
-    console.log('[PersistenceWorker] Extracting template for track', trackId);
+    log.info('PersistenceWorker', 'Extracting template for track', trackId);
     
     const mat = cv.matFromImageData(convertImageData(imageData));
     const gray = new cv.Mat();
@@ -236,7 +243,7 @@ function handleExtractTemplate({ trackId, imageData, bbox }) {
       // Convert descriptors to array
       const descriptorData = Array.from(descriptors.data);
       
-      console.log(`[PersistenceWorker] Extracted template with ${descriptors.rows} ORB features for track ${trackId}`);
+      log.info('PersistenceWorker', `Extracted template with ${descriptors.rows} ORB features for track ${trackId}`);
 
       self.postMessage({
         type: 'templateExtracted',
@@ -250,7 +257,7 @@ function handleExtractTemplate({ trackId, imageData, bbox }) {
         }
       });
     } else {
-      console.log(`[PersistenceWorker] No features found for template extraction of track ${trackId}`);
+      log.warn('PersistenceWorker', `No features found for template extraction of track ${trackId}`);
       self.postMessage({
         type: 'templateExtracted',
         trackId,
@@ -266,14 +273,14 @@ function handleExtractTemplate({ trackId, imageData, bbox }) {
     gray.delete();
     mat.delete();
   } catch (error) {
-    console.error('[PersistenceWorker] Template extraction failed:', error);
+    log.error('PersistenceWorker', 'Template extraction failed:', error);
     self.postMessage({ type: 'error', message: 'Template extraction failed: ' + error.message });
   }
 }
 
 function handleAttemptReacquisition({ trackId, currentImageData, template }) {
   try {
-    console.log('[PersistenceWorker] Attempting reacquisition for track', trackId);
+    log.info('PersistenceWorker', 'Attempting reacquisition for track', trackId);
     
     if (!template || !template.descriptors) {
       self.postMessage({ type: 'reacquisitionResult', trackId, result: null });
@@ -292,7 +299,7 @@ function handleAttemptReacquisition({ trackId, currentImageData, template }) {
     orb.detectAndCompute(gray, new cv.Mat(), keypoints, descriptors);
 
     if (descriptors.rows < 10) {
-      console.log('[PersistenceWorker] Not enough features in current frame for matching');
+      log.warn('PersistenceWorker', 'Not enough features in current frame for matching');
       orb.delete();
       keypoints.delete();
       descriptors.delete();
@@ -316,7 +323,7 @@ function handleAttemptReacquisition({ trackId, currentImageData, template }) {
     matcher.match(templateDescriptors, descriptors, matches);
 
     if (matches.size() < MIN_ORB_INLIERS) {
-      console.log(`[PersistenceWorker] Not enough matches: ${matches.size()}/${MIN_ORB_INLIERS}`);
+      log.warn('PersistenceWorker', `Not enough matches: ${matches.size()}/${MIN_ORB_INLIERS}`);
       matcher.delete();
       matches.delete();
       templateDescriptors.delete();
@@ -347,7 +354,7 @@ function handleAttemptReacquisition({ trackId, currentImageData, template }) {
     }
 
     if (srcPoints.length < MIN_ORB_INLIERS) {
-      console.log(`[PersistenceWorker] Not enough good matches: ${srcPoints.length}/${MIN_ORB_INLIERS}`);
+      log.warn('PersistenceWorker', `Not enough good matches: ${srcPoints.length}/${MIN_ORB_INLIERS}`);
       // Cleanup and return null
       matcher.delete();
       matches.delete();
@@ -368,7 +375,7 @@ function handleAttemptReacquisition({ trackId, currentImageData, template }) {
     const homography = cv.findHomography(srcMat, dstMat, cv.RANSAC, 3.0);
     
     if (homography.empty()) {
-      console.log('[PersistenceWorker] Could not compute homography');
+      log.warn('PersistenceWorker', 'Could not compute homography');
       // Cleanup and return null
       srcMat.delete();
       dstMat.delete();
@@ -415,7 +422,7 @@ function handleAttemptReacquisition({ trackId, currentImageData, template }) {
       y2: Math.max(...transformedPoints.map(p => p[1]))
     };
 
-    console.log(`[PersistenceWorker] ORB reacquisition successful for track ${trackId}, inliers: ${srcPoints.length}`);
+    log.info('PersistenceWorker', `ORB reacquisition successful for track ${trackId}, inliers: ${srcPoints.length}`);
 
     // Cleanup
     srcMat.delete();
@@ -442,7 +449,7 @@ function handleAttemptReacquisition({ trackId, currentImageData, template }) {
       }
     });
   } catch (error) {
-    console.error('[PersistenceWorker] Reacquisition failed:', error);
+    log.error('PersistenceWorker', 'Reacquisition failed:', error);
     self.postMessage({ type: 'error', message: 'Reacquisition failed: ' + error.message });
   }
 }

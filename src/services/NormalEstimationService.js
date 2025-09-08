@@ -1,3 +1,5 @@
+import { logger } from '../utils/logger.js';
+
 export class NormalEstimationService {
   constructor() {
     this.worker = null;
@@ -23,12 +25,12 @@ export class NormalEstimationService {
 
   async initialize() {
     if (this.isReady) {
-      console.log('[NormalEstimationService] Already initialized, returning true');
+      logger.info('NormalEstimationService', 'Already initialized, returning true');
       return true;
     }
 
     if (this.initPromise) {
-      console.log('[NormalEstimationService] Initialization already in progress, waiting...');
+      logger.info('NormalEstimationService', 'Initialization already in progress, waiting...');
       return this.initPromise;
     }
 
@@ -42,7 +44,7 @@ export class NormalEstimationService {
       };
 
       this.worker.onerror = (error) => {
-        console.error('[NormalEstimationService] Worker error:', error);
+        logger.error('NormalEstimationService', 'Worker error:', error);
         this._notifyListeners('error', { error: error.message });
       };
 
@@ -69,7 +71,7 @@ export class NormalEstimationService {
 
       return this.initPromise;
     } catch (err) {
-      console.error('[NormalEstimationService] Initialization error:', err);
+      logger.error('NormalEstimationService', 'Initialization error:', err);
       throw err;
     }
   }
@@ -112,7 +114,7 @@ export class NormalEstimationService {
       case 'ready':
         this.isReady = true;
         this._notifyListeners('ready');
-        console.log('[NormalEstimationService] Ready');
+        logger.info('NormalEstimationService', 'Ready');
         break;
 
       case 'normal':
@@ -128,20 +130,26 @@ export class NormalEstimationService {
       case 'error':
         this.processing = false;
         this._notifyListeners('error', { error: data.message });
-        console.error('[NormalEstimationService] Estimation error:', data.message);
+        logger.error('NormalEstimationService', 'Estimation error:', data.message);
         break;
 
       case 'log':
-        console.log('[NormalEstimationService] Worker:', data.message);
+        // Forward worker logs to main logger with tag filtering
+        if (data.level && data.tag && data.args) {
+          logger[data.level](data.tag, ...data.args);
+        } else if (data.message) {
+          // Legacy format support
+          logger.info('NormalEstimationService', 'Worker:', data.message);
+        }
         break;
 
       case 'no_result':
         // Normal estimation worker found no valid result - this is expected behavior
-        console.log('[NormalEstimationService] No normal estimation result available');
+        logger.info('NormalEstimationService', 'No normal estimation result available');
         break;
 
       default:
-        console.warn('[NormalEstimationService] Unknown worker message type:', type);
+        logger.warn('NormalEstimationService', 'Unknown worker message type:', type);
     }
   }
 

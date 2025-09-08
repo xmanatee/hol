@@ -1,25 +1,22 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { CameraService } from '../services/CameraService.js';
 import { DetectionService } from '../services/DetectionService.js';
-import { NormalEstimationService } from '../services/NormalEstimationService.js';
 import { AnchorManager } from '../services/AnchorManager.js';
 import { PersonalityService } from '../services/PersonalityService.js';
 import { TTSClient } from '../audio/ttsClient.js';
 import { useHudMetrics } from './useHudMetrics.js';
+import { logger } from '../utils/logger.js';
 
 export const useCameraSystem = (config = {}) => {
   // Services
   const cameraServiceRef = useRef(new CameraService());
   const detectionServiceRef = useRef(new DetectionService());
-  const normalServiceRef = useRef(new NormalEstimationService());
   const anchorManagerRef = useRef(new AnchorManager(config));
   const personalityServiceRef = useRef(new PersonalityService(config.personality));
   const ttsClientRef = useRef(new TTSClient(config.tts));
   const currentCanvasRef = useRef(null);
   const [_initialized, setInitialized] = useState(false);
-
-  // Normal history for jitter calculation
-  const normalHistoryRef = useRef([]);
+  const [cvLoaded, setCvLoaded] = useState(false);
 
   // State
   const [cameraState, setCameraState] = useState('idle');
@@ -27,14 +24,17 @@ export const useCameraSystem = (config = {}) => {
   const [detectionState, setDetectionState] = useState({
     isInitialized: false,
     isModelLoaded: false,
+    detectionEnabled: true,
     error: null,
     processingTime: 0,
     lastDetections: null
   });
-  const [anchorData, setAnchorData] = useState({
-    trackedObjects: [],
-    activeTrackId: null,
-    anchorStates: new Map()
+  const [anchorSystemState, setAnchorSystemState] = useState({
+    mode: 'detection', // 'detection' or 'anchor'
+    detections: [],
+    activeAnchor: null,
+    anchorState: null,
+    initialized: false
   });
   
   const [personalityData, setPersonalityData] = useState({
@@ -54,16 +54,115 @@ export const useCameraSystem = (config = {}) => {
 
   const { updateMetric } = useHudMetrics();
 
-  // Initialize services
+  // Load OpenCV.js (singleton pattern to prevent double loading)
   useEffect(() => {
+    const loadOpenCV = async () => {
+      try {
+        // Check if OpenCV is already loaded
+        if (typeof window.cv !== 'undefined' && window.cv.Mat) {
+          logger.info('CameraSystem', 'OpenCV.js already loaded');
+          setCvLoaded(true);
+          return;
+        }
+
+        // Check if already loading (prevent double loading)
+        if (window.__opencv_loading) {
+          logger.info('CameraSystem', 'OpenCV.js already loading, waiting...');
+          const waitForCV = () => {
+            if (typeof window.cv !== 'undefined' && window.cv.Mat) {
+              logger.info('CameraSystem', 'OpenCV.js loaded by another component');
+              setCvLoaded(true);
+            } else if (!window.__opencv_loading) {
+              // Loading failed, retry
+              loadOpenCV();
+            } else {
+              setTimeout(waitForCV, 100);
+            }
+          };
+          waitForCV();
+          return;
+        }
+
+        // Check if script already exists in DOM
+        const existingScript = document.querySelector('script[src="/opencv.js"]');
+        if (existingScript) {
+          logger.info('CameraSystem', 'OpenCV.js script already in DOM, waiting for load...');
+          const waitForCV = () => {
+            if (typeof window.cv !== 'undefined' && window.cv.Mat) {
+              logger.info('CameraSystem', 'OpenCV.js finished loading');
+              setCvLoaded(true);
+            } else {
+              setTimeout(waitForCV, 100);
+            }
+          };
+          waitForCV();
+          return;
+        }
+
+        logger.info('CameraSystem', 'Loading OpenCV.js');
+        window.__opencv_loading = true;
+        
+        // Load OpenCV.js via script tag
+        const script = document.createElement('script');
+        script.src = '/opencv.js';
+        script.async = true;
+        
+        script.onload = () => {
+          // Wait for cv to be available on window
+          let waitAttempts = 0;
+          const maxWaitAttempts = 100; // 10 seconds max
+          
+          const waitForCV = () => {
+            waitAttempts++;
+            if (typeof window.cv !== 'undefined' && window.cv.Mat) {
+              logger.info('CameraSystem', 'OpenCV.js loaded successfully');
+              window.__opencv_loading = false;
+              setCvLoaded(true);
+            } else if (waitAttempts < maxWaitAttempts) {
+              setTimeout(waitForCV, 100);
+            } else {
+              logger.error('CameraSystem', 'OpenCV.js failed to initialize - timeout after 10 seconds');
+              window.__opencv_loading = false;
+              setCvLoaded(false);
+            }
+          };
+          waitForCV();
+        };
+        
+        script.onerror = (error) => {
+          logger.error('CameraSystem', 'Failed to load OpenCV.js script:', error);
+          window.__opencv_loading = false;
+          setCvLoaded(false);
+        };
+        
+        document.head.appendChild(script);
+        
+      } catch (error) {
+        logger.error('CameraSystem', 'Failed to load OpenCV.js:', error);
+        window.__opencv_loading = false;
+      }
+    };
+
+    loadOpenCV();
+
+    // Cleanup on unmount
+    return () => {
+      // Don't remove script or cv object as it may be used by other components
+      // Just mark this component as no longer needing OpenCV
+    };
+  }, []);
+
+  // Initialize services after OpenCV is loaded
+  useEffect(() => {
+    if (!cvLoaded) return;
+
     let isMounted = true;
 
     const initializeServices = async () => {
       try {
-        // Initialize each service only if not already initialized (StrictMode compatibility)
         const detectionService = detectionServiceRef.current;
-        const normalService = normalServiceRef.current;
         const anchorManager = anchorManagerRef.current;
+        const { width, height } = videoDimensions;
         
         // Initialize detection service
         if (!detectionService.isInitialized) {
@@ -76,14 +175,9 @@ export const useCameraSystem = (config = {}) => {
           if (!isMounted) return;
         }
 
-        // Initialize other services
-        if (!normalService.isReady) {
-          await normalService.initialize();
-          if (!isMounted) return;
-        }
-
+        // Initialize anchor manager with OpenCV and camera parameters
         if (!anchorManager.initialized) {
-          await anchorManager.initialize();
+          await anchorManager.initialize(window.cv, width, height);
           if (!isMounted) return;
         }
 
@@ -92,12 +186,18 @@ export const useCameraSystem = (config = {}) => {
         await ttsClient.initialize();
 
         if (isMounted) {
-          console.log('[CameraSystem] All services initialized successfully');
-          setDetectionState(prev => ({ ...prev, isInitialized: true, isModelLoaded: detectionService.isModelLoaded }));
+          logger.info('CameraSystem', 'All services initialized successfully');
+          setDetectionState(prev => ({ 
+            ...prev, 
+            isInitialized: true, 
+            isModelLoaded: detectionService.isModelLoaded,
+            detectionEnabled: detectionService.isDetectionEnabled()
+          }));
+          setAnchorSystemState(prev => ({ ...prev, initialized: true }));
           setInitialized(true);
         }
       } catch (error) {
-        console.error('[CameraSystem] Service initialization failed:', error);
+        logger.error('CameraSystem', 'Service initialization failed:', error);
         setDetectionState(prev => ({ ...prev, error: error.message }));
       }
     };
@@ -106,16 +206,14 @@ export const useCameraSystem = (config = {}) => {
 
     return () => {
       isMounted = false;
-      // Note: Don't dispose ref-based services here as they persist across StrictMode remounts
     };
-  }, []);
+  }, [cvLoaded, videoDimensions]);
 
   // Set up service listeners
   useEffect(() => {
     const cameraService = cameraServiceRef.current;
     const detectionService = detectionServiceRef.current;
     const anchorManager = anchorManagerRef.current;
-    const normalService = normalServiceRef.current;
 
     // Camera service listeners
     const removeCameraListener = cameraService.addListener({
@@ -130,73 +228,52 @@ export const useCameraSystem = (config = {}) => {
     // Detection service listeners
     const removeDetectionListener = detectionService.addListener({
       onInitialized: () => {
-        console.log('[CameraSystem] Detection service initialized');
+        logger.info('CameraSystem', 'Detection service initialized');
         setDetectionState(prev => ({ ...prev, isInitialized: true }));
       },
       onModelLoaded: () => {
-        console.log('[CameraSystem] Detection model loaded');
+        logger.info('CameraSystem', 'Detection model loaded');
         setDetectionState(prev => ({ ...prev, isModelLoaded: true }));
       },
       onDetections: ({ detections, processingTime }) => {
-        console.log('[CameraSystem] Received detections:', detections.length);
+        logger.info('CameraSystem', 'Received detections:', detections.length);
         setDetectionState(prev => ({ ...prev, processingTime, lastDetections: detections }));
         updateMetric('Detection amortized cost', processingTime);
       },
       onError: ({ error }) => {
-        console.error('[CameraSystem] Detection error:', error);
+        logger.error('CameraSystem', 'Detection error:', error);
         setDetectionState(prev => ({ ...prev, error }));
-      }
-    });
-
-    // Normal estimation service listeners
-    const removeNormalListener = normalService.addListener({
-      onNormal: ({ normal, confidence, method }) => {
-        console.log('[CameraSystem] Normal estimated:', normal, 'confidence:', confidence, 'method:', method);
-        
-        // Validate normal data before processing
-        if (!normal || typeof normal !== 'object' || typeof normal.x !== 'number' || typeof normal.y !== 'number' || typeof normal.z !== 'number') {
-          console.warn('[CameraSystem] Invalid normal data received:', normal);
-          return;
-        }
-        
-        anchorManager.updateNormal(normal);
-        updateMetric('Mode confidence', method === 'planar' ? 'Planar' : 'Cylindrical');
-        
-        // Calculate normal jitter (Phase 5 metric)
-        const history = normalHistoryRef.current;
-        history.push({ normal, timestamp: performance.now() });
-        
-        // Keep only last 1 second of history
-        const oneSecondAgo = performance.now() - 1000;
-        normalHistoryRef.current = history.filter(entry => entry.timestamp > oneSecondAgo);
-        
-        // Calculate jitter if we have enough history
-        if (normalHistoryRef.current.length >= 5) {
-          const normals = normalHistoryRef.current.map(entry => entry.normal);
-          const meanNormal = {
-            x: normals.reduce((sum, n) => sum + n.x, 0) / normals.length,
-            y: normals.reduce((sum, n) => sum + n.y, 0) / normals.length,
-            z: normals.reduce((sum, n) => sum + n.z, 0) / normals.length
-          };
-          
-          const angleDiffs = normals.map(n => {
-            const dot = n.x * meanNormal.x + n.y * meanNormal.y + n.z * meanNormal.z;
-            return Math.acos(Math.max(-1, Math.min(1, dot))) * 180 / Math.PI; // Convert to degrees
-          });
-          
-          const jitterStd = Math.sqrt(angleDiffs.reduce((sum, diff) => sum + diff * diff, 0) / angleDiffs.length);
-          updateMetric('Normal jitter', jitterStd);
-        }
-      },
-      onError: ({ error }) => {
-        console.error('[CameraSystem] Normal estimation error:', error);
       }
     });
 
     // Anchor manager listeners
     const removeAnchorListener = anchorManager.addListener({
-      onAnchorUpdate: ({ trackedObjects, activeTrackId, anchorStates }) => {
-        setAnchorData({ trackedObjects, activeTrackId, anchorStates });
+      onAnchorUpdate: (state) => {
+        setAnchorSystemState(state);
+        
+        // Update metrics based on anchor state
+        if (state.anchorState) {
+          const { metrics } = state.anchorState;
+          if (metrics) {
+            updateMetric('Keypoint count', metrics.keypointCount || 0);
+            updateMetric('Tracking success rate', ((metrics.trackingSuccessRate || 0) * 100).toFixed(1) + '%');
+            updateMetric('Homography inliers', metrics.homographyInliers || 0);
+            updateMetric('Processing time', (metrics.processingTime || 0).toFixed(2) + ' ms');
+            
+            if (metrics.templateQuality) {
+              updateMetric('Template quality', (metrics.templateQuality * 100).toFixed(1) + '%');
+            }
+          }
+          
+          // Update anchor stability metrics
+          if (state.anchorState.normal) {
+            updateMetric('Surface normal', `[${state.anchorState.normal.x.toFixed(2)}, ${state.anchorState.normal.y.toFixed(2)}, ${state.anchorState.normal.z.toFixed(2)}]`);
+          }
+          
+          updateMetric('Anchor state', state.anchorState.state || 'inactive');
+        }
+        
+        updateMetric('System mode', state.mode);
       }
     });
 
@@ -204,11 +281,11 @@ export const useCameraSystem = (config = {}) => {
     const personalityService = personalityServiceRef.current;
     const removePersonalityListener = personalityService.addListener({
       onPersonalityStart: ({ requestId }) => {
-        console.log('[CameraSystem] Personality generation started for request:', requestId);
+        logger.info('CameraSystem', 'Personality generation started for request:', requestId);
         setPersonalityData(prev => ({ ...prev, isProcessing: true, error: null }));
       },
       onPersonalityGenerated: ({ persona, rtt, success, error }) => {
-        console.log('[CameraSystem] Personality generated:', { persona, rtt, success });
+        logger.info('CameraSystem', 'Personality generated:', { persona, rtt, success });
         setPersonalityData(prev => ({ 
           ...prev, 
           isProcessing: false, 
@@ -224,11 +301,11 @@ export const useCameraSystem = (config = {}) => {
     const ttsClient = ttsClientRef.current;
     const removeTTSListener = ttsClient.addListener({
       onSynthesisStart: ({ text, voiceStyle, requestId }) => {
-        console.log('[CameraSystem] TTS synthesis started:', { text, voiceStyle, requestId });
+        logger.info('CameraSystem', 'TTS synthesis started:', { text, voiceStyle, requestId });
         setTTSData(prev => ({ ...prev, isSynthesizing: true, error: null }));
       },
       onAudioStart: ({ duration, analyser, latencyToFirstAudio }) => {
-        console.log('[CameraSystem] TTS audio started, latency:', latencyToFirstAudio, 'ms');
+        logger.info('CameraSystem', 'TTS audio started, latency:', latencyToFirstAudio, 'ms');
         setTTSData(prev => ({ 
           ...prev, 
           isSynthesizing: false, 
@@ -240,20 +317,20 @@ export const useCameraSystem = (config = {}) => {
       },
       onAudioAnalysis: ({ energy, centroid, spectrum }) => {
         // Forward lip-sync data to lip-sync system (Phase 12)
-        // For now just update metrics
         updateMetric('Audio energy', energy);
         updateMetric('Audio centroid', centroid);
+        updateMetric('Current viseme', 'TBD'); // Will be updated by lip-sync system
       },
       onPlaybackComplete: () => {
-        console.log('[CameraSystem] TTS playback completed');
+        logger.info('CameraSystem', 'TTS playback completed');
         setTTSData(prev => ({ ...prev, isPlaying: false, currentAnalyser: null }));
       },
       onSynthesisComplete: ({ text, voiceStyle, latency }) => {
-        console.log('[CameraSystem] TTS synthesis completed:', { text, voiceStyle, latency });
+        logger.info('CameraSystem', 'TTS synthesis completed:', { text, voiceStyle, latency });
         updateMetric('TTS total latency', latency);
       },
       onError: ({ error }) => {
-        console.error('[CameraSystem] TTS error:', error);
+        logger.error('CameraSystem', 'TTS error:', error);
         setTTSData(prev => ({ ...prev, isSynthesizing: false, isPlaying: false, error }));
       }
     });
@@ -261,7 +338,6 @@ export const useCameraSystem = (config = {}) => {
     return () => {
       removeCameraListener();
       removeDetectionListener();
-      removeNormalListener();
       removeAnchorListener();
       removePersonalityListener();
       removeTTSListener();
@@ -286,31 +362,58 @@ export const useCameraSystem = (config = {}) => {
     return detectionServiceRef.current.detectObjects(imageData);
   }, []);
 
-  // Anchor controls
+  // Anchor system controls
   const processDetections = useCallback((detections, imageData) => {
-    return anchorManagerRef.current.processDetections(detections, imageData);
-  }, []);
+    if (anchorSystemState.mode === 'detection') {
+      return anchorManagerRef.current.processDetections(detections, imageData);
+    }
+    return [];
+  }, [anchorSystemState.mode]);
 
-  const processWithoutDetections = useCallback((imageData) => {
-    return anchorManagerRef.current.processWithoutDetections(imageData);
-  }, []);
+  const updateAnchor = useCallback((imageData) => {
+    if (anchorSystemState.mode === 'anchor') {
+      return anchorManagerRef.current.updateAnchor(imageData);
+    }
+    return { success: false, reason: 'Not in anchor mode' };
+  }, [anchorSystemState.mode]);
 
-  const selectTrack = useCallback((trackId) => {
-    anchorManagerRef.current.selectTrack(trackId);
-  }, []);
+  const createAnchorFromTap = useCallback(async (tapPosition, imageData) => {
+    try {
+      const result = await anchorManagerRef.current.createAnchorFromTap(tapPosition, imageData);
+      
+      if (result.success) {
+        // Disable detection when anchor is created
+        detectionServiceRef.current.setDetectionEnabled(false);
+        setDetectionState(prev => ({ ...prev, detectionEnabled: false }));
+        
+        updateMetric('Anchor created', `${result.keypoints} keypoints, quality: ${result.quality.toFixed(2)}`);
+      }
+      
+      return result;
+    } catch (error) {
+      logger.error('CameraSystem', 'Failed to create anchor:', error);
+      throw error;
+    }
+  }, [updateMetric]);
 
-  const clearActiveTrack = useCallback(() => {
-    anchorManagerRef.current.clearActiveTrack();
-  }, []);
+  const clearAnchor = useCallback(() => {
+    anchorManagerRef.current.clearAnchor();
+    
+    // Re-enable detection when returning to detection mode
+    detectionServiceRef.current.setDetectionEnabled(true);
+    setDetectionState(prev => ({ ...prev, detectionEnabled: true }));
+    
+    updateMetric('Anchor cleared', 'Returned to detection mode');
+  }, [updateMetric]);
 
-  const findTrackAtPosition = useCallback((position) => {
-    return anchorManagerRef.current.findTrackAtPosition(anchorData.trackedObjects, position);
-  }, [anchorData.trackedObjects]);
+  const findDetectionAtPosition = useCallback((position) => {
+    if (anchorSystemState.mode === 'detection') {
+      return anchorManagerRef.current.findDetectionAtPosition(position);
+    }
+    return null;
+  }, [anchorSystemState.mode]);
 
-  // Normal estimation
-  const estimateNormal = useCallback((imageData, bbox, cameraMatrix) => {
-    return normalServiceRef.current.estimateNormal(imageData, bbox, cameraMatrix);
-  }, []);
+  // Legacy compatibility - normal estimation is now handled internally
 
   // Personality generation
   const generatePersonality = useCallback((imageData, bbox) => {
@@ -331,10 +434,10 @@ export const useCameraSystem = (config = {}) => {
       const greeting = personalityData.currentPersona.oneLiners[0]; // First one-liner is greeting
       const voiceStyle = personalityData.currentPersona.voiceStyle || 'cheerful';
       
-      console.log('[CameraSystem] Speaking greeting:', greeting, 'with voice style:', voiceStyle);
+      logger.info('CameraSystem', 'Speaking greeting:', greeting, 'with voice style:', voiceStyle);
       return await synthesizeSpeech(greeting, voiceStyle);
     } else {
-      console.warn('[CameraSystem] No persona available for greeting');
+      logger.warn('CameraSystem', 'No persona available for greeting');
     }
   }, [personalityData.currentPersona, synthesizeSpeech]);
 
@@ -362,15 +465,15 @@ export const useCameraSystem = (config = {}) => {
     cameraState,
     videoDimensions,
     detectionState,
-    anchorData,
+    anchorSystemState, // New unified anchor system state
     personalityData,
     ttsData,
+    cvLoaded, // OpenCV loading state
 
     // Services refs for direct access if needed
     services: {
       camera: cameraServiceRef.current,
       detection: detectionServiceRef.current,
-      normal: normalServiceRef.current,
       anchor: anchorManagerRef.current,
       personality: personalityServiceRef.current,
       tts: ttsClientRef.current
@@ -384,15 +487,18 @@ export const useCameraSystem = (config = {}) => {
     // Detection controls
     detectObjects,
 
-    // Anchor controls
+    // New image-based anchor controls
     processDetections,
-    processWithoutDetections,
-    selectTrack,
-    clearActiveTrack,
-    findTrackAtPosition,
+    updateAnchor,
+    createAnchorFromTap,
+    clearAnchor,
+    findDetectionAtPosition,
 
-    // Normal estimation
-    estimateNormal,
+    // Legacy compatibility methods (deprecated)
+    processWithoutDetections: updateAnchor, // Maps to updateAnchor for compatibility
+    selectTrack: createAnchorFromTap, // Legacy - use createAnchorFromTap instead
+    clearActiveTrack: clearAnchor, // Maps to clearAnchor
+    findTrackAtPosition: findDetectionAtPosition, // Maps to findDetectionAtPosition
 
     // Personality generation
     generatePersonality,

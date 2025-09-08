@@ -3,6 +3,7 @@ import { useRef, useEffect, useState } from 'react'
 import * as THREE from 'three'
 import { SparkleManager } from '../components/SparkleParticles.jsx'
 import HeadAnchor from '../components/organisms/HeadAnchor.jsx'
+import { logger } from '../utils/logger.js'
 
 // Axis gizmo component for testing alignment
 const AxisGizmo = () => {
@@ -58,14 +59,14 @@ const AxisGizmo = () => {
 
 
 
-const OverlayScene = ({ width, height, anchors = [] }) => {
+const OverlayScene = ({ width, height, anchors = [], isAgentSpeaking = false, hiddenMeshes = new Set(), manualRotation = { x: 0, y: 0, z: 0 }, onMeshNamesDiscovered = () => {} }) => {
   const canvasRef = useRef()
   const [dpr, setDpr] = useState(1)
 
   // Debug logging
-  console.log('[OverlayScene] Rendering with:', { width, height, anchorsCount: anchors.length });
+  logger.info('OverlayScene', 'Rendering with:', { width, height, anchorsCount: anchors.length });
   anchors.forEach(anchor => {
-    console.log(`[OverlayScene] Anchor ${anchor.id}: ${anchor.state} at`, anchor.screenPosition);
+    logger.info('OverlayScene', `Anchor ${anchor.id}: ${anchor.state} at`, anchor.screenPosition);
   });
 
   // iPhone wide camera approximation
@@ -109,12 +110,10 @@ const OverlayScene = ({ width, height, anchors = [] }) => {
         style={{
           width: '100%',
           height: '100%',
-          transform: 'scaleX(-1)',
-          transformOrigin: 'center',
           pointerEvents: 'none'
         }}
         onCreated={(state) => {
-          console.log('[OverlayScene] Canvas created successfully!');
+          logger.info('OverlayScene', 'Canvas created successfully!');
           state.gl.setClearColor(0x000000, 0.0); // Transparent background
           state.gl.alpha = true; // Enable alpha blending
         }}
@@ -144,6 +143,10 @@ const OverlayScene = ({ width, height, anchors = [] }) => {
           normal_camSpace={[0, 0, 1]} 
           depthHint={1.0}
           visible={true}
+          isAgentSpeaking={isAgentSpeaking}
+          hiddenMeshes={hiddenMeshes}
+          manualRotation={manualRotation}
+          onMeshNamesDiscovered={onMeshNamesDiscovered}
         />
       </Canvas>
       

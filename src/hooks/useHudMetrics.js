@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { logger } from '../utils/logger.js';
 
 const METRIC_DEFINITIONS = {
   // Phase 1
@@ -189,11 +190,11 @@ export const useHudMetrics = () => {
 
   const updateMetric = useCallback((name, value) => {
     if (!METRIC_DEFINITIONS[name]) {
-      console.warn('[HudMetrics] Unknown metric:', name);
+      logger.warn('HudMetrics', 'Unknown metric:', name);
       return;
     }
 
-    // Debug: console.log('[HudMetrics] Updating metric:', name, '=', value);
+    // Debug: logger.info('HudMetrics', 'Updating metric:', name, '=', value);
     setMetrics((prevMetrics) => {
       const definition = METRIC_DEFINITIONS[name];
       const isRed = definition.isRed(value);

@@ -1,5 +1,12 @@
 /* global cv */
 
+// Message-based logger for worker context - forwards to main thread
+const log = {
+  info: (tag, ...args) => postMessage({ type: 'log', level: 'info', tag, args }),
+  error: (tag, ...args) => postMessage({ type: 'log', level: 'error', tag, args }),
+  warn: (tag, ...args) => postMessage({ type: 'log', level: 'warn', tag, args })
+};
+
 let cvLoaded = false;
 
 // Load the normal estimation functions directly in the worker
@@ -10,13 +17,13 @@ self.onmessage = async (e) => {
 
   if (type === 'initialize' || type === 'load') {
     try {
-      console.log('[NormalWorker] Loading OpenCV.js');
+      log.info('NormalWorker', 'Loading OpenCV.js');
       
       // Set up Module object BEFORE loading OpenCV.js
       self.Module = {
         onRuntimeInitialized: () => {
           cvLoaded = true;
-          console.log('[NormalWorker] OpenCV.js runtime initialized');
+          log.info('NormalWorker', 'OpenCV.js runtime initialized');
           self.postMessage({ type: 'ready' });
         }
       };
@@ -30,7 +37,7 @@ self.onmessage = async (e) => {
       loadOpenCV(self.Module);
       
     } catch (err) {
-      console.error('[NormalWorker] Initialization failed:', err);
+      log.error('NormalWorker', 'Initialization failed:', err);
       self.postMessage({ type: 'error', message: 'Initialization failed: ' + err.message });
     }
     return;
@@ -49,11 +56,11 @@ self.onmessage = async (e) => {
         height: e.data.imageData.height
       };
       
-      console.log('[NormalWorker] Starting normal estimation for bbox:', e.data.bbox);
+      log.info('NormalWorker', 'Starting normal estimation for bbox:', e.data.bbox);
       const result = estimateNormal(imageData, e.data.bbox);
       
       if (result) {
-        console.log('[NormalWorker] Normal estimation successful:', result);
+        log.info('NormalWorker', 'Normal estimation successful:', result);
         self.postMessage({ 
           type: 'normal', 
           normal: result.normal_camSpace,
@@ -61,11 +68,11 @@ self.onmessage = async (e) => {
           method: result.method
         });
       } else {
-        console.log('[NormalWorker] No normal estimation result');
+        log.info('NormalWorker', 'No normal estimation result');
         self.postMessage({ type: 'no_result' });
       }
     } catch (err) {
-      console.error('[NormalWorker] Normal estimation error:', err);
+      log.error('NormalWorker', 'Normal estimation error:', err);
       self.postMessage({ type: 'error', message: 'Normal estimation failed: ' + err.message });
     }
   }
@@ -188,7 +195,7 @@ function estimateCylindricalNormal(grayMat) {
     
     return bestResult;
   } catch (err) {
-    console.error('[NormalWorker] Cylindrical estimation error:', err);
+    log.error('NormalWorker', 'Cylindrical estimation error:', err);
     return null;
   }
 }
