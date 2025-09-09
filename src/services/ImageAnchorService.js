@@ -35,6 +35,7 @@ export class ImageAnchorService {
     this.anchorState = 'inactive'; // inactive, initializing, tracking, stable, degraded, lost
     this.template = null;
     this.templateRegion = null;
+    this.templateCenter = null; // Reference center point for stable positioning
     this.currentPosition = null;
     this.currentNormal = null;
     this.lastFrameTime = 0;
@@ -152,21 +153,23 @@ export class ImageAnchorService {
         throw new Error(`Poor template quality: ${qualityAssessment.overall.toFixed(2)} (need > 0.25)`);
       }
 
-      // Initialize tracking with extracted keypoints
-      this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, gray);
-
-      // Store template for persistence system
+      // Store template center for persistence system (still needed for template matching)
       const templateCenter = {
         x: templateRegion.x + templateRegion.width / 2,
         y: templateRegion.y + templateRegion.height / 2
       };
-      
+
+      // Initialize tracking with extracted keypoints and tap position (not template center)
+      this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, gray, tapPosition);
+
+      // Store template for persistence system
       this.persistenceSystem.storeTemplate(this.cv, gray, templateRegion, templateCenter);
 
       // Store anchor state
       this.anchored = true;
       this.templateRegion = templateRegion;
-      this.currentPosition = { x: templateCenter.x, y: templateCenter.y, z: 0 };
+      this.templateCenter = templateCenter; // Store for template persistence (not positioning)
+      this.currentPosition = { x: tapPosition.x, y: tapPosition.y, z: 0 }; // Anchor at tap position
       this.anchorState = 'tracking';
       this.framesSinceRefresh = 0;
       
@@ -474,27 +477,25 @@ export class ImageAnchorService {
         });
       }
 
-      // Update position (prefer homography center, fallback to keypoint centroid)
+      // Update position using offset-based keypoint positioning
       let newPosition = null;
+      let positionMethod = 'unknown';
       
-      if (homographyResult?.success && homographyResult.center) {
+      // Always clean up homography matrix if it exists (used for normals, not position)
+      if (homographyResult?.homography && !homographyResult.homography.isDeleted()) {
+        homographyResult.homography.delete();
+      }
+      
+      // Use keypoint centroid + tap offset for anchor positioning
+      const anchorPosition = this.keypointTracker.getAnchorPosition();
+      if (anchorPosition) {
         newPosition = {
-          x: this.positionFilterX.filter(homographyResult.center.x, timestamp),
-          y: this.positionFilterY.filter(homographyResult.center.y, timestamp),
+          x: this.positionFilterX.filter(anchorPosition.x, timestamp),
+          y: this.positionFilterY.filter(anchorPosition.y, timestamp),
           z: 0
         };
-        logger.debug('ImageAnchor', 'Using homography center for position');
-      } else {
-        // Use keypoint tracker anchor position as fallback
-        const anchorPosition = this.keypointTracker.getAnchorPosition();
-        if (anchorPosition) {
-          newPosition = {
-            x: this.positionFilterX.filter(anchorPosition.x, timestamp),
-            y: this.positionFilterY.filter(anchorPosition.y, timestamp),
-            z: 0
-          };
-          logger.debug('ImageAnchor', 'Using keypoint centroid for position');
-        }
+        positionMethod = anchorPosition.method || 'keypoint_offset';
+        logger.debug('ImageAnchor', `Using keypoint offset positioning: ${positionMethod}`);
       }
       
       if (!newPosition) {
@@ -536,18 +537,19 @@ export class ImageAnchorService {
         logger.info('ImageAnchor', `Anchor state updated: ${prevState} -> ${this.anchorState} (quality: ${overallQuality.toFixed(2)})`);
       }
 
-      // Periodic keypoint refresh for quality maintenance
+      // Periodic keypoint refresh for quality maintenance - only if tracking is stable
       this.framesSinceRefresh++;
-      if (this.framesSinceRefresh >= this.refreshInterval && overallQuality > 0.7) {
+      if (this.framesSinceRefresh >= this.refreshInterval && 
+          overallQuality > 0.7 && 
+          this.anchorState === 'stable' &&
+          this.metrics.trackingSuccessRate > 0.7) {
         this._refreshKeypoints(grayImage);
         this.framesSinceRefresh = 0;
         logger.debug('ImageAnchor', 'Refreshed keypoints');
       }
 
-      const method = homographyResult?.success ? 'keypoint_homography' : 'keypoint_tracking';
-      
       logger.debug('ImageAnchor', 'Keypoint tracking successful:', {
-        method,
+        method: positionMethod,
         position: `(${newPosition.x.toFixed(1)}, ${newPosition.y.toFixed(1)})`,
         quality: overallQuality.toFixed(2),
         state: this.anchorState,
@@ -559,7 +561,7 @@ export class ImageAnchorService {
         position: this.currentPosition,
         normal: this.currentNormal,
         confidence: overallQuality,
-        method: method,
+        method: positionMethod,
         inliers: this.metrics.homographyInliers,
         state: this.anchorState
       };
@@ -720,6 +722,7 @@ export class ImageAnchorService {
       this.currentPosition = null;
       this.currentNormal = null;
       this.templateRegion = null;
+      this.templateCenter = null; // Clear template center reference
       this.framesSinceRefresh = 0;
       
       // Reset resilience counters

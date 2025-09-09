@@ -254,6 +254,48 @@ export class HomographyEstimator {
   }
 
   /**
+   * Transform template center using homography
+   * @param {cv.Mat} homography - Homography matrix
+   * @param {Object} templateCenter - Template center point {x, y}
+   * @returns {Object} - Transformed center point or null if failed
+   */
+  transformTemplateCenter(cv, homography, templateCenter) {
+    if (!homography || homography.empty() || !templateCenter) {
+      return null;
+    }
+
+    try {
+      // Create point matrix for transformation
+      const srcPoint = cv.matFromArray(1, 1, cv.CV_32FC2, [templateCenter.x, templateCenter.y]);
+      const dstPoint = new cv.Mat();
+
+      // Apply homography transformation
+      cv.perspectiveTransform(srcPoint, dstPoint, homography);
+
+      const transformedX = dstPoint.data32F[0];
+      const transformedY = dstPoint.data32F[1];
+
+      // Cleanup
+      srcPoint.delete();
+      dstPoint.delete();
+
+      // Validate transformed coordinates
+      if (isFinite(transformedX) && isFinite(transformedY)) {
+        return {
+          x: transformedX,
+          y: transformedY
+        };
+      }
+
+      return null;
+
+    } catch (error) {
+      logger.error('HomographyEstimator', 'Error transforming template center:', error);
+      return null;
+    }
+  }
+
+  /**
    * Get surface normal and pose from correspondences
    * @param {Array} correspondences - Keypoint correspondences
    * @returns {Object} - Complete pose estimation result

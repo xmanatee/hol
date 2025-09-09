@@ -1,65 +1,38 @@
-import { Canvas } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useRef, useEffect, useState } from 'react'
 import * as THREE from 'three'
 import HeadAnchor from '../components/organisms/HeadAnchor.jsx'
 import { logger } from '../utils/logger.js'
 
-// Axis gizmo component for testing alignment
-const AxisGizmo = () => {
-  return (
-    <group>
-      {/* X axis - Red */}
-      <line>
-        <bufferGeometry>
-          <bufferAttribute
-            attach="attributes-position"
-            count={2}
-            array={new Float32Array([0, 0, 0, 0.1, 0, 0])}
-            itemSize={3}
-          />
-        </bufferGeometry>
-        <lineBasicMaterial color="red" />
-      </line>
-      
-      {/* Y axis - Green */}
-      <line>
-        <bufferGeometry>
-          <bufferAttribute
-            attach="attributes-position"
-            count={2}
-            array={new Float32Array([0, 0, 0, 0, 0.1, 0])}
-            itemSize={3}
-          />
-        </bufferGeometry>
-        <lineBasicMaterial color="green" />
-      </line>
-      
-      {/* Z axis - Blue */}
-      <line>
-        <bufferGeometry>
-          <bufferAttribute
-            attach="attributes-position"
-            count={2}
-            array={new Float32Array([0, 0, 0, 0, 0, 0.1])}
-            itemSize={3}
-          />
-        </bufferGeometry>
-        <lineBasicMaterial color="blue" />
-      </line>
-      
-      {/* Center sphere for better visibility */}
-      <mesh>
-        <sphereGeometry args={[0.005]} />
-        <meshBasicMaterial color="white" />
-      </mesh>
-    </group>
-  )
+// Camera controller to orbit around the tiny GLTF model
+const CameraController = ({ manualRotation }) => {
+  const { camera } = useThree()
+  
+  useFrame(() => {
+    // Calculate camera position to orbit around the model at origin
+    // Model is tiny (~0.02-0.03 units), so camera needs to be close
+    const distance = 0.2 // Very close to see tiny model
+    const height = 0.05   // Slight elevation
+    
+    // Calculate orbital position based on manual rotations
+    const x = distance * Math.sin(manualRotation.y) * Math.cos(manualRotation.x)
+    const y = height + distance * Math.sin(manualRotation.x) * 0.5
+    const z = distance * Math.cos(manualRotation.y) * Math.cos(manualRotation.x)
+    
+    // Position camera
+    camera.position.set(x, y, z)
+    
+    // Always look at the model center (origin)
+    camera.lookAt(0, 0, 0)
+    
+    // Update camera matrix
+    camera.updateMatrixWorld()
+  })
+  
+  return null
 }
 
-
-
 const OverlayScene = ({ width, height, isAgentSpeaking = false, hiddenMeshes = new Set(), manualRotation = { x: 0, y: 0, z: 0 }, onMeshNamesDiscovered = () => {} }) => {
-  const canvasRef = useRef()
   const [dpr, setDpr] = useState(1)
 
   // Debug logging
@@ -114,21 +87,23 @@ const OverlayScene = ({ width, height, isAgentSpeaking = false, hiddenMeshes = n
           state.gl.alpha = true; // Enable alpha blending
         }}
         camera={{ 
-          position: [0, 0, 3], 
+          position: [0.1, 0.05, 0.1], // Initial position close to tiny model
           fov: fov,
           aspect: aspect,
-          near: near,
+          near: 0.001,  // Very close near plane for tiny model
           far: far
         }}
       >
-        {/* Enhanced lighting for model visibility */}
-        <ambientLight intensity={0.8} />
+        {/* Camera controller to orbit around tiny model */}
+        <CameraController manualRotation={manualRotation} />
         
-        {/* Multiple directional lights for better illumination */}
-        <directionalLight position={[1, 1, 1]} intensity={0.8} />
-        <directionalLight position={[-1, -1, -1]} intensity={0.4} />
-        <directionalLight position={[0, 0, 1]} intensity={0.6} />
+        {/* Enhanced lighting for tiny model visibility */}
+        <ambientLight intensity={1.2} />
         
+        {/* Multiple directional lights positioned for tiny model */}
+        <directionalLight position={[0.1, 0.1, 0.1]} intensity={0.8} />
+        <directionalLight position={[-0.1, -0.1, -0.1]} intensity={0.4} />
+        <directionalLight position={[0, 0, 0.1]} intensity={0.6} />
         
         {/* Sparkle effects removed - using 2D canvas sparkles instead */}
         

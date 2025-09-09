@@ -38,8 +38,9 @@ export class KeypointTracker {
    * Initialize tracking with template keypoints
    * @param {Array} keypoints - Array of keypoint objects {x, y, ...}
    * @param {cv.Mat} grayImage - Initial grayscale image
+   * @param {Object} tapPosition - User tap position {x, y} for anchor attachment
    */
-  initializeTracking(cv, keypoints, grayImage) {
+  initializeTracking(cv, keypoints, grayImage, tapPosition = null) {
     if (!this.initialized) {
       throw new Error('KeypointTracker not initialized');
     }
@@ -59,6 +60,25 @@ export class KeypointTracker {
       age: 0
     }));
 
+    // Calculate actual keypoint centroid (not geometric template center)
+    const xSum = this.trackedPoints.reduce((sum, pt) => sum + pt.original.x, 0);
+    const ySum = this.trackedPoints.reduce((sum, pt) => sum + pt.original.y, 0);
+    this.keypointCentroid = {
+      x: xSum / this.trackedPoints.length,
+      y: ySum / this.trackedPoints.length
+    };
+
+    // Calculate and store offset between tap position and keypoint centroid
+    if (tapPosition) {
+      this.tapOffset = {
+        x: tapPosition.x - this.keypointCentroid.x,
+        y: tapPosition.y - this.keypointCentroid.y
+      };
+    } else {
+      // No offset if no tap position provided
+      this.tapOffset = { x: 0, y: 0 };
+    }
+
     // Store reference frame
     if (this.previousGray) {
       this.previousGray.delete();
@@ -69,6 +89,8 @@ export class KeypointTracker {
     this.trackingAttempts = 0;
 
     logger.info('KeypointTracker', `Initialized tracking with ${this.trackedPoints.length} keypoints`);
+    logger.info('KeypointTracker', `Keypoint centroid: (${this.keypointCentroid.x.toFixed(1)}, ${this.keypointCentroid.y.toFixed(1)})`);
+    logger.info('KeypointTracker', `Tap offset: (${this.tapOffset.x.toFixed(1)}, ${this.tapOffset.y.toFixed(1)})`);
   }
 
   /**
@@ -389,20 +411,113 @@ export class KeypointTracker {
   }
 
   /**
-   * Get current anchor position (median of active keypoints)
+   * Get current anchor position using keypoint centroid + tap offset
+   * This provides stable positioning that doesn't drift when keypoints are lost asymmetrically
    */
   getAnchorPosition() {
     const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
     if (activePoints.length === 0) return null;
 
-    // Use median position for robustness
-    const xPositions = activePoints.map(pt => pt.current.x).sort((a, b) => a - b);
-    const yPositions = activePoints.map(pt => pt.current.y).sort((a, b) => a - b);
+    // Calculate current keypoint centroid
+    let currentCentroid = null;
 
+    // Try transformation-based approach first for more robust positioning
+    const transformation = this._estimateReferenceTransformation(activePoints);
+    
+    if (transformation) {
+      // Apply transformation to original keypoint centroid
+      const transformedCentroid = {
+        x: transformation.tx + transformation.scale * Math.cos(transformation.rotation) * this.keypointCentroid.x - transformation.scale * Math.sin(transformation.rotation) * this.keypointCentroid.y,
+        y: transformation.ty + transformation.scale * Math.sin(transformation.rotation) * this.keypointCentroid.x + transformation.scale * Math.cos(transformation.rotation) * this.keypointCentroid.y
+      };
+
+      currentCentroid = transformedCentroid;
+      
+      // Apply tap offset to get anchor position
+      const anchorPosition = {
+        x: currentCentroid.x + this.tapOffset.x,
+        y: currentCentroid.y + this.tapOffset.y,
+        confidence: transformation.confidence,
+        method: 'reference_transform_with_offset'
+      };
+      
+      return anchorPosition;
+    }
+
+    // Fallback: use robust weighted centroid of current keypoints
+    let weightedX = 0;
+    let weightedY = 0;
+    let totalWeight = 0;
+
+    for (const pt of activePoints) {
+      // Weight based on tracking quality (inverse of average error) and age
+      const avgError = pt.errorHistory.length > 0 ? 
+        pt.errorHistory.reduce((sum, err) => sum + err, 0) / pt.errorHistory.length : 
+        10;
+      const weight = Math.max(0.1, (1 / (1 + avgError)) * Math.min(pt.age, 10));
+      
+      weightedX += pt.current.x * weight;
+      weightedY += pt.current.y * weight;
+      totalWeight += weight;
+    }
+
+    currentCentroid = {
+      x: weightedX / totalWeight,
+      y: weightedY / totalWeight
+    };
+
+    // Apply tap offset to get anchor position
     return {
-      x: xPositions[Math.floor(xPositions.length / 2)],
-      y: yPositions[Math.floor(yPositions.length / 2)],
-      confidence: activePoints.length / this.trackedPoints.length
+      x: currentCentroid.x + this.tapOffset.x,
+      y: currentCentroid.y + this.tapOffset.y,
+      confidence: activePoints.length / this.trackedPoints.length,
+      method: 'weighted_centroid_with_offset'
+    };
+  }
+
+  /**
+   * Estimate transformation from original template to current tracked points
+   * Uses robust RANSAC-style consensus to handle outliers
+   */
+  _estimateReferenceTransformation(activePoints) {
+    if (activePoints.length < 3) return null;
+
+    // Calculate motion vectors from original to current positions
+    const motionVectors = activePoints.map(pt => ({
+      dx: pt.current.x - pt.original.x,
+      dy: pt.current.y - pt.original.y,
+      point: pt
+    }));
+
+    // Find consensus translation using median
+    const dxValues = motionVectors.map(mv => mv.dx).sort((a, b) => a - b);
+    const dyValues = motionVectors.map(mv => mv.dy).sort((a, b) => a - b);
+    
+    const consensusDx = dxValues[Math.floor(dxValues.length / 2)];
+    const consensusDy = dyValues[Math.floor(dyValues.length / 2)];
+
+    // Count inliers (points consistent with consensus motion)
+    const threshold = 10; // pixels
+    const inliers = motionVectors.filter(mv => 
+      Math.abs(mv.dx - consensusDx) < threshold && 
+      Math.abs(mv.dy - consensusDy) < threshold
+    );
+
+    const inlierRatio = inliers.length / motionVectors.length;
+    
+    if (inlierRatio < 0.4) {
+      return null; // Not enough consensus
+    }
+
+    // Simple similarity transformation (translation + scale + rotation)
+    // For now, assume mostly translation with small rotation/scale changes
+    return {
+      tx: consensusDx,
+      ty: consensusDy,
+      scale: 1.0, // Could be estimated from point distances
+      rotation: 0.0, // Could be estimated from point relationships
+      confidence: inlierRatio,
+      inlierCount: inliers.length
     };
   }
 
@@ -486,6 +601,26 @@ export class KeypointTracker {
    */
   refreshKeypoints(cv, currentGray, keypointDetector, region) {
     try {
+      // Validate inputs
+      if (!cv || !currentGray || !keypointDetector || !region) {
+        logger.warn('KeypointTracker', 'Invalid inputs for refreshKeypoints');
+        return false;
+      }
+
+      // Check if image is valid
+      if (currentGray.empty() || currentGray.cols === 0 || currentGray.rows === 0) {
+        logger.warn('KeypointTracker', 'Invalid image for keypoint refresh');
+        return false;
+      }
+
+      // Validate region bounds
+      if (region.x < 0 || region.y < 0 || 
+          region.x + region.width > currentGray.cols || 
+          region.y + region.height > currentGray.rows) {
+        logger.warn('KeypointTracker', 'Region out of bounds for keypoint refresh');
+        return false;
+      }
+
       const newKeypoints = keypointDetector.extractKeypoints(cv, currentGray, region);
       
       if (newKeypoints.keypoints.length >= 20) {
@@ -509,9 +644,13 @@ export class KeypointTracker {
         
         logger.info('KeypointTracker', `Refreshed tracking with ${this.trackedPoints.length} total points`);
         return true;
+      } else {
+        logger.debug('KeypointTracker', `Insufficient new keypoints for refresh: ${newKeypoints.keypoints.length}`);
       }
     } catch (error) {
-      logger.error('KeypointTracker', 'Failed to refresh keypoints:', error);
+      // Proper error handling for OpenCV errors
+      const errorMessage = typeof error === 'number' ? `OpenCV error code: ${error}` : error.message || 'Unknown error';
+      logger.error('KeypointTracker', 'Failed to refresh keypoints:', errorMessage);
     }
     
     return false;
@@ -524,6 +663,8 @@ export class KeypointTracker {
     }
     this.trackedPoints = [];
     this.trackingHistory = [];
+    this.keypointCentroid = null;
+    this.tapOffset = null;
     this.initialized = false;
   }
 }

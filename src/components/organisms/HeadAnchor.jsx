@@ -1,6 +1,6 @@
 import { useRef, useEffect, useMemo } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { GLTFLoader, DRACOLoader, KTX2Loader, MeshoptDecoder } from 'three-stdlib'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import * as THREE from 'three'
 import { useHeadLipSync } from '../../hooks/useLipSync.js'
 import { logger } from '../../utils/logger.js'
@@ -41,112 +41,29 @@ const HeadAnchor = ({
 
     // Configure GLTFLoader with extensions for proper loading
     const loader = new GLTFLoader()
-    
-    // Add GLTF extensions for complete compatibility
-    const dracoLoader = new DRACOLoader()
-    dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/')
-    loader.setDRACOLoader(dracoLoader)
-    
-    const ktx2Loader = new KTX2Loader()
-    ktx2Loader.setTranscoderPath('https://cdn.jsdelivr.net/gh/pmndrs/drei-assets/basis/')
-    loader.setKTX2Loader(ktx2Loader)
-    
-    loader.setMeshoptDecoder(MeshoptDecoder)
-    
-    logger.info('HeadAnchor', 'Loading GLTF with full extension support')
-    
-    loader.load('/3d/scene.gltf', (gltf) => {
-      logger.info('HeadAnchor', 'GLTF loaded successfully')
+
+    loader.load('/3d/untitled.gltf', (gltf) => {
       
-      // CRITICAL: Force complete matrix updates before adding to scene
-      logger.info('HeadAnchor', '=== FORCING MATRIX UPDATES ===')
-      gltf.scene.updateMatrix()
-      gltf.scene.updateMatrixWorld(true) // Force update entire hierarchy
-      
-      // Add the raw GLTF scene directly to Three.js scene (preserves all hierarchy)
+      // Add the GLTF scene to Three.js scene
       scene.add(gltf.scene)
       
-      // Force another matrix update after adding to scene
-      gltf.scene.updateMatrix()
-      gltf.scene.updateMatrixWorld(true)
+      // EXPLICIT MATRIX WORLD UPDATES (like three-gltf-viewer)
+      gltf.scene.updateMatrixWorld(true) // Force update with children
       
-      // Discover all mesh names and debug transforms
       const meshNames = []
       gltf.scene.traverse((child) => {
-        if (child.type === 'Mesh' || child.type === 'SkinnedMesh') {
-          meshNames.push(child.name)
-          logger.info('HeadAnchor', `Found mesh: ${child.name} (${child.type})`)
-          
-          // Find head mesh with morph targets for lip sync
-          if (child.morphTargetDictionary && child.morphTargetInfluences) {
-            modelCache.headMesh = child
-            logger.info('HeadAnchor', `Found head mesh with morph targets: ${child.name}`)
-          }
-        }
+        if (child.type !== 'Mesh' && child.type !== 'SkinnedMesh') return;
+
+        meshNames.push(child.name)
+        logger.info('HeadAnchor', `Found mesh: ${child.name} (${child.type})`)
         
-        // Debug transform data for eye-related objects
-        if (child.name.includes('eye') || child.name === 'Object_5' || child.name === 'Object_8' || 
-            child.name.includes('Eye') || child.name.includes('grp_eye')) {
-          
-          logger.info('HeadAnchor', `TRANSFORM_DEBUG_${child.name}`, {
-            type: child.type,
-            position: child.position.toArray(),
-            rotation: child.rotation.toArray(),
-            scale: child.scale.toArray(),
-            quaternion: child.quaternion.toArray(),
-            matrix: child.matrix.toArray().slice(0, 16),
-            matrixWorld: child.matrixWorld.toArray().slice(0, 16),
-            parentName: child.parent?.name || 'none',
-            hasChildren: child.children.length > 0,
-            childrenNames: child.children.map(c => c.name)
-          })
+        // Find head mesh with morph targets for lip sync
+        if (child.morphTargetDictionary && child.morphTargetInfluences) {
+          modelCache.headMesh = child
+          logger.info('HeadAnchor', `Found head mesh with morph targets: ${child.name}`)
         }
       })
-      
-      // After all transforms are logged, force one more update
-      logger.info('HeadAnchor', '=== FINAL MATRIX UPDATE ===')
-      gltf.scene.traverse((child) => {
-        child.updateMatrix()
-        child.updateMatrixWorld()
-      })
-      
-      // Verify eye positions after all matrix updates
-      logger.info('HeadAnchor', '=== EYE POSITION VERIFICATION AFTER MATRIX UPDATES ===')
-      gltf.scene.traverse((child) => {
-        if (child.name === 'Object_5' || child.name === 'Object_8') {
-          const worldPos = new THREE.Vector3()
-          child.getWorldPosition(worldPos)
-          
-          logger.info('HeadAnchor', `FINAL_EYE_POSITION_${child.name}`, {
-            localPosition: child.position.toArray(),
-            worldPosition: worldPos.toArray(),
-            parentName: child.parent?.name,
-            parentMatrix: child.parent?.matrix.toArray().slice(0, 16),
-            parentWorldMatrix: child.parent?.matrixWorld.toArray().slice(0, 16),
-            parentQuaternion: child.parent?.quaternion.toArray(),
-            parentRotation: child.parent?.rotation.toArray(),
-            matrixUpdatesApplied: true,
-            shouldBeCorrectNow: true
-          })
-          
-          // Additional parent hierarchy analysis
-          let parent = child.parent
-          let level = 0
-          while (parent && level < 5) {
-            logger.info('HeadAnchor', `PARENT_HIERARCHY_L${level}_${parent.name || 'unnamed'}`, {
-              position: parent.position.toArray(),
-              rotation: parent.rotation.toArray(), 
-              quaternion: parent.quaternion.toArray(),
-              scale: parent.scale.toArray(),
-              matrix: parent.matrix.toArray().slice(12, 15), // Translation part
-              worldMatrix: parent.matrixWorld.toArray().slice(12, 15) // World translation
-            })
-            parent = parent.parent
-            level++
-          }
-        }
-      })
-      
+
       // Store reference and mark as loaded
       modelCache.gltfScene = gltf.scene
       modelCache.isLoaded = true
@@ -196,24 +113,12 @@ const HeadAnchor = ({
     })
   }, [hiddenMeshes, modelCache.isLoaded, modelCache.gltfScene])
 
-  // Apply transforms and lip-sync animation
+  // Apply only lip-sync animation - NO model transforms
   useFrame(() => {
     if (!modelCache.isLoaded || !modelCache.gltfScene || !visible) return
     
-    // Apply top-level transforms to the whole GLTF model
-    const topLevelScale = 10 // Scale for visibility
-    const baseRotation = Math.PI / 2 // Face forward (90 degrees around X)
-    
-    // Set scale and rotation
-    modelCache.gltfScene.scale.set(topLevelScale, topLevelScale, topLevelScale)
-    modelCache.gltfScene.rotation.set(
-      baseRotation + manualRotation.x, 
-      manualRotation.y, 
-      manualRotation.z
-    )
-    
-    // Position in front of camera
-    modelCache.gltfScene.position.set(0, 0, -2)
+    // NO TRANSFORMS APPLIED TO GLTF SCENE - let it render naturally
+    // Model will appear at its original size (~0.02-0.03 units) and orientation
     
     // Apply lip-sync to head mesh if available
     if (modelCache.headMesh && modelCache.headMesh.morphTargetInfluences) {

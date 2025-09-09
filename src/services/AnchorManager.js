@@ -211,6 +211,14 @@ export class AnchorManager {
       logger.info('AnchorManager', `Anchor state changed: ${previousState} -> ${anchorServiceState.state}`);
     }
     
+    // Auto-switch to detection mode if anchor is permanently lost
+    if (this.mode === 'anchor' && anchorServiceState.state === 'lost' && 
+        anchorServiceState.metrics?.recoveryAttempts > 5) {
+      logger.warn('AnchorManager', 'Anchor permanently lost, automatically returning to detection mode');
+      this.clearAnchor();
+      return;
+    }
+    
     this._notifyUpdate();
   }
 
