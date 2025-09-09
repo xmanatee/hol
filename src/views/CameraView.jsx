@@ -457,15 +457,6 @@ const CameraView = () => {
         <OverlayScene
           width={videoDimensions?.width || 1280}
           height={videoDimensions?.height || 720}
-          anchors={anchorSystemState?.anchorState ? [{
-            id: 'main',
-            state: anchorSystemState.anchorState.state,
-            screenPosition: anchorSystemState.anchorState.position ? {
-              x: anchorSystemState.anchorState.position.x, 
-              y: anchorSystemState.anchorState.position.y
-            } : { x: 0, y: 0 },
-            color: anchorSystemState.anchorState.state === 'stable' ? '#FFD700' : '#FF6B6B'
-          }] : []}
           isAgentSpeaking={ttsData.isPlaying}
           hiddenMeshes={hiddenMeshes}
           manualRotation={manualRotation}

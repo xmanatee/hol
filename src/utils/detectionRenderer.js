@@ -59,7 +59,6 @@ const renderAnchorMode = (ctx, { anchor, anchorState }) => {
   let fillColor = '#ff0000'; // Red for tracking
   if (state === 'stable') {
     fillColor = '#ffd700'; // Gold for stable
-    drawSparkleEffect(ctx, { x1: centerX - 50, y1: centerY - 50, x2: centerX + 50, y2: centerY + 50 });
   } else if (state === 'initializing') {
     fillColor = '#ff8800'; // Orange for initializing
   } else if (state === 'lost') {
@@ -122,10 +121,7 @@ const renderLegacyMode = (ctx, {
     ctx.lineWidth = isActive ? 3 : 2;
     ctx.strokeRect(bbox.x1, bbox.y1, bbox.x2 - bbox.x1, bbox.y2 - bbox.y1);
     
-    // Draw stability indicators for active track
-    if (isActive && isStable) {
-      drawSparkleEffect(ctx, bbox);
-    }
+    // Stability indicators removed - using color only
     
     // Draw label
     drawTrackLabel(ctx, track, anchorState);
@@ -179,23 +175,6 @@ const drawAnchorInfo = (ctx, anchor, anchorState, centerX, centerY) => {
   });
 };
 
-const drawSparkleEffect = (ctx, bbox) => {
-  const centerX = (bbox.x1 + bbox.x2) / 2;
-  const centerY = (bbox.y1 + bbox.y2) / 2;
-  const time = performance.now() * 0.003;
-  
-  for (let i = 0; i < 6; i++) {
-    const angle = (i / 6) * Math.PI * 2 + time;
-    const radius = 20 + Math.sin(time * 2 + i) * 5;
-    const sparkleX = centerX + Math.cos(angle) * radius;
-    const sparkleY = centerY + Math.sin(angle) * radius;
-    
-    ctx.fillStyle = `rgba(255, 215, 0, ${0.7 + Math.sin(time * 4 + i) * 0.3})`;
-    ctx.beginPath();
-    ctx.arc(sparkleX, sparkleY, 2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-};
 
 const drawTrackLabel = (ctx, track, anchorState) => {
   const { bbox, id, confidence, className } = track;

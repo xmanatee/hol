@@ -1,7 +1,6 @@
 import { Canvas } from '@react-three/fiber'
 import { useRef, useEffect, useState } from 'react'
 import * as THREE from 'three'
-import { SparkleManager } from '../components/SparkleParticles.jsx'
 import HeadAnchor from '../components/organisms/HeadAnchor.jsx'
 import { logger } from '../utils/logger.js'
 
@@ -59,15 +58,12 @@ const AxisGizmo = () => {
 
 
 
-const OverlayScene = ({ width, height, anchors = [], isAgentSpeaking = false, hiddenMeshes = new Set(), manualRotation = { x: 0, y: 0, z: 0 }, onMeshNamesDiscovered = () => {} }) => {
+const OverlayScene = ({ width, height, isAgentSpeaking = false, hiddenMeshes = new Set(), manualRotation = { x: 0, y: 0, z: 0 }, onMeshNamesDiscovered = () => {} }) => {
   const canvasRef = useRef()
   const [dpr, setDpr] = useState(1)
 
   // Debug logging
-  logger.info('OverlayScene', 'Rendering with:', { width, height, anchorsCount: anchors.length });
-  anchors.forEach(anchor => {
-    logger.info('OverlayScene', `Anchor ${anchor.id}: ${anchor.state} at`, anchor.screenPosition);
-  });
+  logger.info('OverlayScene', 'Rendering with:', { width, height });
 
   // iPhone wide camera approximation
   const fov = 63
@@ -134,8 +130,7 @@ const OverlayScene = ({ width, height, anchors = [], isAgentSpeaking = false, hi
         <directionalLight position={[0, 0, 1]} intensity={0.6} />
         
         
-        {/* Sparkle effects for stable anchors */}
-        <SparkleManager anchors={anchors} />
+        {/* Sparkle effects removed - using 2D canvas sparkles instead */}
         
         {/* HeadAnchor in top left corner */}
         <HeadAnchor 
