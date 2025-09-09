@@ -316,6 +316,99 @@ const MeshControlsSection = ({ discoveredMeshes, hiddenMeshes, onMeshVisibilityC
   );
 };
 
+const MicrophoneSection = ({ 
+  microphoneMode, 
+  onToggleMicrophoneMode, 
+  voiceActivityThreshold, 
+  onVoiceActivityThresholdChange,
+  microphoneActive,
+  currentViseme,
+  audioEnergy,
+  isVoiceActive
+}) => {
+  return (
+    <div className="text-xs">
+      <div className="flex flex-col gap-2">
+        <label className="flex items-center text-gray-300">
+          <input
+            type="checkbox"
+            checked={microphoneMode}
+            onChange={(e) => onToggleMicrophoneMode?.(e.target.checked)}
+            className="mr-1.5"
+          />
+          Enable microphone mode
+        </label>
+        
+        {microphoneMode && (
+          <>
+            <div className="ml-4 p-2 bg-gray-800 border border-gray-600 rounded">
+              <div className="text-[10px] text-gray-400 mb-1">Voice Activity Threshold</div>
+              <input
+                type="range"
+                min="0.05"
+                max="0.5"
+                step="0.01"
+                value={voiceActivityThreshold}
+                onChange={(e) => onVoiceActivityThresholdChange?.(parseFloat(e.target.value))}
+                className="w-full h-1"
+              />
+              <div className="text-[10px] text-gray-300 text-center">
+                {(voiceActivityThreshold * 100).toFixed(0)}%
+              </div>
+            </div>
+
+            <div className="ml-4 p-2 bg-gray-800 border border-gray-600 rounded">
+              <div className="grid grid-cols-2 gap-2 text-[10px]">
+                <div>
+                  Status: <span className={microphoneActive ? 'text-green-400' : 'text-gray-400'}>
+                    {microphoneActive ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+                <div>
+                  Voice: <span className={isVoiceActive ? 'text-green-400' : 'text-gray-400'}>
+                    {isVoiceActive ? 'Active' : 'Silent'}
+                  </span>
+                </div>
+                <div>
+                  Energy: <span className="text-blue-400">
+                    {audioEnergy ? (audioEnergy * 100).toFixed(0) : 0}%
+                  </span>
+                </div>
+                <div>
+                  Viseme: <span className="text-yellow-400 font-mono">
+                    {currentViseme || 'M'}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="mt-2 h-2 bg-gray-700 rounded overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-green-600 to-green-400 transition-all duration-150"
+                  style={{ width: `${(audioEnergy || 0) * 100}%` }}
+                />
+              </div>
+              
+              <div className="mt-1 text-[10px] text-gray-400 text-center">
+                Audio Level
+              </div>
+            </div>
+            
+            <div className="ml-4 text-[10px] text-blue-400">
+              💡 Speak into your microphone to see the head react in real-time
+            </div>
+          </>
+        )}
+        
+        {!microphoneMode && (
+          <div className="ml-4 text-[10px] text-gray-400">
+            Enable microphone mode to test lip-sync without ElevenLabs
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const ConfigSection = ({ onConfigChange, currentConfig, needsRestart, onRestart }) => {
   const [detectionInterval, setDetectionInterval] = useState(4);
   const [showSparkles, setShowSparkles] = useState(true);
@@ -429,12 +522,22 @@ const UnifiedControlPanel = ({
   discoveredMeshes,
   hiddenMeshes,
   onMeshVisibilityChange,
-  onRotationChange
+  onRotationChange,
+  // Microphone props
+  microphoneMode = false,
+  onToggleMicrophoneMode,
+  voiceActivityThreshold = 0.15,
+  onVoiceActivityThresholdChange,
+  microphoneActive = false,
+  currentViseme = 'M',
+  audioEnergy = 0,
+  isVoiceActive = false
 }) => {
   const [isVisible, setIsVisible] = useState(false); // Minimized by default
   const [expandedSections, setExpandedSections] = useState({
     status: false, // Collapsed by default
     controls: true,
+    microphone: false,
     personality: false,
     meshControls: false,
     metrics: false,
@@ -512,6 +615,23 @@ const UnifiedControlPanel = ({
           onToggleStats={onToggleStats}
           onUnlock={onUnlock}
           onStop={onStop}
+        />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title={`Microphone ${microphoneMode ? '(Active)' : ''}`}
+        isExpanded={expandedSections.microphone}
+        onToggle={() => toggleSection('microphone')}
+      >
+        <MicrophoneSection
+          microphoneMode={microphoneMode}
+          onToggleMicrophoneMode={onToggleMicrophoneMode}
+          voiceActivityThreshold={voiceActivityThreshold}
+          onVoiceActivityThresholdChange={onVoiceActivityThresholdChange}
+          microphoneActive={microphoneActive}
+          currentViseme={currentViseme}
+          audioEnergy={audioEnergy}
+          isVoiceActive={isVoiceActive}
         />
       </CollapsibleSection>
 

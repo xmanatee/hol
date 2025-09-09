@@ -10,6 +10,7 @@ import {
   MorphController,
   LipSyncMetrics 
 } from '../audio/lipSync.js';
+import { MicrophoneService } from '../audio/MicrophoneService.js';
 import { logger } from '../utils/logger.js';
 
 export const useLipSync = () => {
@@ -25,6 +26,7 @@ export const useLipSync = () => {
   // Core lip-sync components
   const visemeMapperRef = useRef(null);
   const audioAnalyzerRef = useRef(null);
+  const microphoneServiceRef = useRef(null);
   const visemePickerRef = useRef(null);
   const morphControllerRef = useRef(null);
   const metricsRef = useRef(null);
@@ -33,22 +35,29 @@ export const useLipSync = () => {
   const lastFrameTimeRef = useRef(performance.now());
   const isAgentSpeakingRef = useRef(false);
   const headMeshRef = useRef(null);
+  const microphoneModeRef = useRef(false);
 
   // Initialize lip-sync system
-  const initialize = useCallback(async (headMesh) => {
-    logger.info('useLipSync', 'Initializing lip-sync system with mesh:', headMesh.name);
+  const initialize = useCallback(async (headMesh, microphoneMode = false) => {
+    logger.info('useLipSync', 'Initializing lip-sync system with mesh:', headMesh.name, 'microphone mode:', microphoneMode);
     
     headMeshRef.current = headMesh;
+    microphoneModeRef.current = microphoneMode;
 
     // Initialize components
     visemeMapperRef.current = new VisemeMapper(headMesh.morphTargetDictionary);
-    audioAnalyzerRef.current = new AudioAnalyzer();
     visemePickerRef.current = new VisemePicker();
     morphControllerRef.current = new MorphController(headMesh, visemeMapperRef.current);
     metricsRef.current = new LipSyncMetrics();
 
-    // Initialize audio analyzer
+    // Initialize audio sources
+    audioAnalyzerRef.current = new AudioAnalyzer();
     audioAnalyzerRef.current.initialize();
+
+    if (microphoneMode) {
+      microphoneServiceRef.current = new MicrophoneService();
+      await microphoneServiceRef.current.initialize();
+    }
 
     logger.info('useLipSync', 'Lip-sync system initialized');
     logger.info('useLipSync', 'Viseme mapping:', visemeMapperRef.current.visemeMap);
@@ -92,6 +101,46 @@ export const useLipSync = () => {
     }
   }, [isActive, start]);
 
+  // Switch between microphone and agent mode
+  const setMicrophoneMode = useCallback(async (enabled) => {
+    microphoneModeRef.current = enabled;
+    
+    if (enabled) {
+      // Initialize microphone service if not already done
+      if (!microphoneServiceRef.current) {
+        microphoneServiceRef.current = new MicrophoneService();
+        await microphoneServiceRef.current.initialize();
+      }
+      microphoneServiceRef.current.start();
+      logger.info('useLipSync', 'Switched to microphone mode');
+      
+      // Auto-start lip-sync when microphone mode is enabled
+      if (!isActive) {
+        start(true);
+      }
+    } else {
+      if (microphoneServiceRef.current) {
+        microphoneServiceRef.current.stop();
+      }
+      logger.info('useLipSync', 'Switched to agent mode');
+    }
+  }, [isActive, start]);
+
+  // Set voice activity threshold for microphone mode
+  const setVoiceActivityThreshold = useCallback((threshold) => {
+    if (microphoneServiceRef.current) {
+      microphoneServiceRef.current.setVoiceActivityThreshold(threshold);
+    }
+  }, []);
+
+  // Check if voice is currently active (for microphone mode)
+  const isVoiceActive = useCallback(() => {
+    if (microphoneModeRef.current && microphoneServiceRef.current) {
+      return microphoneServiceRef.current.isVoiceActive();
+    }
+    return false;
+  }, []);
+
   // Main lip-sync update loop - runs every frame
   useFrame(() => {
     if (!isActive) return;
@@ -100,11 +149,22 @@ export const useLipSync = () => {
     const deltaTime = currentTime - lastFrameTimeRef.current;
     lastFrameTimeRef.current = currentTime;
 
-    // Get audio analysis from agent simulation
-    const audioData = audioAnalyzerRef.current.getAnalysis(
-      isAgentSpeakingRef.current, 
-      currentTime
-    );
+    // Get audio analysis from appropriate source
+    let audioData;
+    let isCurrentlyVoiceActive;
+
+    if (microphoneModeRef.current && microphoneServiceRef.current) {
+      // Use microphone service
+      audioData = microphoneServiceRef.current.getAnalysis();
+      isCurrentlyVoiceActive = microphoneServiceRef.current.isVoiceActive();
+    } else {
+      // Use ElevenLabs agent simulation
+      audioData = audioAnalyzerRef.current.getAnalysis(
+        isAgentSpeakingRef.current, 
+        currentTime
+      );
+      isCurrentlyVoiceActive = isAgentSpeakingRef.current;
+    }
 
     // Pick appropriate viseme based on audio
     const selectedViseme = visemePickerRef.current.pickViseme(
@@ -118,8 +178,8 @@ export const useLipSync = () => {
       setCurrentViseme(selectedViseme);
     }
 
-    // Set morph target influences
-    const intensity = audioData.energy;
+    // Set morph target influences (reduce intensity if voice not active)
+    const intensity = isCurrentlyVoiceActive ? audioData.energy : 0;
     morphControllerRef.current.setViseme(selectedViseme, intensity);
 
     // Update morph controller (handles blending and blink animation)
@@ -143,6 +203,9 @@ export const useLipSync = () => {
     return () => {
       if (audioAnalyzerRef.current) {
         audioAnalyzerRef.current.dispose();
+      }
+      if (microphoneServiceRef.current) {
+        microphoneServiceRef.current.dispose();
       }
     };
   }, []);
@@ -177,14 +240,19 @@ export const useLipSync = () => {
     start,
     stop,
     setAgentSpeaking,
+    setMicrophoneMode,
+    setVoiceActivityThreshold,
 
     // Info methods
     getDebugInfo,
     getCurrentInfluences,
+    isVoiceActive,
 
     // Component refs (for advanced usage)
     visemeMapper: visemeMapperRef.current,
-    morphController: morphControllerRef.current
+    morphController: morphControllerRef.current,
+    audioAnalyzer: audioAnalyzerRef.current,
+    microphoneService: microphoneServiceRef.current
   };
 };
 

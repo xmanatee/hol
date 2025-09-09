@@ -45,10 +45,10 @@ export class KeypointTracker {
       throw new Error('KeypointTracker not initialized');
     }
 
-    // Select strongest keypoints for tracking (limit to 100 for performance)
+    // Select strongest keypoints for tracking (limit to 80 for quality)
     const sortedKeypoints = keypoints
       .sort((a, b) => b.response - a.response)
-      .slice(0, 100);
+      .slice(0, 80);
 
     this.trackedPoints = sortedKeypoints.map((kp, index) => ({
       id: index,
@@ -57,7 +57,12 @@ export class KeypointTracker {
       response: kp.response,
       status: 'active',
       errorHistory: [],
-      age: 0
+      age: 0,
+      // Stability tracking
+      successfulTrackingStreak: 0,  // Consecutive successful tracking frames
+      totalSuccessfulFrames: 0,     // Total frames successfully tracked
+      stabilityScore: 0,            // Computed stability metric (0-1)
+      isStable: false               // High stability flag for protection
     }));
 
     // Calculate actual keypoint centroid (not geometric template center)
@@ -121,13 +126,13 @@ export class KeypointTracker {
     logger.debug('KeypointTracker', 'Active points check:', {
       totalPoints: this.trackedPoints.length,
       activePoints: activePoints.length,
-      minRequired: 10
+      minRequired: 8
     });
     
-    if (activePoints.length < 10) {
+    if (activePoints.length < 8) {
       return { 
         success: false, 
-        reason: `Too few active points: ${activePoints.length} (need at least 10)`,
+        reason: `Too few active points: ${activePoints.length} (need at least 8)`,
         activePointCount: activePoints.length,
         successRate: 0,
         averageError: 999
@@ -168,10 +173,13 @@ export class KeypointTracker {
         this.lkParams.criteria
       );
 
-      // Increment tracking attempts and determine adaptive thresholds
+      // Increment tracking attempts and determine adaptive thresholds with hysteresis
       this.trackingAttempts++;
       const isInitialTracking = this.trackingAttempts <= this.initialLeniencyFrames;
-      const errorThreshold = isInitialTracking ? 60 : 30; // More lenient initially
+      
+      // Hysteresis thresholds: higher threshold to lose tracking, lower to keep it
+      const loseThreshold = isInitialTracking ? 60 : 40; // Threshold to mark as lost
+      const keepThreshold = isInitialTracking ? 50 : 25; // Threshold to keep active
       
       // Update tracked points with results
       let successCount = 0;
@@ -181,7 +189,8 @@ export class KeypointTracker {
       logger.debug('KeypointTracker', 'Processing Lucas-Kanade results:', {
         attempt: this.trackingAttempts,
         isInitialTracking,
-        errorThreshold,
+        loseThreshold,
+        keepThreshold,
         totalPoints: activePoints.length,
         previousFrameSize: `${this.previousGray.cols}x${this.previousGray.rows}`,
         currentFrameSize: `${currentGray.cols}x${currentGray.rows}`
@@ -202,7 +211,10 @@ export class KeypointTracker {
             : 'N/A'
         };
         
-        if (trackingStatus === 1 && trackingError < errorThreshold && 
+        // Use hysteresis: different thresholds based on stability and current status
+        const effectiveThreshold = point.isStable ? keepThreshold : loseThreshold;
+        
+        if (trackingStatus === 1 && trackingError < effectiveThreshold && 
             nextPoints.data32F[i * 2] !== undefined && nextPoints.data32F[i * 2 + 1] !== undefined) {
           // Successful tracking with valid coordinates
           point.current.x = nextPoints.data32F[i * 2];
@@ -210,6 +222,20 @@ export class KeypointTracker {
           point.errorHistory.push(trackingError);
           point.age++;
           point.status = 'active';
+          
+          // Update stability tracking
+          point.successfulTrackingStreak++;
+          point.totalSuccessfulFrames++;
+          
+          // Calculate stability score (weighted by streak and total success)
+          const streakFactor = Math.min(1.0, point.successfulTrackingStreak / 30); // 30 frames = max streak bonus
+          const totalFactor = Math.min(1.0, point.totalSuccessfulFrames / 100); // 100 frames = max total bonus
+          const errorFactor = Math.max(0, 1.0 - (trackingError / effectiveThreshold)); // Lower error = higher score
+          point.stabilityScore = (streakFactor * 0.4 + totalFactor * 0.4 + errorFactor * 0.2);
+          
+          // Mark as stable if high stability score and long tracking history
+          point.isStable = point.stabilityScore > 0.7 && point.totalSuccessfulFrames > 20;
+          
           successCount++;
           totalError += trackingError;
           result.outcome = 'SUCCESS';
@@ -217,6 +243,12 @@ export class KeypointTracker {
           // Tracking failed or invalid coordinates
           point.status = 'lost';
           point.errorHistory.push(999); // High error for failed tracking
+          
+          // Reset tracking streak but preserve total successful frames
+          point.successfulTrackingStreak = 0;
+          point.stabilityScore = Math.max(0, point.stabilityScore - 0.1); // Gradual decay
+          point.isStable = false; // Lose stable status on tracking failure
+          
           if (trackingStatus === 0) {
             result.outcome = 'TRACKING_FAILED';
           } else if (nextPoints.data32F[i * 2] === undefined || nextPoints.data32F[i * 2 + 1] === undefined) {
@@ -238,7 +270,8 @@ export class KeypointTracker {
       logger.info('KeypointTracker', 'Lucas-Kanade tracking results:', {
         attempt: this.trackingAttempts,
         isInitialTracking,
-        errorThreshold,
+        loseThreshold,
+        keepThreshold,
         successCount,
         totalPoints: activePoints.length,
         successRate: `${(successCount / activePoints.length * 100).toFixed(1)}%`,
@@ -284,9 +317,12 @@ export class KeypointTracker {
 
       // Try to recover outlier points if we have too few active points
       const finalActiveCount = this.trackedPoints.filter(pt => pt.status === 'active').length;
-      if (finalActiveCount < 15) {
+      if (finalActiveCount < 12) {
         this._recoverOutlierPoints();
       }
+
+      // Clean up inactive keypoints to prevent memory growth and visual clutter
+      this._cleanupInactiveKeypoints();
 
       return {
         success: successRate >= 0.5, // Require at least 50% success rate
@@ -310,10 +346,10 @@ export class KeypointTracker {
     
     logger.debug('KeypointTracker', 'Outlier filtering - starting:', {
       activePoints: activePoints.length,
-      minRequired: 20
+      minRequired: 15
     });
     
-    if (activePoints.length < 20) {
+    if (activePoints.length < 15) {
       logger.debug('KeypointTracker', 'Skipping outlier filtering - too few points');
       return;
     }
@@ -342,23 +378,43 @@ export class KeypointTracker {
     const madDx = dxDeviations.sort((a, b) => a - b)[Math.floor(dxDeviations.length / 2)];
     const madDy = dyDeviations.sort((a, b) => a - b)[Math.floor(dyDeviations.length / 2)];
 
-    // Filter outliers (points with motion significantly different from median)
-    const threshold = 5.0; // More lenient MAD threshold multiplier (was 3.0)
+    // Filter outliers with stability consideration
+    const baseThreshold = 5.0; // Base MAD threshold multiplier
     let outlierCount = 0;
+    let protectedCount = 0;
     
     logger.debug('KeypointTracker', 'Outlier filtering - motion analysis:', {
       medianMotion: `(${medianDx.toFixed(2)}, ${medianDy.toFixed(2)})`,
       madValues: `(${madDx.toFixed(2)}, ${madDy.toFixed(2)})`,
-      threshold: threshold
+      baseThreshold: baseThreshold
     });
     
     for (const mv of motionVectors) {
-      const dxOutlier = Math.abs(mv.dx - medianDx) > threshold * madDx;
-      const dyOutlier = Math.abs(mv.dy - medianDy) > threshold * madDy;
+      const point = mv.point;
+      
+      // Adaptive threshold based on stability
+      let effectiveThreshold = baseThreshold;
+      if (point.isStable) {
+        // Protect stable points with higher threshold (more lenient)
+        effectiveThreshold = baseThreshold * 2.0; // 10.0x MAD for stable points
+        protectedCount++;
+      } else if (point.stabilityScore > 0.5) {
+        // Moderately stable points get some protection
+        effectiveThreshold = baseThreshold * 1.5; // 7.5x MAD
+      }
+      
+      const dxOutlier = Math.abs(mv.dx - medianDx) > effectiveThreshold * madDx;
+      const dyOutlier = Math.abs(mv.dy - medianDy) > effectiveThreshold * madDy;
       
       if (dxOutlier || dyOutlier) {
-        mv.point.status = 'outlier';
-        outlierCount++;
+        // Only mark as outlier if not highly stable
+        if (!point.isStable || point.stabilityScore < 0.8) {
+          mv.point.status = 'outlier';
+          outlierCount++;
+        } else {
+          // Highly stable points keep active status despite motion deviation
+          logger.debug('KeypointTracker', `Protected stable keypoint ${point.id} from outlier filtering`);
+        }
       }
     }
     
@@ -368,6 +424,7 @@ export class KeypointTracker {
       originalActive: activePoints.length,
       outliers: outlierCount,
       remainingActive: remainingActive,
+      protectedStable: protectedCount,
       outlierRate: `${(outlierCount / activePoints.length * 100).toFixed(1)}%`
     });
   }
@@ -623,26 +680,53 @@ export class KeypointTracker {
 
       const newKeypoints = keypointDetector.extractKeypoints(cv, currentGray, region);
       
-      if (newKeypoints.keypoints.length >= 20) {
-        // Merge with existing tracked points
+      if (newKeypoints.keypoints.length >= 15) {
+        // Smart merge prioritizing stable points
         const existingActive = this.trackedPoints.filter(pt => pt.status === 'active');
+        
+        // Sort existing points by stability (stable points first, then by total success)
+        const sortedExisting = existingActive.sort((a, b) => {
+          // Prioritize stable points
+          if (a.isStable !== b.isStable) return b.isStable - a.isStable;
+          // Then by total successful frames
+          if (a.totalSuccessfulFrames !== b.totalSuccessfulFrames) {
+            return b.totalSuccessfulFrames - a.totalSuccessfulFrames;
+          }
+          // Finally by current streak
+          return b.successfulTrackingStreak - a.successfulTrackingStreak;
+        });
+        
+        // Determine how many existing points to keep
+        const stableCount = sortedExisting.filter(pt => pt.isStable).length;
+        const maxKeepExisting = Math.min(50, sortedExisting.length);
+        const keepExisting = Math.max(stableCount, Math.min(maxKeepExisting, 30)); // Keep at least all stable points, up to 30 total
         
         // Add new keypoints with unique IDs
         const maxId = Math.max(...this.trackedPoints.map(pt => pt.id), -1);
-        const freshKeypoints = newKeypoints.keypoints.slice(0, 50).map((kp, idx) => ({
-          id: maxId + idx + 1,
-          original: { x: kp.pt.x, y: kp.pt.y },
-          current: { x: kp.pt.x, y: kp.pt.y },
-          response: kp.response,
-          status: 'active',
-          errorHistory: [],
-          age: 0
-        }));
+        const remainingSlots = 80 - keepExisting; // Our tracking limit is 80
+        const freshKeypoints = newKeypoints.keypoints
+          .slice(0, Math.max(0, remainingSlots))
+          .map((kp, idx) => ({
+            id: maxId + idx + 1,
+            original: { x: kp.pt.x, y: kp.pt.y },
+            current: { x: kp.pt.x, y: kp.pt.y },
+            response: kp.response,
+            status: 'active',
+            errorHistory: [],
+            age: 0,
+            successfulTrackingStreak: 0,
+            totalSuccessfulFrames: 0,
+            stabilityScore: 0,
+            isStable: false
+          }));
 
-        // Keep best existing points and add fresh ones
-        this.trackedPoints = [...existingActive.slice(0, 50), ...freshKeypoints];
+        // Combine: stable existing points + fresh keypoints
+        this.trackedPoints = [
+          ...sortedExisting.slice(0, keepExisting), 
+          ...freshKeypoints
+        ];
         
-        logger.info('KeypointTracker', `Refreshed tracking with ${this.trackedPoints.length} total points`);
+        logger.info('KeypointTracker', `Smart refresh: kept ${keepExisting} existing (${stableCount} stable) + ${freshKeypoints.length} fresh = ${this.trackedPoints.length} total`);
         return true;
       } else {
         logger.debug('KeypointTracker', `Insufficient new keypoints for refresh: ${newKeypoints.keypoints.length}`);
@@ -654,6 +738,54 @@ export class KeypointTracker {
     }
     
     return false;
+  }
+
+  /**
+   * Clean up inactive keypoints to prevent memory growth and reduce visual clutter
+   * Removes points that have been lost or outliers for too long
+   */
+  _cleanupInactiveKeypoints() {
+    if (!this.trackedPoints || this.trackedPoints.length === 0) return;
+    
+    const initialCount = this.trackedPoints.length;
+    const activeCount = this.trackedPoints.filter(pt => pt.status === 'active').length;
+    
+    // Only clean up if we have enough active points to maintain tracking
+    if (activeCount < 15) {
+      logger.debug('KeypointTracker', 'Skipping cleanup - too few active points:', activeCount);
+      return;
+    }
+    
+    // Mark points for removal if they've been inactive for too long
+    let removedCount = 0;
+    this.trackedPoints = this.trackedPoints.filter(point => {
+      // Keep all active points
+      if (point.status === 'active') return true;
+      
+      // Remove lost or outlier points that have aged beyond threshold
+      // Age represents frames since the point was last active
+      if (point.status === 'lost' || point.status === 'outlier') {
+        point.age = (point.age || 0) + 1;
+        
+        // Remove after 30 frames (~1 second at 30fps) of being inactive
+        if (point.age > 30) {
+          removedCount++;
+          return false;
+        }
+      }
+      
+      return true; // Keep the point for now
+    });
+    
+    if (removedCount > 0) {
+      const finalActiveCount = this.trackedPoints.filter(pt => pt.status === 'active').length;
+      logger.info('KeypointTracker', 'Cleaned up inactive keypoints:', {
+        removed: removedCount,
+        totalPoints: `${initialCount} -> ${this.trackedPoints.length}`,
+        activePoints: finalActiveCount,
+        memoryReduction: `${((removedCount / initialCount) * 100).toFixed(1)}%`
+      });
+    }
   }
 
   dispose() {

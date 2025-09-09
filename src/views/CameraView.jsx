@@ -54,6 +54,53 @@ const CameraView = () => {
   const [discoveredMeshes, setDiscoveredMeshes] = useState([]);
   const [hiddenMeshes, setHiddenMeshes] = useState(new Set());
   const [manualRotation, setManualRotation] = useState({ x: 0, y: 0, z: 0 });
+  
+  // Microphone state
+  const [microphoneMode, setMicrophoneMode] = useState(false);
+  const [voiceActivityThreshold, setVoiceActivityThreshold] = useState(0.15);
+  const [microphoneActive, setMicrophoneActive] = useState(false);
+  const [currentViseme, setCurrentViseme] = useState('M');
+  const [audioEnergy, setAudioEnergy] = useState(0);
+  const [isVoiceActive, setIsVoiceActive] = useState(false);
+
+
+  // Use the camera system hook with new image-based anchor system
+  const {
+    cameraState,
+    videoDimensions,
+    detectionState,
+    anchorSystemState,
+    personalityData,
+    ttsData,
+    cvLoaded,
+    services,
+    startCamera,
+    resumeCamera,
+    stopCamera,
+    detectObjects,
+    processDetections,
+    updateAnchor,
+    createAnchorFromTap,
+    clearAnchor,
+    findDetectionAtPosition,
+    generatePersonality,
+    synthesizeSpeech,
+    stopTTS,
+    speakGreeting,
+    setCurrentCanvas
+  } = useCameraSystem(cameraSystemConfig);
+
+  const { metrics, updateMetric } = useHudMetrics();
+  const throttledFrame = useFrameRate(30);
+
+  // Handle camera start/resume
+  const handleStartClick = useCallback(async () => {
+    if (cameraState === 'blocked') {
+      await resumeCamera();
+    } else {
+      await startCamera(videoRef.current);
+    }
+  }, [cameraState, startCamera, resumeCamera]);
 
   // Handle mesh discovery from HeadAnchor
   const handleMeshNamesDiscovered = useCallback((meshNames) => {
@@ -83,45 +130,6 @@ const CameraView = () => {
       z: `${(rotation.z * 180 / Math.PI).toFixed(1)}°`
     });
   }, []);
-
-  // Use the camera system hook with new image-based anchor system
-  const {
-    cameraState,
-    videoDimensions,
-    detectionState,
-    anchorSystemState,
-    personalityData,
-    ttsData,
-    cvLoaded,
-    services,
-    startCamera,
-    resumeCamera,
-    stopCamera,
-    detectObjects,
-    processDetections,
-    updateAnchor,
-    createAnchorFromTap,
-    clearAnchor,
-    findDetectionAtPosition,
-    generatePersonality,
-    synthesizeSpeech,
-    stopTTS,
-    speakGreeting,
-    getCameraMatrix,
-    setCurrentCanvas
-  } = useCameraSystem(cameraSystemConfig);
-
-  const { metrics, updateMetric } = useHudMetrics();
-  const throttledFrame = useFrameRate(30);
-
-  // Handle camera start/resume
-  const handleStartClick = useCallback(async () => {
-    if (cameraState === 'blocked') {
-      await resumeCamera();
-    } else {
-      await startCamera(videoRef.current);
-    }
-  }, [cameraState, startCamera, resumeCamera]);
 
   const handleConfigChange = useCallback((config) => {
     if (config.detectionInterval) {
@@ -192,6 +200,50 @@ const CameraView = () => {
       logger.info('CameraView', 'Camera system restarted');
     }, 200); // Slightly longer delay for WebGL cleanup
   }, [stopCamera]);
+
+  // Microphone handlers
+  const handleToggleMicrophoneMode = useCallback(async (enabled) => {
+    try {
+      setMicrophoneMode(enabled);
+      
+      // Update TTS client microphone mode
+      if (services.tts) {
+        services.tts.setMicrophoneMode(enabled);
+      }
+      
+      logger.info('CameraView', 'Microphone mode toggled:', enabled);
+      
+      if (enabled) {
+        // Start microphone listening - always activate when enabled
+        setMicrophoneActive(true);
+        logger.info('CameraView', 'Microphone listening activated');
+      } else {
+        // Stop microphone mode
+        stopTTS();
+        setMicrophoneActive(false);
+        setIsVoiceActive(false);
+        setCurrentViseme('M');
+        setAudioEnergy(0);
+      }
+    } catch (error) {
+      logger.error('CameraView', 'Failed to toggle microphone mode:', error);
+    }
+  }, [services.tts, synthesizeSpeech, stopTTS, ttsData.isPlaying, anchorSystemState]);
+
+  const handleVoiceActivityThresholdChange = useCallback((threshold) => {
+    setVoiceActivityThreshold(threshold);
+    logger.info('CameraView', 'Voice activity threshold changed:', threshold);
+  }, []);
+
+  // Handle lip-sync updates from HeadAnchor
+  const handleLipSyncUpdate = useCallback((lipSyncData) => {
+    if (microphoneMode) {
+      setCurrentViseme(lipSyncData.currentViseme);
+      setAudioEnergy(lipSyncData.audioEnergy);
+      setIsVoiceActive(lipSyncData.isVoiceActive);
+      setMicrophoneActive(lipSyncData.microphoneActive);
+    }
+  }, [microphoneMode]);
 
   // Handle canvas tap for detection selection or anchor clearing
   const handleCanvasTap = useCallback(async (event, canvas) => {
@@ -457,10 +509,12 @@ const CameraView = () => {
         <OverlayScene
           width={videoDimensions?.width || 1280}
           height={videoDimensions?.height || 720}
-          isAgentSpeaking={ttsData.isPlaying}
+          isAgentSpeaking={microphoneMode ? microphoneActive : ttsData.isPlaying}
           hiddenMeshes={hiddenMeshes}
           manualRotation={manualRotation}
           onMeshNamesDiscovered={handleMeshNamesDiscovered}
+          onLipSyncUpdate={handleLipSyncUpdate}
+          microphoneMode={microphoneMode}
         />
       )}
 
@@ -497,6 +551,15 @@ const CameraView = () => {
           hiddenMeshes={hiddenMeshes}
           onMeshVisibilityChange={handleMeshVisibilityChange}
           onRotationChange={handleRotationChange}
+          // Microphone props
+          microphoneMode={microphoneMode}
+          onToggleMicrophoneMode={handleToggleMicrophoneMode}
+          voiceActivityThreshold={voiceActivityThreshold}
+          onVoiceActivityThresholdChange={handleVoiceActivityThresholdChange}
+          microphoneActive={microphoneActive}
+          currentViseme={currentViseme}
+          audioEnergy={audioEnergy}
+          isVoiceActive={isVoiceActive}
         />
       )}
     </div>

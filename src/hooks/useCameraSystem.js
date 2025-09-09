@@ -304,7 +304,7 @@ export const useCameraSystem = (config = {}) => {
         logger.info('CameraSystem', 'TTS synthesis started:', { text, voiceStyle, requestId });
         setTTSData(prev => ({ ...prev, isSynthesizing: true, error: null }));
       },
-      onAudioStart: ({ duration, analyser, latencyToFirstAudio }) => {
+      onAudioStart: ({ latencyToFirstAudio }) => {
         logger.info('CameraSystem', 'TTS audio started, latency:', latencyToFirstAudio, 'ms');
         setTTSData(prev => ({ 
           ...prev, 
@@ -315,7 +315,7 @@ export const useCameraSystem = (config = {}) => {
         }));
         updateMetric('TTS latency to first audio', latencyToFirstAudio);
       },
-      onAudioAnalysis: ({ energy, centroid, spectrum }) => {
+      onAudioAnalysis: ({ energy, centroid }) => {
         // Forward lip-sync data to lip-sync system (Phase 12)
         updateMetric('Audio energy', energy);
         updateMetric('Audio centroid', centroid);

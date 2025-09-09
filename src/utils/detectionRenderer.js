@@ -30,13 +30,6 @@ const renderDetectionMode = (ctx, { detections }) => {
     // Draw label
     drawDetectionLabel(ctx, detection);
   }
-  
-  // Draw instruction text
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-  ctx.fillRect(10, 10, 250, 30);
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '14px monospace';
-  ctx.fillText('Tap on an object to create anchor', 15, 30);
 };
 
 const renderAnchorMode = (ctx, { anchor, anchorState }) => {
@@ -57,12 +50,21 @@ const renderAnchorMode = (ctx, { anchor, anchorState }) => {
   
   // Color based on anchor state
   let fillColor = '#ff0000'; // Red for tracking
+  let strokeColor = '#ffffff'; // Default white stroke
+  let strokeWidth = 2;
+  
   if (state === 'stable') {
     fillColor = '#ffd700'; // Gold for stable
   } else if (state === 'initializing') {
     fillColor = '#ff8800'; // Orange for initializing
   } else if (state === 'lost') {
-    fillColor = '#666666'; // Gray for lost
+    // Make lost anchor more visible with bright red and pulsing effect
+    const pulseTime = performance.now() * 0.003; // 3 cycles per second
+    const pulseIntensity = 0.5 + 0.5 * Math.sin(pulseTime);
+    
+    fillColor = `rgb(${Math.floor(255 * pulseIntensity)}, 0, 0)`; // Pulsing red
+    strokeColor = '#ffff00'; // Bright yellow stroke for high contrast
+    strokeWidth = 3; // Thicker stroke for visibility
   }
   
   // Draw anchor circle
@@ -70,30 +72,30 @@ const renderAnchorMode = (ctx, { anchor, anchorState }) => {
   ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
   ctx.fillStyle = fillColor;
   ctx.fill();
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = strokeWidth;
   ctx.stroke();
   
-  // Draw cross-hair
+  // Draw cross-hair with enhanced visibility for lost state
   ctx.beginPath();
   ctx.moveTo(centerX - radius - 5, centerY);
   ctx.lineTo(centerX + radius + 5, centerY);
   ctx.moveTo(centerX, centerY - radius - 5);
   ctx.lineTo(centerX, centerY + radius + 5);
-  ctx.strokeStyle = fillColor;
-  ctx.lineWidth = 2;
+  
+  if (state === 'lost') {
+    // Make cross-hair more prominent for lost anchors
+    ctx.strokeStyle = strokeColor; // Bright yellow
+    ctx.lineWidth = strokeWidth; // Thicker line
+  } else {
+    ctx.strokeStyle = fillColor;
+    ctx.lineWidth = 2;
+  }
   ctx.stroke();
   
   // Draw anchor info
   drawAnchorInfo(ctx, anchor, anchorState, centerX, centerY);
-  
-  // Draw instruction text
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-  ctx.fillRect(10, 10, 200, 30);
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '14px monospace';
-  ctx.fillText('Tap anywhere to clear anchor', 15, 30);
-};
+  };
 
 const renderLegacyMode = (ctx, {
   trackedObjects,
@@ -292,36 +294,18 @@ export const renderKeypoints = (ctx, anchorSystem) => {
 
   const keypoints = anchorSystem.keypointTracker.trackedPoints;
   
-  keypoints.forEach((point, index) => {
-    const { current, status, errorHistory, age } = point;
+  // Only render active keypoints to avoid visual clutter from fixed lost/outlier points
+  const activeKeypoints = keypoints.filter(point => point.status === 'active');
+  
+  activeKeypoints.forEach((point, index) => {
+    const { current } = point;
     
     if (!current || current.x === undefined || current.y === undefined) return;
     
-    // Color based on status
-    let color;
-    let size;
-    switch (status) {
-      case 'active':
-        color = '#00ff00'; // Green for active points
-        size = 3;
-        break;
-      case 'outlier':
-        color = '#ffaa00'; // Orange for outliers
-        size = 2;
-        break;
-      case 'lost':
-        color = '#ff0000'; // Red for lost points
-        size = 2;
-        break;
-      default:
-        color = '#888888'; // Gray for unknown
-        size = 2;
-    }
-    
-    // Draw keypoint
-    ctx.fillStyle = color;
+    // Draw active keypoint in green
+    ctx.fillStyle = '#00ff00'; // Green for active points
     ctx.beginPath();
-    ctx.arc(current.x, current.y, size, 0, Math.PI * 2);
+    ctx.arc(current.x, current.y, 3, 0, Math.PI * 2);
     ctx.fill();
     
     // Add subtle border for visibility
@@ -336,19 +320,6 @@ export const renderKeypoints = (ctx, anchorSystem) => {
       ctx.fillText(`${point.id}`, current.x + 5, current.y - 5);
     }
   });
-  
-  // Show keypoint summary
-  const activeCount = keypoints.filter(p => p.status === 'active').length;
-  const outlierCount = keypoints.filter(p => p.status === 'outlier').length;
-  const lostCount = keypoints.filter(p => p.status === 'lost').length;
-  
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-  ctx.fillRect(10, 300, 180, 50);
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '12px monospace';
-  ctx.fillText(`Keypoints: ${keypoints.length}`, 15, 315);
-  ctx.fillText(`Active: ${activeCount}`, 15, 330);
-  ctx.fillText(`Outlier: ${outlierCount} Lost: ${lostCount}`, 15, 345);
 };
 
 /**

@@ -187,6 +187,22 @@ export class AnchorManager {
    * @private
    */
   _onAnchorUpdate(anchorServiceState) {
+    // Handle auto-reset events from ImageAnchorService
+    if (anchorServiceState.type === 'auto-reset') {
+      logger.info('AnchorManager', 'Received auto-reset event:', anchorServiceState.reason);
+      
+      // The ImageAnchorService already called clearAnchor(), so we just need to sync our state
+      if (this.mode === 'anchor') {
+        this.mode = 'detection';
+        this.activeAnchor = null;
+        this.anchorState = null;
+        
+        logger.info('AnchorManager', 'Auto-reset completed - returned to detection mode');
+        this._notifyUpdate();
+      }
+      return;
+    }
+    
     logger.debug('AnchorManager', 'Received anchor service state update:', {
       anchored: anchorServiceState.anchored,
       state: anchorServiceState.state,
@@ -211,10 +227,21 @@ export class AnchorManager {
       logger.info('AnchorManager', `Anchor state changed: ${previousState} -> ${anchorServiceState.state}`);
     }
     
-    // Auto-switch to detection mode if anchor is permanently lost
+    // Handle anchor state transitions to detection mode
+    if (this.mode === 'anchor' && !anchorServiceState.anchored) {
+      // Anchor was cleared (either manually or via auto-reset)
+      logger.info('AnchorManager', 'Anchor cleared - transitioning to detection mode');
+      this.mode = 'detection';
+      this.activeAnchor = null;
+      this.anchorState = null;
+      this._notifyUpdate();
+      return;
+    }
+    
+    // Legacy fallback: Auto-switch to detection mode if anchor is permanently lost
     if (this.mode === 'anchor' && anchorServiceState.state === 'lost' && 
         anchorServiceState.metrics?.recoveryAttempts > 5) {
-      logger.warn('AnchorManager', 'Anchor permanently lost, automatically returning to detection mode');
+      logger.warn('AnchorManager', 'Anchor permanently lost, automatically returning to detection mode (legacy fallback)');
       this.clearAnchor();
       return;
     }

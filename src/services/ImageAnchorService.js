@@ -46,6 +46,11 @@ export class ImageAnchorService {
     this.keypointFailureCount = 0;
     this.maxKeypointFailures = 3; // Allow 3 consecutive failures before degrading
     
+    // Auto-reset functionality for permanently lost anchors
+    this.autoResetTimer = null;
+    this.autoResetDelay = 3000; // 3 seconds before auto-reset
+    this.permanentlyLost = false;
+    
     // Performance metrics
     this.metrics = {
       keypointCount: 0,
@@ -133,10 +138,10 @@ export class ImageAnchorService {
       // Extract keypoints from template region
       const keypointResult = this.keypointDetector.extractKeypoints(this.cv, gray, templateRegion);
       
-      if (keypointResult.keypoints.length < 20) {
+      if (keypointResult.keypoints.length < 15) {
         src.delete();
         gray.delete();
-        throw new Error(`Insufficient keypoints: ${keypointResult.keypoints.length} (need at least 20)`);
+        throw new Error(`Insufficient keypoints: ${keypointResult.keypoints.length} (need at least 15)`);
       }
 
       // Assess template quality
@@ -341,6 +346,7 @@ export class ImageAnchorService {
           }
         } else {
           logger.error('ImageAnchor', 'Max recovery attempts exceeded, anchor permanently lost');
+          this._startAutoResetTimer();
         }
       } else {
         // Reset recovery attempts on success
@@ -348,6 +354,9 @@ export class ImageAnchorService {
           logger.info('ImageAnchor', 'Anchor tracking recovered successfully');
         }
         this.metrics.recoveryAttempts = 0;
+        
+        // Cancel auto-reset timer if tracking recovered
+        this._cancelAutoResetTimer();
       }
 
       // Update metrics
@@ -404,7 +413,7 @@ export class ImageAnchorService {
 
       // Check if we have sufficient tracking quality
       const minSuccessRate = 0.5;
-      const minActivePoints = 15;
+      const minActivePoints = 12;
       
       if (this.metrics.trackingSuccessRate < minSuccessRate || this.metrics.keypointCount < minActivePoints) {
         logger.warn('ImageAnchor', 'Keypoint tracking quality insufficient:', {
@@ -643,7 +652,7 @@ export class ImageAnchorService {
     try {
       const keypointResult = this.keypointDetector.extractKeypoints(this.cv, grayImage, region);
       
-      if (keypointResult.keypoints.length >= 20) {
+      if (keypointResult.keypoints.length >= 15) {
         this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, grayImage);
         this.anchorState = 'tracking';
         logger.info('ImageAnchor', 'Keypoint tracking reinitialized after recovery');
@@ -728,6 +737,9 @@ export class ImageAnchorService {
       // Reset resilience counters
       this.keypointFailureCount = 0;
       
+      // Cancel any pending auto-reset timer
+      this._cancelAutoResetTimer();
+      
       // Reset filters
       this.positionFilterX = new OneEuroFilter(30);
       this.positionFilterY = new OneEuroFilter(30);
@@ -753,8 +765,78 @@ export class ImageAnchorService {
     };
   }
 
+  /**
+   * Start auto-reset timer for permanently lost anchors
+   */
+  _startAutoResetTimer() {
+    if (this.autoResetTimer) {
+      clearTimeout(this.autoResetTimer);
+    }
+    
+    this.permanentlyLost = true;
+    
+    logger.info('ImageAnchor', `Starting auto-reset timer: ${this.autoResetDelay}ms`);
+    
+    this.autoResetTimer = setTimeout(() => {
+      if (this.permanentlyLost && this.anchored) {
+        logger.info('ImageAnchor', 'Auto-resetting permanently lost anchor to detection mode');
+        
+        // Notify listeners about auto-reset before clearing
+        this._notifyAutoReset();
+        
+        // Clear the anchor (transitions back to detection mode)
+        this.clearAnchor();
+        
+        // Emit special auto-reset notification
+        this._notifyStateChange();
+      }
+    }, this.autoResetDelay);
+  }
+  
+  /**
+   * Cancel auto-reset timer (when tracking recovers)
+   */
+  _cancelAutoResetTimer() {
+    if (this.autoResetTimer) {
+      clearTimeout(this.autoResetTimer);
+      this.autoResetTimer = null;
+      
+      if (this.permanentlyLost) {
+        logger.info('ImageAnchor', 'Cancelled auto-reset timer - tracking recovered');
+        this.permanentlyLost = false;
+      }
+    }
+  }
+  
+  /**
+   * Notify listeners about auto-reset event
+   */
+  _notifyAutoReset() {
+    const resetEvent = {
+      type: 'auto-reset',
+      reason: 'permanently_lost',
+      message: 'Anchor lost, returning to detection mode',
+      timestamp: performance.now()
+    };
+
+    this.listeners.forEach(listener => {
+      try {
+        if (typeof listener === 'function') {
+          listener(resetEvent);
+        } else if (listener.onAutoReset) {
+          listener.onAutoReset(resetEvent);
+        }
+      } catch (error) {
+        logger.error('ImageAnchor', 'Auto-reset listener error:', error);
+      }
+    });
+  }
+
   dispose() {
     this.clearAnchor();
+    
+    // Cancel any pending auto-reset timer
+    this._cancelAutoResetTimer();
     
     if (this.keypointDetector) this.keypointDetector.dispose();
     if (this.keypointTracker) this.keypointTracker.dispose();

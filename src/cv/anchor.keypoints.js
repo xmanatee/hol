@@ -9,10 +9,10 @@ export class KeypointDetector {
   constructor() {
     this.initialized = false;
     
-    // Shi-Tomasi corner detection parameters
-    this.maxCorners = 500;
-    this.qualityLevel = 0.01;
-    this.minDistance = 10;
+    // Shi-Tomasi corner detection parameters - optimized for higher quality, fewer points
+    this.maxCorners = 150; // Reduced from 500 - fewer but better keypoints
+    this.qualityLevel = 0.05; // High quality but not extreme - prevents flickering of good corners
+    this.minDistance = 15; // Increased from 10 - better spatial distribution
     this.blockSize = 3;
     this.useHarrisDetector = false;
     this.k = 0.04;
@@ -171,8 +171,8 @@ export class KeypointDetector {
     const keypointCount = keypoints.length;
     const spatialScore = this.calculateSpatialDistribution(keypoints, imageWidth, imageHeight);
     
-    // For corners, we focus on count and distribution (no descriptors)
-    const countScore = Math.min(1, keypointCount / 200); // Normalize to 200 keypoints max
+    // For corners, we focus on count and distribution (no descriptors) 
+    const countScore = Math.min(1, keypointCount / 80); // Normalize to 80 keypoints max (our new target)
     const qualityScore = countScore * 0.6 + spatialScore * 0.4;
     
     return {
