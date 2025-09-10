@@ -57,11 +57,14 @@ const CameraView = () => {
   
   // Microphone state
   const [microphoneMode, setMicrophoneMode] = useState(false);
-  const [voiceActivityThreshold, setVoiceActivityThreshold] = useState(0.15);
+  const [voiceActivityThreshold, setVoiceActivityThreshold] = useState(0.02);
   const [microphoneActive, setMicrophoneActive] = useState(false);
   const [currentViseme, setCurrentViseme] = useState('M');
   const [audioEnergy, setAudioEnergy] = useState(0);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
+  // Enhanced microphone controls
+  const [microphoneGain, setMicrophoneGain] = useState(3.0);
+  const [microphoneDebugMode, setMicrophoneDebugMode] = useState(true);
 
 
   // Use the camera system hook with new image-based anchor system
@@ -234,6 +237,32 @@ const CameraView = () => {
     setVoiceActivityThreshold(threshold);
     logger.info('CameraView', 'Voice activity threshold changed:', threshold);
   }, []);
+
+  const handleMicrophoneGainChange = useCallback((gain) => {
+    setMicrophoneGain(gain);
+    // Update the microphone service if it exists
+    if (services.tts?.microphoneService) {
+      services.tts.microphoneService.setInputGain(gain);
+    }
+    logger.info('CameraView', 'Microphone gain changed:', gain);
+  }, [services.tts]);
+
+  const handleToggleMicrophoneDebug = useCallback((enabled) => {
+    setMicrophoneDebugMode(enabled);
+    // Update the microphone service if it exists
+    if (services.tts?.microphoneService) {
+      services.tts.microphoneService.setDebugMode(enabled);
+    }
+    logger.info('CameraView', 'Microphone debug mode:', enabled);
+  }, [services.tts]);
+
+  const handleResetMicrophoneBaseline = useCallback(() => {
+    // Reset the microphone service baseline if it exists
+    if (services.tts?.microphoneService) {
+      services.tts.microphoneService.resetBaseline();
+    }
+    logger.info('CameraView', 'Microphone baseline reset');
+  }, [services.tts]);
 
   // Handle lip-sync updates from HeadAnchor
   const handleLipSyncUpdate = useCallback((lipSyncData) => {
@@ -560,6 +589,12 @@ const CameraView = () => {
           currentViseme={currentViseme}
           audioEnergy={audioEnergy}
           isVoiceActive={isVoiceActive}
+          // Enhanced microphone controls
+          onMicrophoneGainChange={handleMicrophoneGainChange}
+          onToggleMicrophoneDebug={handleToggleMicrophoneDebug}
+          onResetMicrophoneBaseline={handleResetMicrophoneBaseline}
+          microphoneGain={microphoneGain}
+          microphoneDebugMode={microphoneDebugMode}
         />
       )}
     </div>

@@ -133,6 +133,27 @@ export const useLipSync = () => {
     }
   }, []);
 
+  // Set microphone input gain
+  const setMicrophoneGain = useCallback((gain) => {
+    if (microphoneServiceRef.current) {
+      microphoneServiceRef.current.setInputGain(gain);
+    }
+  }, []);
+
+  // Enable/disable debug mode for microphone
+  const setMicrophoneDebugMode = useCallback((enabled) => {
+    if (microphoneServiceRef.current) {
+      microphoneServiceRef.current.setDebugMode(enabled);
+    }
+  }, []);
+
+  // Reset microphone baseline noise calculation
+  const resetMicrophoneBaseline = useCallback(() => {
+    if (microphoneServiceRef.current) {
+      microphoneServiceRef.current.resetBaseline();
+    }
+  }, []);
+
   // Check if voice is currently active (for microphone mode)
   const isVoiceActive = useCallback(() => {
     if (microphoneModeRef.current && microphoneServiceRef.current) {
@@ -242,6 +263,9 @@ export const useLipSync = () => {
     setAgentSpeaking,
     setMicrophoneMode,
     setVoiceActivityThreshold,
+    setMicrophoneGain,
+    setMicrophoneDebugMode,
+    resetMicrophoneBaseline,
 
     // Info methods
     getDebugInfo,

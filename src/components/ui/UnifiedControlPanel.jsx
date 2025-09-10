@@ -324,7 +324,13 @@ const MicrophoneSection = ({
   microphoneActive,
   currentViseme,
   audioEnergy,
-  isVoiceActive
+  isVoiceActive,
+  // New props for enhanced microphone control
+  onMicrophoneGainChange,
+  onToggleMicrophoneDebug,
+  onResetMicrophoneBaseline,
+  microphoneGain = 3.0,
+  microphoneDebugMode = true
 }) => {
   return (
     <div className="text-xs">
@@ -345,16 +351,51 @@ const MicrophoneSection = ({
               <div className="text-[10px] text-gray-400 mb-1">Voice Activity Threshold</div>
               <input
                 type="range"
-                min="0.05"
-                max="0.5"
-                step="0.01"
+                min="0.005"
+                max="0.2"
+                step="0.005"
                 value={voiceActivityThreshold}
                 onChange={(e) => onVoiceActivityThresholdChange?.(parseFloat(e.target.value))}
                 className="w-full h-1"
               />
               <div className="text-[10px] text-gray-300 text-center">
-                {(voiceActivityThreshold * 100).toFixed(0)}%
+                {(voiceActivityThreshold * 1000).toFixed(0)}‰
               </div>
+            </div>
+
+            <div className="ml-4 p-2 bg-gray-800 border border-gray-600 rounded">
+              <div className="text-[10px] text-gray-400 mb-1">Microphone Gain</div>
+              <input
+                type="range"
+                min="0.5"
+                max="10"
+                step="0.5"
+                value={microphoneGain}
+                onChange={(e) => onMicrophoneGainChange?.(parseFloat(e.target.value))}
+                className="w-full h-1"
+              />
+              <div className="text-[10px] text-gray-300 text-center">
+                {microphoneGain.toFixed(1)}x
+              </div>
+            </div>
+
+            <div className="ml-4 flex gap-2">
+              <button
+                onClick={() => onToggleMicrophoneDebug?.(!microphoneDebugMode)}
+                className={`px-2 py-1 text-[10px] rounded ${
+                  microphoneDebugMode 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-gray-600 text-gray-300'
+                }`}
+              >
+                Debug: {microphoneDebugMode ? 'ON' : 'OFF'}
+              </button>
+              <button
+                onClick={() => onResetMicrophoneBaseline?.()}
+                className="px-2 py-1 text-[10px] bg-yellow-600 text-white rounded hover:bg-yellow-700"
+              >
+                Reset Baseline
+              </button>
             </div>
 
             <div className="ml-4 p-2 bg-gray-800 border border-gray-600 rounded">
@@ -526,12 +567,18 @@ const UnifiedControlPanel = ({
   // Microphone props
   microphoneMode = false,
   onToggleMicrophoneMode,
-  voiceActivityThreshold = 0.15,
+  voiceActivityThreshold = 0.02,
   onVoiceActivityThresholdChange,
   microphoneActive = false,
   currentViseme = 'M',
   audioEnergy = 0,
-  isVoiceActive = false
+  isVoiceActive = false,
+  // Enhanced microphone controls
+  onMicrophoneGainChange,
+  onToggleMicrophoneDebug,
+  onResetMicrophoneBaseline,
+  microphoneGain = 3.0,
+  microphoneDebugMode = true
 }) => {
   const [isVisible, setIsVisible] = useState(false); // Minimized by default
   const [expandedSections, setExpandedSections] = useState({
@@ -632,6 +679,11 @@ const UnifiedControlPanel = ({
           currentViseme={currentViseme}
           audioEnergy={audioEnergy}
           isVoiceActive={isVoiceActive}
+          onMicrophoneGainChange={onMicrophoneGainChange}
+          onToggleMicrophoneDebug={onToggleMicrophoneDebug}
+          onResetMicrophoneBaseline={onResetMicrophoneBaseline}
+          microphoneGain={microphoneGain}
+          microphoneDebugMode={microphoneDebugMode}
         />
       </CollapsibleSection>
 

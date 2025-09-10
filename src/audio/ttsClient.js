@@ -1,5 +1,6 @@
 import { Conversation } from '@elevenlabs/client';
 import { logger } from '../utils/logger.js';
+import { MicrophoneService } from './MicrophoneService.js';
 
 export class TTSClient {
   constructor(config = {}) {
@@ -13,8 +14,10 @@ export class TTSClient {
     this.isConnected = false;
     this.isPlaying = false;
     this.micPermissionGranted = false;
+    this.microphoneMode = false;
     
     this.listeners = new Set();
+    this.microphoneService = new MicrophoneService();
     
     this.metrics = {
       totalRequests: 0,
@@ -199,10 +202,29 @@ export class TTSClient {
     };
   }
 
+  // Enable/disable microphone mode for lip-sync testing
+  async setMicrophoneMode(enabled) {
+    this.microphoneMode = enabled;
+    
+    if (enabled) {
+      await this.microphoneService.initialize();
+      this.microphoneService.start();
+      logger.info('TTSClient', 'Microphone mode enabled');
+    } else {
+      this.microphoneService.stop();
+      logger.info('TTSClient', 'Microphone mode disabled');
+    }
+  }
+
   async dispose() {
     await this.endConversation();
     this.stopCurrentAudio();
     this.listeners.clear();
+    
+    // Dispose microphone service
+    if (this.microphoneService) {
+      this.microphoneService.dispose();
+    }
     
     if (this.audioContext && this.audioContext.state !== 'closed') {
       this.audioContext.close();

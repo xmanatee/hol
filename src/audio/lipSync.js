@@ -149,7 +149,7 @@ export class VisemePicker {
     this.currentViseme = 'M'; // Start with mouth closed
     this.visemeHistory = [];
     this.smoothingBuffer = new Array(6).fill('M'); // 120ms smoothing at 20ms frames
-    this.energyThreshold = 0.15; // Below this = mouth closed
+    this.energyThreshold = 0.02; // Lower threshold for real microphone input
     this.lastTransitionTime = 0;
     this.hysteresisDelay = 100; // Min time between transitions (ms)
   }
