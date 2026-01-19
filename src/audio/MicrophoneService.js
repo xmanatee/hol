@@ -13,12 +13,13 @@ export class MicrophoneService {
     this.timeData = null;
     this.isActive = false;
     this.isInitialized = false;
-    this.voiceActivityThreshold = 0.02; // Lowered threshold for real microphone input
-    this.inputGain = 3.0; // Amplify microphone input
-    this.debugMode = true; // Enable debug logging
+    this.voiceActivityThreshold = 0.02;
+    this.inputGain = 3.0;
+    this.debugMode = false;
     this.debugCounter = 0;
-    this.energyHistory = []; // Track recent energy levels for auto-gain
-    this.baselineNoise = 0; // Baseline noise level
+    this.energyHistory = [];
+    this.baselineNoise = 0;
+    this.stateChangeHandler = null;
   }
 
   async initialize() {
@@ -39,15 +40,18 @@ export class MicrophoneService {
       }
 
       // Handle audio context state changes (important for mobile)
-      this.audioContext.addEventListener('statechange', () => {
-        logger.info('MicrophoneService', 'AudioContext state changed to:', this.audioContext.state);
+      this.stateChangeHandler = () => {
+        if (this.debugMode) {
+          logger.info('MicrophoneService', 'AudioContext state changed to:', this.audioContext.state);
+        }
         if (this.audioContext.state === 'suspended' && this.isActive) {
           logger.warn('MicrophoneService', 'AudioContext suspended while active, attempting resume');
           this.audioContext.resume().catch(err => {
             logger.error('MicrophoneService', 'Failed to resume AudioContext:', err);
           });
         }
-      });
+      };
+      this.audioContext.addEventListener('statechange', this.stateChangeHandler);
 
       // Request microphone access
       this.microphoneStream = await navigator.mediaDevices.getUserMedia({ 
@@ -72,9 +76,8 @@ export class MicrophoneService {
       // Connect microphone to analyzer
       this.microphoneSource.connect(this.analyserNode);
 
-      // Prepare data buffers
-      this.frequencyData = new Uint8Array(this.analyserNode.frequencyBinCount); // 128 bins
-      this.timeData = new Uint8Array(this.analyserNode.fftSize); // 256 samples
+      this.frequencyData = new Uint8Array(this.analyserNode.frequencyBinCount);
+      this.timeData = new Uint8Array(this.analyserNode.fftSize);
 
       this.isInitialized = true;
       this.isActive = true;
@@ -121,8 +124,10 @@ export class MicrophoneService {
       // During initialization, collect baseline
       this.energyHistory.push(energy);
       if (this.energyHistory.length === 10) {
-        this.baselineNoise = Math.min(...this.energyHistory) * 1.5; // Set baseline above minimum
-        logger.info('MicrophoneService', 'Baseline noise level set to:', this.baselineNoise);
+        this.baselineNoise = Math.min(...this.energyHistory) * 1.5;
+        if (this.debugMode) {
+          logger.info('MicrophoneService', 'Baseline noise level set to:', this.baselineNoise);
+        }
       }
     } else {
       // Update baseline slowly
@@ -152,11 +157,9 @@ export class MicrophoneService {
     // Convert frequency data to spectrum format expected by viseme picker
     const spectrum = Array.from(this.frequencyData);
 
-    // Debug logging every 60 frames (~1 second at 60fps)
     if (this.debugMode && (this.debugCounter++ % 60 === 0)) {
       logger.info('MicrophoneService', 'Audio Analysis:', {
-        rawEnergy: energy,
-        processedEnergy: energy,
+        energy,
         centroid: centroid.toFixed(3),
         threshold: this.voiceActivityThreshold,
         isActive: energy > this.voiceActivityThreshold,
@@ -168,7 +171,6 @@ export class MicrophoneService {
     return { energy, centroid, spectrum };
   }
 
-  // Voice activity detection
   isVoiceActive() {
     if (!this.isInitialized) {
       return false;
@@ -178,46 +180,33 @@ export class MicrophoneService {
     return analysis.energy > this.voiceActivityThreshold;
   }
 
-  // Set voice activity detection threshold
   setVoiceActivityThreshold(threshold) {
     this.voiceActivityThreshold = Math.max(0, Math.min(1, threshold));
-    logger.info('MicrophoneService', 'Voice activity threshold set to:', this.voiceActivityThreshold);
   }
 
-  // Set input gain multiplier
   setInputGain(gain) {
     this.inputGain = Math.max(0.1, Math.min(10, gain));
-    logger.info('MicrophoneService', 'Input gain set to:', this.inputGain);
   }
 
-  // Enable/disable debug mode
   setDebugMode(enabled) {
     this.debugMode = enabled;
-    logger.info('MicrophoneService', 'Debug mode:', enabled ? 'enabled' : 'disabled');
   }
 
-  // Reset baseline noise calculation
   resetBaseline() {
     this.energyHistory = [];
     this.baselineNoise = 0;
-    logger.info('MicrophoneService', 'Baseline noise reset');
   }
 
-  // Start microphone analysis
   start() {
     if (this.isInitialized) {
       this.isActive = true;
-      logger.info('MicrophoneService', 'Microphone analysis started');
     }
   }
 
-  // Stop microphone analysis
   stop() {
     this.isActive = false;
-    logger.info('MicrophoneService', 'Microphone analysis stopped');
   }
 
-  // Clean up microphone resources
   dispose() {
     this.isActive = false;
     
@@ -236,15 +225,20 @@ export class MicrophoneService {
     this.timeData = null;
     this.isInitialized = false;
 
-    if (this.audioContext && this.audioContext.state !== 'closed') {
-      this.audioContext.close();
+    if (this.audioContext) {
+      if (this.stateChangeHandler) {
+        this.audioContext.removeEventListener('statechange', this.stateChangeHandler);
+        this.stateChangeHandler = null;
+      }
+      if (this.audioContext.state !== 'closed') {
+        this.audioContext.close();
+      }
       this.audioContext = null;
     }
 
     logger.info('MicrophoneService', 'Microphone resources disposed');
   }
 
-  // Get debug information
   getDebugInfo() {
     const currentAnalysis = this.getAnalysis();
     return {

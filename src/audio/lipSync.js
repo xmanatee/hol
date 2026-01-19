@@ -19,18 +19,17 @@ export class VisemeMapper {
   constructor(morphTargetDictionary) {
     this.morphDict = morphTargetDictionary || {};
     this.visemeMap = this.createVisemeMapping();
-    logger.info('VisemeMapper', 'Created viseme mapping:', this.visemeMap);
   }
 
   createVisemeMapping() {
-    // Common naming patterns for facial morph targets
+    // Expanded naming patterns for facial morph targets (more inclusive)
     const patterns = {
-      M: ['mouth_close', 'lips_close', 'closed', 'press', 'seal', 'm_shape', 'bilabial'],
-      A: ['mouth_open', 'jaw_open', 'open_wide', 'a_shape', 'ah_open', 'surprise'],
-      E: ['mouth_mid', 'e_shape', 'eh_open', 'mid_open', 'smile_open'],
-      I: ['smile', 'grin', 'i_shape', 'ee_shape', 'narrow_open', 'teeth_show'],
-      O: ['o_shape', 'oh_open', 'round', 'oval_open'],
-      U: ['pucker', 'u_shape', 'oo_shape', 'lips_pucker', 'whistle']
+      M: ['mouth_close', 'lips_close', 'closed', 'press', 'seal', 'm_shape', 'bilabial', 'close', 'shut', 'mm', 'mouthclose'],
+      A: ['mouth_open', 'jaw_open', 'open_wide', 'a_shape', 'ah_open', 'surprise', 'open', 'wide', 'aa', 'ah', 'mouthopen', 'jaw'],
+      E: ['mouth_mid', 'e_shape', 'eh_open', 'mid_open', 'smile_open', 'eh', 'mid', 'teeth'],
+      I: ['smile', 'grin', 'i_shape', 'ee_shape', 'narrow_open', 'teeth_show', 'ii', 'ee', 'narrow'],
+      O: ['o_shape', 'oh_open', 'round', 'oval_open', 'oo', 'oh', 'oval'],
+      U: ['pucker', 'u_shape', 'oo_shape', 'lips_pucker', 'whistle', 'uu', 'kiss']
     };
 
     const mapping = {};
@@ -58,16 +57,13 @@ export class VisemeMapper {
         }
       });
 
-      // Add to mapping if we found a match
       if (bestMatch && bestScore > 0) {
         mapping[bestMatch].push({
           name: morphName,
-          index: this.morphDict[morphName],
-          confidence: bestScore
+          index: this.morphDict[morphName]
         });
       }
     });
-
 
     return mapping;
   }
@@ -87,17 +83,10 @@ export class VisemeMapper {
 
 // ElevenLabs agent audio simulation system
 export class AudioAnalyzer {
-  constructor() {
-    this.audioContext = null; // Create only when needed
-    this.isActive = false;
-  }
+  constructor() {}
 
-  initialize() {
-    this.isActive = true;
-    logger.info('AudioAnalyzer', 'Initialized agent-based audio simulation (no AudioContext needed)');
-  }
+  initialize() {}
 
-  // Agent-based audio simulation
   getAgentAnalysis(isAgentSpeaking, timeMs) {
     if (!isAgentSpeaking) {
       return {
@@ -129,40 +118,31 @@ export class AudioAnalyzer {
     return { energy, centroid, spectrum };
   }
 
-  // Get audio analysis data from agent simulation
   getAnalysis(isAgentSpeaking = false, timeMs = 0) {
     return this.getAgentAnalysis(isAgentSpeaking, timeMs);
   }
 
-  dispose() {
-    this.isActive = false;
-    if (this.audioContext) {
-      this.audioContext.close();
-      this.audioContext = null;
-    }
-  }
+  dispose() {}
 }
 
 // Heuristic viseme picker with hysteresis and smoothing
 export class VisemePicker {
   constructor() {
-    this.currentViseme = 'M'; // Start with mouth closed
-    this.visemeHistory = [];
+    this.currentViseme = 'M';
     this.smoothingBuffer = new Array(6).fill('M'); // 120ms smoothing at 20ms frames
     this.energyThreshold = 0.02; // Lower threshold for real microphone input
     this.lastTransitionTime = 0;
     this.hysteresisDelay = 100; // Min time between transitions (ms)
   }
 
-  // Map spectrum peaks to vowel visemes
   spectrumToViseme(centroid, energy) {
     if (energy < this.energyThreshold) {
       return 'M'; // Closed mouth for low energy
     }
 
     // Map spectral centroid to vowel positions
-    // Lower frequencies � back vowels (O, U)
-    // Higher frequencies � front vowels (I, E, A)
+    // Lower frequencies = back vowels (O, U)
+    // Higher frequencies = front vowels (I, E, A)
     
     if (centroid < 0.2) return 'U'; // Low freq - back rounded
     if (centroid < 0.35) return 'O'; // Low-mid freq - mid rounded  
@@ -171,7 +151,6 @@ export class VisemePicker {
     return 'I'; // High freq - front close
   }
 
-  // Pick viseme with hysteresis and smoothing
   pickViseme(energy, centroid, timeMs) {
     const newViseme = this.spectrumToViseme(centroid, energy);
     
@@ -221,12 +200,19 @@ export class MorphController {
     this.blinkDuration = 200; // ms
     this.blinkStartTime = 0;
 
-    // Initialize influences
+    if (!mesh || !mesh.morphTargetInfluences) {
+      logger.error('MorphController', 'Mesh has no morphTargetInfluences array!');
+      return;
+    }
+
     this.initializeInfluences();
   }
 
   initializeInfluences() {
-    // Reset all morph influences to 0
+    if (!this.mesh?.morphTargetInfluences) {
+      return;
+    }
+
     for (let i = 0; i < this.mesh.morphTargetInfluences.length; i++) {
       this.mesh.morphTargetInfluences[i] = 0;
       this.currentInfluences[i] = 0;
@@ -234,7 +220,6 @@ export class MorphController {
     }
   }
 
-  // Set target viseme with smooth transition
   setViseme(viseme, intensity = 1.0) {
     // Reset all targets to 0
     Object.keys(this.targetInfluences).forEach(index => {
@@ -244,8 +229,7 @@ export class MorphController {
     // Set target influences for this viseme
     const morphs = this.visemeMapper.getMorphIndicesForViseme(viseme);
     morphs.forEach(morph => {
-      const influence = intensity * (morph.confidence / 10); // Scale by confidence
-      this.targetInfluences[morph.index] = Math.min(this.maxInfluence, influence);
+      this.targetInfluences[morph.index] = Math.min(this.maxInfluence, intensity);
     });
   }
 
@@ -253,7 +237,6 @@ export class MorphController {
     return 3000 + Math.random() * 3000; // 3-6 seconds
   }
 
-  // Handle blink animation
   updateBlink(deltaTimeMs) {
     this.blinkTimer += deltaTimeMs;
 
@@ -299,8 +282,12 @@ export class MorphController {
     });
   }
 
-  // Update morph influences with smooth blending
   update(deltaTimeMs) {
+    if (!this.mesh?.morphTargetInfluences) {
+      logger.error('MorphController', 'Cannot update - no morphTargetInfluences array');
+      return;
+    }
+    
     // Update blink animation
     this.updateBlink(deltaTimeMs);
 
@@ -309,7 +296,7 @@ export class MorphController {
       const target = this.targetInfluences[index];
       const current = this.currentInfluences[index] || 0;
       const blended = current + this.blendSpeed * (target - current);
-      
+
       this.currentInfluences[index] = blended;
       this.mesh.morphTargetInfluences[index] = blended;
     });
@@ -364,7 +351,7 @@ export class LipSyncMetrics {
     let bestOffset = 0;
     let bestCorrelation = -1;
     
-    for (let offset = -200; offset <= 200; offset += 10) { // �200ms range
+    for (let offset = -200; offset <= 200; offset += 10) {
       let correlation = 0;
       let count = 0;
       
@@ -397,7 +384,7 @@ export class LipSyncMetrics {
     const avgActiveVisemes = this.activeVisemes / this.frameCount;
     const stabilityScore = avgActiveVisemes <= 2 ? 100 : Math.max(0, 100 - ((avgActiveVisemes - 2) * 25));
     
-    return stabilityScore; // % frames with d2 active visemes
+    return stabilityScore;
   }
 
   getMetrics() {
