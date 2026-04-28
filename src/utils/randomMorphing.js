@@ -1,6 +1,3 @@
-// Random Morphing System for Idle Facial Animation
-// Provides subtle, natural-looking facial movements when not speaking
-
 export class RandomMorphController {
   constructor(mesh, options = {}) {
     this.mesh = mesh
@@ -142,23 +139,15 @@ export class RandomMorphController {
     }
     this.updateBlink(currentTime)
     
-    // Apply continuous morph values (skip blink indices during blink)
-    let appliedMorphs = 0
     for (let i = 0; i < this.mesh.morphTargetInfluences.length; i++) {
       if (this.isBlinking && this.blinkIndices.includes(i)) {
-        continue // Don't interfere with blink animation
+        continue
       }
-      
-      const morphValue = morphValues[i]
-      this.mesh.morphTargetInfluences[i] = morphValue
-      
-      if (Math.abs(morphValue) > 0.01) appliedMorphs++
+      this.mesh.morphTargetInfluences[i] = morphValues[i]
     }
   }
   
-  // Stop morphing and reset to neutral
   stop() {
-    // Reset all morph influences to neutral (except blinks)
     for (let i = 0; i < this.mesh.morphTargetInfluences.length; i++) {
       if (!this.blinkIndices.includes(i)) {
         this.mesh.morphTargetInfluences[i] = 0
@@ -166,13 +155,12 @@ export class RandomMorphController {
     }
   }
   
-  // Get debug info
   getDebugInfo() {
+    const morphValues = this.calculateContinuousMorphValues(Date.now())
     return {
-      nextChangeTime: this.nextChangeTime - Date.now(),
       nextBlinkTime: this.nextBlinkTime - Date.now(),
       isBlinking: this.isBlinking,
-      activeTargets: this.targetValues.filter(v => v > 0.01).length,
+      activeTargets: morphValues.filter(v => v > 0.01).length,
       blinkIndices: this.blinkIndices,
       morphTargetCount: this.mesh.morphTargetInfluences.length
     }

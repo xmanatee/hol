@@ -8,8 +8,7 @@ export const renderDetectionOverlay = (ctx, params) => {
   } else if (params.mode === 'anchor') {
     renderAnchorMode(ctx, params);
   } else {
-    // Legacy mode for backward compatibility
-    renderLegacyMode(ctx, params);
+    throw new Error(`Unknown detection renderer mode: ${params.mode}`);
   }
   
   ctx.restore();
@@ -97,49 +96,6 @@ const renderAnchorMode = (ctx, { anchor, anchorState }) => {
   drawAnchorInfo(ctx, anchor, anchorState, centerX, centerY);
   };
 
-const renderLegacyMode = (ctx, {
-  trackedObjects,
-  activeTrackId,
-  anchorStates,
-  stabilityTrackerRef,
-  persistenceTrackerRef
-}) => {
-  if (!trackedObjects) return;
-  
-  // Draw tracked objects (legacy)
-  for (const track of trackedObjects) {
-    const { bbox, id } = track;
-    const isActive = id === activeTrackId;
-    const anchorState = anchorStates?.get(id);
-    const isStable = anchorState?.state === 'stable';
-    
-    // Draw bounding box with different colors for stability
-    let strokeColor = '#00ff00'; // Default green
-    if (isActive) {
-      strokeColor = isStable ? '#ffd700' : '#ff0000'; // Gold for stable, red for tracking
-    }
-    
-    ctx.strokeStyle = strokeColor;
-    ctx.lineWidth = isActive ? 3 : 2;
-    ctx.strokeRect(bbox.x1, bbox.y1, bbox.x2 - bbox.x1, bbox.y2 - bbox.y1);
-    
-    // Stability indicators removed - using color only
-    
-    // Draw label
-    drawTrackLabel(ctx, track, anchorState);
-  }
-  
-  // Draw lock indicator with stability status
-  if (activeTrackId) {
-    drawLockIndicator(ctx, {
-      activeTrackId,
-      anchorStates,
-      stabilityTrackerRef,
-      persistenceTrackerRef
-    });
-  }
-};
-
 const drawDetectionLabel = (ctx, detection) => {
   const { x1, y1, confidence, className } = detection;
   const label = `${className} (${(confidence * 100).toFixed(0)}%)`;
@@ -175,102 +131,6 @@ const drawAnchorInfo = (ctx, anchor, anchorState, centerX, centerY) => {
   info.forEach((line, index) => {
     ctx.fillText(line, boxX + 5, boxY + 15 + index * 16);
   });
-};
-
-
-const drawTrackLabel = (ctx, track, anchorState) => {
-  const { bbox, id, confidence, className } = track;
-  
-  // Build status text
-  let statusText = '';
-  if (anchorState) {
-    statusText = ` [${anchorState.state.toUpperCase()}`;
-    if (anchorState.synthetic) statusText += ' FLOW';
-    if (anchorState.reacquired) statusText += ' REACQ';
-    if (anchorState.persistent) statusText += ' PERSIST';
-    statusText += ']';
-  }
-  
-  const labelText = `${className} #${id} (${(confidence * 100).toFixed(0)}%)${statusText}`;
-  ctx.font = '14px Arial';
-  const textMetrics = ctx.measureText(labelText);
-  const textWidth = textMetrics.width + 8;
-  const textHeight = 20;
-  
-  // Background color based on state
-  const isActive = anchorState?.state !== undefined;
-  const isStable = anchorState?.state === 'stable';
-  let bgColor = 'rgba(0, 255, 0, 0.8)';
-  if (isActive) {
-    bgColor = isStable ? 'rgba(255, 215, 0, 0.8)' : 'rgba(255, 0, 0, 0.8)';
-  }
-  
-  ctx.fillStyle = bgColor;
-  ctx.fillRect(bbox.x1, bbox.y1 - textHeight, textWidth, textHeight);
-  
-  // Draw label text
-  ctx.fillStyle = 'white';
-  ctx.fillText(labelText, bbox.x1 + 4, bbox.y1 - 4);
-};
-
-const drawLockIndicator = (ctx, {
-  activeTrackId,
-  anchorStates,
-  stabilityTrackerRef,
-  persistenceTrackerRef
-}) => {
-  const anchorState = anchorStates.get(activeTrackId);
-  const isStable = anchorState?.state === 'stable';
-  
-  ctx.fillStyle = isStable ? 'rgba(255, 215, 0, 0.9)' : 'rgba(255, 0, 0, 0.9)';
-  ctx.fillRect(10, 60, 280, 200);
-  ctx.fillStyle = 'white';
-  ctx.font = '16px Arial';
-  ctx.fillText(`LOCKED #${activeTrackId}`, 15, 80);
-  ctx.font = '12px Arial';
-  ctx.fillText(`State: ${anchorState?.state?.toUpperCase() || 'TRACKING'}`, 15, 95);
-  
-  // Show persistence status
-  let yOffset = 110;
-  if (anchorState?.synthetic) {
-    ctx.fillText('Status: OPTICAL FLOW', 15, yOffset);
-    yOffset += 15;
-  }
-  if (anchorState?.reacquired) {
-    ctx.fillText('Status: RE-ACQUIRED', 15, yOffset);
-    yOffset += 15;
-  }
-  if (anchorState?.persistent) {
-    ctx.fillText('Status: PERSISTENT', 15, yOffset);
-    yOffset += 15;
-  }
-  
-  // Show detailed stability metrics
-  if (anchorState?.metrics) {
-    const { centerVelocity, areaChangePercent, confidenceRate, sampleCount } = anchorState.metrics;
-    ctx.fillText(`Samples: ${sampleCount}`, 15, yOffset);
-    ctx.fillText(`Velocity: ${centerVelocity.toFixed(1)} px/s (<30)`, 15, yOffset + 15);
-    ctx.fillText(`Area Δ: ${areaChangePercent.toFixed(1)}% (<10)`, 15, yOffset + 30);
-    ctx.fillText(`Confidence: ${(confidenceRate * 100).toFixed(0)}% (≥75)`, 15, yOffset + 45);
-    
-    // Show timer progress
-    const tracker = stabilityTrackerRef.current;
-    const stats = tracker?.trackStats?.get(activeTrackId);
-    if (stats && stats.stableStartTime) {
-      const elapsed = performance.now() - stats.stableStartTime;
-      const progress = (elapsed / 1000).toFixed(1);
-      ctx.fillText(`Timer: ${progress}s / 1.0s`, 15, yOffset + 60);
-    }
-    
-    // Show persistence stats
-    const persistenceStats = persistenceTrackerRef.current?.getAnchorStats() || [];
-    const persistentAnchor = persistenceStats.find(a => a.trackId === activeTrackId);
-    if (persistentAnchor) {
-      ctx.fillText(`Flow Points: ${persistentAnchor.flowPoints}`, 15, yOffset + 75);
-      ctx.fillText(`Miss Count: ${persistentAnchor.missCount}`, 15, yOffset + 90);
-      ctx.fillText(`Template: ${persistentAnchor.hasTemplate ? 'Yes' : 'No'}`, 15, yOffset + 105);
-    }
-  }
 };
 
 export const renderDebugStats = (ctx, { fps, frameTime, processingTime, objectCount }) => {
