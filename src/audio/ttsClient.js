@@ -41,9 +41,6 @@ export class TTSClient {
   }
 
   async initialize() {
-    // Request microphone access first (required for ElevenLabs agents)
-    await this.requestMicrophoneAccess();
-    
     if (!this.audioContext) {
       this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
       logger.info('TTSClient', 'AudioContext created, state:', this.audioContext.state);
@@ -71,9 +68,7 @@ export class TTSClient {
     const startTime = performance.now();
     this.metrics.totalRequests++;
 
-    if (!this.micPermissionGranted) {
-      await this.initialize();
-    }
+    await this.initialize();
 
     // Resume AudioContext if suspended (iOS autoplay handling)
     if (this.audioContext && this.audioContext.state === 'suspended') {
@@ -101,10 +96,17 @@ export class TTSClient {
     this.currentRequestStart = startTime;
     
     logger.info('TTSClient', 'Sending message to agent:', messageWithContext);
+    this.conversation.sendUserMessage(messageWithContext);
+    return true;
   }
 
   async startConversation() {
+    if (!this.config.agentId) {
+      throw new Error('Set VITE_ELEVENLABS_AGENT_ID to enable voice playback.');
+    }
+
     logger.info('TTSClient', 'Starting conversation session...');
+    await this.requestMicrophoneAccess();
     
     this.conversation = await Conversation.startSession({
       agentId: this.config.agentId,
@@ -125,13 +127,15 @@ export class TTSClient {
       },
       onError: (error) => {
         logger.error('TTSClient', 'Agent error:', error);
-        this.emit('onError', { error: error.message });
+        this.emit('onError', { error: error.message || String(error) });
       },
-      onStatusChange: (status) => {
+      onStatusChange: ({ status }) => {
         logger.info('TTSClient', 'Status changed:', status);
-        
-        // Track when agent starts/stops speaking
-        if (status === 'speaking') {
+      },
+      onModeChange: ({ mode }) => {
+        logger.info('TTSClient', 'Mode changed:', mode);
+
+        if (mode === 'speaking') {
           this.isPlaying = true;
           const latencyToFirstAudio = performance.now() - this.currentRequestStart;
           
@@ -140,7 +144,7 @@ export class TTSClient {
           });
           
           logger.info('TTSClient', 'Agent started speaking, latency:', latencyToFirstAudio, 'ms');
-        } else if (status === 'listening' && this.isPlaying) {
+        } else if (mode === 'listening' && this.isPlaying) {
           this.isPlaying = false;
           const totalLatency = performance.now() - this.currentRequestStart;
           
@@ -166,10 +170,6 @@ export class TTSClient {
     // For now, just log them - could be used for text responses
     logger.info('TTSClient', 'Agent message:', message);
   }
-
-  // Note: Audio analysis for lip-sync will need to be implemented differently with agents
-  // The agent platform handles audio playback internally, so we'll need to find alternative ways
-  // to get audio analysis data for lip-sync in Phase 12
 
   calculateMovingAverage(currentAvg, newValue, alpha = 0.15) {
     return currentAvg === 0 ? newValue : currentAvg + alpha * (newValue - currentAvg);

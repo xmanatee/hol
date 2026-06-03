@@ -1,5 +1,7 @@
 # HOL (High on Life)
 
+This launch root is part of the mono workspace. Before broad work, read and follow `../../AGENTS.md`.
+
 ## Code Style
 
 

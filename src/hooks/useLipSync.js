@@ -1,6 +1,3 @@
-// Phase 12 - useLipSync React Hook
-// Integrates lip-sync system with ElevenLabs agents and R3F render loop
-
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { 
@@ -121,6 +118,14 @@ export const useLipSync = () => {
     return false;
   }, []);
 
+  const getMicrophoneAnalysis = useCallback(() => {
+    return microphoneServiceRef.current?.getAnalysis() || {
+      energy: 0,
+      centroid: 0,
+      spectrum: []
+    };
+  }, []);
+
   useFrame(() => {
     if (!isActive) {
       return;
@@ -219,24 +224,9 @@ export const useLipSync = () => {
     resetMicrophoneBaseline,
     getDebugInfo,
     getCurrentInfluences,
+    getMicrophoneAnalysis,
     isVoiceActive
   };
-};
-
-// Utility hook for integrating with HeadAnchor component
-export const useHeadLipSync = (headMesh) => {
-  const lipSync = useLipSync();
-
-  // Auto-initialize when head mesh becomes available
-  // Note: Intentionally using stable lipSync properties to avoid re-initialization loops
-  useEffect(() => {
-    if (headMesh && headMesh.morphTargetDictionary && !lipSync.isActive) {
-      lipSync.initialize(headMesh);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [headMesh, lipSync.isActive, lipSync.initialize]);
-
-  return lipSync;
 };
 
 export default useLipSync;

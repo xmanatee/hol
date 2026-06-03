@@ -1,15 +1,9 @@
-# YOLO Models
+# YOLO Model
 
-This directory should contain ONNX model files for object detection.
+This directory contains the ONNX model used by `DetectionService`.
 
-## Required Model
-- `yolov8n.onnx` - YOLOv8 Nano model optimized for web inference
+## Required File
 
-## How to get the model
-1. Download YOLOv8n from Ultralytics: https://github.com/ultralytics/ultralytics
-2. Export to ONNX format: `yolo export model=yolov8n.pt format=onnx`
-3. Place the exported `yolov8n.onnx` file in this directory
+- `yolo11n_480.onnx` - YOLO11 nano model exported for 480x480 web inference.
 
-## Alternative
-For development/testing, you can use any YOLO ONNX model that supports COCO classes.
-The detector.worker.js expects bottle (class 39) and cup (class 41) from COCO dataset.
+The detector filters COCO classes for person, bottle, cup, and book in `src/cv/detector.worker.js`.

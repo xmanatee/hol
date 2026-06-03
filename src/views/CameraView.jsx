@@ -2,7 +2,6 @@ import { useRef, useCallback, useState } from 'react';
 import { useAnimationFrame, useFrameRate } from '../hooks/useAnimationFrame.js';
 import { useCameraSystem } from '../hooks/useCameraSystem.js';
 import { useHudMetrics } from '../hooks/useHudMetrics.js';
-import { Canvas } from '@react-three/fiber';
 
 import CameraVideo from '../components/CameraVideo.jsx';
 import DetectionCanvas from '../components/DetectionCanvas.jsx';
@@ -13,8 +12,16 @@ import { renderDetectionOverlay, renderDebugStats, renderKeypoints } from '../ut
 import { logger } from '../utils/logger.js';
 
 // Start Screen Component - separate from control panel
-const StartScreen = ({ cameraState, onStartCamera }) => {
+const getStartButtonLabel = (cameraState) => {
+  if (cameraState === 'requesting') return 'Starting Camera...';
+  if (cameraState === 'blocked') return 'Resume Camera';
+  if (cameraState === 'error') return 'Retry Camera';
+  return 'Start Camera';
+};
+
+const StartScreen = ({ cameraState, cameraError, onStartCamera }) => {
   if (cameraState === 'active') return null;
+  const isRequesting = cameraState === 'requesting';
   
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-black z-40 pointer-events-auto">
@@ -27,12 +34,13 @@ const StartScreen = ({ cameraState, onStartCamera }) => {
         </p>
         <button
           onClick={onStartCamera}
-          className="px-6 py-3 text-lg bg-blue-600 text-white border-0 rounded-lg cursor-pointer hover:bg-blue-700 transition-all duration-200 font-medium"
+          disabled={isRequesting}
+          className="px-6 py-3 text-lg bg-blue-600 text-white border-0 rounded-lg cursor-pointer hover:bg-blue-700 transition-all duration-200 font-medium disabled:cursor-wait disabled:bg-blue-900"
         >
-          {cameraState === 'blocked' ? 'Resume Camera' : 'Start Camera'}
+          {getStartButtonLabel(cameraState)}
         </button>
         <div className="mt-6 text-sm text-gray-500">
-          Allow camera permissions when prompted
+          {cameraError || 'Allow camera permissions when prompted'}
         </div>
       </div>
     </div>
@@ -47,10 +55,6 @@ const CameraView = () => {
 
   const [showStats, setShowStats] = useState(false);
   const [lastProcessedDetections, setLastProcessedDetections] = useState(null);
-  const [cameraSystemConfig, setCameraSystemConfig] = useState({
-    useWorkerPersistence: false // Default to simple persistence for Phase 1-6
-  });
-  const [needsRestart, setNeedsRestart] = useState(false);
   const [discoveredMeshes, setDiscoveredMeshes] = useState([]);
   const [hiddenMeshes, setHiddenMeshes] = useState(new Set());
   const [manualRotation, setManualRotation] = useState({ x: 0, y: 0, z: 0 });
@@ -67,9 +71,12 @@ const CameraView = () => {
   const [microphoneDebugMode, setMicrophoneDebugMode] = useState(true);
 
 
-  // Use the camera system hook with new image-based anchor system
+  const { metrics, updateMetric } = useHudMetrics();
+
+  // Use the camera system hook with image-based anchors
   const {
     cameraState,
+    cameraError,
     videoDimensions,
     detectionState,
     anchorSystemState,
@@ -87,13 +94,10 @@ const CameraView = () => {
     clearAnchor,
     findDetectionAtPosition,
     generatePersonality,
-    synthesizeSpeech,
     stopTTS,
     speakGreeting,
     setCurrentCanvas
-  } = useCameraSystem(cameraSystemConfig);
-
-  const { metrics, updateMetric } = useHudMetrics();
+  } = useCameraSystem({ onMetricUpdate: updateMetric });
   const throttledFrame = useFrameRate(30);
 
   // Handle camera start/resume
@@ -138,19 +142,7 @@ const CameraView = () => {
     if (config.detectionInterval) {
       services.detection.setDetectionInterval(config.detectionInterval);
     }
-    
-    // Handle persistence configuration change
-    if ('useWorkerPersistence' in config) {
-      const newConfig = { ...cameraSystemConfig, useWorkerPersistence: config.useWorkerPersistence };
-      setCameraSystemConfig(newConfig);
-      
-      // Mark that restart is needed for persistence mode change
-      if (config.useWorkerPersistence !== cameraSystemConfig.useWorkerPersistence) {
-        setNeedsRestart(true);
-        logger.info('CameraView', `Persistence mode changed to: ${config.useWorkerPersistence ? 'Worker-based' : 'Simple'} - restart recommended`);
-      }
-    }
-  }, [services.detection, cameraSystemConfig]);
+  }, [services.detection]);
 
   const handleGeneratePersonality = useCallback(async () => {
     if (anchorSystemState.mode !== 'anchor' || !anchorSystemState.activeAnchor || !canvasRef.current) {
@@ -162,47 +154,26 @@ const CameraView = () => {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     
-    // Create a mock bbox from anchor position for personality generation
     const position = anchorSystemState.activeAnchor.position;
-    const mockBbox = {
-      x1: position.x - 50,
-      y1: position.y - 50,
-      x2: position.x + 50,
-      y2: position.y + 50
+    const sourceDetection = anchorSystemState.activeAnchor.sourceDetection;
+    const roi = sourceDetection ? {
+      x: sourceDetection.x1,
+      y: sourceDetection.y1,
+      width: sourceDetection.x2 - sourceDetection.x1,
+      height: sourceDetection.y2 - sourceDetection.y1
+    } : {
+      x: position.x - 50,
+      y: position.y - 50,
+      width: 100,
+      height: 100
     };
     
     try {
-      await generatePersonality(imageData, mockBbox);
+      await generatePersonality(imageData, roi);
     } catch (error) {
       logger.error('CameraView', 'Failed to generate personality:', error);
     }
   }, [anchorSystemState, generatePersonality]);
-
-  // Handle restart for configuration changes
-  const handleRestart = useCallback(async () => {
-    logger.info('CameraView', 'Restarting camera system with new configuration...');
-    
-    // Stop current camera and clear state
-    stopCamera();
-    
-    // Clear canvas context to prevent WebGL issues
-    if (canvasRef.current) {
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }
-    }
-    ctxRef.current = null;
-    
-    setNeedsRestart(false);
-    
-    // Small delay to allow cleanup
-    setTimeout(() => {
-      // The camera system will be recreated with new config on next render
-      logger.info('CameraView', 'Camera system restarted');
-    }, 200); // Slightly longer delay for WebGL cleanup
-  }, [stopCamera]);
 
   // Microphone handlers
   const handleToggleMicrophoneMode = useCallback(async (enabled) => {
@@ -211,7 +182,7 @@ const CameraView = () => {
       
       // Update TTS client microphone mode
       if (services.tts) {
-        services.tts.setMicrophoneMode(enabled);
+        await services.tts.setMicrophoneMode(enabled);
       }
       
       logger.info('CameraView', 'Microphone mode toggled:', enabled);
@@ -231,7 +202,7 @@ const CameraView = () => {
     } catch (error) {
       logger.error('CameraView', 'Failed to toggle microphone mode:', error);
     }
-  }, [services.tts, synthesizeSpeech, stopTTS, ttsData.isPlaying, anchorSystemState]);
+  }, [services.tts, stopTTS]);
 
   const handleVoiceActivityThresholdChange = useCallback((threshold) => {
     setVoiceActivityThreshold(threshold);
@@ -324,10 +295,11 @@ const CameraView = () => {
               position: result.position
             });
           } else {
-            logger.error('CameraView', 'Anchor creation failed:', result);
+            logger.warn('CameraView', 'Anchor creation failed:', result);
           }
         } catch (error) {
-          logger.error('CameraView', 'Failed to create anchor:', error);
+          logger.warn('CameraView', `Anchor not created: ${error.message}`);
+          updateMetric('Anchor creation', error.message);
         }
       } else {
         logger.warn('CameraView', 'No detection found at tap position:', {
@@ -344,7 +316,7 @@ const CameraView = () => {
       logger.info('CameraView', 'Clearing anchor to return to detection mode');
       clearAnchor();
     }
-  }, [cvLoaded, anchorSystemState, findDetectionAtPosition, createAnchorFromTap, clearAnchor]);
+  }, [cvLoaded, anchorSystemState, findDetectionAtPosition, createAnchorFromTap, clearAnchor, updateMetric]);
 
   // Main animation frame loop
   useAnimationFrame(() => {
@@ -446,7 +418,7 @@ const CameraView = () => {
         const stableAnchorCount = anchorSystemState?.anchorState?.state === 'stable' ? 1 : 0;
         updateMetric('Stable Anchors', stableAnchorCount);
         
-        // Update Phase 4 stability metrics for active anchor
+        // Update stability metrics for active anchor
         if (anchorSystemState?.activeAnchor) {
           const anchorState = anchorSystemState.anchorState;
           if (anchorState) {
@@ -473,7 +445,7 @@ const CameraView = () => {
           }
         }
         
-        // Phase 6 Persistence metrics
+        // Update persistence metrics
         if (services.anchor.persistenceTracker) {
           const persistenceStats = services.anchor.persistenceTracker.getAnchorStats();
           if (persistenceStats.length > 0) {
@@ -533,8 +505,8 @@ const CameraView = () => {
         onDraw={handleCanvasDraw}
       />
 
-      {/* WebGL Overlay Scene - restored with working Canvas */}
-      {cameraState === 'active' && !needsRestart && (
+      {/* WebGL Overlay Scene */}
+      {cameraState === 'active' && (
         <OverlayScene
           width={videoDimensions?.width || 1280}
           height={videoDimensions?.height || 720}
@@ -544,12 +516,15 @@ const CameraView = () => {
           onMeshNamesDiscovered={handleMeshNamesDiscovered}
           onLipSyncUpdate={handleLipSyncUpdate}
           microphoneMode={microphoneMode}
+          activeAnchor={anchorSystemState.activeAnchor}
+          anchorState={anchorSystemState.anchorState}
         />
       )}
 
       {/* Start Screen - only when camera is not active */}
       <StartScreen 
         cameraState={cameraState} 
+        cameraError={cameraError}
         onStartCamera={handleStartClick} 
       />
 
@@ -562,15 +537,11 @@ const CameraView = () => {
           detectionError={detectionState.error}
           trackedObjects={anchorSystemState?.mode === 'detection' ? (detectionState.detections || []) : []}
           activeTrackId={anchorSystemState?.activeAnchor ? 'anchor' : null}
-          activeAnchor={anchorSystemState?.activeAnchor}
           showStats={showStats}
           onToggleStats={() => setShowStats(!showStats)}
           onUnlock={clearAnchor}
           onStop={stopCamera}
           onConfigChange={handleConfigChange}
-          onRestart={handleRestart}
-          needsRestart={needsRestart}
-          currentConfig={cameraSystemConfig}
           metrics={metrics}
           personalityData={personalityData}
           ttsData={ttsData}

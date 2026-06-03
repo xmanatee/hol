@@ -23,13 +23,18 @@ const CollapsibleSection = ({ title, isExpanded, onToggle, children }) => (
 
 const MetricsSection = ({ metrics }) => (
   <div className="grid grid-cols-1 gap-1 max-h-48 overflow-y-auto">
+    {Object.keys(metrics).length === 0 && (
+      <div className="px-2 py-2 text-xs text-gray-400 border border-gray-700 rounded">
+        Metrics appear after camera processing starts.
+      </div>
+    )}
     {Object.entries(metrics).map(([name, metric]) => (
       <div
         key={name}
-        className={`px-2 py-1 text-xs border-l-2 ${
+        className={`px-2 py-1 text-xs border rounded ${
           metric.isRed 
-            ? 'text-red-400 border-red-500 bg-red-900' 
-            : 'text-green-400 border-green-500 bg-green-900'
+            ? 'text-red-300 border-red-700 bg-red-950' 
+            : 'text-green-300 border-green-700 bg-green-950'
         }`}
       >
         <div className="text-white text-xs">
@@ -450,11 +455,8 @@ const MicrophoneSection = ({
   );
 };
 
-const ConfigSection = ({ onConfigChange, currentConfig, needsRestart, onRestart }) => {
+const ConfigSection = ({ onConfigChange }) => {
   const [detectionInterval, setDetectionInterval] = useState(4);
-  const [showSparkles, setShowSparkles] = useState(true);
-  const [normalEstimation, setNormalEstimation] = useState(true);
-  const [useWorkerPersistence, setUseWorkerPersistence] = useState(currentConfig?.useWorkerPersistence || false);
   
   return (
     <div className="text-xs">
@@ -475,67 +477,6 @@ const ConfigSection = ({ onConfigChange, currentConfig, needsRestart, onRestart 
           className="w-full"
         />
       </div>
-      
-      <div className="flex flex-col gap-1">
-        <label className="flex items-center text-gray-300">
-          <input
-            type="checkbox"
-            checked={showSparkles}
-            onChange={(e) => {
-              setShowSparkles(e.target.checked);
-              onConfigChange?.({ showSparkles: e.target.checked });
-            }}
-            className="mr-1.5"
-          />
-          Show sparkles for stable anchors
-        </label>
-        
-        <label className="flex items-center text-gray-300">
-          <input
-            type="checkbox"
-            checked={normalEstimation}
-            onChange={(e) => {
-              setNormalEstimation(e.target.checked);
-              onConfigChange?.({ normalEstimation: e.target.checked });
-            }}
-            className="mr-1.5"
-          />
-          Enable normal estimation
-        </label>
-
-        <label className="flex items-center text-gray-300">
-          <input
-            type="checkbox"
-            checked={useWorkerPersistence}
-            onChange={(e) => {
-              setUseWorkerPersistence(e.target.checked);
-              onConfigChange?.({ useWorkerPersistence: e.target.checked });
-            }}
-            className="mr-1.5"
-          />
-          Use worker-based persistence (OpenCV)
-        </label>
-        
-        {useWorkerPersistence && !needsRestart && (
-          <div className="ml-4 text-green-400 text-[10px]">
-            ✓ Worker persistence enabled
-          </div>
-        )}
-        
-        {needsRestart && (
-          <div className="ml-4 mt-2">
-            <div className="text-yellow-400 text-[10px] mb-1">
-              ⚠️ Configuration changed - restart recommended
-            </div>
-            <button
-              onClick={onRestart}
-              className="px-2 py-1 text-xs bg-blue-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-blue-500"
-            >
-              Restart Camera System
-            </button>
-          </div>
-        )}
-      </div>
     </div>
   );
 };
@@ -552,9 +493,6 @@ const UnifiedControlPanel = ({
   onUnlock,
   onStop,
   onConfigChange,
-  onRestart,
-  needsRestart,
-  currentConfig,
   metrics,
   personalityData,
   ttsData,
@@ -617,16 +555,6 @@ const UnifiedControlPanel = ({
           <h3 className="text-base font-medium text-white">
             Control Panel
           </h3>
-          {currentConfig?.useWorkerPersistence && (
-            <div className="text-xs text-blue-400">
-              Worker Persistence Mode
-            </div>
-          )}
-          {needsRestart && (
-            <div className="text-xs text-yellow-400 animate-pulse">
-              ⚠️ Restart Needed
-            </div>
-          )}
         </div>
         <button
           onClick={() => setIsVisible(false)}
@@ -737,9 +665,6 @@ const UnifiedControlPanel = ({
       >
         <ConfigSection 
           onConfigChange={onConfigChange}
-          currentConfig={currentConfig}
-          needsRestart={needsRestart}
-          onRestart={onRestart}
         />
       </CollapsibleSection>
     </div>

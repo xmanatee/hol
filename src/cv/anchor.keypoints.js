@@ -133,7 +133,7 @@ export class KeypointDetector {
   /**
    * Calculate spatial distribution score for keypoint quality assessment
    */
-  calculateSpatialDistribution(keypoints, imageWidth, imageHeight) {
+  calculateSpatialDistribution(keypoints, imageWidth, imageHeight, offsetX = 0, offsetY = 0) {
     if (keypoints.length < 10) return 0;
 
     // Divide image into 3x3 grid
@@ -146,8 +146,8 @@ export class KeypointDetector {
     
     // Count keypoints in each cell
     for (const kp of keypoints) {
-      const x = kp.pt ? kp.pt.x : kp.x;
-      const y = kp.pt ? kp.pt.y : kp.y;
+      const x = (kp.pt ? kp.pt.x : kp.x) - offsetX;
+      const y = (kp.pt ? kp.pt.y : kp.y) - offsetY;
       const col = Math.min(Math.floor(x / cellWidth), gridCols - 1);
       const row = Math.min(Math.floor(y / cellHeight), gridRows - 1);
       grid[row][col]++;
@@ -167,9 +167,9 @@ export class KeypointDetector {
   /**
    * Assess overall template quality for Shi-Tomasi corners
    */
-  assessTemplateQuality(keypoints, descriptors, imageWidth, imageHeight) {
+  assessTemplateQuality(keypoints, descriptors, imageWidth, imageHeight, offsetX = 0, offsetY = 0) {
     const keypointCount = keypoints.length;
-    const spatialScore = this.calculateSpatialDistribution(keypoints, imageWidth, imageHeight);
+    const spatialScore = this.calculateSpatialDistribution(keypoints, imageWidth, imageHeight, offsetX, offsetY);
     
     // For corners, we focus on count and distribution (no descriptors) 
     const countScore = Math.min(1, keypointCount / 80); // Normalize to 80 keypoints max (our new target)

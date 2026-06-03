@@ -127,7 +127,7 @@ export class RandomMorphController {
     }
   }
   
-  update(deltaTime) {
+  update() {
     const currentTime = Date.now()
     
     // Calculate continuous morph values
@@ -182,9 +182,9 @@ export function useRandomMorphing(mesh, isActive = true, options = {}) {
   }, [mesh, options])
   
   // Update morphing on each frame
-  useFrame((state, deltaTime) => {
+  useFrame(() => {
     if (controllerRef.current && isActive) {
-      controllerRef.current.update(deltaTime)
+      controllerRef.current.update()
     }
   })
   

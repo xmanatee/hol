@@ -1,9 +1,10 @@
-import { useRef, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useThree, useFrame } from '@react-three/fiber'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import * as THREE from 'three'
-import { useHeadLipSync } from '../../hooks/useLipSync.js'
+import { useLipSync } from '../../hooks/useLipSync.js'
 import { useRandomMorphing } from '../../utils/randomMorphing.js'
+import { logger } from '../../utils/logger.js'
 
 const HeadAnchor = ({ 
   visible = true,
@@ -14,17 +15,22 @@ const HeadAnchor = ({
   onLipSyncUpdate = () => {},
   microphoneMode = false
 }) => {
-  const { scene, camera } = useThree()
+  const { camera } = useThree()
   const [gltfScene, setGltfScene] = useState(null)
   const [headMesh, setHeadMesh] = useState(null)
   const [isLoaded, setIsLoaded] = useState(false)
-  const headGroupRef = useRef()
 
-  // Initialize lip-sync system
-  const lipSync = useHeadLipSync(headMesh)
+  const {
+    initialize,
+    setAgentSpeaking,
+    setMicrophoneMode,
+    getMicrophoneAnalysis,
+    isVoiceActive,
+    isActive,
+    currentViseme
+  } = useLipSync()
   
-  // Initialize random morphing (active when NOT speaking AND not in microphone mode)
-  const randomMorphing = useRandomMorphing(headMesh, !isAgentSpeaking && !microphoneMode, {
+  useRandomMorphing(headMesh, !isAgentSpeaking && !microphoneMode, {
     intensity: 0.8,           // Maximum morph intensity (increased for all-target use)
     waveSpeed: 0.9,           // Speed of continuous wave motion
     phaseOffset: 1.8,         // Phase offset between morph targets
@@ -34,34 +40,31 @@ const HeadAnchor = ({
 
   // Initialize lip-sync with microphone mode when mesh is loaded
   useEffect(() => {
-    if (headMesh && lipSync.initialize) {
-      lipSync.initialize(headMesh, microphoneMode);
+    if (headMesh) {
+      initialize(headMesh);
     }
-  }, [headMesh, microphoneMode, lipSync.initialize]);
+  }, [headMesh, initialize]);
 
   // Update lip-sync when agent speaking status changes
   useEffect(() => {
-    if (lipSync.setAgentSpeaking) {
-      lipSync.setAgentSpeaking(isAgentSpeaking)
-    }
-  }, [isAgentSpeaking, lipSync.setAgentSpeaking])
+    setAgentSpeaking(isAgentSpeaking)
+  }, [isAgentSpeaking, setAgentSpeaking])
 
   // Update microphone mode in lip-sync system
   useEffect(() => {
-    if (lipSync.setMicrophoneMode) {
-      lipSync.setMicrophoneMode(microphoneMode);
-    }
-  }, [microphoneMode, lipSync.setMicrophoneMode]);
+    setMicrophoneMode(microphoneMode);
+  }, [microphoneMode, setMicrophoneMode]);
 
   // Eye gaze tracking and lip-sync update - runs every frame
   useFrame(() => {
-    if (!gltfScene || !isLoaded) return
+    if (!gltfScene || !isLoaded || !visible) return
 
     // Get camera position in world space
     const cameraPosition = camera.position.clone()
     
     // Calculate look-at direction from head to camera
-    const headPosition = gltfScene.position.clone()
+    const headPosition = new THREE.Vector3()
+    gltfScene.getWorldPosition(headPosition)
     const lookDirection = cameraPosition.clone().sub(headPosition).normalize()
     
     // Convert to local rotation (limit angles to avoid extreme poses)
@@ -90,15 +93,14 @@ const HeadAnchor = ({
     }
 
     // Update parent with lip-sync data from microphone mode
-    if (microphoneMode && lipSync.microphoneService) {
-      const audioData = lipSync.microphoneService.getAnalysis();
-      const voiceActive = lipSync.microphoneService.isVoiceActive();
+    if (microphoneMode) {
+      const audioData = getMicrophoneAnalysis();
       
       onLipSyncUpdate({
-        currentViseme: lipSync.currentViseme,
+        currentViseme,
         audioEnergy: audioData.energy,
-        isVoiceActive: voiceActive,
-        microphoneActive: lipSync.isActive
+        isVoiceActive: isVoiceActive(),
+        microphoneActive: isActive
       });
     }
   })
@@ -124,7 +126,6 @@ const HeadAnchor = ({
       const scaleFactor = targetSize / maxDimension
       gltf.scene.scale.setScalar(scaleFactor)
       
-      scene.add(gltf.scene)
       gltf.scene.updateMatrixWorld(true)
       
       const meshNames = []
@@ -145,9 +146,9 @@ const HeadAnchor = ({
       setGltfScene(gltf.scene)
       setIsLoaded(true)
     }, undefined, (error) => {
-      console.error('GLTF loading error:', error)
+      logger.error('HeadAnchor', 'GLTF loading error:', error)
     })
-  }, [scene, isLoaded])
+  }, [isLoaded, onMeshNamesDiscovered])
 
   // Apply mesh visibility when hiddenMeshes changes
   useEffect(() => {
@@ -161,22 +162,11 @@ const HeadAnchor = ({
     })
   }, [hiddenMeshes, isLoaded, gltfScene])
 
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      if (gltfScene && scene) {
-        scene.remove(gltfScene)
-      }
-    }
-  }, [scene, gltfScene])
-
-
-
   if (!isLoaded || !visible) {
     return null
   }
 
-  return null // Model is added directly to Three.js scene
+  return <primitive object={gltfScene} />
 }
 
 export default HeadAnchor

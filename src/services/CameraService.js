@@ -13,6 +13,7 @@ export class CameraService {
       audio: false
     };
     this.listeners = new Set();
+    this.timeoutMs = 5000;
   }
 
   addListener(listener) {
@@ -39,10 +40,10 @@ export class CameraService {
       this._notifyStateChange('requesting');
       this.videoElement = videoElement;
 
-      this.stream = await navigator.mediaDevices.getUserMedia(this.constraints);
+      this.stream = await this._requestCameraStream();
       videoElement.srcObject = this.stream;
 
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve) => {
         const onLoadedMetadata = () => {
           videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
           
@@ -66,15 +67,38 @@ export class CameraService {
         setTimeout(() => {
           if (this.state === 'requesting') {
             videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+            this._stopStream();
+            videoElement.srcObject = null;
             this._notifyStateChange('error', { error: 'Camera start timeout' });
-            reject(new Error('Camera start timeout'));
+            resolve(false);
           }
-        }, 5000);
+        }, this.timeoutMs);
       });
     } catch (err) {
       this._notifyStateChange('error', { error: err.message });
-      throw err;
+      return false;
     }
+  }
+
+  async _requestCameraStream() {
+    let timedOut = false;
+    const streamRequest = navigator.mediaDevices.getUserMedia(this.constraints);
+
+    streamRequest.then((stream) => {
+      if (timedOut) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    }, () => {});
+
+    return await Promise.race([
+      streamRequest,
+      new Promise((_, reject) => {
+        setTimeout(() => {
+          timedOut = true;
+          reject(new Error('Camera permission timeout'));
+        }, this.timeoutMs);
+      })
+    ]);
   }
 
   async resume() {
@@ -94,15 +118,19 @@ export class CameraService {
   }
 
   stop() {
-    if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop());
-      this.stream = null;
-    }
+    this._stopStream();
     if (this.videoElement) {
       this.videoElement.srcObject = null;
       this.videoElement = null;
     }
     this._notifyStateChange('idle');
+  }
+
+  _stopStream() {
+    if (this.stream) {
+      this.stream.getTracks().forEach(track => track.stop());
+      this.stream = null;
+    }
   }
 
   getState() {

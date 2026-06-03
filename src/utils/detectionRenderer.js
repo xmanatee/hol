@@ -19,7 +19,7 @@ const renderDetectionMode = (ctx, { detections }) => {
   
   // Draw detection boxes
   for (const detection of detections) {
-    const { x1, y1, x2, y2, confidence, className } = detection;
+    const { x1, y1, x2, y2 } = detection;
     
     // Draw bounding box
     ctx.strokeStyle = '#00ff00'; // Green for detections
@@ -35,7 +35,7 @@ const renderAnchorMode = (ctx, { anchor, anchorState }) => {
   if (!anchor || !anchorState) return;
   
   const { position } = anchor;
-  const { state, metrics } = anchorState;
+  const { state } = anchorState;
   
   // Debug: Log 2D anchor position updates (10% chance per frame)
   if (Math.random() < 0.1) {

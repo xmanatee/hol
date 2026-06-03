@@ -3,7 +3,7 @@ import OpenAI from 'openai';
 export class VisionClient {
   constructor(config = {}) {
     this.config = {
-      model: config.model || import.meta.env.VITE_OPENAI_VISION_MODEL || 'gpt-4-vision-preview',
+      model: config.model || import.meta.env.VITE_OPENAI_VISION_MODEL || 'gpt-4.1-mini',
       maxTokens: config.maxTokens || 300,
       ...config
     };
@@ -46,6 +46,7 @@ export class VisionClient {
         }
       ],
       max_tokens: this.config.maxTokens,
+      response_format: { type: "json_object" }
     });
 
     const content = response.choices[0].message.content;
@@ -76,11 +77,11 @@ Focus on details that would help create a unique personality for this object. Re
     return {
       category: result.category,
       brandOrTitle: result.brandOrTitle || result.brand || result.title,
-      textSnippets: result.textSnippets,
-      confidence: result.confidence,
+      textSnippets: result.textSnippets || [],
+      confidence: result.confidence || 0,
       description: result.description,
-      colors: result.colors,
-      materials: result.materials
+      colors: result.colors || [],
+      materials: result.materials || []
     };
   }
 

@@ -430,8 +430,6 @@ export class HomographyEstimator {
       // Camera intrinsic parameters
       const fx = this.cameraMatrix.data64F[0];
       const fy = this.cameraMatrix.data64F[4];
-      const cx = this.cameraMatrix.data64F[2];
-      const cy = this.cameraMatrix.data64F[5];
 
       // Normalize homography by H[2,2] to ensure scale consistency
       const scale = H[8];
@@ -448,7 +446,6 @@ export class HomographyEstimator {
       // For planar surfaces, we can extract tilt information
       const h00 = h[0], h01 = h[1], h02 = h[2];
       const h10 = h[3], h11 = h[4], h12 = h[5];
-      const h20 = h[6], h21 = h[7], h22 = h[8];
 
       // Estimate the dominant rotation using the upper 2x2 submatrix
       // Normalize the rotation part

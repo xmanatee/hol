@@ -1,11 +1,57 @@
-- continious transition from phase shape to object .
-- full screen mode
-- intro screen
-- context menu which can enable/disable dev mode and direct to explanation page.
-- in @PHASES.md there is a complete plan for the implementation. First 6 phases must be completed now. Now proceed with the implemntation. After completing each phase review the changes and check that the app builds and linter applies correctly
+# HOL (High on Life)
 
+Mobile-first camera app that detects selectable objects, switches to image-based anchoring after a tap, and renders an animated talking 3D face over the camera feed.
 
-DONE:
-- check my plan in @PHASES.md . I want you to restructure and refactor my code to make it more usable and simpler. Each class should have a specific responsibility. Modern web and design patterns and best practices must be followed. Make these changes to improve my codebase. but be careful not to break anything. check that everything compiles (and linter) after every change.
-- Also there are too many metric/info/debug components on the screen. Unify it all into one a single control panel with metrics, configurations, controls and alerts/notifications. each section should be hideable
-- In my @PHASES.md i updated metrics for every phase. I implemented first 6 phases. in top right corner display these metrics: show metric in red if it doesn't hit expected value.  
+## Runtime Flow
+
+1. `CameraView` starts the rear camera and draws each frame into the processing canvas.
+2. `DetectionService` runs YOLO in `detector.worker.js` every fourth frame while the app is in detection mode.
+3. `AnchorManager` stores selectable detections and switches to `ImageAnchorService` when the user taps an object.
+4. `ImageAnchorService` tracks the selected region with Shi-Tomasi keypoints, Lucas-Kanade optical flow, homography scoring, and template-matching recovery.
+5. `OverlayScene` loads `/3d/untitled.gltf` and drives morph targets through idle morphing, microphone lip sync, and ElevenLabs agent speech state.
+6. `UnifiedControlPanel` contains status, metrics, object controls, mesh visibility, logging controls, microphone tuning, and personality actions.
+
+## Commands
+
+```bash
+npm run dev
+npm run build
+npm run lint
+npm run preview
+```
+
+Camera access on iPhone requires HTTPS. For local device testing, expose the Vite dev server through a trusted HTTPS tunnel or local certificate.
+
+## Required Assets
+
+- `public/models/yolo11n_480.onnx`
+- `public/opencv.js`
+- `public/ort-wasm-simd-threaded.wasm`
+- `public/ort-wasm-simd-threaded.jsep.wasm`
+- `public/3d/untitled.gltf`
+- `public/3d/untitled.bin`
+- `public/3d/textures/lambert5_baseColor.png`
+
+## Optional Services
+
+Personality generation uses OpenAI and is lazy-loaded only when requested:
+
+```bash
+VITE_OPENAI_API_KEY=...
+VITE_OPENAI_VISION_MODEL=gpt-4.1-mini
+VITE_OPENAI_CHAT_MODEL=gpt-4.1-mini
+```
+
+Voice playback uses ElevenLabs Conversational AI:
+
+```bash
+VITE_ELEVENLABS_AGENT_ID=...
+```
+
+Without these values, the camera, detection, anchoring, model rendering, and microphone lip-sync paths still load.
+
+## Current Limits
+
+- The face model currently renders in a fixed overlay position while the 2D anchor is tracked on the processing canvas.
+- ElevenLabs agent audio playback is controlled by the SDK; microphone lip-sync is real, while agent lip-sync uses speech-state simulation.
+- The OpenAI key is read by browser code through Vite env variables. Use a backend proxy before shipping publicly.

@@ -9,7 +9,7 @@ import { KeypointTracker } from '../cv/anchor.tracking.js';
 import { HomographyEstimator } from '../cv/anchor.homography.js';
 import { AnchorPersistenceSystem } from '../cv/anchor.persistence.js';
 import { OneEuroFilter } from '../cv/oneEuroFilter.js';
-import { testOpenCVFeatures, logOpenCVFeatures, checkCriticalFeatures } from '../cv/opencv.features.test.js';
+import { checkCriticalFeatures } from '../cv/opencv.features.test.js';
 import { logger } from '../utils/logger.js';
 
 export class ImageAnchorService {
@@ -62,6 +62,10 @@ export class ImageAnchorService {
     
     // Event listeners
     this.listeners = new Set();
+
+    this.minAnchorKeypoints = 12;
+    this.minimumTemplateQuality = 0.12;
+    this.targetTemplateQuality = 0.25;
   }
 
   async initialize(cv, cameraParams) {
@@ -69,24 +73,16 @@ export class ImageAnchorService {
     
     try {
       logger.info('ImageAnchor', 'Initializing...');
-      
-      // Test OpenCV features first
-      logger.info('ImageAnchor', 'Testing OpenCV features...');
-      const featureTest = logOpenCVFeatures();
-      
-      if (!featureTest.available) {
-        throw new Error('OpenCV.js not available');
-      }
 
-      // Check critical features
       const criticalCheck = checkCriticalFeatures();
       if (!criticalCheck.allAvailable) {
         const missingFeatures = criticalCheck.missing.join(', ');
-        logger.error('ImageAnchor', 'Missing critical OpenCV features:', missingFeatures);
-        throw new Error(`Missing critical OpenCV features: ${missingFeatures}. Image anchor system cannot function.`);
+        const error = criticalCheck.error || `Missing critical OpenCV features: ${missingFeatures}`;
+        logger.error('ImageAnchor', error);
+        throw new Error(error);
       }
 
-      logger.info('ImageAnchor', 'All critical OpenCV features available ✅');
+      logger.info('ImageAnchor', 'All critical OpenCV features available');
       
       this.cv = cv;
       
@@ -122,7 +118,7 @@ export class ImageAnchorService {
     try {
       // Convert to OpenCV Mat
       const src = this.cv.matFromImageData(imageData);
-      const gray = new cv.Mat();
+      const gray = new this.cv.Mat();
       this.cv.cvtColor(src, gray, this.cv.COLOR_RGBA2GRAY);
       
       // Determine template region
@@ -138,10 +134,10 @@ export class ImageAnchorService {
       // Extract keypoints from template region
       const keypointResult = this.keypointDetector.extractKeypoints(this.cv, gray, templateRegion);
       
-      if (keypointResult.keypoints.length < 15) {
+      if (keypointResult.keypoints.length < this.minAnchorKeypoints) {
         src.delete();
         gray.delete();
-        throw new Error(`Insufficient keypoints: ${keypointResult.keypoints.length} (need at least 15)`);
+        throw new Error(`Insufficient keypoints: ${keypointResult.keypoints.length} (need at least ${this.minAnchorKeypoints})`);
       }
 
       // Assess template quality
@@ -149,13 +145,15 @@ export class ImageAnchorService {
         keypointResult.keypoints,
         keypointResult.descriptors,
         templateRegion.width,
-        templateRegion.height
+        templateRegion.height,
+        templateRegion.x,
+        templateRegion.y
       );
 
-      if (qualityAssessment.overall < 0.25) {
+      if (!this._isUsableTemplateQuality(qualityAssessment.overall)) {
         src.delete();
         gray.delete();
-        throw new Error(`Poor template quality: ${qualityAssessment.overall.toFixed(2)} (need > 0.25)`);
+        throw new Error(`Poor template quality: ${qualityAssessment.overall.toFixed(2)} (need at least ${this.minimumTemplateQuality.toFixed(2)})`);
       }
 
       // Store template center for persistence system (still needed for template matching)
@@ -175,7 +173,7 @@ export class ImageAnchorService {
       this.templateRegion = templateRegion;
       this.templateCenter = templateCenter; // Store for template persistence (not positioning)
       this.currentPosition = { x: tapPosition.x, y: tapPosition.y, z: 0 }; // Anchor at tap position
-      this.anchorState = 'tracking';
+      this.anchorState = this._getInitialAnchorState(qualityAssessment.overall);
       this.framesSinceRefresh = 0;
       
       // Initialize metrics
@@ -201,14 +199,14 @@ export class ImageAnchorService {
         position: this.currentPosition,
         keypoints: keypointResult.keypoints.length,
         quality: qualityAssessment.overall,
-        method: keypointResult.method
+        method: keypointResult.method,
+        state: this.anchorState
       };
 
     } catch (error) {
       this.anchorState = 'inactive';
       this.anchored = false;
       this._notifyStateChange();
-      logger.error('ImageAnchor', 'Failed to create anchor:', error);
       throw error;
     }
   }
@@ -240,7 +238,7 @@ export class ImageAnchorService {
     try {
       // Convert to OpenCV Mat
       const src = this.cv.matFromImageData(imageData);
-      const gray = new cv.Mat();
+      const gray = new this.cv.Mat();
       this.cv.cvtColor(src, gray, this.cv.COLOR_RGBA2GRAY);
 
       let updateResult;
@@ -666,26 +664,50 @@ export class ImageAnchorService {
    * Calculate template region from tap position and bounding box
    */
   _calculateTemplateRegion(tapPosition, boundingBox, imageWidth, imageHeight) {
-    // Use ±20% of image dimensions around clicked point for keypoint detection
-    const boxPercent = 0.2; // 20% in each direction = 40% total box
-    const boxWidth = imageWidth * boxPercent;
-    const boxHeight = imageHeight * boxPercent;
-    
-    // Create rectangular region centered on tap position with ±20% constraint
-    const region = {
-      x: Math.max(0, tapPosition.x - boxWidth),
-      y: Math.max(0, tapPosition.y - boxHeight), 
-      width: boxWidth * 2, // ±20% = 40% total width
-      height: boxHeight * 2 // ±20% = 40% total height
+    if (boundingBox) {
+      const bboxWidth = boundingBox.x2 - boundingBox.x1;
+      const bboxHeight = boundingBox.y2 - boundingBox.y1;
+      const padding = 0.2;
+      const paddedWidth = Math.max(80, bboxWidth * (1 + padding * 2));
+      const paddedHeight = Math.max(80, bboxHeight * (1 + padding * 2));
+      const centerX = (boundingBox.x1 + boundingBox.x2) / 2;
+      const centerY = (boundingBox.y1 + boundingBox.y2) / 2;
+
+      return this._clampTemplateRegion({
+        x: centerX - paddedWidth / 2,
+        y: centerY - paddedHeight / 2,
+        width: paddedWidth,
+        height: paddedHeight
+      }, imageWidth, imageHeight);
+    }
+
+    const fallbackSize = Math.max(96, Math.min(imageWidth, imageHeight) * 0.24);
+    return this._clampTemplateRegion({
+      x: tapPosition.x - fallbackSize / 2,
+      y: tapPosition.y - fallbackSize / 2,
+      width: fallbackSize,
+      height: fallbackSize
+    }, imageWidth, imageHeight);
+  }
+
+  _clampTemplateRegion(region, imageWidth, imageHeight) {
+    const width = Math.min(region.width, imageWidth);
+    const height = Math.min(region.height, imageHeight);
+
+    return {
+      x: Math.round(Math.max(0, Math.min(region.x, imageWidth - width))),
+      y: Math.round(Math.max(0, Math.min(region.y, imageHeight - height))),
+      width: Math.round(width),
+      height: Math.round(height)
     };
+  }
 
-    // Ensure region is within image bounds
-    region.x = Math.max(0, Math.min(region.x, imageWidth - region.width));
-    region.y = Math.max(0, Math.min(region.y, imageHeight - region.height));
-    region.width = Math.min(region.width, imageWidth - region.x);
-    region.height = Math.min(region.height, imageHeight - region.y);
+  _isUsableTemplateQuality(quality) {
+    return quality >= this.minimumTemplateQuality;
+  }
 
-    return region;
+  _getInitialAnchorState(quality) {
+    return quality >= this.targetTemplateQuality ? 'tracking' : 'degraded';
   }
 
   /**

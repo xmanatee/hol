@@ -1,5 +1,4 @@
-// Phase 12 - Lip-sync Implementation for 52 Morph Targets
-// ElevenLabs agent-based audio simulation for facial animation
+// Lip-sync implementation for facial morph targets.
 
 import { logger } from '../utils/logger.js';
 
@@ -303,7 +302,6 @@ export class MorphController {
   }
 }
 
-// Performance metrics for Phase 12
 export class LipSyncMetrics {
   constructor() {
     this.audioEnvelope = [];

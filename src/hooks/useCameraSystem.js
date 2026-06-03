@@ -4,7 +4,6 @@ import { DetectionService } from '../services/DetectionService.js';
 import { AnchorManager } from '../services/AnchorManager.js';
 import { PersonalityService } from '../services/PersonalityService.js';
 import { TTSClient } from '../audio/ttsClient.js';
-import { useHudMetrics } from './useHudMetrics.js';
 import { logger } from '../utils/logger.js';
 
 export const useCameraSystem = (config = {}) => {
@@ -15,11 +14,13 @@ export const useCameraSystem = (config = {}) => {
   const personalityServiceRef = useRef(new PersonalityService(config.personality));
   const ttsClientRef = useRef(new TTSClient(config.tts));
   const currentCanvasRef = useRef(null);
+  const metricUpdateRef = useRef(config.onMetricUpdate || null);
   const [_initialized, setInitialized] = useState(false);
   const [cvLoaded, setCvLoaded] = useState(false);
 
   // State
   const [cameraState, setCameraState] = useState('idle');
+  const [cameraError, setCameraError] = useState(null);
   const [videoDimensions, setVideoDimensions] = useState({ width: 1280, height: 720 });
   const [detectionState, setDetectionState] = useState({
     isInitialized: false,
@@ -52,7 +53,13 @@ export const useCameraSystem = (config = {}) => {
     lastLatency: 0
   });
 
-  const { updateMetric } = useHudMetrics();
+  useEffect(() => {
+    metricUpdateRef.current = config.onMetricUpdate || null;
+  }, [config.onMetricUpdate]);
+
+  const updateMetric = useCallback((name, value) => {
+    metricUpdateRef.current?.(name, value);
+  }, []);
 
   // Load OpenCV.js (singleton pattern to prevent double loading)
   useEffect(() => {
@@ -219,6 +226,7 @@ export const useCameraSystem = (config = {}) => {
     const removeCameraListener = cameraService.addListener({
       onStateChange: (newState, oldState, data) => {
         setCameraState(newState);
+        setCameraError(data.error || null);
         if (newState === 'active' && data) {
           setVideoDimensions({ width: data.width, height: data.height });
         }
@@ -310,13 +318,12 @@ export const useCameraSystem = (config = {}) => {
           ...prev, 
           isSynthesizing: false, 
           isPlaying: true, 
-          currentAnalyser: analyser,
+          currentAnalyser: null,
           lastLatency: latencyToFirstAudio 
         }));
         updateMetric('TTS latency to first audio', latencyToFirstAudio);
       },
       onAudioAnalysis: ({ energy, centroid }) => {
-        // Forward lip-sync data to lip-sync system (Phase 12)
         updateMetric('Audio energy', energy);
         updateMetric('Audio centroid', centroid);
         updateMetric('Current viseme', 'TBD'); // Will be updated by lip-sync system
@@ -378,22 +385,16 @@ export const useCameraSystem = (config = {}) => {
   }, [anchorSystemState.mode]);
 
   const createAnchorFromTap = useCallback(async (tapPosition, imageData) => {
-    try {
-      const result = await anchorManagerRef.current.createAnchorFromTap(tapPosition, imageData);
+    const result = await anchorManagerRef.current.createAnchorFromTap(tapPosition, imageData);
+    
+    if (result.success) {
+      detectionServiceRef.current.setDetectionEnabled(false);
+      setDetectionState(prev => ({ ...prev, detectionEnabled: false }));
       
-      if (result.success) {
-        // Disable detection when anchor is created
-        detectionServiceRef.current.setDetectionEnabled(false);
-        setDetectionState(prev => ({ ...prev, detectionEnabled: false }));
-        
-        updateMetric('Anchor created', `${result.keypoints} keypoints, quality: ${result.quality.toFixed(2)}`);
-      }
-      
-      return result;
-    } catch (error) {
-      logger.error('CameraSystem', 'Failed to create anchor:', error);
-      throw error;
+      updateMetric('Anchor created', `${result.keypoints} keypoints, quality: ${result.quality.toFixed(2)}`);
     }
+    
+    return result;
   }, [updateMetric]);
 
   const clearAnchor = useCallback(() => {
@@ -412,8 +413,6 @@ export const useCameraSystem = (config = {}) => {
     }
     return null;
   }, [anchorSystemState.mode]);
-
-  // Legacy compatibility - normal estimation is now handled internally
 
   // Personality generation
   const generatePersonality = useCallback((imageData, bbox) => {
@@ -463,6 +462,7 @@ export const useCameraSystem = (config = {}) => {
   return {
     // State
     cameraState,
+    cameraError,
     videoDimensions,
     detectionState,
     anchorSystemState, // New unified anchor system state

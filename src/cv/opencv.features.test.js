@@ -202,8 +202,8 @@ export const logOpenCVFeatures = () => {
   logger.info('OpenCVFeatureTest', '✅ OpenCV.js is loaded');
   logger.info('OpenCVFeatureTest', '📦 Version:', results.version);
   
-  const available = Object.entries(results.features).filter(([k, v]) => v === true);
-  const missing = Object.entries(results.features).filter(([k, v]) => v === false);
+  const available = Object.entries(results.features).filter(([, v]) => v === true);
+  const missing = Object.entries(results.features).filter(([, v]) => v === false);
   
   logger.info('OpenCVFeatureTest', `✅ Available features (${available.length}):`, available.map(([k]) => k));
   
@@ -246,9 +246,16 @@ export const getRequiredFeatures = () => {
 
 export const checkCriticalFeatures = () => {
   const results = testOpenCVFeatures();
-  if (!results.available) return false;
-  
   const required = getRequiredFeatures();
+  if (!results.available) {
+    return {
+      allAvailable: false,
+      available: [],
+      missing: required,
+      error: results.error || 'OpenCV.js not available'
+    };
+  }
+
   const missing = required.filter(feat => !results.features[feat]);
   
   return {

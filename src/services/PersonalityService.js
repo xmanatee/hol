@@ -6,15 +6,9 @@ export class PersonalityService {
     this.config = {
       ...config
     };
-    
-    this.visionClient = new VisionClient({
-      ...config.vision,
-      apiKey: config.apiKey || config.vision?.apiKey
-    });
-    this.llmClient = new LLMClient({
-      ...config.llm,
-      apiKey: config.apiKey || config.llm?.apiKey
-    });
+
+    this.visionClient = null;
+    this.llmClient = null;
     
     this.listeners = new Set();
     this.isProcessing = false;
@@ -51,44 +45,59 @@ export class PersonalityService {
       requestId: this.metrics.totalRequests 
     });
 
-    const roiImageBlob = await this.extractROI(imageData, bbox);
-    const visionResult = await this.visionClient.identifyObject(roiImageBlob);
-    const persona = await this.llmClient.generatePersona(visionResult);
-    
-    const endTime = performance.now();
-    const rtt = endTime - startTime;
-    
-    this.metrics.lastRTT = rtt;
-    this.metrics.averageRTT = this.calculateMovingAverage(this.metrics.averageRTT, rtt);
-    this.metrics.successfulRequests++;
-    
-    this.lastPersona = {
-      ...persona,
-      visionData: visionResult,
-      generatedAt: Date.now(),
-      rtt: rtt
-    };
+    try {
+      const roiImageBlob = await this.extractROI(imageData, bbox);
+      const visionResult = await this.getVisionClient().identifyObject(roiImageBlob);
+      const persona = await this.getLLMClient().generatePersona(visionResult);
+      
+      const endTime = performance.now();
+      const rtt = endTime - startTime;
+      
+      this.metrics.lastRTT = rtt;
+      this.metrics.averageRTT = this.calculateMovingAverage(this.metrics.averageRTT, rtt);
+      this.metrics.successfulRequests++;
+      
+      this.lastPersona = {
+        ...persona,
+        visionData: visionResult,
+        generatedAt: Date.now(),
+        rtt
+      };
 
-    this.emit('onPersonalityGenerated', {
-      persona: this.lastPersona,
-      rtt: rtt,
-      success: true
-    });
+      this.emit('onPersonalityGenerated', {
+        persona: this.lastPersona,
+        rtt,
+        success: true
+      });
 
-    this.isProcessing = false;
-    return this.lastPersona;
+      return this.lastPersona;
+    } catch (error) {
+      const rtt = performance.now() - startTime;
+      this.metrics.failedRequests++;
+      this.metrics.lastRTT = rtt;
+      this.emit('onPersonalityGenerated', {
+        persona: null,
+        rtt,
+        success: false,
+        error: error.message
+      });
+      throw error;
+    } finally {
+      this.isProcessing = false;
+    }
   }
 
   extractROI(imageData, bbox) {
+    const crop = this.normalizeBbox(bbox, imageData.width, imageData.height);
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
     // Add 15% padding around bbox
     const padding = 0.15;
-    const paddedWidth = bbox.width * (1 + padding);
-    const paddedHeight = bbox.height * (1 + padding);
-    const paddedX = bbox.x - (paddedWidth - bbox.width) / 2;
-    const paddedY = bbox.y - (paddedHeight - bbox.height) / 2;
+    const paddedWidth = crop.width * (1 + padding);
+    const paddedHeight = crop.height * (1 + padding);
+    const paddedX = crop.x - (paddedWidth - crop.width) / 2;
+    const paddedY = crop.y - (paddedHeight - crop.height) / 2;
     
     canvas.width = Math.round(paddedWidth);
     canvas.height = Math.round(paddedHeight);
@@ -111,7 +120,56 @@ export class PersonalityService {
     );
     
     // Convert to blob for API upload
-    return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error('Failed to encode object crop'));
+        }
+      }, 'image/jpeg', 0.8);
+    });
+  }
+
+  normalizeBbox(bbox, imageWidth, imageHeight) {
+    const x = bbox.x ?? bbox.x1;
+    const y = bbox.y ?? bbox.y1;
+    const width = bbox.width ?? (bbox.x2 - bbox.x1);
+    const height = bbox.height ?? (bbox.y2 - bbox.y1);
+
+    const clampedX = Math.max(0, Math.min(imageWidth - 1, x));
+    const clampedY = Math.max(0, Math.min(imageHeight - 1, y));
+
+    return {
+      x: clampedX,
+      y: clampedY,
+      width: Math.max(1, Math.min(width, imageWidth - clampedX)),
+      height: Math.max(1, Math.min(height, imageHeight - clampedY))
+    };
+  }
+
+  getApiKey() {
+    return this.config.apiKey || this.config.vision?.apiKey || this.config.llm?.apiKey || import.meta.env.VITE_OPENAI_API_KEY;
+  }
+
+  getVisionClient() {
+    if (!this.visionClient) {
+      this.visionClient = new VisionClient({
+        ...this.config.vision,
+        apiKey: this.getApiKey()
+      });
+    }
+    return this.visionClient;
+  }
+
+  getLLMClient() {
+    if (!this.llmClient) {
+      this.llmClient = new LLMClient({
+        ...this.config.llm,
+        apiKey: this.getApiKey()
+      });
+    }
+    return this.llmClient;
   }
 
   calculateMovingAverage(currentAvg, newValue, alpha = 0.15) {

@@ -14,6 +14,10 @@ class TaggedLogger {
   }
 
   loadSettings() {
+    if (typeof localStorage === 'undefined') {
+      return;
+    }
+
     try {
       const saved = localStorage.getItem('logger-enabled-tags');
       if (saved) {
@@ -26,6 +30,10 @@ class TaggedLogger {
   }
 
   saveSettings() {
+    if (typeof localStorage === 'undefined') {
+      return;
+    }
+
     try {
       localStorage.setItem('logger-enabled-tags', JSON.stringify([...this.enabledTags]));
     } catch (error) {

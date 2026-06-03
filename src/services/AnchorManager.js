@@ -52,7 +52,7 @@ export class AnchorManager {
    * @param {ImageData} imageData - Current frame
    * @returns {Array} Processed detections for UI display
    */
-  processDetections(detections, imageData) {
+  processDetections(detections) {
     if (!this.initialized || this.mode !== 'detection') {
       return [];
     }
@@ -98,36 +98,29 @@ export class AnchorManager {
     // Find detection at tap position
     const selectedDetection = this.findDetectionAtPosition(tapPosition);
     
-    try {
-      // Create image-based anchor
-      const result = await this.imageAnchorService.createAnchor(
-        imageData, 
-        tapPosition, 
-        selectedDetection
-      );
+    const result = await this.imageAnchorService.createAnchor(
+      imageData, 
+      tapPosition, 
+      selectedDetection
+    );
 
-      if (result.success) {
-        // Switch to anchor mode
-        this.mode = 'anchor';
-        this.detections = []; // Clear detection results
-        this.activeAnchor = {
-          position: result.position,
-          keypoints: result.keypoints,
-          quality: result.quality,
-          method: result.method,
-          createdAt: Date.now()
-        };
-        
-        logger.info('AnchorManager', `Created anchor with ${result.keypoints} keypoints (quality: ${result.quality.toFixed(2)})`);
-        this._notifyUpdate();
-      }
-
-      return result;
+    if (result.success) {
+      this.mode = 'anchor';
+      this.detections = [];
+      this.activeAnchor = {
+        position: result.position,
+        keypoints: result.keypoints,
+        quality: result.quality,
+        method: result.method,
+        sourceDetection: selectedDetection,
+        createdAt: Date.now()
+      };
       
-    } catch (error) {
-      logger.error('AnchorManager', 'Failed to create anchor:', error);
-      throw error;
+      logger.info('AnchorManager', `Created anchor with ${result.keypoints} keypoints (quality: ${result.quality.toFixed(2)})`);
+      this._notifyUpdate();
     }
+
+    return result;
   }
 
   /**

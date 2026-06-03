@@ -3,7 +3,7 @@ import OpenAI from 'openai';
 export class LLMClient {
   constructor(config = {}) {
     this.config = {
-      model: config.model || import.meta.env.VITE_OPENAI_CHAT_MODEL || 'gpt-4',
+      model: config.model || import.meta.env.VITE_OPENAI_CHAT_MODEL || 'gpt-4.1-mini',
       maxTokens: config.maxTokens || parseInt(import.meta.env.VITE_OPENAI_MAX_TOKENS) || 300,
       temperature: config.temperature || parseFloat(import.meta.env.VITE_OPENAI_TEMPERATURE) || 0.8,
       ...config
@@ -71,8 +71,8 @@ Make it witty, distinctive, and based on the object's specific characteristics. 
     return {
       voiceStyle: result.voiceStyle,
       tone: result.tone,
-      quirks: result.quirks.slice(0, 3),
-      oneLiners: result.oneLiners.slice(0, 3)
+      quirks: (result.quirks || []).slice(0, 3),
+      oneLiners: (result.oneLiners || []).slice(0, 3)
     };
   }
 
