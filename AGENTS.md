@@ -25,4 +25,4 @@
 
 ## Architecture
 
-@PHASES.md
+Runtime architecture is summarized in README.md.
