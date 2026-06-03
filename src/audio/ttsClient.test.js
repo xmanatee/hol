@@ -10,4 +10,5 @@ test('ElevenLabs sessions are configured as voice conversations with WebRTC outp
   assert.equal(options.connectionType, 'webrtc');
   assert.equal(options.preferHeadphonesForIosDevices, true);
   assert.equal(typeof options.onModeChange, 'function');
+  assert.equal(typeof options.onAudioAlignment, 'function');
 });

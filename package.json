@@ -11,10 +11,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@elevenlabs/client": "^0.6.1",
-    "@elevenlabs/react": "^0.6.1",
+    "@elevenlabs/client": "^1.9.0",
+    "@elevenlabs/react": "^1.6.4",
     "@react-three/fiber": "^9.3.0",
-    "opencv.js": "^1.2.1",
     "onnxruntime-web": "^1.22.0",
     "openai": "^5.19.1",
     "react": "^19.1.1",

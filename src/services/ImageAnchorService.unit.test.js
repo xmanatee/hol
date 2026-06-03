@@ -165,3 +165,48 @@ test('keeps tracking state during the keypoint retry budget', () => {
   assert.equal(state.metrics.lostFrameCount, 0);
   assert.match(state.metrics.lastFailureReason, /Optical flow/);
 });
+
+test('keypoint updates propagate pose normals from homography correspondences', () => {
+  const service = new ImageAnchorService();
+  const poseNormal = { x: 0.32, y: -0.21, z: 0.92 };
+
+  service.initialized = true;
+  service.anchored = true;
+  service.anchorState = 'tracking';
+  service.currentPosition = { x: 100, y: 120, z: 0 };
+  service.cv = {};
+  service.keypointTracker = {
+    trackToFrame: () => ({
+      success: true,
+      successRate: 0.92,
+      activePointCount: 24,
+      averageError: 1.1
+    }),
+    getCorrespondences: () => Array.from({ length: 12 }, (_, index) => ({
+      prev: { x: 20 + index * 2, y: 30 + index },
+      curr: { x: 24 + index * 2, y: 33 + index }
+    })),
+    getAnchorPosition: () => ({
+      x: 140,
+      y: 160,
+      method: 'reference_transform_with_offset'
+    })
+  };
+  service.homographyEstimator = {
+    estimatePose: () => ({
+      success: true,
+      normal: poseNormal,
+      inlierCount: 18,
+      inlierRatio: 0.75,
+      confidence: 0.84
+    })
+  };
+
+  const result = service._updateWithKeypoints({ cols: 320, rows: 240 }, 1000);
+
+  assert.equal(result.success, true);
+  assert.equal(result.inliers, 18);
+  assert.equal(result.normal.x.toFixed(2), '0.32');
+  assert.equal(result.normal.y.toFixed(2), '-0.21');
+  assert.equal(service.currentNormal.z.toFixed(2), '0.92');
+});

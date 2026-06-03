@@ -50,6 +50,7 @@ export const useCameraSystem = (config = {}) => {
     isPlaying: false,
     currentAnalyser: null,
     audioAnalysis: { energy: 0, centroid: 0, spectrum: [] },
+    audioAlignment: null,
     error: null,
     lastLatency: 0
   });
@@ -319,6 +320,7 @@ export const useCameraSystem = (config = {}) => {
           ...prev,
           isSynthesizing: true,
           audioAnalysis: { energy: 0, centroid: 0, spectrum: [] },
+          audioAlignment: null,
           error: null
         }));
       },
@@ -342,13 +344,20 @@ export const useCameraSystem = (config = {}) => {
         updateMetric('Audio centroid', audioAnalysis.centroid);
         updateMetric('Current viseme', 'TBD'); // Will be updated by lip-sync system
       },
+      onAudioAlignment: (audioAlignment) => {
+        setTTSData(prev => ({
+          ...prev,
+          audioAlignment
+        }));
+      },
       onPlaybackComplete: () => {
         logger.info('CameraSystem', 'TTS playback completed');
         setTTSData(prev => ({
           ...prev,
           isPlaying: false,
           currentAnalyser: null,
-          audioAnalysis: { energy: 0, centroid: 0, spectrum: [] }
+          audioAnalysis: { energy: 0, centroid: 0, spectrum: [] },
+          audioAlignment: null
         }));
       },
       onSynthesisComplete: ({ text, voiceStyle, latency }) => {
@@ -362,6 +371,7 @@ export const useCameraSystem = (config = {}) => {
           isSynthesizing: false,
           isPlaying: false,
           audioAnalysis: { energy: 0, centroid: 0, spectrum: [] },
+          audioAlignment: null,
           error
         }));
       }

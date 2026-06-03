@@ -40,7 +40,8 @@ const OverlayScene = ({
   microphoneMode = false,
   activeAnchor = null,
   anchorState = null,
-  agentAudioAnalysis = null
+  agentAudioAnalysis = null,
+  agentAudioAlignment = null
 }) => {
   const [webglStatus, setWebglStatus] = useState('active')
   const fov = 63
@@ -122,6 +123,7 @@ const OverlayScene = ({
             onLipSyncUpdate={onLipSyncUpdate}
             microphoneMode={microphoneMode}
             agentAudioAnalysis={agentAudioAnalysis}
+            agentAudioAlignment={agentAudioAlignment}
           />
         </group>
       </Canvas>

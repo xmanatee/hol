@@ -127,10 +127,16 @@ export class TTSClient {
         logger.info('TTSClient', 'Received message from agent:', message);
         this.handleAgentMessage(message);
       },
-      onError: (error) => {
-        logger.error('TTSClient', 'Agent error:', error);
+      onError: (error, context) => {
+        logger.error('TTSClient', 'Agent error:', error, context);
         this._stopAudioAnalysisLoop();
         this.emit('onError', { error: error.message || String(error) });
+      },
+      onAudioAlignment: (alignment) => {
+        this.emit('onAudioAlignment', {
+          ...alignment,
+          receivedAt: performance.now()
+        });
       },
       onStatusChange: ({ status }) => {
         logger.info('TTSClient', 'Status changed:', status);
@@ -203,6 +209,9 @@ export class TTSClient {
       try {
         const frequencyData = await this.conversation.getOutputByteFrequencyData();
         const volume = await this.conversation.getOutputVolume();
+        if (!frequencyData) {
+          return;
+        }
         this.emit('onAudioAnalysis', createAudioAnalysisFromFrequencyData(frequencyData, volume));
       } catch (error) {
         this.isPlaying = false;

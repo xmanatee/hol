@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { useThree, useFrame } from '@react-three/fiber'
+import { useFrame } from '@react-three/fiber'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import * as THREE from 'three'
 import { useLipSync } from '../../hooks/useLipSync.js'
 import { useRandomMorphing } from '../../utils/randomMorphing.js'
+import { computeHeadLocalRotation } from '../../utils/headPose.js'
 import { logger } from '../../utils/logger.js'
 
 const HeadAnchor = ({ 
@@ -14,9 +15,9 @@ const HeadAnchor = ({
   onMeshNamesDiscovered = () => {},
   onLipSyncUpdate = () => {},
   microphoneMode = false,
-  agentAudioAnalysis = null
+  agentAudioAnalysis = null,
+  agentAudioAlignment = null
 }) => {
-  const { camera } = useThree()
   const [gltfScene, setGltfScene] = useState(null)
   const [headMesh, setHeadMesh] = useState(null)
   const [isLoaded, setIsLoaded] = useState(false)
@@ -25,6 +26,7 @@ const HeadAnchor = ({
     initialize,
     setAgentSpeaking,
     setAgentAudioAnalysis,
+    setAgentAudioAlignment,
     setMicrophoneMode,
     getMicrophoneAnalysis,
     isVoiceActive,
@@ -55,40 +57,23 @@ const HeadAnchor = ({
     }
   }, [agentAudioAnalysis, setAgentAudioAnalysis])
 
+  useEffect(() => {
+    if (agentAudioAlignment) {
+      setAgentAudioAlignment(agentAudioAlignment)
+    }
+  }, [agentAudioAlignment, setAgentAudioAlignment])
+
   // Update microphone mode in lip-sync system
   useEffect(() => {
     setMicrophoneMode(microphoneMode);
   }, [microphoneMode, setMicrophoneMode]);
 
-  // Eye gaze tracking and lip-sync update - runs every frame
+  // Local pose and lip-sync update - runs every frame
   useFrame(() => {
     if (!gltfScene || !isLoaded || !visible) return
 
-    // Get camera position in world space
-    const cameraPosition = camera.position.clone()
-    
-    // Calculate look-at direction from head to camera
-    const headPosition = new THREE.Vector3()
-    gltfScene.getWorldPosition(headPosition)
-    const lookDirection = cameraPosition.clone().sub(headPosition).normalize()
-    
-    // Convert to local rotation (limit angles to avoid extreme poses)
-    const targetY = Math.atan2(lookDirection.x, lookDirection.z)
-    const targetX = Math.asin(-lookDirection.y)
-    
-    // Limit rotation angles to keep natural head movement
-    const maxAngle = Math.PI * 0.15 // ±27 degrees
-    const clampedY = Math.max(-maxAngle, Math.min(maxAngle, targetY))
-    const clampedX = Math.max(-maxAngle, Math.min(maxAngle, targetX))
-    
-    // Apply manual rotation from parent component
-    const finalY = clampedY + manualRotation.y
-    const finalX = clampedX + manualRotation.x
-    
-    // Apply rotation to the head model
-    gltfScene.rotation.y = finalY
-    gltfScene.rotation.x = finalX
-    gltfScene.rotation.z = manualRotation.z
+    const localRotation = computeHeadLocalRotation(manualRotation)
+    gltfScene.rotation.set(localRotation.x, localRotation.y, localRotation.z)
     
     // Update parent with lip-sync data from microphone mode
     if (microphoneMode) {

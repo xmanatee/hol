@@ -508,8 +508,8 @@ export class ImageAnchorService {
         };
       }
 
-      // Try homography estimation if we have correspondences
-      let homographyResult = null;
+      // Try pose estimation if we have enough homography correspondences
+      let poseResult = null;
       this.metrics.homographyInliers = 0;
       
       const correspondences = this.keypointTracker.getCorrespondences();
@@ -519,28 +519,28 @@ export class ImageAnchorService {
       });
       
       if (correspondences.length >= 8) {
-        logger.debug('ImageAnchor', `Attempting homography with ${correspondences.length} correspondences`);
+        logger.debug('ImageAnchor', `Attempting pose estimation with ${correspondences.length} correspondences`);
         
         try {
-          homographyResult = this.homographyEstimator.estimateHomography(
+          poseResult = this.homographyEstimator.estimatePose(
             this.cv,
             correspondences
           );
           
-          logger.debug('ImageAnchor', 'Homography result:', {
-            success: homographyResult?.success,
-            inliers: homographyResult?.inlierCount || 0,
-            center: homographyResult?.center ? `(${homographyResult.center.x.toFixed(1)}, ${homographyResult.center.y.toFixed(1)})` : null
+          logger.debug('ImageAnchor', 'Pose result:', {
+            success: poseResult?.success,
+            inliers: poseResult?.inlierCount || 0,
+            normal: poseResult?.normal
           });
           
-          if (homographyResult?.success) {
-            this.metrics.homographyInliers = homographyResult.inlierCount;
+          if (poseResult?.success) {
+            this.metrics.homographyInliers = poseResult.inlierCount;
           }
         } catch (error) {
-          logger.warn('ImageAnchor', 'Homography estimation error:', error);
+          logger.warn('ImageAnchor', 'Pose estimation error:', error);
         }
       } else {
-        logger.debug('ImageAnchor', 'Skipping homography - insufficient correspondences:', {
+        logger.debug('ImageAnchor', 'Skipping pose estimation - insufficient correspondences:', {
           correspondences: correspondences.length,
           required: 8
         });
@@ -549,11 +549,6 @@ export class ImageAnchorService {
       // Update position using offset-based keypoint positioning
       let newPosition = null;
       let positionMethod = 'unknown';
-      
-      // Always clean up homography matrix if it exists (used for normals, not position)
-      if (homographyResult?.homography && !homographyResult.homography.isDeleted()) {
-        homographyResult.homography.delete();
-      }
       
       // Use keypoint centroid + tap offset for anchor positioning
       const anchorPosition = this.keypointTracker.getAnchorPosition();
@@ -578,12 +573,12 @@ export class ImageAnchorService {
       
       this.currentPosition = newPosition;
 
-      // Update surface normal if available from homography
-      if (homographyResult?.success && homographyResult.normal) {
+      // Update surface normal if available from homography pose decomposition
+      if (poseResult?.success && poseResult.normal) {
         this.currentNormal = {
-          x: this.normalFilterX.filter(homographyResult.normal.x, timestamp),
-          y: this.normalFilterY.filter(homographyResult.normal.y, timestamp),
-          z: this.normalFilterZ.filter(homographyResult.normal.z, timestamp)
+          x: this.normalFilterX.filter(poseResult.normal.x, timestamp),
+          y: this.normalFilterY.filter(poseResult.normal.y, timestamp),
+          z: this.normalFilterZ.filter(poseResult.normal.z, timestamp)
         };
         logger.debug('ImageAnchor', 'Updated surface normal from homography');
       }

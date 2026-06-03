@@ -5,7 +5,8 @@ import {
   AudioAnalyzer, 
   VisemePicker, 
   MorphController,
-  LipSyncMetrics 
+  LipSyncMetrics,
+  pickVisemeFromAlignment
 } from '../audio/lipSync.js';
 import { MicrophoneService } from '../audio/MicrophoneService.js';
 import { logger } from '../utils/logger.js';
@@ -31,6 +32,7 @@ export const useLipSync = () => {
   const headMeshRef = useRef(null);
   const microphoneModeRef = useRef(false);
   const externalAgentAudioRef = useRef(null);
+  const externalAgentAlignmentRef = useRef(null);
 
   const initialize = useCallback(async (headMesh, microphoneMode = false) => {
     headMeshRef.current = headMesh;
@@ -59,9 +61,10 @@ export const useLipSync = () => {
     setIsActive(false);
     isAgentSpeakingRef.current = false;
     externalAgentAudioRef.current = null;
+    externalAgentAlignmentRef.current = null;
     setCurrentViseme('M');
     if (morphControllerRef.current) {
-      morphControllerRef.current.setViseme('M', 1.0);
+      morphControllerRef.current.resetTargets();
     }
   }, []);
 
@@ -73,9 +76,10 @@ export const useLipSync = () => {
       }
     } else {
       if (morphControllerRef.current) {
-        morphControllerRef.current.setViseme('M', 1.0);
+        morphControllerRef.current.resetTargets();
       }
       externalAgentAudioRef.current = null;
+      externalAgentAlignmentRef.current = null;
       setCurrentViseme('M');
     }
   }, [isActive, start]);
@@ -86,6 +90,13 @@ export const useLipSync = () => {
       centroid: audioData.centroid,
       spectrum: audioData.spectrum,
       receivedAt: performance.now()
+    };
+  }, []);
+
+  const setAgentAudioAlignment = useCallback((alignment) => {
+    externalAgentAlignmentRef.current = {
+      data: alignment,
+      receivedAt: alignment.receivedAt || performance.now()
     };
   }, []);
 
@@ -160,7 +171,12 @@ export const useLipSync = () => {
       isCurrentlyVoiceActive = isAgentSpeakingRef.current && audioData.energy >= visemePickerRef.current.energyThreshold;
     }
 
-    const selectedViseme = visemePickerRef.current.pickViseme(
+    const alignment = externalAgentAlignmentRef.current;
+    const hasFreshAlignment = !microphoneModeRef.current && alignment && currentTime - alignment.receivedAt < 1500;
+    const alignedViseme = hasFreshAlignment
+      ? pickVisemeFromAlignment(alignment.data, currentTime - alignment.receivedAt + 35)
+      : null;
+    const selectedViseme = alignedViseme || visemePickerRef.current.pickViseme(
       audioData.energy,
       audioData.centroid,
       currentTime
@@ -229,6 +245,7 @@ export const useLipSync = () => {
     stop,
     setAgentSpeaking,
     setAgentAudioAnalysis,
+    setAgentAudioAlignment,
     setMicrophoneMode,
     setVoiceActivityThreshold,
     setMicrophoneGain,

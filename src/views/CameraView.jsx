@@ -603,6 +603,7 @@ const CameraView = () => {
           onLipSyncUpdate={handleLipSyncUpdate}
           microphoneMode={microphoneMode}
           agentAudioAnalysis={ttsData.audioAnalysis}
+          agentAudioAlignment={ttsData.audioAlignment}
           activeAnchor={anchorSystemState.activeAnchor}
           anchorState={anchorSystemState.anchorState}
         />

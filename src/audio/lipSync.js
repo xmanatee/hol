@@ -12,6 +12,150 @@ export const STANDARD_VISEMES = {
   U: 'pucker' // Pursed lips (U sound, OO)
 };
 
+const clamp01 = value => Math.max(0, Math.min(1, value));
+
+export const ARKIT_52_BLENDSHAPES = [
+  'eyeBlinkLeft',
+  'eyeLookDownLeft',
+  'eyeLookInLeft',
+  'eyeLookOutLeft',
+  'eyeLookUpLeft',
+  'eyeSquintLeft',
+  'eyeWideLeft',
+  'eyeBlinkRight',
+  'eyeLookDownRight',
+  'eyeLookInRight',
+  'eyeLookOutRight',
+  'eyeLookUpRight',
+  'eyeSquintRight',
+  'eyeWideRight',
+  'jawForward',
+  'jawLeft',
+  'jawRight',
+  'jawOpen',
+  'mouthClose',
+  'mouthFunnel',
+  'mouthPucker',
+  'mouthRight',
+  'mouthLeft',
+  'mouthSmileLeft',
+  'mouthSmileRight',
+  'mouthFrownLeft',
+  'mouthFrownRight',
+  'mouthDimpleLeft',
+  'mouthDimpleRight',
+  'mouthStretchLeft',
+  'mouthStretchRight',
+  'mouthRollLower',
+  'mouthRollUpper',
+  'mouthShrugLower',
+  'mouthShrugUpper',
+  'mouthPressLeft',
+  'mouthPressRight',
+  'mouthLowerDownLeft',
+  'mouthLowerDownRight',
+  'mouthUpperUpLeft',
+  'mouthUpperUpRight',
+  'browDownLeft',
+  'browDownRight',
+  'browInnerUp',
+  'browOuterUpLeft',
+  'browOuterUpRight',
+  'cheekPuff',
+  'cheekSquintLeft',
+  'cheekSquintRight',
+  'noseSneerLeft',
+  'noseSneerRight',
+  'tongueOut',
+];
+
+const ARKIT_52_VISEME_WEIGHTS = {
+  M: [
+    ['mouthClose', 1],
+    ['mouthPressLeft', 0.35],
+    ['mouthPressRight', 0.35],
+  ],
+  A: [
+    ['jawOpen', 1],
+    ['mouthLowerDownLeft', 0.35],
+    ['mouthLowerDownRight', 0.35],
+    ['mouthUpperUpLeft', 0.18],
+    ['mouthUpperUpRight', 0.18],
+  ],
+  E: [
+    ['jawOpen', 0.25],
+    ['mouthSmileLeft', 0.55],
+    ['mouthSmileRight', 0.55],
+    ['mouthStretchLeft', 0.35],
+    ['mouthStretchRight', 0.35],
+  ],
+  I: [
+    ['jawOpen', 0.12],
+    ['mouthSmileLeft', 0.85],
+    ['mouthSmileRight', 0.85],
+    ['mouthStretchLeft', 0.55],
+    ['mouthStretchRight', 0.55],
+  ],
+  O: [
+    ['jawOpen', 0.45],
+    ['mouthFunnel', 0.9],
+    ['mouthPucker', 0.35],
+  ],
+  U: [
+    ['jawOpen', 0.18],
+    ['mouthFunnel', 0.55],
+    ['mouthPucker', 1],
+  ],
+};
+
+const ARKIT_NAME_TO_INDEX = Object.fromEntries(
+  ARKIT_52_BLENDSHAPES.map((name, index) => [name, index])
+);
+
+const normalizeMorphName = name => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const getAlignmentStarts = alignment => alignment?.char_start_times_ms || alignment?.charStartTimesMs || [];
+const getAlignmentDurations = alignment => alignment?.char_durations_ms || alignment?.charDurationsMs || alignment?.chars_durations_ms || [];
+
+export const visemeFromCharacter = (character) => {
+  const normalized = String(character || '').toLowerCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if ('a'.includes(normalized)) return 'A';
+  if ('e'.includes(normalized)) return 'E';
+  if ('iy'.includes(normalized)) return 'I';
+  if ('o'.includes(normalized)) return 'O';
+  if ('uwq'.includes(normalized)) return 'U';
+  if ('mbp'.includes(normalized)) return 'M';
+
+  return null;
+};
+
+export const pickVisemeFromAlignment = (alignment, elapsedMs) => {
+  const chars = alignment?.chars || [];
+  const starts = getAlignmentStarts(alignment);
+  const durations = getAlignmentDurations(alignment);
+
+  if (!chars.length || !starts.length || !durations.length) {
+    return null;
+  }
+
+  const index = chars.findIndex((_, charIndex) => {
+    const start = starts[charIndex];
+    const end = start + durations[charIndex];
+    return elapsedMs >= start && elapsedMs < end;
+  });
+
+  if (index === -1) {
+    return null;
+  }
+
+  return visemeFromCharacter(chars[index]);
+};
+
 // Create viseme map from 52 morph targets to standard visemes
 // This maps the glTF model's morph target names to our viseme system
 export class VisemeMapper {
@@ -23,12 +167,12 @@ export class VisemeMapper {
   createVisemeMapping() {
     // Expanded naming patterns for facial morph targets (more inclusive)
     const patterns = {
-      M: ['mouth_close', 'lips_close', 'closed', 'press', 'seal', 'm_shape', 'bilabial', 'close', 'shut', 'mm', 'mouthclose'],
-      A: ['mouth_open', 'jaw_open', 'open_wide', 'a_shape', 'ah_open', 'surprise', 'open', 'wide', 'aa', 'ah', 'mouthopen', 'jaw'],
-      E: ['mouth_mid', 'e_shape', 'eh_open', 'mid_open', 'smile_open', 'eh', 'mid', 'teeth'],
-      I: ['smile', 'grin', 'i_shape', 'ee_shape', 'narrow_open', 'teeth_show', 'ii', 'ee', 'narrow'],
-      O: ['o_shape', 'oh_open', 'round', 'oval_open', 'oo', 'oh', 'oval'],
-      U: ['pucker', 'u_shape', 'oo_shape', 'lips_pucker', 'whistle', 'uu', 'kiss']
+      M: ['mouthclose', 'lipsclose', 'closed', 'press', 'seal', 'mshape', 'bilabial', 'close', 'shut', 'mm'],
+      A: ['mouthopen', 'jawopen', 'openwide', 'ashape', 'ahopen', 'surprise', 'open', 'wide', 'aa', 'ah', 'jaw'],
+      E: ['mouthmid', 'eshape', 'ehopen', 'midopen', 'smileopen', 'mouthstretch', 'eh', 'mid', 'teeth'],
+      I: ['mouthsmile', 'smile', 'grin', 'ishape', 'eeshape', 'narrowopen', 'teethshow', 'ii', 'ee', 'narrow'],
+      O: ['mouthfunnel', 'oshape', 'ohopen', 'round', 'ovalopen', 'oo', 'oh', 'oval'],
+      U: ['mouthpucker', 'pucker', 'ushape', 'ooshape', 'lipspucker', 'whistle', 'uu', 'kiss']
     };
 
     const mapping = {};
@@ -40,7 +184,7 @@ export class VisemeMapper {
 
     // Map morph targets to visemes based on name patterns
     Object.keys(this.morphDict).forEach(morphName => {
-      const lowerName = morphName.toLowerCase();
+      const lowerName = normalizeMorphName(morphName);
       let bestMatch = null;
       let bestScore = 0;
 
@@ -57,14 +201,48 @@ export class VisemeMapper {
       });
 
       if (bestMatch && bestScore > 0) {
-        mapping[bestMatch].push({
+        this.addMapping(mapping, bestMatch, {
           name: morphName,
-          index: this.morphDict[morphName]
+          index: this.morphDict[morphName],
+          weight: 1
         });
       }
     });
 
+    if (this.hasGenericArkitTargets()) {
+      this.addArkit52Mappings(mapping);
+    }
+
     return mapping;
+  }
+
+  hasGenericArkitTargets() {
+    return ARKIT_52_BLENDSHAPES.every((_, index) => {
+      return Number.isInteger(this.morphDict[`target_${index}`]);
+    });
+  }
+
+  addMapping(mapping, viseme, morph) {
+    const alreadyMapped = mapping[viseme].some(existing => existing.index === morph.index);
+    if (!alreadyMapped) {
+      mapping[viseme].push(morph);
+    }
+  }
+
+  addArkit52Mappings(mapping) {
+    Object.entries(ARKIT_52_VISEME_WEIGHTS).forEach(([viseme, weights]) => {
+      weights.forEach(([blendShapeName, weight]) => {
+        const arkitIndex = ARKIT_NAME_TO_INDEX[blendShapeName];
+        const targetName = `target_${arkitIndex}`;
+        const index = this.morphDict[targetName];
+
+        this.addMapping(mapping, viseme, {
+          name: targetName,
+          index,
+          weight,
+        });
+      });
+    });
   }
 
   getMorphIndicesForViseme(viseme) {
@@ -93,9 +271,10 @@ export const createAudioAnalysisFromFrequencyData = (frequencyData, volume) => {
     return sum + value * index;
   }, 0);
   const maxIndex = Math.max(1, spectrum.length - 1);
+  const spectralEnergy = spectrum.length ? totalMagnitude / (255 * spectrum.length) : 0;
 
   return {
-    energy: Math.max(0, Math.min(1, volume)),
+    energy: clamp01(Math.max(volume, spectralEnergy * 1.4)),
     centroid: totalMagnitude > 0 ? (weightedFrequency / totalMagnitude) / maxIndex : 0,
     spectrum
   };
@@ -118,10 +297,10 @@ export class AudioAnalyzer {
 export class VisemePicker {
   constructor() {
     this.currentViseme = 'M';
-    this.smoothingBuffer = new Array(6).fill('M'); // 120ms smoothing at 20ms frames
+    this.smoothingBuffer = new Array(3).fill('M'); // Short buffer keeps agent speech responsive
     this.energyThreshold = 0.02; // Lower threshold for real microphone input
     this.lastTransitionTime = 0;
-    this.hysteresisDelay = 100; // Min time between transitions (ms)
+    this.hysteresisDelay = 45; // Min time between transitions (ms)
   }
 
   spectrumToViseme(centroid, energy) {
@@ -218,7 +397,18 @@ export class MorphController {
     // Set target influences for this viseme
     const morphs = this.visemeMapper.getMorphIndicesForViseme(viseme);
     morphs.forEach(morph => {
-      this.targetInfluences[morph.index] = Math.min(this.maxInfluence, intensity);
+      const weight = morph.weight ?? 1;
+      this.targetInfluences[morph.index] = Math.min(this.maxInfluence, clamp01(intensity * weight));
+    });
+  }
+
+  resetTargets() {
+    Object.keys(this.targetInfluences).forEach(index => {
+      this.targetInfluences[index] = 0;
+      this.currentInfluences[index] = 0;
+      if (this.mesh?.morphTargetInfluences) {
+        this.mesh.morphTargetInfluences[index] = 0;
+      }
     });
   }
 
@@ -284,7 +474,10 @@ export class MorphController {
     Object.keys(this.targetInfluences).forEach(index => {
       const target = this.targetInfluences[index];
       const current = this.currentInfluences[index] || 0;
-      const blended = current + this.blendSpeed * (target - current);
+      const attackBlend = 1 - Math.exp(-deltaTimeMs / 22);
+      const releaseBlend = 1 - Math.exp(-deltaTimeMs / 80);
+      const blend = target > current ? attackBlend : releaseBlend;
+      const blended = current + blend * (target - current);
 
       this.currentInfluences[index] = blended;
       this.mesh.morphTargetInfluences[index] = blended;
