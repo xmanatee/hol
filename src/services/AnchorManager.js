@@ -112,6 +112,7 @@ export class AnchorManager {
         keypoints: result.keypoints,
         quality: result.quality,
         method: result.method,
+        state: result.state,
         sourceDetection: selectedDetection,
         createdAt: Date.now()
       };
@@ -212,6 +213,17 @@ export class AnchorManager {
         x: anchorServiceState.position.x,
         y: anchorServiceState.position.y,
         z: anchorServiceState.position.z || 0
+      };
+      this.activeAnchor.state = anchorServiceState.state;
+      this.activeAnchor.keypoints = anchorServiceState.metrics?.keypointCount ?? this.activeAnchor.keypoints;
+      this.activeAnchor.quality = anchorServiceState.metrics?.templateQuality ?? this.activeAnchor.quality;
+      this.activeAnchor.diagnostics = {
+        qualityState: anchorServiceState.metrics?.qualityState || null,
+        trackingSuccessRate: anchorServiceState.metrics?.trackingSuccessRate ?? null,
+        homographyInliers: anchorServiceState.metrics?.homographyInliers ?? 0,
+        recoveryAttempts: anchorServiceState.metrics?.recoveryAttempts ?? 0,
+        lostFrameCount: anchorServiceState.metrics?.lostFrameCount ?? 0,
+        lastFailureReason: anchorServiceState.metrics?.lastFailureReason || null
       };
       logger.debug('AnchorManager', 'Updated activeAnchor position:', this.activeAnchor.position);
     }

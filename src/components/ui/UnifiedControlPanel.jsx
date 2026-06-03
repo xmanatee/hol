@@ -48,6 +48,133 @@ const MetricsSection = ({ metrics }) => (
   </div>
 );
 
+const formatPercent = (value) => (
+  typeof value === 'number' ? `${(value * 100).toFixed(0)}%` : 'N/A'
+);
+
+const formatNumber = (value, digits = 0) => (
+  typeof value === 'number' ? value.toFixed(digits) : 'N/A'
+);
+
+const formatRegion = (region) => (
+  region ? `${region.width}x${region.height} @ ${region.x},${region.y}` : 'N/A'
+);
+
+const DiagnosticRow = ({ label, value, tone = 'neutral' }) => {
+  const toneClass = tone === 'bad'
+    ? 'text-red-300'
+    : tone === 'warn'
+      ? 'text-yellow-300'
+      : tone === 'good'
+        ? 'text-green-300'
+        : 'text-gray-300';
+
+  return (
+    <div className="flex justify-between gap-2 border-b border-gray-800 py-1 last:border-b-0">
+      <span className="text-gray-500">{label}</span>
+      <span className={`text-right font-mono ${toneClass}`}>{value}</span>
+    </div>
+  );
+};
+
+const AnchorDiagnosticsSection = ({ diagnostics }) => {
+  if (!diagnostics) {
+    return (
+      <div className="text-xs text-gray-400">
+        Anchor diagnostics appear after camera startup.
+      </div>
+    );
+  }
+
+  const details = diagnostics.details || {};
+  const hasTemplateQuality = typeof details.templateQuality === 'number';
+  const hasTrackingRate = typeof details.trackingSuccessRate === 'number';
+  const keypointTone = diagnostics.status === 'scanning'
+    ? 'neutral'
+    : (details.keypointCount ?? 0) >= 12 ? 'good' : 'warn';
+  const templateQualityTone = !hasTemplateQuality
+    ? 'neutral'
+    : details.templateQuality >= 0.25 ? 'good' : details.templateQuality >= 0.12 ? 'warn' : 'bad';
+  const trackingTone = !hasTrackingRate
+    ? 'neutral'
+    : details.trackingSuccessRate >= 0.5 ? 'good' : 'warn';
+  const statusClass = diagnostics.severity === 'bad'
+    ? 'border-red-700 bg-red-950 text-red-200'
+    : diagnostics.severity === 'warn'
+      ? 'border-yellow-700 bg-yellow-950 text-yellow-200'
+      : diagnostics.severity === 'good'
+        ? 'border-green-700 bg-green-950 text-green-200'
+        : 'border-gray-700 bg-gray-950 text-gray-300';
+
+  return (
+    <div className="text-xs">
+      <div className={`mb-2 rounded border px-2 py-1 ${statusClass}`}>
+        <div className="font-medium">{diagnostics.message}</div>
+        <div className="mt-0.5 text-[10px] opacity-80">{diagnostics.recommendation}</div>
+      </div>
+
+      <DiagnosticRow label="Status" value={diagnostics.status} tone={diagnostics.severity} />
+      <DiagnosticRow label="Keypoints" value={details.keypointCount ?? 0} tone={keypointTone} />
+      <DiagnosticRow label="Template quality" value={formatPercent(details.templateQuality)} tone={templateQualityTone} />
+      <DiagnosticRow label="Tracking success" value={formatPercent(details.trackingSuccessRate)} tone={trackingTone} />
+      <DiagnosticRow label="Homography inliers" value={details.homographyInliers ?? 0} tone={(details.homographyInliers ?? 0) >= 15 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Recovery attempts" value={details.recoveryAttempts ?? 0} tone={(details.recoveryAttempts ?? 0) > 0 ? 'warn' : 'good'} />
+      <DiagnosticRow label="Lost frames" value={details.lostFrameCount ?? 0} tone={(details.lostFrameCount ?? 0) > 3 ? 'bad' : 'good'} />
+      <DiagnosticRow label="Processing" value={`${formatNumber(details.processingTime, 1)} ms`} tone={(details.processingTime ?? 0) <= 6 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Template region" value={formatRegion(details.templateRegion)} />
+      {details.lastFailureReason && (
+        <div className="mt-2 rounded border border-red-800 bg-red-950/50 px-2 py-1 text-[10px] text-red-200">
+          {details.lastFailureReason}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const RuntimeReadinessSection = ({ readiness }) => {
+  if (!readiness) {
+    return (
+      <div className="text-xs text-gray-400">
+        Runtime checks are unavailable.
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-xs">
+      <div className="mb-2 grid grid-cols-2 gap-1">
+        <div className={`rounded border px-2 py-1 ${readiness.cameraReady ? 'border-green-800 bg-green-950 text-green-300' : 'border-red-800 bg-red-950 text-red-300'}`}>
+          Camera {readiness.cameraReady ? 'ready' : 'blocked'}
+        </div>
+        <div className={`rounded border px-2 py-1 ${readiness.serviceReady ? 'border-green-800 bg-green-950 text-green-300' : 'border-yellow-800 bg-yellow-950 text-yellow-300'}`}>
+          Services {readiness.serviceReady ? 'ready' : 'setup'}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        {readiness.checks.map(check => (
+          <div
+            key={check.id}
+            className={`rounded border px-2 py-1 ${
+              check.ok
+                ? 'border-green-900 bg-green-950/50 text-green-300'
+                : check.severity === 'blocker'
+                  ? 'border-red-900 bg-red-950/50 text-red-300'
+                  : 'border-yellow-900 bg-yellow-950/50 text-yellow-300'
+            }`}
+          >
+            <div className="flex justify-between gap-2">
+              <span>{check.label}</span>
+              <span className="font-mono">{check.ok ? 'OK' : 'MISSING'}</span>
+            </div>
+            <div className="mt-0.5 text-[10px] text-gray-400">{check.detail}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const ControlsSection = ({
   showStats,
   activeTrackId,
@@ -494,6 +621,8 @@ const UnifiedControlPanel = ({
   onStop,
   onConfigChange,
   metrics,
+  anchorDiagnostics,
+  runtimeReadiness,
   personalityData,
   ttsData,
   onGeneratePersonality,
@@ -521,6 +650,8 @@ const UnifiedControlPanel = ({
   const [isVisible, setIsVisible] = useState(false); // Minimized by default
   const [expandedSections, setExpandedSections] = useState({
     status: false, // Collapsed by default
+    diagnostics: true,
+    runtime: false,
     controls: true,
     microphone: false,
     personality: false,
@@ -577,6 +708,22 @@ const UnifiedControlPanel = ({
           trackedObjects={trackedObjects}
           activeTrackId={activeTrackId}
         />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title={`Anchor Diagnostics (${anchorDiagnostics?.status || 'pending'})`}
+        isExpanded={expandedSections.diagnostics}
+        onToggle={() => toggleSection('diagnostics')}
+      >
+        <AnchorDiagnosticsSection diagnostics={anchorDiagnostics} />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title={`Runtime (${runtimeReadiness?.status || 'unknown'})`}
+        isExpanded={expandedSections.runtime}
+        onToggle={() => toggleSection('runtime')}
+      >
+        <RuntimeReadinessSection readiness={runtimeReadiness} />
       </CollapsibleSection>
 
       <CollapsibleSection

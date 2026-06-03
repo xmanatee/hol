@@ -264,13 +264,17 @@ export const useCameraSystem = (config = {}) => {
           const { metrics } = state.anchorState;
           if (metrics) {
             updateMetric('Keypoint count', metrics.keypointCount || 0);
-            updateMetric('Tracking success rate', ((metrics.trackingSuccessRate || 0) * 100).toFixed(1) + '%');
+            updateMetric('Tracking success rate', (metrics.trackingSuccessRate || 0) * 100);
             updateMetric('Homography inliers', metrics.homographyInliers || 0);
-            updateMetric('Processing time', (metrics.processingTime || 0).toFixed(2) + ' ms');
+            updateMetric('Anchor processing time', metrics.processingTime || 0);
+            updateMetric('Recovery attempts', metrics.recoveryAttempts || 0);
+            updateMetric('Lost frame count', metrics.lostFrameCount || 0);
             
-            if (metrics.templateQuality) {
-              updateMetric('Template quality', (metrics.templateQuality * 100).toFixed(1) + '%');
+            if (typeof metrics.templateQuality === 'number') {
+              updateMetric('Template quality', metrics.templateQuality * 100);
             }
+
+            updateMetric('Anchor last failure', metrics.lastFailureReason || 'None');
           }
           
           // Update anchor stability metrics

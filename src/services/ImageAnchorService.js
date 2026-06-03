@@ -57,7 +57,13 @@ export class ImageAnchorService {
       trackingSuccessRate: 0,
       homographyInliers: 0,
       processingTime: 0,
-      recoveryAttempts: 0
+      recoveryAttempts: 0,
+      lostFrameCount: 0,
+      keypointFailureCount: 0,
+      lastFailureReason: null,
+      lastFailureStage: null,
+      lastUpdateResult: null,
+      lastUpdateMethod: null
     };
     
     // Event listeners
@@ -135,9 +141,17 @@ export class ImageAnchorService {
       const keypointResult = this.keypointDetector.extractKeypoints(this.cv, gray, templateRegion);
       
       if (keypointResult.keypoints.length < this.minAnchorKeypoints) {
+        const message = `Insufficient keypoints: ${keypointResult.keypoints.length} (need at least ${this.minAnchorKeypoints})`;
+        this._recordAnchorFailure('keypoints', message, {
+          keypointCount: keypointResult.keypoints.length,
+          templateKeypoints: keypointResult.keypoints.length,
+          templateRegion,
+          extractionMethod: keypointResult.method,
+          processingTime: performance.now() - startTime
+        });
         src.delete();
         gray.delete();
-        throw new Error(`Insufficient keypoints: ${keypointResult.keypoints.length} (need at least ${this.minAnchorKeypoints})`);
+        throw new Error(message);
       }
 
       // Assess template quality
@@ -151,9 +165,19 @@ export class ImageAnchorService {
       );
 
       if (!this._isUsableTemplateQuality(qualityAssessment.overall)) {
+        const message = `Poor template quality: ${qualityAssessment.overall.toFixed(2)} (need at least ${this.minimumTemplateQuality.toFixed(2)})`;
+        this._recordAnchorFailure('template-quality', message, {
+          keypointCount: keypointResult.keypoints.length,
+          templateKeypoints: keypointResult.keypoints.length,
+          templateQuality: qualityAssessment.overall,
+          qualityState: 'failed',
+          templateRegion,
+          extractionMethod: keypointResult.method,
+          processingTime: performance.now() - startTime
+        });
         src.delete();
         gray.delete();
-        throw new Error(`Poor template quality: ${qualityAssessment.overall.toFixed(2)} (need at least ${this.minimumTemplateQuality.toFixed(2)})`);
+        throw new Error(message);
       }
 
       // Store template center for persistence system (still needed for template matching)
@@ -179,12 +203,23 @@ export class ImageAnchorService {
       // Initialize metrics
       this.metrics = {
         keypointCount: keypointResult.keypoints.length,
+        templateKeypoints: keypointResult.keypoints.length,
         templateQuality: qualityAssessment.overall,
+        qualityState: this._getTemplateQualityState(qualityAssessment.overall),
+        templateRegion: { ...templateRegion },
+        templateRegionArea: templateRegion.width * templateRegion.height,
         extractionMethod: keypointResult.method,
         processingTime: performance.now() - startTime,
         trackingSuccessRate: 1.0,
         homographyInliers: 0,
-        recoveryAttempts: 0
+        recoveryAttempts: 0,
+        lostFrameCount: 0,
+        keypointFailureCount: 0,
+        lastFailureReason: null,
+        lastFailureStage: null,
+        lastUpdateResult: 'created',
+        lastUpdateMethod: keypointResult.method,
+        createdAt: Date.now()
       };
 
       // Cleanup
@@ -204,6 +239,11 @@ export class ImageAnchorService {
       };
 
     } catch (error) {
+      if (!this.metrics.lastFailureReason) {
+        this._recordAnchorFailure('create-anchor', error.message, {
+          processingTime: performance.now() - startTime
+        });
+      }
       this.anchorState = 'inactive';
       this.anchored = false;
       this._notifyStateChange();
@@ -251,6 +291,9 @@ export class ImageAnchorService {
         if (!updateResult.success && this.anchorState !== 'lost') {
           // Increment failure counter instead of immediately degrading
           this.keypointFailureCount++;
+          this.metrics.keypointFailureCount = this.keypointFailureCount;
+          this.metrics.lastFailureReason = updateResult.reason || 'Keypoint tracking failed';
+          this.metrics.lastFailureStage = 'keypoint-tracking';
           
           logger.warn('ImageAnchor', 'Keypoint tracking failed:', {
             reason: updateResult.reason,
@@ -272,7 +315,8 @@ export class ImageAnchorService {
               success: false,
               reason: `Keypoint failure ${this.keypointFailureCount}/${this.maxKeypointFailures}: ${updateResult.reason}`,
               position: this.currentPosition,
-              state: this.anchorState
+              state: this.anchorState,
+              recoverable: true
             };
           }
         } else if (updateResult.success) {
@@ -315,9 +359,12 @@ export class ImageAnchorService {
       }
 
       // Handle complete failure
-      if (!updateResult.success) {
+      if (!updateResult.success && !updateResult.recoverable) {
         this.anchorState = 'lost';
         this.metrics.recoveryAttempts++;
+        this.metrics.lostFrameCount = (this.metrics.lostFrameCount || 0) + 1;
+        this.metrics.lastFailureReason = updateResult.reason || 'Anchor tracking failed';
+        this.metrics.lastFailureStage = 'tracking';
         
         logger.warn('ImageAnchor', 'Anchor tracking completely failed:', {
           reason: updateResult.reason,
@@ -346,19 +393,25 @@ export class ImageAnchorService {
           logger.error('ImageAnchor', 'Max recovery attempts exceeded, anchor permanently lost');
           this._startAutoResetTimer();
         }
+      } else if (!updateResult.success) {
+        this.metrics.lastFailureReason = updateResult.reason || 'Keypoint tracking failed';
+        this.metrics.lastFailureStage = 'keypoint-tracking';
       } else {
         // Reset recovery attempts on success
         if (this.metrics.recoveryAttempts > 0) {
           logger.info('ImageAnchor', 'Anchor tracking recovered successfully');
         }
         this.metrics.recoveryAttempts = 0;
+        this.metrics.lostFrameCount = 0;
+        this.metrics.lastFailureReason = null;
+        this.metrics.lastFailureStage = null;
         
         // Cancel auto-reset timer if tracking recovered
         this._cancelAutoResetTimer();
       }
 
       // Update metrics
-      this.metrics.processingTime = performance.now() - startTime;
+      this._recordAnchorUpdateResult(updateResult, performance.now() - startTime);
       
       // Cleanup
       src.delete();
@@ -706,8 +759,37 @@ export class ImageAnchorService {
     return quality >= this.minimumTemplateQuality;
   }
 
+  _getTemplateQualityState(quality) {
+    return quality >= this.targetTemplateQuality ? 'strong' : 'weak';
+  }
+
   _getInitialAnchorState(quality) {
     return quality >= this.targetTemplateQuality ? 'tracking' : 'degraded';
+  }
+
+  _recordAnchorFailure(stage, reason, metrics = {}) {
+    this.metrics = {
+      ...this.metrics,
+      ...metrics,
+      templateRegion: metrics.templateRegion ? { ...metrics.templateRegion } : this.metrics.templateRegion,
+      lastFailureStage: stage,
+      lastFailureReason: reason,
+      lastFailureAt: performance.now(),
+      lastUpdateResult: 'failed'
+    };
+  }
+
+  _recordAnchorUpdateResult(result, processingTime) {
+    this.metrics.processingTime = processingTime;
+    this.metrics.lastUpdateResult = result.success ? 'success' : 'failed';
+    this.metrics.lastUpdateMethod = result.method || null;
+    this.metrics.lastUpdateConfidence = typeof result.confidence === 'number' ? result.confidence : null;
+    this.metrics.keypointFailureCount = this.keypointFailureCount;
+
+    if (!result.success) {
+      this.metrics.lastFailureReason = result.reason || this.metrics.lastFailureReason || 'Anchor update failed';
+      this.metrics.lastFailureStage = this.metrics.lastFailureStage || 'tracking';
+    }
   }
 
   /**

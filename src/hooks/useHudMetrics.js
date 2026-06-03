@@ -16,6 +16,41 @@ const METRIC_DEFINITIONS = {
     isRed: (value) => value > 4,
     unit: 'ms/frame',
   },
+  'Anchor processing time': {
+    target: 6,
+    isRed: (value) => value > 6,
+    unit: 'ms',
+  },
+  'Keypoint count': {
+    target: 12,
+    isRed: (value) => value < 12,
+    unit: '',
+  },
+  'Tracking success rate': {
+    target: 50,
+    isRed: (value) => value < 50,
+    unit: '%',
+  },
+  'Homography inliers': {
+    target: 15,
+    isRed: (value) => value < 8,
+    unit: '',
+  },
+  'Template quality': {
+    target: 25,
+    isRed: (value) => value < 12,
+    unit: '%',
+  },
+  'Recovery attempts': {
+    target: 0,
+    isRed: (value) => value > 0,
+    unit: '',
+  },
+  'Lost frame count': {
+    target: 0,
+    isRed: (value) => value > 3,
+    unit: '',
+  },
   'Track ID persistence': {
     target: 90,
     isRed: (value) => value < 90,

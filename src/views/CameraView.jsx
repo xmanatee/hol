@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState } from 'react';
+import { useRef, useCallback, useEffect, useMemo, useState } from 'react';
 import { useAnimationFrame, useFrameRate } from '../hooks/useAnimationFrame.js';
 import { useCameraSystem } from '../hooks/useCameraSystem.js';
 import { useHudMetrics } from '../hooks/useHudMetrics.js';
@@ -10,6 +10,8 @@ import OverlayScene from '../scenes/OverlayScene.jsx';
 
 import { renderDetectionOverlay, renderDebugStats, renderKeypoints } from '../utils/detectionRenderer.js';
 import { logger } from '../utils/logger.js';
+import { describeAnchorState } from '../utils/anchorDiagnostics.js';
+import { collectRuntimeReadiness } from '../utils/runtimeReadiness.js';
 
 // Start Screen Component - separate from control panel
 const getStartButtonLabel = (cameraState) => {
@@ -47,17 +49,35 @@ const StartScreen = ({ cameraState, cameraError, onStartCamera }) => {
   );
 };
 
+const AnchorFeedback = ({ feedback }) => {
+  if (!feedback) return null;
+
+  const toneClass = feedback.severity === 'bad'
+    ? 'border-red-500 bg-red-950/90 text-red-100'
+    : feedback.severity === 'warn'
+      ? 'border-yellow-500 bg-yellow-950/90 text-yellow-100'
+      : 'border-green-500 bg-green-950/90 text-green-100';
+
+  return (
+    <div className={`fixed left-1/2 bottom-8 z-50 w-[min(92vw,28rem)] -translate-x-1/2 rounded border px-3 py-2 text-center text-sm shadow-lg ${toneClass}`}>
+      {feedback.message}
+    </div>
+  );
+};
+
 const CameraView = () => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const frameCountRef = useRef(0);
   const ctxRef = useRef(null);
+  const anchorFeedbackTimeoutRef = useRef(null);
 
   const [showStats, setShowStats] = useState(false);
   const [lastProcessedDetections, setLastProcessedDetections] = useState(null);
   const [discoveredMeshes, setDiscoveredMeshes] = useState([]);
   const [hiddenMeshes, setHiddenMeshes] = useState(new Set());
   const [manualRotation, setManualRotation] = useState({ x: 0, y: 0, z: 0 });
+  const [anchorFeedback, setAnchorFeedback] = useState(null);
   
   // Microphone state
   const [microphoneMode, setMicrophoneMode] = useState(false);
@@ -72,6 +92,7 @@ const CameraView = () => {
 
 
   const { metrics, updateMetric } = useHudMetrics();
+  const runtimeReadiness = useMemo(() => collectRuntimeReadiness(), []);
 
   // Use the camera system hook with image-based anchors
   const {
@@ -99,6 +120,28 @@ const CameraView = () => {
     setCurrentCanvas
   } = useCameraSystem({ onMetricUpdate: updateMetric });
   const throttledFrame = useFrameRate(30);
+  const anchorDiagnostics = useMemo(() => describeAnchorState({
+    cameraState,
+    anchorSystemState
+  }), [cameraState, anchorSystemState]);
+
+  useEffect(() => () => {
+    if (anchorFeedbackTimeoutRef.current) {
+      window.clearTimeout(anchorFeedbackTimeoutRef.current);
+    }
+  }, []);
+
+  const showAnchorFeedback = useCallback((message, severity = 'info') => {
+    if (anchorFeedbackTimeoutRef.current) {
+      window.clearTimeout(anchorFeedbackTimeoutRef.current);
+    }
+
+    setAnchorFeedback({ message, severity });
+    anchorFeedbackTimeoutRef.current = window.setTimeout(() => {
+      setAnchorFeedback(null);
+      anchorFeedbackTimeoutRef.current = null;
+    }, 3500);
+  }, []);
 
   // Handle camera start/resume
   const handleStartClick = useCallback(async () => {
@@ -265,6 +308,7 @@ const CameraView = () => {
       // In detection mode: create anchor from tap
       if (anchorSystemState.detections.length === 0) {
         logger.info('CameraView', 'No detections available for anchor creation');
+        showAnchorFeedback('No selectable object detected yet. Keep the label in view.', 'warn');
         return;
       }
 
@@ -294,12 +338,16 @@ const CameraView = () => {
               method: result.method,
               position: result.position
             });
+            const qualityLabel = result.state === 'degraded' ? 'weak' : 'solid';
+            showAnchorFeedback(`Anchor created with ${result.keypoints} keypoints (${qualityLabel} lock).`, result.state === 'degraded' ? 'warn' : 'good');
           } else {
             logger.warn('CameraView', 'Anchor creation failed:', result);
+            showAnchorFeedback('Anchor was not created. Try a sharper textured area.', 'warn');
           }
         } catch (error) {
           logger.warn('CameraView', `Anchor not created: ${error.message}`);
           updateMetric('Anchor creation', error.message);
+          showAnchorFeedback(`Anchor not created: ${error.message}`, 'bad');
         }
       } else {
         logger.warn('CameraView', 'No detection found at tap position:', {
@@ -310,13 +358,15 @@ const CameraView = () => {
             confidence: d.confidence?.toFixed(3)
           }))
         });
+        showAnchorFeedback('Tap inside a highlighted object to create an anchor.', 'warn');
       }
     } else if (anchorSystemState.mode === 'anchor') {
       // In anchor mode: clear anchor on tap
       logger.info('CameraView', 'Clearing anchor to return to detection mode');
       clearAnchor();
+      showAnchorFeedback('Anchor cleared. Detection is active again.', 'good');
     }
-  }, [cvLoaded, anchorSystemState, findDetectionAtPosition, createAnchorFromTap, clearAnchor, updateMetric]);
+  }, [cvLoaded, anchorSystemState, findDetectionAtPosition, createAnchorFromTap, clearAnchor, updateMetric, showAnchorFeedback]);
 
   // Main animation frame loop
   useAnimationFrame(() => {
@@ -504,6 +554,7 @@ const CameraView = () => {
         onTap={handleCanvasTap}
         onDraw={handleCanvasDraw}
       />
+      <AnchorFeedback feedback={anchorFeedback} />
 
       {/* WebGL Overlay Scene */}
       {cameraState === 'active' && (
@@ -543,6 +594,8 @@ const CameraView = () => {
           onStop={stopCamera}
           onConfigChange={handleConfigChange}
           metrics={metrics}
+          anchorDiagnostics={anchorDiagnostics}
+          runtimeReadiness={runtimeReadiness}
           personalityData={personalityData}
           ttsData={ttsData}
           onGeneratePersonality={handleGeneratePersonality}
