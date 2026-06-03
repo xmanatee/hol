@@ -157,16 +157,26 @@ export class DetectionService {
       return false;
     }
 
-    this.worker.postMessage({
-      type: 'detect',
-      imageData: {
-        data: Array.from(imageData.data),
-        width: imageData.width,
-        height: imageData.height
-      }
-    });
+    const { message, transferList } = this._createDetectionMessage(imageData);
+    this.worker.postMessage(message, transferList);
 
     return true;
+  }
+
+  _createDetectionMessage(imageData) {
+    const data = new Uint8ClampedArray(imageData.data);
+
+    return {
+      message: {
+        type: 'detect',
+        imageData: {
+          data,
+          width: imageData.width,
+          height: imageData.height
+        }
+      },
+      transferList: [data.buffer]
+    };
   }
 
   /**

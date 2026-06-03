@@ -9,6 +9,7 @@ const CameraVideo = forwardRef(({ isVisible = true, style = {}, ...props }, ref)
       }`}
       style={style}
       playsInline
+      webkit-playsinline=""
       muted
       autoPlay
       {...props}

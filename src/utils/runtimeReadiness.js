@@ -12,6 +12,7 @@ export const assessRuntimeReadiness = ({
   hasGetUserMedia,
   hasWebGL,
   hasAudioContext,
+  crossOriginIsolated,
   openAIKey,
   elevenLabsAgentId
 }) => {
@@ -69,14 +70,25 @@ export const assessRuntimeReadiness = ({
       detail: normalizePresent(elevenLabsAgentId) ? 'Voice playback configured' : 'Voice playback needs VITE_ELEVENLABS_AGENT_ID'
     }
   ];
-  const checks = [...cameraChecks, ...serviceChecks];
+  const performanceChecks = [
+    {
+      id: 'crossOriginIsolated',
+      label: 'Cross-origin isolation',
+      ok: Boolean(crossOriginIsolated),
+      severity: 'performance',
+      detail: crossOriginIsolated ? 'WASM threading can be enabled' : 'ONNX will stay single-threaded without COOP/COEP isolation'
+    }
+  ];
+  const checks = [...cameraChecks, ...serviceChecks, ...performanceChecks];
   const cameraReady = cameraChecks.every(check => check.ok);
   const serviceReady = serviceChecks.every(check => check.ok);
+  const performanceReady = performanceChecks.every(check => check.ok);
 
   return {
-    status: cameraReady ? (serviceReady ? 'ready' : 'service-setup') : 'blocked',
+    status: cameraReady ? (serviceReady ? (performanceReady ? 'ready' : 'performance-limited') : 'service-setup') : 'blocked',
     cameraReady,
     serviceReady,
+    performanceReady,
     checks
   };
 };
@@ -97,6 +109,7 @@ export const collectRuntimeReadiness = () => {
     hasGetUserMedia: hasNavigator && Boolean(navigator.mediaDevices?.getUserMedia),
     hasWebGL,
     hasAudioContext: hasWindow && Boolean(window.AudioContext || window.webkitAudioContext),
+    crossOriginIsolated: hasWindow && Boolean(window.crossOriginIsolated),
     openAIKey: viteEnv.VITE_OPENAI_API_KEY,
     elevenLabsAgentId: viteEnv.VITE_ELEVENLABS_AGENT_ID
   });

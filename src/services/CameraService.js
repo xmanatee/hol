@@ -37,8 +37,19 @@ export class CameraService {
     }
 
     try {
+      const blocker = this._getStartBlocker();
+      if (blocker) {
+        this._notifyStateChange('error', { error: blocker });
+        return false;
+      }
+      if (!videoElement) {
+        this._notifyStateChange('error', { error: 'Camera video element is not ready.' });
+        return false;
+      }
+
       this._notifyStateChange('requesting');
       this.videoElement = videoElement;
+      this._prepareVideoElement(videoElement);
 
       this.stream = await this._requestCameraStream();
       videoElement.srcObject = this.stream;
@@ -101,18 +112,49 @@ export class CameraService {
     ]);
   }
 
+  _getStartBlocker(env = {}) {
+    const locationSource = env.location || (typeof window !== 'undefined' ? window.location : {});
+    const protocol = env.protocol ?? locationSource.protocol;
+    const hostname = env.hostname ?? locationSource.hostname;
+    const isSecureContext = env.isSecureContext ?? (typeof window !== 'undefined' && window.isSecureContext);
+    const mediaDevices = env.mediaDevices ?? (typeof navigator !== 'undefined' ? navigator.mediaDevices : null);
+    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+
+    if (!isSecureContext && protocol !== 'https:' && !isLocalhost) {
+      return 'Camera access requires HTTPS or localhost.';
+    }
+
+    if (!mediaDevices || typeof mediaDevices.getUserMedia !== 'function') {
+      return 'Camera capture is not supported by this browser.';
+    }
+
+    return null;
+  }
+
+  _prepareVideoElement(videoElement) {
+    videoElement.muted = true;
+    videoElement.defaultMuted = true;
+    videoElement.playsInline = true;
+    videoElement.autoplay = true;
+    videoElement.setAttribute('playsinline', '');
+    videoElement.setAttribute('webkit-playsinline', '');
+  }
+
   async resume() {
     if (this.state === 'blocked' && this.videoElement) {
-      try {
-        await this.videoElement.play();
-        this._notifyStateChange('active', {
-          width: this.videoElement.videoWidth,
-          height: this.videoElement.videoHeight
-        });
-        return true;
-      } catch {
-        return false;
-      }
+      return this.videoElement.play().then(
+        () => {
+          this._notifyStateChange('active', {
+            width: this.videoElement.videoWidth,
+            height: this.videoElement.videoHeight
+          });
+          return true;
+        },
+        (playError) => {
+          this._notifyStateChange('blocked', { error: playError.message });
+          return false;
+        }
+      );
     }
     return false;
   }

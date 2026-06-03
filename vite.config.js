@@ -13,6 +13,12 @@ export default defineConfig({
       allow: ['..']
     }
   },
+  preview: {
+    headers: {
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Opener-Policy': 'same-origin',
+    }
+  },
   optimizeDeps: {
     exclude: ['onnxruntime-web']
   },

@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { VISION_RESPONSE_FORMAT } from './openaiSchemas.js';
 
 export class VisionClient {
   constructor(config = {}) {
@@ -46,7 +47,7 @@ export class VisionClient {
         }
       ],
       max_tokens: this.config.maxTokens,
-      response_format: { type: "json_object" }
+      response_format: VISION_RESPONSE_FORMAT
     });
 
     const content = response.choices[0].message.content;

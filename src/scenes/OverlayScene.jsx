@@ -41,6 +41,7 @@ const OverlayScene = ({
   activeAnchor = null,
   anchorState = null
 }) => {
+  const [webglStatus, setWebglStatus] = useState('active')
   const fov = 63
   const cameraDistance = 3
   const far = 100
@@ -82,6 +83,17 @@ const OverlayScene = ({
           logger.info('OverlayScene', 'Canvas created successfully!');
           state.gl.setClearColor(0x000000, 0.0); // Transparent background
           state.gl.alpha = true; // Enable alpha blending
+
+          const canvas = state.gl.domElement
+          canvas.addEventListener('webglcontextlost', (event) => {
+            event.preventDefault()
+            setWebglStatus('lost')
+            logger.warn('OverlayScene', 'WebGL context lost')
+          })
+          canvas.addEventListener('webglcontextrestored', () => {
+            setWebglStatus('active')
+            logger.info('OverlayScene', 'WebGL context restored')
+          })
         }}
         camera={{
           position: [0, 0, cameraDistance],
@@ -111,6 +123,11 @@ const OverlayScene = ({
           />
         </group>
       </Canvas>
+      {webglStatus === 'lost' && (
+        <div className="fixed left-1/2 top-4 z-40 -translate-x-1/2 rounded border border-yellow-600 bg-yellow-950 px-3 py-2 text-xs text-yellow-100">
+          3D overlay paused while WebGL recovers
+        </div>
+      )}
     </div>
   )
 }

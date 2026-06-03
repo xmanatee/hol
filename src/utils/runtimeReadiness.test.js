@@ -29,6 +29,7 @@ test('accepts localhost camera development while flagging missing external servi
     hasGetUserMedia: true,
     hasWebGL: true,
     hasAudioContext: true,
+    crossOriginIsolated: true,
     openAIKey: '',
     elevenLabsAgentId: ''
   });
@@ -40,4 +41,23 @@ test('accepts localhost camera development while flagging missing external servi
     readiness.checks.filter(check => !check.ok).map(check => check.id),
     ['openAIKey', 'elevenLabsAgentId']
   );
+});
+
+test('reports ONNX threading readiness from cross-origin isolation', () => {
+  const readiness = assessRuntimeReadiness({
+    protocol: 'https:',
+    hostname: 'example.com',
+    isSecureContext: true,
+    hasMediaDevices: true,
+    hasGetUserMedia: true,
+    hasWebGL: true,
+    hasAudioContext: true,
+    crossOriginIsolated: false,
+    openAIKey: 'present',
+    elevenLabsAgentId: 'present'
+  });
+
+  assert.equal(readiness.status, 'performance-limited');
+  assert.equal(readiness.performanceReady, false);
+  assert.equal(readiness.checks.find(check => check.id === 'crossOriginIsolated').ok, false);
 });

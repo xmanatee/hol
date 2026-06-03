@@ -37,7 +37,9 @@ async function initializeONNX() {
   try {
     // Configure ONNX Runtime Web environment
     ort.env.wasm.simd = true;
-    ort.env.wasm.numThreads = 1;
+    ort.env.wasm.numThreads = self.crossOriginIsolated
+      ? Math.max(1, Math.min(4, Math.floor((navigator.hardwareConcurrency || 2) / 2)))
+      : 1;
     
     // Set WASM paths to public directory
     ort.env.wasm.wasmPaths = {
@@ -55,9 +57,7 @@ async function initializeONNX() {
     
     if ('gpu' in navigator) {
       log.info('Worker', 'WebGPU available, configuring...');
-      ort.env.webgpu = { 
-        powerPreference: 'high-performance' 
-      };
+      ort.env.webgpu.powerPreference = 'high-performance';
       executionProviders.unshift('webgpu');
     } else {
       log.info('Worker', 'WebGPU not available, using WASM only');
@@ -65,7 +65,12 @@ async function initializeONNX() {
     
     isInitialized = true;
     log.info('Worker', 'ONNX initialization complete');
-    postMessage({ type: 'initialized', executionProviders });
+    postMessage({
+      type: 'initialized',
+      executionProviders,
+      wasmThreads: ort.env.wasm.numThreads,
+      crossOriginIsolated: self.crossOriginIsolated
+    });
   } catch (error) {
     log.error('Worker', 'ONNX initialization failed:', error);
     postMessage({ type: 'error', message: `ONNX initialization failed: ${error.message}` });
@@ -82,9 +87,7 @@ async function loadModel(modelPath) {
     
     // Try WebGPU first, fallback to WASM
     if ('gpu' in navigator) {
-      if ('gpu' in navigator) {
-        sessionOptions.executionProviders.push('webgpu');
-      }
+      sessionOptions.executionProviders.push('webgpu');
     }
     
     // Always add WASM as fallback

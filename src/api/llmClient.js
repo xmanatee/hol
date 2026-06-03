@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { PERSONA_RESPONSE_FORMAT } from './openaiSchemas.js';
 
 export class LLMClient {
   constructor(config = {}) {
@@ -37,7 +38,7 @@ export class LLMClient {
       ],
       max_tokens: this.config.maxTokens,
       temperature: this.config.temperature,
-      response_format: { type: "json_object" }
+      response_format: PERSONA_RESPONSE_FORMAT
     });
 
     const content = response.choices[0].message.content;
