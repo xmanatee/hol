@@ -13,7 +13,8 @@ const HeadAnchor = ({
   manualRotation = { x: 0, y: 0, z: 0 },
   onMeshNamesDiscovered = () => {},
   onLipSyncUpdate = () => {},
-  microphoneMode = false
+  microphoneMode = false,
+  agentAudioAnalysis = null
 }) => {
   const { camera } = useThree()
   const [gltfScene, setGltfScene] = useState(null)
@@ -23,6 +24,7 @@ const HeadAnchor = ({
   const {
     initialize,
     setAgentSpeaking,
+    setAgentAudioAnalysis,
     setMicrophoneMode,
     getMicrophoneAnalysis,
     isVoiceActive,
@@ -31,9 +33,6 @@ const HeadAnchor = ({
   } = useLipSync()
   
   useRandomMorphing(headMesh, !isAgentSpeaking && !microphoneMode, {
-    intensity: 0.8,           // Maximum morph intensity (increased for all-target use)
-    waveSpeed: 0.9,           // Speed of continuous wave motion
-    phaseOffset: 1.8,         // Phase offset between morph targets
     blinkInterval: 4000,      // Time between blinks
     blinkVariation: 2500      // Random variation in blink timing
   })
@@ -49,6 +48,12 @@ const HeadAnchor = ({
   useEffect(() => {
     setAgentSpeaking(isAgentSpeaking)
   }, [isAgentSpeaking, setAgentSpeaking])
+
+  useEffect(() => {
+    if (agentAudioAnalysis) {
+      setAgentAudioAnalysis(agentAudioAnalysis)
+    }
+  }, [agentAudioAnalysis, setAgentAudioAnalysis])
 
   // Update microphone mode in lip-sync system
   useEffect(() => {
@@ -85,13 +90,6 @@ const HeadAnchor = ({
     gltfScene.rotation.x = finalX
     gltfScene.rotation.z = manualRotation.z
     
-    // Add subtle micro-movements during speech
-    if (isAgentSpeaking && headMesh) {
-      const time = Date.now() * 0.001
-      const energyNod = Math.sin(time * 8) * 0.02 // Small nod motion
-      gltfScene.rotation.x += energyNod
-    }
-
     // Update parent with lip-sync data from microphone mode
     if (microphoneMode) {
       const audioData = getMicrophoneAnalysis();

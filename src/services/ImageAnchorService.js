@@ -10,6 +10,7 @@ import { HomographyEstimator } from '../cv/anchor.homography.js';
 import { AnchorPersistenceSystem } from '../cv/anchor.persistence.js';
 import { OneEuroFilter } from '../cv/oneEuroFilter.js';
 import { checkCriticalFeatures } from '../cv/opencv.features.test.js';
+import { calculateTemplateRegion } from '../utils/templateRegion.js';
 import { logger } from '../utils/logger.js';
 
 export class ImageAnchorService {
@@ -36,6 +37,7 @@ export class ImageAnchorService {
     this.template = null;
     this.templateRegion = null;
     this.templateCenter = null; // Reference center point for stable positioning
+    this.templateAnchorOffset = null;
     this.currentPosition = null;
     this.currentNormal = null;
     this.lastFrameTime = 0;
@@ -185,17 +187,22 @@ export class ImageAnchorService {
         x: templateRegion.x + templateRegion.width / 2,
         y: templateRegion.y + templateRegion.height / 2
       };
+      const templateAnchorOffset = {
+        x: tapPosition.x - templateCenter.x,
+        y: tapPosition.y - templateCenter.y
+      };
 
       // Initialize tracking with extracted keypoints and tap position (not template center)
       this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, gray, tapPosition);
 
       // Store template for persistence system
-      this.persistenceSystem.storeTemplate(this.cv, gray, templateRegion, templateCenter);
+      this.persistenceSystem.storeTemplate(this.cv, gray, templateRegion, tapPosition);
 
       // Store anchor state
       this.anchored = true;
       this.templateRegion = templateRegion;
       this.templateCenter = templateCenter; // Store for template persistence (not positioning)
+      this.templateAnchorOffset = templateAnchorOffset;
       this.currentPosition = { x: tapPosition.x, y: tapPosition.y, z: 0 }; // Anchor at tap position
       this.anchorState = this._getInitialAnchorState(qualityAssessment.overall);
       this.framesSinceRefresh = 0;
@@ -207,6 +214,8 @@ export class ImageAnchorService {
         templateQuality: qualityAssessment.overall,
         qualityState: this._getTemplateQualityState(qualityAssessment.overall),
         templateRegion: { ...templateRegion },
+        templateCenter: { ...templateCenter },
+        templateAnchorOffset: { ...templateAnchorOffset },
         templateRegionArea: templateRegion.width * templateRegion.height,
         extractionMethod: keypointResult.method,
         processingTime: performance.now() - startTime,
@@ -668,9 +677,10 @@ export class ImageAnchorService {
   _refreshKeypoints(grayImage) {
     if (!this.currentPosition) return;
 
+    const templateCenter = this._getTemplateCenterFromAnchorPosition();
     const refreshRegion = {
-      x: Math.max(0, this.currentPosition.x - this.templateRegion.width / 2),
-      y: Math.max(0, this.currentPosition.y - this.templateRegion.height / 2),
+      x: templateCenter.x - this.templateRegion.width / 2,
+      y: templateCenter.y - this.templateRegion.height / 2,
       width: this.templateRegion.width,
       height: this.templateRegion.height
     };
@@ -679,7 +689,8 @@ export class ImageAnchorService {
       this.cv,
       grayImage,
       this.keypointDetector,
-      refreshRegion
+      this._clampTemplateRegion(refreshRegion, grayImage.cols, grayImage.rows),
+      this.currentPosition
     );
 
     if (refreshResult) {
@@ -693,18 +704,23 @@ export class ImageAnchorService {
   _reinitializeKeypoints(grayImage) {
     if (!this.currentPosition) return;
 
+    const templateCenter = this._getTemplateCenterFromAnchorPosition();
     const region = {
-      x: Math.max(0, this.currentPosition.x - this.templateRegion.width / 2),
-      y: Math.max(0, this.currentPosition.y - this.templateRegion.height / 2),
+      x: templateCenter.x - this.templateRegion.width / 2,
+      y: templateCenter.y - this.templateRegion.height / 2,
       width: this.templateRegion.width,
       height: this.templateRegion.height
     };
 
     try {
-      const keypointResult = this.keypointDetector.extractKeypoints(this.cv, grayImage, region);
+      const keypointResult = this.keypointDetector.extractKeypoints(
+        this.cv,
+        grayImage,
+        this._clampTemplateRegion(region, grayImage.cols, grayImage.rows)
+      );
       
       if (keypointResult.keypoints.length >= 15) {
-        this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, grayImage);
+        this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, grayImage, this.currentPosition);
         this.anchorState = 'tracking';
         logger.info('ImageAnchor', 'Keypoint tracking reinitialized after recovery');
       }
@@ -717,30 +733,15 @@ export class ImageAnchorService {
    * Calculate template region from tap position and bounding box
    */
   _calculateTemplateRegion(tapPosition, boundingBox, imageWidth, imageHeight) {
-    if (boundingBox) {
-      const bboxWidth = boundingBox.x2 - boundingBox.x1;
-      const bboxHeight = boundingBox.y2 - boundingBox.y1;
-      const padding = 0.2;
-      const paddedWidth = Math.max(80, bboxWidth * (1 + padding * 2));
-      const paddedHeight = Math.max(80, bboxHeight * (1 + padding * 2));
-      const centerX = (boundingBox.x1 + boundingBox.x2) / 2;
-      const centerY = (boundingBox.y1 + boundingBox.y2) / 2;
+    return calculateTemplateRegion(tapPosition, boundingBox, imageWidth, imageHeight);
+  }
 
-      return this._clampTemplateRegion({
-        x: centerX - paddedWidth / 2,
-        y: centerY - paddedHeight / 2,
-        width: paddedWidth,
-        height: paddedHeight
-      }, imageWidth, imageHeight);
-    }
-
-    const fallbackSize = Math.max(96, Math.min(imageWidth, imageHeight) * 0.24);
-    return this._clampTemplateRegion({
-      x: tapPosition.x - fallbackSize / 2,
-      y: tapPosition.y - fallbackSize / 2,
-      width: fallbackSize,
-      height: fallbackSize
-    }, imageWidth, imageHeight);
+  _getTemplateCenterFromAnchorPosition() {
+    const offset = this.templateAnchorOffset || { x: 0, y: 0 };
+    return {
+      x: this.currentPosition.x - offset.x,
+      y: this.currentPosition.y - offset.y
+    };
   }
 
   _clampTemplateRegion(region, imageWidth, imageHeight) {
@@ -836,6 +837,7 @@ export class ImageAnchorService {
       this.currentNormal = null;
       this.templateRegion = null;
       this.templateCenter = null; // Clear template center reference
+      this.templateAnchorOffset = null;
       this.framesSinceRefresh = 0;
       
       // Reset resilience counters

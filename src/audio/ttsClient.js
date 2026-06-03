@@ -1,4 +1,5 @@
 import { Conversation } from '@elevenlabs/client';
+import { createAudioAnalysisFromFrequencyData } from './lipSync.js';
 import { logger } from '../utils/logger.js';
 import { MicrophoneService } from './MicrophoneService.js';
 
@@ -11,6 +12,7 @@ export class TTSClient {
     
     this.conversation = null;
     this.audioContext = null;
+    this.audioAnalysisInterval = null;
     this.isConnected = false;
     this.isPlaying = false;
     this.micPermissionGranted = false;
@@ -49,6 +51,15 @@ export class TTSClient {
     logger.info('TTSClient', 'Initialized successfully');
   }
 
+  async _ensureAudioContextReady() {
+    await this.initialize();
+
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      await this.audioContext.resume();
+      logger.info('TTSClient', 'AudioContext resumed for user gesture');
+    }
+  }
+
   async requestMicrophoneAccess() {
     if (this.micPermissionGranted) {
       return;
@@ -68,13 +79,7 @@ export class TTSClient {
     const startTime = performance.now();
     this.metrics.totalRequests++;
 
-    await this.initialize();
-
-    // Resume AudioContext if suspended (iOS autoplay handling)
-    if (this.audioContext && this.audioContext.state === 'suspended') {
-      await this.audioContext.resume();
-      logger.info('TTSClient', 'AudioContext resumed for user gesture');
-    }
+    await this._ensureAudioContextReady();
 
     this.emit('onSynthesisStart', { 
       text: text,
@@ -100,16 +105,11 @@ export class TTSClient {
     return true;
   }
 
-  async startConversation() {
-    if (!this.config.agentId) {
-      throw new Error('Set VITE_ELEVENLABS_AGENT_ID to enable voice playback.');
-    }
-
-    logger.info('TTSClient', 'Starting conversation session...');
-    await this.requestMicrophoneAccess();
-    
-    this.conversation = await Conversation.startSession({
+  _buildSessionOptions() {
+    return {
       agentId: this.config.agentId,
+      connectionType: 'webrtc',
+      preferHeadphonesForIosDevices: true,
       onConnect: () => {
         logger.info('TTSClient', 'Connected to agent');
         this.isConnected = true;
@@ -117,7 +117,9 @@ export class TTSClient {
       },
       onDisconnect: (details) => {
         logger.info('TTSClient', 'Disconnected from agent:', details);
+        this._stopAudioAnalysisLoop();
         this.isConnected = false;
+        this.isPlaying = false;
         this.conversation = null;
         this.emit('onDisconnected', { details });
       },
@@ -127,42 +129,94 @@ export class TTSClient {
       },
       onError: (error) => {
         logger.error('TTSClient', 'Agent error:', error);
+        this._stopAudioAnalysisLoop();
         this.emit('onError', { error: error.message || String(error) });
       },
       onStatusChange: ({ status }) => {
         logger.info('TTSClient', 'Status changed:', status);
       },
       onModeChange: ({ mode }) => {
-        logger.info('TTSClient', 'Mode changed:', mode);
-
-        if (mode === 'speaking') {
-          this.isPlaying = true;
-          const latencyToFirstAudio = performance.now() - this.currentRequestStart;
-          
-          this.emit('onAudioStart', {
-            latencyToFirstAudio: latencyToFirstAudio
-          });
-          
-          logger.info('TTSClient', 'Agent started speaking, latency:', latencyToFirstAudio, 'ms');
-        } else if (mode === 'listening' && this.isPlaying) {
-          this.isPlaying = false;
-          const totalLatency = performance.now() - this.currentRequestStart;
-          
-          this.metrics.successfulRequests++;
-          this.metrics.lastLatency = totalLatency;
-          this.metrics.averageLatency = this.calculateMovingAverage(this.metrics.averageLatency, totalLatency);
-          
-          this.emit('onPlaybackComplete');
-          this.emit('onSynthesisComplete', { 
-            latency: totalLatency 
-          });
-          
-          logger.info('TTSClient', 'Agent finished speaking, total latency:', totalLatency, 'ms');
-        }
+        this._handleModeChange(mode);
       }
-    });
+    };
+  }
+
+  async startConversation() {
+    if (this.conversation) {
+      return;
+    }
+
+    if (!this.config.agentId) {
+      throw new Error('Set VITE_ELEVENLABS_AGENT_ID to enable voice playback.');
+    }
+
+    logger.info('TTSClient', 'Starting conversation session...');
+    await this._ensureAudioContextReady();
+    await this.requestMicrophoneAccess();
+
+    this.conversation = await Conversation.startSession(this._buildSessionOptions());
 
     logger.info('TTSClient', 'Conversation session started successfully');
+  }
+
+  _handleModeChange(mode) {
+    logger.info('TTSClient', 'Mode changed:', mode);
+
+    if (mode === 'speaking') {
+      this.isPlaying = true;
+      const requestStart = this.currentRequestStart || performance.now();
+      const latencyToFirstAudio = performance.now() - requestStart;
+
+      this.emit('onAudioStart', {
+        latencyToFirstAudio: latencyToFirstAudio
+      });
+      this._startAudioAnalysisLoop();
+
+      logger.info('TTSClient', 'Agent started speaking, latency:', latencyToFirstAudio, 'ms');
+    } else if (mode === 'listening' && this.isPlaying) {
+      this.isPlaying = false;
+      this._stopAudioAnalysisLoop();
+      const requestStart = this.currentRequestStart || performance.now();
+      const totalLatency = performance.now() - requestStart;
+
+      this.metrics.successfulRequests++;
+      this.metrics.lastLatency = totalLatency;
+      this.metrics.averageLatency = this.calculateMovingAverage(this.metrics.averageLatency, totalLatency);
+
+      this.emit('onPlaybackComplete');
+      this.emit('onSynthesisComplete', {
+        latency: totalLatency
+      });
+
+      logger.info('TTSClient', 'Agent finished speaking, total latency:', totalLatency, 'ms');
+    }
+  }
+
+  _startAudioAnalysisLoop() {
+    this._stopAudioAnalysisLoop();
+
+    this.audioAnalysisInterval = window.setInterval(async () => {
+      if (!this.conversation || !this.isPlaying) {
+        return;
+      }
+
+      try {
+        const frequencyData = await this.conversation.getOutputByteFrequencyData();
+        const volume = await this.conversation.getOutputVolume();
+        this.emit('onAudioAnalysis', createAudioAnalysisFromFrequencyData(frequencyData, volume));
+      } catch (error) {
+        this.isPlaying = false;
+        this._stopAudioAnalysisLoop();
+        this.emit('onError', { error: error.message || String(error) });
+      }
+    }, 33);
+  }
+
+  _stopAudioAnalysisLoop() {
+    if (this.audioAnalysisInterval) {
+      window.clearInterval(this.audioAnalysisInterval);
+      this.audioAnalysisInterval = null;
+    }
   }
 
   handleAgentMessage(message) {
@@ -181,12 +235,14 @@ export class TTSClient {
       // But we can end the conversation session
       logger.info('TTSClient', 'Stopping current speech...');
       this.isPlaying = false;
+      this._stopAudioAnalysisLoop();
     }
   }
 
   async endConversation() {
     if (this.conversation) {
-      this.conversation.endSession();
+      this._stopAudioAnalysisLoop();
+      await this.conversation.endSession();
       logger.info('TTSClient', 'Conversation session ended');
       this.conversation = null;
       this.isConnected = false;

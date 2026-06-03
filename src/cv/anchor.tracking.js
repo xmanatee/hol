@@ -656,7 +656,7 @@ export class KeypointTracker {
   /**
    * Refresh tracking by re-detecting keypoints in current region
    */
-  refreshKeypoints(cv, currentGray, keypointDetector, region) {
+  refreshKeypoints(cv, currentGray, keypointDetector, region, anchorPosition) {
     try {
       // Validate inputs
       if (!cv || !currentGray || !keypointDetector || !region) {
@@ -681,52 +681,8 @@ export class KeypointTracker {
       const newKeypoints = keypointDetector.extractKeypoints(cv, currentGray, region);
       
       if (newKeypoints.keypoints.length >= 15) {
-        // Smart merge prioritizing stable points
-        const existingActive = this.trackedPoints.filter(pt => pt.status === 'active');
-        
-        // Sort existing points by stability (stable points first, then by total success)
-        const sortedExisting = existingActive.sort((a, b) => {
-          // Prioritize stable points
-          if (a.isStable !== b.isStable) return b.isStable - a.isStable;
-          // Then by total successful frames
-          if (a.totalSuccessfulFrames !== b.totalSuccessfulFrames) {
-            return b.totalSuccessfulFrames - a.totalSuccessfulFrames;
-          }
-          // Finally by current streak
-          return b.successfulTrackingStreak - a.successfulTrackingStreak;
-        });
-        
-        // Determine how many existing points to keep
-        const stableCount = sortedExisting.filter(pt => pt.isStable).length;
-        const maxKeepExisting = Math.min(50, sortedExisting.length);
-        const keepExisting = Math.max(stableCount, Math.min(maxKeepExisting, 30)); // Keep at least all stable points, up to 30 total
-        
-        // Add new keypoints with unique IDs
-        const maxId = Math.max(...this.trackedPoints.map(pt => pt.id), -1);
-        const remainingSlots = 80 - keepExisting; // Our tracking limit is 80
-        const freshKeypoints = newKeypoints.keypoints
-          .slice(0, Math.max(0, remainingSlots))
-          .map((kp, idx) => ({
-            id: maxId + idx + 1,
-            original: { x: kp.pt.x, y: kp.pt.y },
-            current: { x: kp.pt.x, y: kp.pt.y },
-            response: kp.response,
-            status: 'active',
-            errorHistory: [],
-            age: 0,
-            successfulTrackingStreak: 0,
-            totalSuccessfulFrames: 0,
-            stabilityScore: 0,
-            isStable: false
-          }));
-
-        // Combine: stable existing points + fresh keypoints
-        this.trackedPoints = [
-          ...sortedExisting.slice(0, keepExisting), 
-          ...freshKeypoints
-        ];
-        
-        logger.info('KeypointTracker', `Smart refresh: kept ${keepExisting} existing (${stableCount} stable) + ${freshKeypoints.length} fresh = ${this.trackedPoints.length} total`);
+        this.initializeTracking(cv, newKeypoints.keypoints, currentGray, anchorPosition);
+        logger.info('KeypointTracker', `Refreshed tracking with ${this.trackedPoints.length} current-frame keypoints`);
         return true;
       } else {
         logger.debug('KeypointTracker', `Insufficient new keypoints for refresh: ${newKeypoints.keypoints.length}`);

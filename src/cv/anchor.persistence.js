@@ -11,6 +11,7 @@ export class AnchorPersistenceSystem {
     this.template = null;
     this.templateRegion = null;
     this.lastKnownPosition = null;
+    this.anchorOffset = { x: 0, y: 0 };
     this.searchRegion = null;
     this.correlationThreshold = 0.7;
     this.maxSearchRadius = 100;
@@ -47,9 +48,15 @@ export class AnchorPersistenceSystem {
       
       templateRoi.delete();
       
+      const templateCenter = this._getTemplateCenter(region);
+
       // Store template info
       this.templateRegion = { ...region };
       this.lastKnownPosition = { ...position };
+      this.anchorOffset = {
+        x: position.x - templateCenter.x,
+        y: position.y - templateCenter.y
+      };
       this.searchRegion = this._calculateSearchRegion(position, grayImage.cols, grayImage.rows);
       
       logger.info('AnchorPersistenceSystem', `Stored template ${region.width}x${region.height} at (${position.x}, ${position.y})`);
@@ -92,10 +99,12 @@ export class AnchorPersistenceSystem {
       searchRoi.roi.delete();
 
       if (matchResults.success) {
-        // Convert local coordinates to global coordinates
         const globalMatch = {
-          x: searchRoi.offset.x + matchResults.location.x + this.templateRegion.width / 2,
-          y: searchRoi.offset.y + matchResults.location.y + this.templateRegion.height / 2,
+          ...this._matchLocationToAnchorPosition(
+            matchResults.location,
+            searchRoi.offset,
+            matchResults.scale
+          ),
           confidence: matchResults.confidence,
           scale: matchResults.scale
         };
@@ -235,6 +244,25 @@ export class AnchorPersistenceSystem {
     };
   }
 
+  _getTemplateCenter(region) {
+    return {
+      x: region.x + region.width / 2,
+      y: region.y + region.height / 2
+    };
+  }
+
+  _matchLocationToAnchorPosition(matchLocation, searchOffset, scale = 1) {
+    const matchCenter = {
+      x: searchOffset.x + matchLocation.x + (this.templateRegion.width * scale) / 2,
+      y: searchOffset.y + matchLocation.y + (this.templateRegion.height * scale) / 2
+    };
+
+    return {
+      x: matchCenter.x + this.anchorOffset.x * scale,
+      y: matchCenter.y + this.anchorOffset.y * scale
+    };
+  }
+
   /**
    * Update template with new successful match
    * @param {cv.Mat} grayImage - Current frame
@@ -261,6 +289,11 @@ export class AnchorPersistenceSystem {
           this.template = newTemplateRoi.clone();
           this.templateRegion = { ...region };
           this.lastKnownPosition = { ...position };
+          const templateCenter = this._getTemplateCenter(region);
+          this.anchorOffset = {
+            x: position.x - templateCenter.x,
+            y: position.y - templateCenter.y
+          };
           logger.info('AnchorPersistenceSystem', `Template updated with correlation ${correlation.toFixed(3)}`);
         }
       }
@@ -295,10 +328,11 @@ export class AnchorPersistenceSystem {
       result.delete();
 
       if (confidence > this.correlationThreshold) {
-        const matchCenter = {
-          x: minMaxLoc.maxLoc.x + this.templateRegion.width / 2,
-          y: minMaxLoc.maxLoc.y + this.templateRegion.height / 2
-        };
+        const matchCenter = this._matchLocationToAnchorPosition(
+          minMaxLoc.maxLoc,
+          { x: 0, y: 0 },
+          1
+        );
 
         this.lastKnownPosition = matchCenter;
         this.recoveryAttempts = 0;
@@ -351,6 +385,7 @@ export class AnchorPersistenceSystem {
         height: this.templateRegion.height
       },
       lastPosition: this.lastKnownPosition,
+      anchorOffset: this.anchorOffset,
       recoveryAttempts: this.recoveryAttempts,
       correlationThreshold: this.correlationThreshold
     };
@@ -364,6 +399,7 @@ export class AnchorPersistenceSystem {
     
     this.templateRegion = null;
     this.lastKnownPosition = null;
+    this.anchorOffset = { x: 0, y: 0 };
     this.searchRegion = null;
     this.recoveryAttempts = 0;
     this.initialized = false;

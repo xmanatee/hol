@@ -19,6 +19,29 @@ test('template region follows the selected detection instead of a full-frame gen
   assert.ok(region.y <= 320 && region.y + region.height >= 320);
 });
 
+test('large detections create a tap-local template instead of seeding the whole box', () => {
+  const service = new ImageAnchorService();
+  const tap = { x: 240, y: 180 };
+  const region = service._calculateTemplateRegion(
+    tap,
+    { x1: 100, y1: 80, x2: 900, y2: 680 },
+    1280,
+    720
+  );
+
+  const center = {
+    x: region.x + region.width / 2,
+    y: region.y + region.height / 2,
+  };
+
+  assert.ok(region.width <= 180);
+  assert.ok(region.height <= 180);
+  assert.ok(Math.abs(center.x - tap.x) <= 2);
+  assert.ok(Math.abs(center.y - tap.y) <= 2);
+  assert.ok(center.x < 360);
+  assert.ok(center.y < 300);
+});
+
 test('moderate template quality is usable but starts degraded', () => {
   const service = new ImageAnchorService();
 

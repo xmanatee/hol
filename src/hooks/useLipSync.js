@@ -30,6 +30,7 @@ export const useLipSync = () => {
   const isAgentSpeakingRef = useRef(false);
   const headMeshRef = useRef(null);
   const microphoneModeRef = useRef(false);
+  const externalAgentAudioRef = useRef(null);
 
   const initialize = useCallback(async (headMesh, microphoneMode = false) => {
     headMeshRef.current = headMesh;
@@ -57,6 +58,7 @@ export const useLipSync = () => {
   const stop = useCallback(() => {
     setIsActive(false);
     isAgentSpeakingRef.current = false;
+    externalAgentAudioRef.current = null;
     setCurrentViseme('M');
     if (morphControllerRef.current) {
       morphControllerRef.current.setViseme('M', 1.0);
@@ -73,9 +75,19 @@ export const useLipSync = () => {
       if (morphControllerRef.current) {
         morphControllerRef.current.setViseme('M', 1.0);
       }
+      externalAgentAudioRef.current = null;
       setCurrentViseme('M');
     }
   }, [isActive, start]);
+
+  const setAgentAudioAnalysis = useCallback((audioData) => {
+    externalAgentAudioRef.current = {
+      energy: audioData.energy,
+      centroid: audioData.centroid,
+      spectrum: audioData.spectrum,
+      receivedAt: performance.now()
+    };
+  }, []);
 
   const setMicrophoneMode = useCallback(async (enabled) => {
     microphoneModeRef.current = enabled;
@@ -142,11 +154,10 @@ export const useLipSync = () => {
       audioData = microphoneServiceRef.current.getAnalysis();
       isCurrentlyVoiceActive = microphoneServiceRef.current.isVoiceActive();
     } else {
-      audioData = audioAnalyzerRef.current.getAnalysis(
-        isAgentSpeakingRef.current, 
-        currentTime
-      );
-      isCurrentlyVoiceActive = isAgentSpeakingRef.current;
+      const externalAudio = externalAgentAudioRef.current;
+      const hasFreshAgentAudio = externalAudio && currentTime - externalAudio.receivedAt < 500;
+      audioData = hasFreshAgentAudio ? externalAudio : audioAnalyzerRef.current.getAnalysis();
+      isCurrentlyVoiceActive = isAgentSpeakingRef.current && audioData.energy >= visemePickerRef.current.energyThreshold;
     }
 
     const selectedViseme = visemePickerRef.current.pickViseme(
@@ -217,6 +228,7 @@ export const useLipSync = () => {
     start,
     stop,
     setAgentSpeaking,
+    setAgentAudioAnalysis,
     setMicrophoneMode,
     setVoiceActivityThreshold,
     setMicrophoneGain,

@@ -49,6 +49,7 @@ export const useCameraSystem = (config = {}) => {
     isSynthesizing: false,
     isPlaying: false,
     currentAnalyser: null,
+    audioAnalysis: { energy: 0, centroid: 0, spectrum: [] },
     error: null,
     lastLatency: 0
   });
@@ -314,7 +315,12 @@ export const useCameraSystem = (config = {}) => {
     const removeTTSListener = ttsClient.addListener({
       onSynthesisStart: ({ text, voiceStyle, requestId }) => {
         logger.info('CameraSystem', 'TTS synthesis started:', { text, voiceStyle, requestId });
-        setTTSData(prev => ({ ...prev, isSynthesizing: true, error: null }));
+        setTTSData(prev => ({
+          ...prev,
+          isSynthesizing: true,
+          audioAnalysis: { energy: 0, centroid: 0, spectrum: [] },
+          error: null
+        }));
       },
       onAudioStart: ({ latencyToFirstAudio }) => {
         logger.info('CameraSystem', 'TTS audio started, latency:', latencyToFirstAudio, 'ms');
@@ -327,14 +333,23 @@ export const useCameraSystem = (config = {}) => {
         }));
         updateMetric('TTS latency to first audio', latencyToFirstAudio);
       },
-      onAudioAnalysis: ({ energy, centroid }) => {
-        updateMetric('Audio energy', energy);
-        updateMetric('Audio centroid', centroid);
+      onAudioAnalysis: (audioAnalysis) => {
+        setTTSData(prev => ({
+          ...prev,
+          audioAnalysis
+        }));
+        updateMetric('Audio energy', audioAnalysis.energy);
+        updateMetric('Audio centroid', audioAnalysis.centroid);
         updateMetric('Current viseme', 'TBD'); // Will be updated by lip-sync system
       },
       onPlaybackComplete: () => {
         logger.info('CameraSystem', 'TTS playback completed');
-        setTTSData(prev => ({ ...prev, isPlaying: false, currentAnalyser: null }));
+        setTTSData(prev => ({
+          ...prev,
+          isPlaying: false,
+          currentAnalyser: null,
+          audioAnalysis: { energy: 0, centroid: 0, spectrum: [] }
+        }));
       },
       onSynthesisComplete: ({ text, voiceStyle, latency }) => {
         logger.info('CameraSystem', 'TTS synthesis completed:', { text, voiceStyle, latency });
@@ -342,7 +357,13 @@ export const useCameraSystem = (config = {}) => {
       },
       onError: ({ error }) => {
         logger.error('CameraSystem', 'TTS error:', error);
-        setTTSData(prev => ({ ...prev, isSynthesizing: false, isPlaying: false, error }));
+        setTTSData(prev => ({
+          ...prev,
+          isSynthesizing: false,
+          isPlaying: false,
+          audioAnalysis: { energy: 0, centroid: 0, spectrum: [] },
+          error
+        }));
       }
     });
 

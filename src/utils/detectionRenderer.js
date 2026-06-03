@@ -1,4 +1,5 @@
 import { logger } from './logger.js';
+import { calculateTemplateRegion } from './templateRegion.js';
 
 export const renderDetectionOverlay = (ctx, params) => {
   ctx.save();
@@ -193,26 +194,7 @@ export const renderKeypoints = (ctx, anchorSystem) => {
 export const renderTemplatePreview = (ctx, tapPosition, boundingBox, canvasWidth, canvasHeight) => {
   if (!tapPosition) return;
   
-  // Calculate template region (same logic as ImageAnchorService)
-  let baseSize = Math.min(canvasWidth, canvasHeight) * 0.3;
-  
-  if (boundingBox) {
-    const detectionWidth = boundingBox.x2 - boundingBox.x1;
-    const detectionHeight = boundingBox.y2 - boundingBox.y1;
-    const avgDetectionSize = (detectionWidth + detectionHeight) / 2;
-    baseSize = Math.min(avgDetectionSize * 1.4, Math.min(canvasWidth, canvasHeight) * 0.5);
-  }
-  
-  const region = {
-    x: Math.max(0, tapPosition.x - baseSize / 2),
-    y: Math.max(0, tapPosition.y - baseSize / 2),
-    width: baseSize,
-    height: baseSize
-  };
-  
-  // Ensure region is within bounds
-  region.x = Math.max(0, Math.min(region.x, canvasWidth - region.width));
-  region.y = Math.max(0, Math.min(region.y, canvasHeight - region.height));
+  const region = calculateTemplateRegion(tapPosition, boundingBox, canvasWidth, canvasHeight);
   
   // Draw template region outline
   ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)'; // Cyan

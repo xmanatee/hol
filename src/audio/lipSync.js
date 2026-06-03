@@ -80,45 +80,35 @@ export class VisemeMapper {
   }
 }
 
-// ElevenLabs agent audio simulation system
+const createSilentAnalysis = () => ({
+  energy: 0,
+  centroid: 0,
+  spectrum: new Array(128).fill(0)
+});
+
+export const createAudioAnalysisFromFrequencyData = (frequencyData, volume) => {
+  const spectrum = Array.from(frequencyData);
+  const totalMagnitude = spectrum.reduce((sum, value) => sum + value, 0);
+  const weightedFrequency = spectrum.reduce((sum, value, index) => {
+    return sum + value * index;
+  }, 0);
+  const maxIndex = Math.max(1, spectrum.length - 1);
+
+  return {
+    energy: Math.max(0, Math.min(1, volume)),
+    centroid: totalMagnitude > 0 ? (weightedFrequency / totalMagnitude) / maxIndex : 0,
+    spectrum
+  };
+};
+
+// Silent fallback. Real agent lip-sync is driven by ElevenLabs output analysis.
 export class AudioAnalyzer {
   constructor() {}
 
   initialize() {}
 
-  getAgentAnalysis(isAgentSpeaking, timeMs) {
-    if (!isAgentSpeaking) {
-      return {
-        energy: 0,
-        centroid: 0,
-        spectrum: new Array(128).fill(0)
-      };
-    }
-
-    // Simulate realistic audio analysis during speech
-    const time = timeMs * 0.001;
-    
-    // Simulate varying energy levels during speech
-    const baseEnergy = 0.3 + Math.sin(time * 8) * 0.2; // 0.1 to 0.5 range
-    const noise = (Math.random() - 0.5) * 0.1;
-    const energy = Math.max(0, Math.min(1, baseEnergy + noise));
-    
-    // Simulate spectral centroid for vowel variation
-    const centroid = 0.3 + Math.sin(time * 3 + Math.PI/4) * 0.2; // 0.1 to 0.5 range
-    
-    // Create fake spectrum data
-    const spectrum = new Array(128).fill(0);
-    for (let i = 0; i < 128; i++) {
-      const freq = i / 128;
-      const magnitude = energy * Math.exp(-Math.pow(freq - centroid, 2) * 8);
-      spectrum[i] = Math.floor(magnitude * 255);
-    }
-
-    return { energy, centroid, spectrum };
-  }
-
-  getAnalysis(isAgentSpeaking = false, timeMs = 0) {
-    return this.getAgentAnalysis(isAgentSpeaking, timeMs);
+  getAnalysis() {
+    return createSilentAnalysis();
   }
 
   dispose() {}
