@@ -421,89 +421,84 @@ export class HomographyEstimator {
    */
   _extractPoseFromHomography(cv, homography) {
     try {
-      // Get homography matrix elements
-      const H = homography.data64F;
+      const H = Array.from(homography.data64F);
       if (!H || H.length < 9) {
         return { success: false, reason: 'Invalid homography matrix' };
       }
 
-      // Camera intrinsic parameters
       const fx = this.cameraMatrix.data64F[0];
       const fy = this.cameraMatrix.data64F[4];
+      const cx = this.cameraMatrix.data64F[2];
+      const cy = this.cameraMatrix.data64F[5];
+      const k = [
+        fx, 0, cx,
+        0, fy, cy,
+        0, 0, 1,
+      ];
+      const kInverse = [
+        1 / fx, 0, -cx / fx,
+        0, 1 / fy, -cy / fy,
+        0, 0, 1,
+      ];
+      const multiply3 = (a, b) => {
+        const result = new Array(9).fill(0);
+        for (let row = 0; row < 3; row++) {
+          for (let col = 0; col < 3; col++) {
+            for (let index = 0; index < 3; index++) {
+              result[row * 3 + col] += a[row * 3 + index] * b[index * 3 + col];
+            }
+          }
+        }
+        return result;
+      };
+      const length = vector => Math.hypot(vector[0], vector[1], vector[2]);
+      const normalize = vector => {
+        const vectorLength = length(vector);
+        return vector.map(value => value / vectorLength);
+      };
+      const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      const cross = (a, b) => [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+      ];
 
-      // Normalize homography by H[2,2] to ensure scale consistency
-      const scale = H[8];
-      if (Math.abs(scale) < 1e-8) {
-        return { success: false, reason: 'Homography scale too small' };
-      }
+      const normalizedHomography = multiply3(kInverse, multiply3(H, k));
+      const column1 = [normalizedHomography[0], normalizedHomography[3], normalizedHomography[6]];
+      const column2 = [normalizedHomography[1], normalizedHomography[4], normalizedHomography[7]];
+      const scale1 = length(column1);
+      const scale2 = length(column2);
+      const averageScale = (scale1 + scale2) / 2;
 
-      const h = H.map(val => val / scale);
-
-      // Extract the 2x2 upper-left rotation part and translation
-      // H = K * [R + t*n^T/d] * K^(-1) for planar homography
-      
-      // Compute approximate rotation from H
-      // For planar surfaces, we can extract tilt information
-      const h00 = h[0], h01 = h[1], h02 = h[2];
-      const h10 = h[3], h11 = h[4], h12 = h[5];
-
-      // Estimate the dominant rotation using the upper 2x2 submatrix
-      // Normalize the rotation part
-      const r1_norm = Math.sqrt(h00*h00 + h10*h10);
-      const r2_norm = Math.sqrt(h01*h01 + h11*h11);
-      const avg_norm = (r1_norm + r2_norm) / 2.0;
-
-      if (avg_norm < 1e-6) {
+      if (averageScale < 1e-6) {
         return { success: false, reason: 'Degenerate homography' };
       }
 
-      // Normalized rotation vectors
-      const r1 = [h00/avg_norm, h10/avg_norm];
-      const r2 = [h01/avg_norm, h11/avg_norm];
+      const inverseScale = 1 / averageScale;
+      const r1 = normalize(column1.map(value => value * inverseScale));
+      const scaledColumn2 = column2.map(value => value * inverseScale);
+      const r2Orthogonal = scaledColumn2.map((value, index) => value - dot(scaledColumn2, r1) * r1[index]);
+      const r2 = normalize(r2Orthogonal);
+      const r3 = normalize(cross(r1, r2));
+      const normal = { x: r3[0], y: r3[1], z: r3[2] };
 
-      // Estimate rotation angles
-      const theta_x = Math.atan2(r1[1], r1[0]); // Rotation around X
-      const theta_y = Math.atan2(-r2[0], r2[1]); // Rotation around Y
-
-      // Create rotation matrix (simplified for small rotations)
-      const cos_x = Math.cos(theta_x), sin_x = Math.sin(theta_x);
-      const cos_y = Math.cos(theta_y), sin_y = Math.sin(theta_y);
-
-      // Combined rotation matrix R = Ry * Rx
-      const rotation = [
-        cos_y, -sin_y*sin_x, -sin_y*cos_x,
-        0, cos_x, -sin_x,
-        sin_y, cos_y*sin_x, cos_y*cos_x
-      ];
-
-      // Compute surface normal from rotation
-      // For planar objects initially facing camera, normal rotates with surface
-      // Initial normal: [0, 0, 1] -> rotated normal
-      const normal_x = -sin_y;
-      const normal_y = cos_y * sin_x;
-      const normal_z = cos_y * cos_x;
-
-      // Normalize the normal vector
-      const normal_len = Math.sqrt(normal_x*normal_x + normal_y*normal_y + normal_z*normal_z);
-      const normal = {
-        x: normal_x / normal_len,
-        y: normal_y / normal_len, 
-        z: normal_z / normal_len
-      };
-
-      // Ensure normal points toward camera (positive Z component)
       if (normal.z < 0) {
         normal.x = -normal.x;
         normal.y = -normal.y;
         normal.z = -normal.z;
       }
 
-      // Estimate translation from homography
-      // Translation is encoded in h02, h12 terms
+      const rotation = [
+        r1[0], r2[0], normal.x,
+        r1[1], r2[1], normal.y,
+        r1[2], r2[2], normal.z,
+      ];
+      const scaleBalance = Math.min(scale1, scale2) / Math.max(scale1, scale2);
+      const orthogonality = 1 - Math.min(1, Math.abs(dot(normalize(column1), normalize(column2))));
       const translation = {
-        x: h02 / fx,
-        y: h12 / fy,
-        z: 1.0  // Assume unit depth for planar surfaces
+        x: normalizedHomography[2] * inverseScale,
+        y: normalizedHomography[5] * inverseScale,
+        z: normalizedHomography[8] * inverseScale,
       };
 
       return {
@@ -511,7 +506,7 @@ export class HomographyEstimator {
         normal: normal,
         rotation: rotation,
         translation: translation,
-        confidence: Math.min(r1_norm, r2_norm) / Math.max(r1_norm, r2_norm) // Measure of transformation quality
+        confidence: Math.max(0, Math.min(1, scaleBalance * 0.55 + orthogonality * 0.45))
       };
 
     } catch (error) {

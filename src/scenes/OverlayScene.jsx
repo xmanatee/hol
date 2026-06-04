@@ -41,7 +41,13 @@ const OverlayScene = ({
   activeAnchor = null,
   anchorState = null,
   agentAudioAnalysis = null,
-  agentAudioAlignment = null
+  agentAudioAlignment = null,
+  facialExpression = 'neutral',
+  animationIntensity = 0.65,
+  voiceActivityThreshold = 0.02,
+  microphoneGain = 3.0,
+  microphoneDebugMode = false,
+  microphoneBaselineResetToken = 0
 }) => {
   const [webglStatus, setWebglStatus] = useState('active')
   const fov = 63
@@ -124,6 +130,12 @@ const OverlayScene = ({
             microphoneMode={microphoneMode}
             agentAudioAnalysis={agentAudioAnalysis}
             agentAudioAlignment={agentAudioAlignment}
+            facialExpression={facialExpression}
+            animationIntensity={animationIntensity}
+            voiceActivityThreshold={voiceActivityThreshold}
+            microphoneGain={microphoneGain}
+            microphoneDebugMode={microphoneDebugMode}
+            microphoneBaselineResetToken={microphoneBaselineResetToken}
           />
         </group>
       </Canvas>

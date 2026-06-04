@@ -2,7 +2,8 @@ const DEFAULT_FOV = 63;
 const DEFAULT_CAMERA_DISTANCE = 3;
 const MIN_SCALE = 0.28;
 const MAX_SCALE = 1.35;
-const NORMAL_TILT_LIMIT = 0.55;
+const NORMAL_TILT_LIMIT = 0.95;
+const NORMAL_TILT_GAIN = 1.12;
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -48,13 +49,15 @@ export const computeAnchorOverlayTransform = ({
   const worldPixelSize = anchorPixelSize / height * viewHeight;
   const scale = clamp(worldPixelSize * 0.7, MIN_SCALE, MAX_SCALE);
   const normal = anchorState.normal || { x: 0, y: 0, z: 1 };
+  const pitch = Math.atan2(normal.y, Math.max(0.001, normal.z)) * NORMAL_TILT_GAIN;
+  const yaw = -Math.atan2(normal.x, Math.max(0.001, normal.z)) * NORMAL_TILT_GAIN;
 
   return {
     visible: true,
     position: [worldX, worldY, 0],
     rotation: [
-      clamp(normal.y, -NORMAL_TILT_LIMIT, NORMAL_TILT_LIMIT),
-      clamp(-normal.x, -NORMAL_TILT_LIMIT, NORMAL_TILT_LIMIT),
+      clamp(pitch, -NORMAL_TILT_LIMIT, NORMAL_TILT_LIMIT),
+      clamp(yaw, -NORMAL_TILT_LIMIT, NORMAL_TILT_LIMIT),
       0,
     ],
     scale,

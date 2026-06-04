@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react'
-import { useFrame } from '@react-three/fiber'
+import { useEffect, useRef, useState } from 'react'
+import { useFrame, useThree } from '@react-three/fiber'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import * as THREE from 'three'
 import { useLipSync } from '../../hooks/useLipSync.js'
-import { useRandomMorphing } from '../../utils/randomMorphing.js'
-import { computeHeadLocalRotation } from '../../utils/headPose.js'
+import { computeEyeGazeRotation, computeHeadLocalRotation } from '../../utils/headPose.js'
 import { logger } from '../../utils/logger.js'
 
 const HeadAnchor = ({ 
@@ -16,11 +15,22 @@ const HeadAnchor = ({
   onLipSyncUpdate = () => {},
   microphoneMode = false,
   agentAudioAnalysis = null,
-  agentAudioAlignment = null
+  agentAudioAlignment = null,
+  facialExpression = 'neutral',
+  animationIntensity = 0.65,
+  voiceActivityThreshold = 0.02,
+  microphoneGain = 3.0,
+  microphoneDebugMode = false,
+  microphoneBaselineResetToken = 0
 }) => {
   const [gltfScene, setGltfScene] = useState(null)
   const [headMesh, setHeadMesh] = useState(null)
   const [isLoaded, setIsLoaded] = useState(false)
+  const { camera } = useThree()
+  const eyeControlsRef = useRef([])
+  const gazeEulerRef = useRef(new THREE.Euler())
+  const gazeQuaternionRef = useRef(new THREE.Quaternion())
+  const cameraPositionRef = useRef(new THREE.Vector3())
 
   const {
     initialize,
@@ -28,16 +38,18 @@ const HeadAnchor = ({
     setAgentAudioAnalysis,
     setAgentAudioAlignment,
     setMicrophoneMode,
+    setVoiceActivityThreshold,
+    setMicrophoneGain,
+    setMicrophoneDebugMode,
+    resetMicrophoneBaseline,
+    setExpression,
+    setPerformanceIntensity,
     getMicrophoneAnalysis,
     isVoiceActive,
     isActive,
     currentViseme
   } = useLipSync()
-  
-  useRandomMorphing(headMesh, !isAgentSpeaking && !microphoneMode, {
-    blinkInterval: 4000,      // Time between blinks
-    blinkVariation: 2500      // Random variation in blink timing
-  })
+  const microphoneBaselineResetRef = useRef(microphoneBaselineResetToken)
 
   // Initialize lip-sync with microphone mode when mesh is loaded
   useEffect(() => {
@@ -45,6 +57,11 @@ const HeadAnchor = ({
       initialize(headMesh);
     }
   }, [headMesh, initialize]);
+
+  useEffect(() => {
+    setPerformanceIntensity(animationIntensity)
+    setExpression(facialExpression)
+  }, [animationIntensity, facialExpression, headMesh, setExpression, setPerformanceIntensity])
 
   // Update lip-sync when agent speaking status changes
   useEffect(() => {
@@ -68,12 +85,47 @@ const HeadAnchor = ({
     setMicrophoneMode(microphoneMode);
   }, [microphoneMode, setMicrophoneMode]);
 
+  useEffect(() => {
+    setVoiceActivityThreshold(voiceActivityThreshold)
+  }, [voiceActivityThreshold, setVoiceActivityThreshold])
+
+  useEffect(() => {
+    setMicrophoneGain(microphoneGain)
+  }, [microphoneGain, setMicrophoneGain])
+
+  useEffect(() => {
+    setMicrophoneDebugMode(microphoneDebugMode)
+  }, [microphoneDebugMode, setMicrophoneDebugMode])
+
+  useEffect(() => {
+    if (microphoneBaselineResetToken !== microphoneBaselineResetRef.current) {
+      microphoneBaselineResetRef.current = microphoneBaselineResetToken
+      resetMicrophoneBaseline()
+    }
+  }, [microphoneBaselineResetToken, resetMicrophoneBaseline])
+
   // Local pose and lip-sync update - runs every frame
   useFrame(() => {
     if (!gltfScene || !isLoaded || !visible) return
 
     const localRotation = computeHeadLocalRotation(manualRotation)
     gltfScene.rotation.set(localRotation.x, localRotation.y, localRotation.z)
+
+    eyeControlsRef.current.forEach(({ object, baseQuaternion }) => {
+      if (!object.parent) {
+        return
+      }
+
+      camera.getWorldPosition(cameraPositionRef.current)
+      object.parent.worldToLocal(cameraPositionRef.current)
+      const gaze = computeEyeGazeRotation({
+        eyePosition: object.position,
+        cameraPosition: cameraPositionRef.current,
+      })
+      gazeEulerRef.current.set(gaze.x, gaze.y, gaze.z, 'XYZ')
+      gazeQuaternionRef.current.setFromEuler(gazeEulerRef.current)
+      object.quaternion.copy(baseQuaternion).multiply(gazeQuaternionRef.current)
+    })
     
     // Update parent with lip-sync data from microphone mode
     if (microphoneMode) {
@@ -112,8 +164,16 @@ const HeadAnchor = ({
       gltf.scene.updateMatrixWorld(true)
       
       const meshNames = []
+      eyeControlsRef.current = []
       // Find head mesh with morph targets
       gltf.scene.traverse((child) => {
+        if (/^grp_eye/i.test(child.name)) {
+          eyeControlsRef.current.push({
+            object: child,
+            baseQuaternion: child.quaternion.clone(),
+          })
+        }
+
         if (child.type === 'Mesh' || child.type === 'SkinnedMesh') {
           meshNames.push(child.name)
           

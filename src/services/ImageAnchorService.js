@@ -11,6 +11,7 @@ import { AnchorPersistenceSystem } from '../cv/anchor.persistence.js';
 import { OneEuroFilter } from '../cv/oneEuroFilter.js';
 import { checkCriticalFeatures } from '../cv/opencv.features.test.js';
 import { calculateTemplateRegion } from '../utils/templateRegion.js';
+import { SurfaceNormalStabilizer } from '../utils/normalStabilizer.js';
 import { logger } from '../utils/logger.js';
 
 export class ImageAnchorService {
@@ -27,9 +28,7 @@ export class ImageAnchorService {
     // Filters for smoothing
     this.positionFilterX = new OneEuroFilter(30);
     this.positionFilterY = new OneEuroFilter(30);
-    this.normalFilterX = new OneEuroFilter(30);
-    this.normalFilterY = new OneEuroFilter(30);
-    this.normalFilterZ = new OneEuroFilter(30);
+    this.normalStabilizer = new SurfaceNormalStabilizer();
     
     // State
     this.anchored = false;
@@ -575,12 +574,11 @@ export class ImageAnchorService {
 
       // Update surface normal if available from homography pose decomposition
       if (poseResult?.success && poseResult.normal) {
-        this.currentNormal = {
-          x: this.normalFilterX.filter(poseResult.normal.x, timestamp),
-          y: this.normalFilterY.filter(poseResult.normal.y, timestamp),
-          z: this.normalFilterZ.filter(poseResult.normal.z, timestamp)
-        };
-        logger.debug('ImageAnchor', 'Updated surface normal from homography');
+        this.currentNormal = this.normalStabilizer.update(poseResult.normal, {
+          confidence: poseResult.confidence ?? this.metrics.trackingSuccessRate,
+          inliers: this.metrics.homographyInliers,
+        });
+        logger.debug('ImageAnchor', 'Updated stabilized surface normal from homography');
       }
 
       // Determine anchor state based on tracking quality
@@ -641,7 +639,7 @@ export class ImageAnchorService {
   }
 
   /**
-   * Update using template matching fallback
+   * Update using template matching recovery
    */
   _updateWithTemplate(grayImage) {
     const recoveryResult = this.persistenceSystem.attemptRecovery(this.cv, grayImage);
@@ -652,6 +650,15 @@ export class ImageAnchorService {
         y: recoveryResult.position.y,
         z: 0
       };
+      const activePointCount = this.keypointTracker.trackedPoints
+        ? this.keypointTracker.trackedPoints.filter(point => point.status === 'active').length
+        : 0;
+
+      if (activePointCount >= 3 && activePointCount < 20) {
+        this._refreshKeypoints(grayImage);
+      } else if (activePointCount < 3) {
+        this._reinitializeKeypoints(grayImage);
+      }
 
       return {
         success: true,
@@ -844,9 +851,7 @@ export class ImageAnchorService {
       // Reset filters
       this.positionFilterX = new OneEuroFilter(30);
       this.positionFilterY = new OneEuroFilter(30);
-      this.normalFilterX = new OneEuroFilter(30);
-      this.normalFilterY = new OneEuroFilter(30);
-      this.normalFilterZ = new OneEuroFilter(30);
+      this.normalStabilizer.reset();
       
       logger.info('ImageAnchor', 'Anchor cleared');
       this._notifyStateChange();

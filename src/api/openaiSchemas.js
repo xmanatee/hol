@@ -44,6 +44,16 @@ export const PERSONA_RESPONSE_FORMAT = {
           type: 'string',
           enum: ['cheerful', 'sassy', 'wise', 'gruff', 'bubbly', 'sarcastic', 'dramatic']
         },
+        facialExpression: {
+          type: 'string',
+          enum: ['neutral', 'happy', 'sassy', 'wise', 'gruff', 'bubbly', 'sarcastic', 'dramatic']
+        },
+        emotionalDelivery: { type: 'string' },
+        animationIntensity: {
+          type: 'number',
+          minimum: 0,
+          maximum: 1
+        },
         tone: { type: 'string' },
         quirks: {
           type: 'array',
@@ -54,7 +64,7 @@ export const PERSONA_RESPONSE_FORMAT = {
           items: { type: 'string' }
         }
       },
-      required: ['voiceStyle', 'tone', 'quirks', 'oneLiners']
+      required: ['voiceStyle', 'facialExpression', 'emotionalDelivery', 'animationIntensity', 'tone', 'quirks', 'oneLiners']
     }
   }
 };

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { 
+import {
   VisemeMapper, 
   AudioAnalyzer, 
   VisemePicker, 
@@ -9,7 +9,6 @@ import {
   pickVisemeFromAlignment
 } from '../audio/lipSync.js';
 import { MicrophoneService } from '../audio/MicrophoneService.js';
-import { logger } from '../utils/logger.js';
 
 export const useLipSync = () => {
   const [isActive, setIsActive] = useState(false);
@@ -31,8 +30,24 @@ export const useLipSync = () => {
   const isAgentSpeakingRef = useRef(false);
   const headMeshRef = useRef(null);
   const microphoneModeRef = useRef(false);
+  const microphoneConfigRef = useRef({
+    voiceActivityThreshold: 0.02,
+    inputGain: 3.0,
+    debugMode: false
+  });
   const externalAgentAudioRef = useRef(null);
   const externalAgentAlignmentRef = useRef(null);
+
+  const applyMicrophoneConfig = useCallback(() => {
+    const microphoneService = microphoneServiceRef.current;
+    if (!microphoneService) {
+      return;
+    }
+
+    microphoneService.setVoiceActivityThreshold(microphoneConfigRef.current.voiceActivityThreshold);
+    microphoneService.setInputGain(microphoneConfigRef.current.inputGain);
+    microphoneService.setDebugMode(microphoneConfigRef.current.debugMode);
+  }, []);
 
   const initialize = useCallback(async (headMesh, microphoneMode = false) => {
     headMeshRef.current = headMesh;
@@ -48,8 +63,9 @@ export const useLipSync = () => {
     if (microphoneMode) {
       microphoneServiceRef.current = new MicrophoneService();
       await microphoneServiceRef.current.initialize();
+      applyMicrophoneConfig();
     }
-  }, []);
+  }, [applyMicrophoneConfig]);
 
   const start = useCallback((isAgentSpeaking = true) => {
     setIsActive(true);
@@ -107,6 +123,7 @@ export const useLipSync = () => {
         microphoneServiceRef.current = new MicrophoneService();
         await microphoneServiceRef.current.initialize();
       }
+      applyMicrophoneConfig();
       microphoneServiceRef.current.start();
       setIsActive(true);
       isAgentSpeakingRef.current = true;
@@ -116,18 +133,29 @@ export const useLipSync = () => {
         microphoneServiceRef.current.stop();
       }
     }
-  }, []);
+  }, [applyMicrophoneConfig]);
 
   const setVoiceActivityThreshold = useCallback((threshold) => {
+    microphoneConfigRef.current.voiceActivityThreshold = threshold;
     microphoneServiceRef.current?.setVoiceActivityThreshold(threshold);
   }, []);
 
   const setMicrophoneGain = useCallback((gain) => {
+    microphoneConfigRef.current.inputGain = gain;
     microphoneServiceRef.current?.setInputGain(gain);
   }, []);
 
   const setMicrophoneDebugMode = useCallback((enabled) => {
+    microphoneConfigRef.current.debugMode = enabled;
     microphoneServiceRef.current?.setDebugMode(enabled);
+  }, []);
+
+  const setExpression = useCallback((expression) => {
+    morphControllerRef.current?.setExpression(expression, 1);
+  }, []);
+
+  const setPerformanceIntensity = useCallback((intensity) => {
+    morphControllerRef.current?.setPerformanceIntensity(intensity);
   }, []);
 
   const resetMicrophoneBaseline = useCallback(() => {
@@ -150,13 +178,22 @@ export const useLipSync = () => {
   }, []);
 
   useFrame(() => {
-    if (!isActive) {
+    if (!morphControllerRef.current) {
       return;
     }
 
     const currentTime = performance.now();
     const deltaTime = currentTime - lastFrameTimeRef.current;
     lastFrameTimeRef.current = currentTime;
+
+    if (!isActive) {
+      morphControllerRef.current.setViseme('M', 0);
+      morphControllerRef.current.update(deltaTime);
+      if (currentViseme !== 'M') {
+        setCurrentViseme('M');
+      }
+      return;
+    }
 
     let audioData;
     let isCurrentlyVoiceActive;
@@ -188,12 +225,8 @@ export const useLipSync = () => {
 
     const intensity = isCurrentlyVoiceActive ? audioData.energy : 0;
 
-    if (morphControllerRef.current) {
-      morphControllerRef.current.setViseme(selectedViseme, intensity);
-      morphControllerRef.current.update(deltaTime);
-    } else {
-      logger.error('useLipSync', 'MorphController is null! Cannot apply morph targets.');
-    }
+    morphControllerRef.current.setViseme(selectedViseme, intensity);
+    morphControllerRef.current.update(deltaTime);
 
     if (metricsRef.current) {
       metricsRef.current.recordFrame(
@@ -250,6 +283,8 @@ export const useLipSync = () => {
     setVoiceActivityThreshold,
     setMicrophoneGain,
     setMicrophoneDebugMode,
+    setExpression,
+    setPerformanceIntensity,
     resetMicrophoneBaseline,
     getDebugInfo,
     getCurrentInfluences,

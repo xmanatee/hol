@@ -48,7 +48,6 @@ export const useCameraSystem = (config = {}) => {
   const [ttsData, setTTSData] = useState({
     isSynthesizing: false,
     isPlaying: false,
-    currentAnalyser: null,
     audioAnalysis: { energy: 0, centroid: 0, spectrum: [] },
     audioAlignment: null,
     error: null,
@@ -314,8 +313,8 @@ export const useCameraSystem = (config = {}) => {
     // TTS client listeners
     const ttsClient = ttsClientRef.current;
     const removeTTSListener = ttsClient.addListener({
-      onSynthesisStart: ({ text, voiceStyle, requestId }) => {
-        logger.info('CameraSystem', 'TTS synthesis started:', { text, voiceStyle, requestId });
+      onSynthesisStart: ({ text, voiceStyle, emotionalDelivery, requestId }) => {
+        logger.info('CameraSystem', 'TTS synthesis started:', { text, voiceStyle, emotionalDelivery, requestId });
         setTTSData(prev => ({
           ...prev,
           isSynthesizing: true,
@@ -330,7 +329,6 @@ export const useCameraSystem = (config = {}) => {
           ...prev, 
           isSynthesizing: false, 
           isPlaying: true, 
-          currentAnalyser: null,
           lastLatency: latencyToFirstAudio 
         }));
         updateMetric('TTS latency to first audio', latencyToFirstAudio);
@@ -342,7 +340,6 @@ export const useCameraSystem = (config = {}) => {
         }));
         updateMetric('Audio energy', audioAnalysis.energy);
         updateMetric('Audio centroid', audioAnalysis.centroid);
-        updateMetric('Current viseme', 'TBD'); // Will be updated by lip-sync system
       },
       onAudioAlignment: (audioAlignment) => {
         setTTSData(prev => ({
@@ -355,13 +352,12 @@ export const useCameraSystem = (config = {}) => {
         setTTSData(prev => ({
           ...prev,
           isPlaying: false,
-          currentAnalyser: null,
           audioAnalysis: { energy: 0, centroid: 0, spectrum: [] },
           audioAlignment: null
         }));
       },
-      onSynthesisComplete: ({ text, voiceStyle, latency }) => {
-        logger.info('CameraSystem', 'TTS synthesis completed:', { text, voiceStyle, latency });
+      onSynthesisComplete: ({ text, voiceStyle, emotionalDelivery, latency }) => {
+        logger.info('CameraSystem', 'TTS synthesis completed:', { text, voiceStyle, emotionalDelivery, latency });
         updateMetric('TTS total latency', latency);
       },
       onError: ({ error }) => {
@@ -455,8 +451,8 @@ export const useCameraSystem = (config = {}) => {
   }, []);
 
   // TTS controls
-  const synthesizeSpeech = useCallback((text, voiceStyle) => {
-    return ttsClientRef.current.synthesizeSpeech(text, voiceStyle);
+  const synthesizeSpeech = useCallback((text, voiceStyle, emotionalDelivery) => {
+    return ttsClientRef.current.synthesizeSpeech(text, voiceStyle, emotionalDelivery);
   }, []);
 
   const stopTTS = useCallback(() => {
@@ -467,9 +463,10 @@ export const useCameraSystem = (config = {}) => {
     if (personalityData.currentPersona && personalityData.currentPersona.oneLiners) {
       const greeting = personalityData.currentPersona.oneLiners[0]; // First one-liner is greeting
       const voiceStyle = personalityData.currentPersona.voiceStyle || 'cheerful';
+      const emotionalDelivery = personalityData.currentPersona.emotionalDelivery || personalityData.currentPersona.tone;
       
       logger.info('CameraSystem', 'Speaking greeting:', greeting, 'with voice style:', voiceStyle);
-      return await synthesizeSpeech(greeting, voiceStyle);
+      return await synthesizeSpeech(greeting, voiceStyle, emotionalDelivery);
     } else {
       logger.warn('CameraSystem', 'No persona available for greeting');
     }
@@ -528,12 +525,6 @@ export const useCameraSystem = (config = {}) => {
     createAnchorFromTap,
     clearAnchor,
     findDetectionAtPosition,
-
-    // Legacy compatibility methods (deprecated)
-    processWithoutDetections: updateAnchor, // Maps to updateAnchor for compatibility
-    selectTrack: createAnchorFromTap, // Legacy - use createAnchorFromTap instead
-    clearActiveTrack: clearAnchor, // Maps to clearAnchor
-    findTrackAtPosition: findDetectionAtPosition, // Maps to findDetectionAtPosition
 
     // Personality generation
     generatePersonality,

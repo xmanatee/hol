@@ -60,17 +60,23 @@ Object Details:
 Return a JSON object with exactly these fields:
 {
   "voiceStyle": "one of: cheerful, sassy, wise, gruff, bubbly, sarcastic, dramatic",
+  "facialExpression": "one of: neutral, happy, sassy, wise, gruff, bubbly, sarcastic, dramatic",
+  "emotionalDelivery": "short direction for how the line should be performed emotionally",
+  "animationIntensity": 0.0 to 1.0, where calm delivery is 0.25-0.45 and cartoonishly emotional delivery is 0.75-1.0,
   "tone": "brief description of personality tone",
   "quirks": ["unique trait 1", "unique trait 2", "unique trait 3"],
   "oneLiners": ["greeting line", "idle comment", "departure line"]
 }
 
-Make it witty, distinctive, and based on the object's specific characteristics. The personality should feel like it belongs to this specific object.`;
+Make it witty, distinctive, and based on the object's specific characteristics. The facial expression and emotional delivery should match the one-liners instead of staying neutral. The personality should feel like it belongs to this specific object.`;
   }
 
   validatePersona(result) {
     return {
       voiceStyle: result.voiceStyle,
+      facialExpression: result.facialExpression,
+      emotionalDelivery: result.emotionalDelivery,
+      animationIntensity: result.animationIntensity,
       tone: result.tone,
       quirks: (result.quirks || []).slice(0, 3),
       oneLiners: (result.oneLiners || []).slice(0, 3)

@@ -1,4 +1,3 @@
-import { logger } from './logger.js';
 import { calculateTemplateRegion } from './templateRegion.js';
 
 export const renderDetectionOverlay = (ctx, params) => {
@@ -37,11 +36,6 @@ const renderAnchorMode = (ctx, { anchor, anchorState }) => {
   
   const { position } = anchor;
   const { state } = anchorState;
-  
-  // Debug: Log 2D anchor position updates (10% chance per frame)
-  if (Math.random() < 0.1) {
-    logger.info('DetectionRenderer', '2D Anchor position:', { x: position.x, y: position.y, state });
-  }
   
   // Draw anchor point
   const radius = 8;

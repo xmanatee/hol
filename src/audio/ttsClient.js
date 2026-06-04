@@ -1,7 +1,41 @@
 import { Conversation } from '@elevenlabs/client';
 import { createAudioAnalysisFromFrequencyData } from './lipSync.js';
 import { logger } from '../utils/logger.js';
-import { MicrophoneService } from './MicrophoneService.js';
+
+const EMOTIONAL_DELIVERY_PROFILES = {
+  cheerful: {
+    tag: '[excited]',
+    delivery: 'bright, warm, quick, and playful',
+  },
+  bubbly: {
+    tag: '[excited]',
+    delivery: 'sparkly, delighted, and high-energy',
+  },
+  sassy: {
+    tag: '[laughs]',
+    delivery: 'confident, teasing, and amused',
+  },
+  sarcastic: {
+    tag: '[laughs]',
+    delivery: 'dry, amused, and sharply timed',
+  },
+  wise: {
+    tag: '[sighs]',
+    delivery: 'calm, knowing, and gently amused',
+  },
+  gruff: {
+    tag: '[sighs]',
+    delivery: 'raspy, impatient, and low-energy',
+  },
+  dramatic: {
+    tag: '[excited]',
+    delivery: 'big, theatrical, suspenseful, and emphatic',
+  },
+  neutral: {
+    tag: '',
+    delivery: 'natural and conversational',
+  },
+};
 
 export class TTSClient {
   constructor(config = {}) {
@@ -16,10 +50,9 @@ export class TTSClient {
     this.isConnected = false;
     this.isPlaying = false;
     this.micPermissionGranted = false;
-    this.microphoneMode = false;
+    this.currentRequest = null;
     
     this.listeners = new Set();
-    this.microphoneService = new MicrophoneService();
     
     this.metrics = {
       totalRequests: 0,
@@ -75,7 +108,21 @@ export class TTSClient {
     logger.info('TTSClient', 'Microphone access granted');
   }
 
-  async synthesizeSpeech(text, voiceStyle = 'cheerful') {
+  buildExpressivePrompt(text, voiceStyle = 'cheerful', emotionalDelivery = '') {
+    const profile = EMOTIONAL_DELIVERY_PROFILES[voiceStyle] || EMOTIONAL_DELIVERY_PROFILES.neutral;
+    const delivery = emotionalDelivery || profile.delivery;
+    const tagInstruction = profile.tag
+      ? `Use the expressive cue ${profile.tag} at the start if it improves delivery; the cue is audio direction, not an extra spoken word.`
+      : 'Use no nonverbal expressive cue.';
+
+    return `Speak exactly this line as the animated object. Do not add extra words.
+Voice style: ${voiceStyle}.
+Emotional delivery: ${delivery}.
+${tagInstruction}
+Line: "${text}"`;
+  }
+
+  async synthesizeSpeech(text, voiceStyle = 'cheerful', emotionalDelivery = '') {
     const startTime = performance.now();
     this.metrics.totalRequests++;
 
@@ -84,21 +131,22 @@ export class TTSClient {
     this.emit('onSynthesisStart', { 
       text: text,
       voiceStyle: voiceStyle,
+      emotionalDelivery,
       requestId: this.metrics.totalRequests 
     });
 
-    logger.info('TTSClient', 'Starting agent conversation:', { text, voiceStyle, agentId: this.config.agentId });
+    logger.info('TTSClient', 'Starting agent conversation:', { text, voiceStyle, emotionalDelivery, agentId: this.config.agentId });
 
     // Start conversation session if not already connected
     if (!this.conversation) {
       await this.startConversation();
     }
 
-    // Send message to agent with voice style context
-    const messageWithContext = `[Voice style: ${voiceStyle}] ${text}`;
+    const messageWithContext = this.buildExpressivePrompt(text, voiceStyle, emotionalDelivery);
     
     // Start timing for first audio
     this.currentRequestStart = startTime;
+    this.currentRequest = { text, voiceStyle, emotionalDelivery };
     
     logger.info('TTSClient', 'Sending message to agent:', messageWithContext);
     this.conversation.sendUserMessage(messageWithContext);
@@ -191,8 +239,12 @@ export class TTSClient {
 
       this.emit('onPlaybackComplete');
       this.emit('onSynthesisComplete', {
+        text: this.currentRequest?.text,
+        voiceStyle: this.currentRequest?.voiceStyle,
+        emotionalDelivery: this.currentRequest?.emotionalDelivery,
         latency: totalLatency
       });
+      this.currentRequest = null;
 
       logger.info('TTSClient', 'Agent finished speaking, total latency:', totalLatency, 'ms');
     }
@@ -229,9 +281,8 @@ export class TTSClient {
   }
 
   handleAgentMessage(message) {
-    // Handle incoming messages from the agent
-    // For now, just log them - could be used for text responses
     logger.info('TTSClient', 'Agent message:', message);
+    this.emit('onMessage', message);
   }
 
   calculateMovingAverage(currentAvg, newValue, alpha = 0.15) {
@@ -267,29 +318,10 @@ export class TTSClient {
     };
   }
 
-  // Enable/disable microphone mode for lip-sync testing
-  async setMicrophoneMode(enabled) {
-    this.microphoneMode = enabled;
-    
-    if (enabled) {
-      await this.microphoneService.initialize();
-      this.microphoneService.start();
-      logger.info('TTSClient', 'Microphone mode enabled');
-    } else {
-      this.microphoneService.stop();
-      logger.info('TTSClient', 'Microphone mode disabled');
-    }
-  }
-
   async dispose() {
     await this.endConversation();
     this.stopCurrentAudio();
     this.listeners.clear();
-    
-    // Dispose microphone service
-    if (this.microphoneService) {
-      this.microphoneService.dispose();
-    }
     
     if (this.audioContext && this.audioContext.state !== 'closed') {
       this.audioContext.close();

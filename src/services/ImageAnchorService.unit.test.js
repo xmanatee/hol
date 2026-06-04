@@ -210,3 +210,38 @@ test('keypoint updates propagate pose normals from homography correspondences', 
   assert.equal(result.normal.y.toFixed(2), '-0.21');
   assert.equal(service.currentNormal.z.toFixed(2), '0.92');
 });
+
+test('template recovery preserves partial reference tracking before full reinitialization', () => {
+  const service = new ImageAnchorService();
+  let refreshed = 0;
+  let reinitialized = 0;
+
+  service.currentPosition = { x: 120, y: 140, z: 0 };
+  service.currentNormal = { x: 0.1, y: 0.2, z: 0.97 };
+  service.anchorState = 'degraded';
+  service.persistenceSystem = {
+    attemptRecovery: () => ({
+      success: true,
+      position: { x: 130, y: 150 },
+      confidence: 0.82,
+      scale: 1,
+      method: 'template_matching'
+    })
+  };
+  service.keypointTracker = {
+    trackedPoints: Array.from({ length: 6 }, () => ({ status: 'active' }))
+  };
+  service._refreshKeypoints = () => {
+    refreshed++;
+  };
+  service._reinitializeKeypoints = () => {
+    reinitialized++;
+  };
+
+  const result = service._updateWithTemplate({});
+
+  assert.equal(result.success, true);
+  assert.equal(refreshed, 1);
+  assert.equal(reinitialized, 0);
+  assert.deepEqual(service.currentPosition, { x: 130, y: 150, z: 0 });
+});

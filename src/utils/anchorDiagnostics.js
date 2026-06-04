@@ -91,7 +91,7 @@ export const describeAnchorState = ({
     return {
       status: 'weak',
       severity: 'warn',
-      message: 'Weak lock; template fallback is active',
+      message: 'Weak lock; template recovery is active',
       recommendation: 'Move closer to a textured label or stronger edge detail.',
       details
     };

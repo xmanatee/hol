@@ -34,24 +34,12 @@ Camera access on iPhone requires HTTPS. For local device testing, expose the Vit
 
 ## Optional Services
 
-Personality generation uses OpenAI and is lazy-loaded only when requested:
+Personality generation uses OpenAI and is lazy-loaded only when requested. Voice playback uses ElevenLabs Conversational AI. Copy `.env.example` to `.env.local` and fill the service values for those paths.
 
-```bash
-VITE_OPENAI_API_KEY=...
-VITE_OPENAI_VISION_MODEL=gpt-4.1-mini
-VITE_OPENAI_CHAT_MODEL=gpt-4.1-mini
-```
-
-Voice playback uses ElevenLabs Conversational AI:
-
-```bash
-VITE_ELEVENLABS_AGENT_ID=...
-```
-
-Without these values, the camera, detection, anchoring, model rendering, and microphone lip-sync paths still load.
+Without service configuration, the camera, detection, anchoring, model rendering, and microphone lip-sync paths still load.
 
 ## Current Limits
 
-- The face model currently renders in a fixed overlay position while the 2D anchor is tracked on the processing canvas.
-- ElevenLabs agent audio playback is controlled by the SDK; microphone lip-sync is real, while agent lip-sync uses speech-state simulation.
+- The face model is positioned from the active anchor and tilted from the stabilized homography surface normal.
+- ElevenLabs agent lip-sync uses output audio analysis and alignment events from the Conversational AI SDK.
 - The OpenAI key is read by browser code through Vite env variables. Use a backend proxy before shipping publicly.

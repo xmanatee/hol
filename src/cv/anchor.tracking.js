@@ -46,7 +46,7 @@ export class KeypointTracker {
     }
 
     // Select strongest keypoints for tracking (limit to 80 for quality)
-    const sortedKeypoints = keypoints
+    const sortedKeypoints = [...keypoints]
       .sort((a, b) => b.response - a.response)
       .slice(0, 80);
 
@@ -79,9 +79,11 @@ export class KeypointTracker {
         x: tapPosition.x - this.keypointCentroid.x,
         y: tapPosition.y - this.keypointCentroid.y
       };
+      this.anchorOriginalPosition = { x: tapPosition.x, y: tapPosition.y };
     } else {
       // No offset if no tap position provided
       this.tapOffset = { x: 0, y: 0 };
+      this.anchorOriginalPosition = { ...this.keypointCentroid };
     }
 
     // Store reference frame
@@ -354,29 +356,18 @@ export class KeypointTracker {
       return;
     }
 
-    // Calculate median motion vector
-    const motionVectors = [];
-    for (const pt of activePoints) {
-      motionVectors.push({
-        dx: pt.current.x - pt.original.x,
-        dy: pt.current.y - pt.original.y,
-        point: pt
-      });
+    const transformation = this._estimateReferenceTransformation(activePoints);
+    if (!transformation) {
+      logger.debug('KeypointTracker', 'Skipping outlier filtering - no coherent transform');
+      return;
     }
 
-    // Find median motion
-    const dxValues = motionVectors.map(mv => mv.dx).sort((a, b) => a - b);
-    const dyValues = motionVectors.map(mv => mv.dy).sort((a, b) => a - b);
-    
-    const medianDx = dxValues[Math.floor(dxValues.length / 2)];
-    const medianDy = dyValues[Math.floor(dyValues.length / 2)];
-
-    // Calculate MAD (Median Absolute Deviation)
-    const dxDeviations = dxValues.map(dx => Math.abs(dx - medianDx));
-    const dyDeviations = dyValues.map(dy => Math.abs(dy - medianDy));
-    
-    const madDx = dxDeviations.sort((a, b) => a - b)[Math.floor(dxDeviations.length / 2)];
-    const madDy = dyDeviations.sort((a, b) => a - b)[Math.floor(dyDeviations.length / 2)];
+    const residuals = activePoints.map(point => ({
+      point,
+      residual: this._transformationResidual(point, transformation)
+    }));
+    const sortedResiduals = residuals.map(item => item.residual).sort((a, b) => a - b);
+    const medianResidual = sortedResiduals[Math.floor(sortedResiduals.length / 2)];
 
     // Filter outliers with stability consideration
     const baseThreshold = 5.0; // Base MAD threshold multiplier
@@ -384,32 +375,29 @@ export class KeypointTracker {
     let protectedCount = 0;
     
     logger.debug('KeypointTracker', 'Outlier filtering - motion analysis:', {
-      medianMotion: `(${medianDx.toFixed(2)}, ${medianDy.toFixed(2)})`,
-      madValues: `(${madDx.toFixed(2)}, ${madDy.toFixed(2)})`,
+      rotation: `${(transformation.rotation * 180 / Math.PI).toFixed(1)}deg`,
+      scale: transformation.scale.toFixed(3),
+      medianResidual: medianResidual.toFixed(2),
       baseThreshold: baseThreshold
     });
     
-    for (const mv of motionVectors) {
-      const point = mv.point;
-      
+    for (const item of residuals) {
+      const point = item.point;
       // Adaptive threshold based on stability
-      let effectiveThreshold = baseThreshold;
+      let effectiveThreshold = Math.max(8, medianResidual * baseThreshold);
       if (point.isStable) {
         // Protect stable points with higher threshold (more lenient)
-        effectiveThreshold = baseThreshold * 2.0; // 10.0x MAD for stable points
+        effectiveThreshold *= 2.0;
         protectedCount++;
       } else if (point.stabilityScore > 0.5) {
         // Moderately stable points get some protection
-        effectiveThreshold = baseThreshold * 1.5; // 7.5x MAD
+        effectiveThreshold *= 1.5;
       }
       
-      const dxOutlier = Math.abs(mv.dx - medianDx) > effectiveThreshold * madDx;
-      const dyOutlier = Math.abs(mv.dy - medianDy) > effectiveThreshold * madDy;
-      
-      if (dxOutlier || dyOutlier) {
+      if (item.residual > effectiveThreshold) {
         // Only mark as outlier if not highly stable
         if (!point.isStable || point.stabilityScore < 0.8) {
-          mv.point.status = 'outlier';
+          point.status = 'outlier';
           outlierCount++;
         } else {
           // Highly stable points keep active status despite motion deviation
@@ -436,12 +424,33 @@ export class KeypointTracker {
     const outlierPoints = this.trackedPoints.filter(pt => pt.status === 'outlier');
     
     if (outlierPoints.length === 0) return;
+    const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
+    const transformation = activePoints.length >= 3
+      ? this._estimateReferenceTransformation(activePoints)
+      : null;
     
     logger.debug('KeypointTracker', 'Attempting to recover outlier points:', {
       outlierCount: outlierPoints.length,
       activeCount: this.trackedPoints.filter(pt => pt.status === 'active').length
     });
     
+    if (transformation) {
+      let recoveredByGeometry = 0;
+      outlierPoints.forEach(point => {
+        const residual = this._transformationResidual(point, transformation);
+        if (residual < 10) {
+          point.status = 'active';
+          point.stabilityScore = Math.max(point.stabilityScore, 0.45);
+          recoveredByGeometry++;
+        }
+      });
+
+      if (recoveredByGeometry > 0) {
+        logger.info('KeypointTracker', `Recovered ${recoveredByGeometry} outlier points from similarity transform`);
+        return;
+      }
+    }
+
     // Recover up to 5 outlier points that have the best error history
     const recoverablePoints = outlierPoints
       .filter(pt => pt.errorHistory.length > 0)
@@ -475,30 +484,25 @@ export class KeypointTracker {
     const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
     if (activePoints.length === 0) return null;
 
-    // Calculate current keypoint centroid
-    let currentCentroid = null;
-
     // Try transformation-based approach first for more robust positioning
     const transformation = this._estimateReferenceTransformation(activePoints);
     
     if (transformation) {
-      // Apply transformation to original keypoint centroid
-      const transformedCentroid = {
-        x: transformation.tx + transformation.scale * Math.cos(transformation.rotation) * this.keypointCentroid.x - transformation.scale * Math.sin(transformation.rotation) * this.keypointCentroid.y,
-        y: transformation.ty + transformation.scale * Math.sin(transformation.rotation) * this.keypointCentroid.x + transformation.scale * Math.cos(transformation.rotation) * this.keypointCentroid.y
+      const anchorOriginal = this.anchorOriginalPosition || {
+        x: this.keypointCentroid.x + this.tapOffset.x,
+        y: this.keypointCentroid.y + this.tapOffset.y
       };
+      const anchorPosition = this._applyReferenceTransformation(anchorOriginal, transformation);
 
-      currentCentroid = transformedCentroid;
-      
-      // Apply tap offset to get anchor position
-      const anchorPosition = {
-        x: currentCentroid.x + this.tapOffset.x,
-        y: currentCentroid.y + this.tapOffset.y,
+      return {
+        x: anchorPosition.x,
+        y: anchorPosition.y,
         confidence: transformation.confidence,
-        method: 'reference_transform_with_offset'
+        method: 'reference_similarity_transform',
+        rotation: transformation.rotation,
+        scale: transformation.scale,
+        inlierCount: transformation.inlierCount,
       };
-      
-      return anchorPosition;
     }
 
     // Fallback: use robust weighted centroid of current keypoints
@@ -518,7 +522,7 @@ export class KeypointTracker {
       totalWeight += weight;
     }
 
-    currentCentroid = {
+    const currentCentroid = {
       x: weightedX / totalWeight,
       y: weightedY / totalWeight
     };
@@ -539,43 +543,141 @@ export class KeypointTracker {
   _estimateReferenceTransformation(activePoints) {
     if (activePoints.length < 3) return null;
 
-    // Calculate motion vectors from original to current positions
-    const motionVectors = activePoints.map(pt => ({
-      dx: pt.current.x - pt.original.x,
-      dy: pt.current.y - pt.original.y,
-      point: pt
+    const initialTransform = this._fitSimilarityTransform(activePoints);
+    const residuals = activePoints.map(point => ({
+      point,
+      residual: this._transformationResidual(point, initialTransform)
     }));
+    const sortedResiduals = residuals.map(item => item.residual).sort((a, b) => a - b);
+    const medianResidual = sortedResiduals[Math.floor(sortedResiduals.length / 2)];
+    const threshold = Math.max(8, medianResidual * 2.5);
+    const inliers = residuals
+      .filter(item => item.residual <= threshold)
+      .map(item => item.point);
 
-    // Find consensus translation using median
-    const dxValues = motionVectors.map(mv => mv.dx).sort((a, b) => a - b);
-    const dyValues = motionVectors.map(mv => mv.dy).sort((a, b) => a - b);
-    
-    const consensusDx = dxValues[Math.floor(dxValues.length / 2)];
-    const consensusDy = dyValues[Math.floor(dyValues.length / 2)];
-
-    // Count inliers (points consistent with consensus motion)
-    const threshold = 10; // pixels
-    const inliers = motionVectors.filter(mv => 
-      Math.abs(mv.dx - consensusDx) < threshold && 
-      Math.abs(mv.dy - consensusDy) < threshold
-    );
-
-    const inlierRatio = inliers.length / motionVectors.length;
-    
-    if (inlierRatio < 0.4) {
-      return null; // Not enough consensus
+    if (inliers.length < 3 || inliers.length / activePoints.length < 0.45) {
+      return null;
     }
 
-    // Simple similarity transformation (translation + scale + rotation)
-    // For now, assume mostly translation with small rotation/scale changes
+    const refinedTransform = this._fitSimilarityTransform(inliers);
+    const refinedResiduals = inliers.map(point => this._transformationResidual(point, refinedTransform));
+    const averageResidual = refinedResiduals.reduce((sum, residual) => sum + residual, 0) / refinedResiduals.length;
+    const residualConfidence = Math.max(0, 1 - averageResidual / 16);
+
     return {
-      tx: consensusDx,
-      ty: consensusDy,
-      scale: 1.0, // Could be estimated from point distances
-      rotation: 0.0, // Could be estimated from point relationships
-      confidence: inlierRatio,
-      inlierCount: inliers.length
+      ...refinedTransform,
+      confidence: (inliers.length / activePoints.length) * residualConfidence,
+      inlierCount: inliers.length,
+      averageResidual,
     };
+  }
+
+  _fitSimilarityTransform(points) {
+    const sourceCentroid = points.reduce((sum, point) => ({
+      x: sum.x + point.original.x,
+      y: sum.y + point.original.y,
+    }), { x: 0, y: 0 });
+    sourceCentroid.x /= points.length;
+    sourceCentroid.y /= points.length;
+
+    const targetCentroid = points.reduce((sum, point) => ({
+      x: sum.x + point.current.x,
+      y: sum.y + point.current.y,
+    }), { x: 0, y: 0 });
+    targetCentroid.x /= points.length;
+    targetCentroid.y /= points.length;
+
+    let a = 0;
+    let b = 0;
+    let denominator = 0;
+    points.forEach(point => {
+      const sourceX = point.original.x - sourceCentroid.x;
+      const sourceY = point.original.y - sourceCentroid.y;
+      const targetX = point.current.x - targetCentroid.x;
+      const targetY = point.current.y - targetCentroid.y;
+
+      a += sourceX * targetX + sourceY * targetY;
+      b += sourceX * targetY - sourceY * targetX;
+      denominator += sourceX * sourceX + sourceY * sourceY;
+    });
+
+    const scale = Math.hypot(a, b) / Math.max(denominator, 1e-6);
+    const rotation = Math.atan2(b, a);
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    const tx = targetCentroid.x - scale * (cos * sourceCentroid.x - sin * sourceCentroid.y);
+    const ty = targetCentroid.y - scale * (sin * sourceCentroid.x + cos * sourceCentroid.y);
+
+    return { tx, ty, scale, rotation };
+  }
+
+  _applyReferenceTransformation(point, transformation) {
+    const cos = Math.cos(transformation.rotation);
+    const sin = Math.sin(transformation.rotation);
+    return {
+      x: transformation.tx + transformation.scale * (cos * point.x - sin * point.y),
+      y: transformation.ty + transformation.scale * (sin * point.x + cos * point.y),
+    };
+  }
+
+  _invertReferenceTransformation(point, transformation) {
+    const cos = Math.cos(transformation.rotation);
+    const sin = Math.sin(transformation.rotation);
+    const translatedX = point.x - transformation.tx;
+    const translatedY = point.y - transformation.ty;
+    const inverseScale = 1 / transformation.scale;
+
+    return {
+      x: inverseScale * (cos * translatedX + sin * translatedY),
+      y: inverseScale * (-sin * translatedX + cos * translatedY),
+    };
+  }
+
+  _replaceTrackingPointsPreservingReference(keypoints, currentGray, transformation) {
+    const sortedKeypoints = [...keypoints]
+      .sort((a, b) => b.response - a.response)
+      .slice(0, 80);
+    const anchorOriginalPosition = { ...this.anchorOriginalPosition };
+
+    this.trackedPoints = sortedKeypoints.map((kp, index) => {
+      const current = { x: kp.pt.x, y: kp.pt.y };
+      return {
+        id: index,
+        original: this._invertReferenceTransformation(current, transformation),
+        current,
+        response: kp.response,
+        status: 'active',
+        errorHistory: [],
+        age: 0,
+        successfulTrackingStreak: 0,
+        totalSuccessfulFrames: 0,
+        stabilityScore: 0,
+        isStable: false
+      };
+    });
+
+    const xSum = this.trackedPoints.reduce((sum, pt) => sum + pt.original.x, 0);
+    const ySum = this.trackedPoints.reduce((sum, pt) => sum + pt.original.y, 0);
+    this.keypointCentroid = {
+      x: xSum / this.trackedPoints.length,
+      y: ySum / this.trackedPoints.length
+    };
+    this.anchorOriginalPosition = anchorOriginalPosition;
+    this.tapOffset = {
+      x: this.anchorOriginalPosition.x - this.keypointCentroid.x,
+      y: this.anchorOriginalPosition.y - this.keypointCentroid.y
+    };
+
+    if (this.previousGray) {
+      this.previousGray.delete();
+    }
+    this.previousGray = currentGray.clone();
+    this.trackingAttempts = 0;
+  }
+
+  _transformationResidual(point, transformation) {
+    const projected = this._applyReferenceTransformation(point.original, transformation);
+    return Math.hypot(projected.x - point.current.x, projected.y - point.current.y);
   }
 
   /**
@@ -678,10 +780,18 @@ export class KeypointTracker {
         return false;
       }
 
+      const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
+      const referenceTransformation = activePoints.length >= 3
+        ? this._estimateReferenceTransformation(activePoints)
+        : null;
       const newKeypoints = keypointDetector.extractKeypoints(cv, currentGray, region);
       
       if (newKeypoints.keypoints.length >= 15) {
-        this.initializeTracking(cv, newKeypoints.keypoints, currentGray, anchorPosition);
+        if (referenceTransformation && referenceTransformation.scale > 0.001) {
+          this._replaceTrackingPointsPreservingReference(newKeypoints.keypoints, currentGray, referenceTransformation);
+        } else {
+          this.initializeTracking(cv, newKeypoints.keypoints, currentGray, anchorPosition);
+        }
         logger.info('KeypointTracker', `Refreshed tracking with ${this.trackedPoints.length} current-frame keypoints`);
         return true;
       } else {
@@ -702,46 +812,14 @@ export class KeypointTracker {
    */
   _cleanupInactiveKeypoints() {
     if (!this.trackedPoints || this.trackedPoints.length === 0) return;
-    
-    const initialCount = this.trackedPoints.length;
-    const activeCount = this.trackedPoints.filter(pt => pt.status === 'active').length;
-    
-    // Only clean up if we have enough active points to maintain tracking
-    if (activeCount < 15) {
-      logger.debug('KeypointTracker', 'Skipping cleanup - too few active points:', activeCount);
-      return;
-    }
-    
-    // Mark points for removal if they've been inactive for too long
-    let removedCount = 0;
-    this.trackedPoints = this.trackedPoints.filter(point => {
-      // Keep all active points
-      if (point.status === 'active') return true;
-      
-      // Remove lost or outlier points that have aged beyond threshold
-      // Age represents frames since the point was last active
+
+    this.trackedPoints.forEach(point => {
       if (point.status === 'lost' || point.status === 'outlier') {
-        point.age = (point.age || 0) + 1;
-        
-        // Remove after 30 frames (~1 second at 30fps) of being inactive
-        if (point.age > 30) {
-          removedCount++;
-          return false;
-        }
+        point.inactiveAge = (point.inactiveAge || 0) + 1;
+      } else {
+        point.inactiveAge = 0;
       }
-      
-      return true; // Keep the point for now
     });
-    
-    if (removedCount > 0) {
-      const finalActiveCount = this.trackedPoints.filter(pt => pt.status === 'active').length;
-      logger.info('KeypointTracker', 'Cleaned up inactive keypoints:', {
-        removed: removedCount,
-        totalPoints: `${initialCount} -> ${this.trackedPoints.length}`,
-        activePoints: finalActiveCount,
-        memoryReduction: `${((removedCount / initialCount) * 100).toFixed(1)}%`
-      });
-    }
   }
 
   dispose() {

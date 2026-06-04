@@ -108,6 +108,51 @@ const ARKIT_52_VISEME_WEIGHTS = {
   ],
 };
 
+const ARKIT_52_EXPRESSION_WEIGHTS = {
+  neutral: [],
+  happy: [
+    ['mouthSmileLeft', 0.32],
+    ['mouthSmileRight', 0.32],
+    ['cheekSquintLeft', 0.08],
+    ['cheekSquintRight', 0.08],
+    ['browInnerUp', 0.06],
+  ],
+  sassy: [
+    ['mouthSmileRight', 0.34],
+    ['mouthDimpleRight', 0.22],
+    ['browOuterUpRight', 0.16],
+    ['browDownLeft', 0.08],
+  ],
+  wise: [
+    ['mouthSmileLeft', 0.13],
+    ['mouthSmileRight', 0.13],
+    ['browInnerUp', 0.12],
+    ['browOuterUpLeft', 0.08],
+    ['browOuterUpRight', 0.08],
+  ],
+  gruff: [
+    ['browDownLeft', 0.24],
+    ['browDownRight', 0.24],
+    ['mouthPressLeft', 0.12],
+    ['mouthPressRight', 0.12],
+  ],
+  dramatic: [
+    ['browInnerUp', 0.24],
+    ['browOuterUpLeft', 0.18],
+    ['browOuterUpRight', 0.18],
+    ['jawOpen', 0.08],
+    ['mouthFunnel', 0.08],
+  ],
+};
+
+const EXPRESSION_ALIASES = {
+  bubbly: 'happy',
+  cheerful: 'happy',
+  sarcastic: 'sassy',
+};
+
+const performanceGain = intensity => 0.85 + clamp01(intensity) * 0.75;
+
 const ARKIT_NAME_TO_INDEX = Object.fromEntries(
   ARKIT_52_BLENDSHAPES.map((name, index) => [name, index])
 );
@@ -280,7 +325,7 @@ export const createAudioAnalysisFromFrequencyData = (frequencyData, volume) => {
   };
 };
 
-// Silent fallback. Real agent lip-sync is driven by ElevenLabs output analysis.
+// Silence source used until real microphone or ElevenLabs output analysis arrives.
 export class AudioAnalyzer {
   constructor() {}
 
@@ -359,14 +404,15 @@ export class MorphController {
     this.visemeMapper = visemeMapper;
     this.currentInfluences = {};
     this.targetInfluences = {};
+    this.expressionInfluences = {};
     this.blendSpeed = 0.15; // EMA smoothing factor
     this.maxInfluence = 1.0;
+    this.performanceIntensity = 0.65;
     
     this.blinkTimer = 0;
     this.nextBlinkTime = this.getRandomBlinkTime();
     this.isBlinking = false;
     this.blinkDuration = 200; // ms
-    this.blinkStartTime = 0;
 
     if (!mesh || !mesh.morphTargetInfluences) {
       logger.error('MorphController', 'Mesh has no morphTargetInfluences array!');
@@ -385,29 +431,75 @@ export class MorphController {
       this.mesh.morphTargetInfluences[i] = 0;
       this.currentInfluences[i] = 0;
       this.targetInfluences[i] = 0;
+      this.expressionInfluences[i] = 0;
     }
   }
 
-  setViseme(viseme, intensity = 1.0) {
-    // Reset all targets to 0
-    Object.keys(this.targetInfluences).forEach(index => {
-      this.targetInfluences[index] = 0;
+  resolveBlendShapeIndex(blendShapeName) {
+    const morphDict = this.mesh.morphTargetDictionary;
+    const arkitIndex = ARKIT_NAME_TO_INDEX[blendShapeName];
+    const genericTargetName = `target_${arkitIndex}`;
+
+    if (Number.isInteger(morphDict[genericTargetName])) {
+      return morphDict[genericTargetName];
+    }
+
+    const normalizedBlendShape = normalizeMorphName(blendShapeName);
+    const matchingEntry = Object.entries(morphDict).find(([morphName]) => {
+      return normalizeMorphName(morphName) === normalizedBlendShape;
     });
+
+    return matchingEntry ? matchingEntry[1] : null;
+  }
+
+  applyExpressionTargets() {
+    Object.keys(this.targetInfluences).forEach(index => {
+      this.targetInfluences[index] = this.expressionInfluences[index] || 0;
+    });
+  }
+
+  setPerformanceIntensity(intensity = 0.65) {
+    this.performanceIntensity = clamp01(intensity);
+  }
+
+  setExpression(expression, intensity = 1.0) {
+    Object.keys(this.expressionInfluences).forEach(index => {
+      this.expressionInfluences[index] = 0;
+    });
+
+    const normalizedExpression = EXPRESSION_ALIASES[expression] || expression;
+    const weights = ARKIT_52_EXPRESSION_WEIGHTS[normalizedExpression] || ARKIT_52_EXPRESSION_WEIGHTS.neutral;
+    const expressionGain = performanceGain(this.performanceIntensity);
+    weights.forEach(([blendShapeName, weight]) => {
+      const index = this.resolveBlendShapeIndex(blendShapeName);
+      if (Number.isInteger(index)) {
+        this.expressionInfluences[index] = clamp01(weight * intensity * expressionGain);
+      }
+    });
+
+    this.applyExpressionTargets();
+  }
+
+  setViseme(viseme, intensity = 1.0) {
+    this.applyExpressionTargets();
 
     // Set target influences for this viseme
     const morphs = this.visemeMapper.getMorphIndicesForViseme(viseme);
+    const visemeGain = 1.15 + this.performanceIntensity * 0.8;
     morphs.forEach(morph => {
       const weight = morph.weight ?? 1;
-      this.targetInfluences[morph.index] = Math.min(this.maxInfluence, clamp01(intensity * weight));
+      const visemeInfluence = Math.min(this.maxInfluence, clamp01(intensity * weight * visemeGain));
+      this.targetInfluences[morph.index] = Math.max(this.targetInfluences[morph.index] || 0, visemeInfluence);
     });
   }
 
   resetTargets() {
     Object.keys(this.targetInfluences).forEach(index => {
-      this.targetInfluences[index] = 0;
-      this.currentInfluences[index] = 0;
+      const expressionInfluence = this.expressionInfluences[index] || 0;
+      this.targetInfluences[index] = expressionInfluence;
+      this.currentInfluences[index] = expressionInfluence;
       if (this.mesh?.morphTargetInfluences) {
-        this.mesh.morphTargetInfluences[index] = 0;
+        this.mesh.morphTargetInfluences[index] = expressionInfluence;
       }
     });
   }
@@ -422,34 +514,50 @@ export class MorphController {
     if (!this.isBlinking && this.blinkTimer >= this.nextBlinkTime) {
       // Start blink
       this.isBlinking = true;
-      this.blinkStartTime = this.blinkTimer;
       this.blinkTimer = 0;
       this.nextBlinkTime = this.getRandomBlinkTime();
     }
 
     if (this.isBlinking) {
-      const blinkProgress = (this.blinkTimer - this.blinkStartTime) / this.blinkDuration;
+      const blinkProgress = this.blinkTimer / this.blinkDuration;
       
       if (blinkProgress >= 1.0) {
         // End blink
         this.isBlinking = false;
         this.setBlinkInfluence(0);
       } else {
-        // Animate blink (quick close, slower open)
-        const blinkValue = blinkProgress < 0.3 
-          ? blinkProgress / 0.3 // Quick close
-          : 1.0 - ((blinkProgress - 0.3) / 0.7); // Slower open
+        const blinkValue = this._naturalBlinkValue(blinkProgress) * (0.88 + this.performanceIntensity * 0.12);
         
         this.setBlinkInfluence(blinkValue);
       }
     }
   }
 
+  _naturalBlinkValue(progress) {
+    if (progress < 0.28) {
+      const t = progress / 0.28;
+      return 1 - Math.pow(1 - t, 3);
+    }
+    if (progress < 0.38) {
+      return 1;
+    }
+    const t = (progress - 0.38) / 0.62;
+    return Math.pow(1 - t, 2.4);
+  }
+
   setBlinkInfluence(value) {
     // Find eyelid/blink morph targets
     const morphDict = this.mesh.morphTargetDictionary;
     const blinkPatterns = ['blink', 'eyelid', 'eye_close', 'eyes_close'];
+    const genericBlinkIndices = [
+      morphDict.target_0,
+      morphDict.target_7,
+    ].filter(Number.isInteger);
     
+    genericBlinkIndices.forEach(index => {
+      this.targetInfluences[index] = value;
+    });
+
     Object.keys(morphDict).forEach(morphName => {
       const lowerName = morphName.toLowerCase();
       const isBlinkMorph = blinkPatterns.some(pattern => lowerName.includes(pattern));
@@ -474,7 +582,7 @@ export class MorphController {
     Object.keys(this.targetInfluences).forEach(index => {
       const target = this.targetInfluences[index];
       const current = this.currentInfluences[index] || 0;
-      const attackBlend = 1 - Math.exp(-deltaTimeMs / 22);
+      const attackBlend = 1 - Math.exp(-deltaTimeMs / 16);
       const releaseBlend = 1 - Math.exp(-deltaTimeMs / 80);
       const blend = target > current ? attackBlend : releaseBlend;
       const blended = current + blend * (target - current);

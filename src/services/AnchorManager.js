@@ -60,7 +60,7 @@ export class AnchorManager {
     // Store detections for potential tap selection
     this.detections = detections.map(detection => ({
       ...detection,
-      id: Math.random().toString(36).substr(2, 9) // Generate temporary ID
+      id: `${detection.class}-${Math.round(detection.x1)}-${Math.round(detection.y1)}-${Math.round(detection.x2)}-${Math.round(detection.y2)}`
     }));
 
     logger.info('AnchorManager', `Processed ${detections.length} detections in detection mode`);
@@ -243,14 +243,6 @@ export class AnchorManager {
       return;
     }
     
-    // Legacy fallback: Auto-switch to detection mode if anchor is permanently lost
-    if (this.mode === 'anchor' && anchorServiceState.state === 'lost' && 
-        anchorServiceState.metrics?.recoveryAttempts > 5) {
-      logger.warn('AnchorManager', 'Anchor permanently lost, automatically returning to detection mode (legacy fallback)');
-      this.clearAnchor();
-      return;
-    }
-    
     this._notifyUpdate();
   }
 
@@ -272,20 +264,6 @@ export class AnchorManager {
         logger.error('AnchorManager', 'Listener error:', error);
       }
     });
-  }
-
-  /**
-   * Legacy compatibility methods (deprecated)
-   */
-  
-  // For backward compatibility with existing UI
-  getActiveTrackState() {
-    return this.anchorState;
-  }
-
-  // For backward compatibility 
-  processWithoutDetections(imageData) {
-    return this.updateAnchor(imageData);
   }
 
   dispose() {

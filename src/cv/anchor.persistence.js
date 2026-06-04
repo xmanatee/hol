@@ -1,6 +1,6 @@
 /**
  * Template Matching and Anchor Persistence System
- * Handles fallback tracking and recovery when keypoint tracking fails
+ * Handles template recovery when keypoint tracking loses the selected object
  */
 
 import { logger } from '../utils/logger.js';

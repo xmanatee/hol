@@ -86,6 +86,25 @@ test('tilts the overlay from the tracked surface normal', () => {
   assert.ok(transform.rotation[1] < 0);
 });
 
+test('uses angular surface rotation for strong object turns', () => {
+  const transform = computeAnchorOverlayTransform({
+    width: 1280,
+    height: 720,
+    activeAnchor: {
+      position: { x: 640, y: 360 },
+    },
+    anchorState: {
+      anchored: true,
+      state: 'stable',
+      normal: { x: 0.7, y: 0, z: 0.714 },
+    },
+  });
+
+  assert.equal(transform.visible, true);
+  assert.ok(transform.rotation[1] < -0.72);
+  assert.ok(transform.rotation[1] > -0.95);
+});
+
 test('hides the overlay when no live anchor is available', () => {
   const transform = computeAnchorOverlayTransform({
     width: 1280,

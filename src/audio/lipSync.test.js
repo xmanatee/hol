@@ -72,6 +72,126 @@ test('morph controller opens the ARKit jaw quickly on voice attack', () => {
   assert.ok(mesh.morphTargetInfluences[17] > 0.25);
 });
 
+test('morph controller drives a more pronounced open-mouth viseme', () => {
+  const mesh = {
+    morphTargetDictionary: createGenericArkitDictionary(),
+    morphTargetInfluences: new Array(52).fill(0),
+  };
+  const mapper = new VisemeMapper(mesh.morphTargetDictionary);
+  const controller = new MorphController(mesh, mapper);
+
+  controller.setViseme('A', 1);
+  controller.update(16);
+
+  assert.ok(mesh.morphTargetInfluences[17] > 0.55);
+});
+
+test('morph controller blinks bundled ARKit eye targets while speaking', () => {
+  const mesh = {
+    morphTargetDictionary: createGenericArkitDictionary(),
+    morphTargetInfluences: new Array(52).fill(0),
+  };
+  const mapper = new VisemeMapper(mesh.morphTargetDictionary);
+  const controller = new MorphController(mesh, mapper);
+
+  controller.setBlinkInfluence(0.85);
+
+  assert.equal(controller.targetInfluences[0], 0.85);
+  assert.equal(controller.targetInfluences[7], 0.85);
+});
+
+test('speech blink completes near its configured duration after a delayed blink start', () => {
+  const mesh = {
+    morphTargetDictionary: createGenericArkitDictionary(),
+    morphTargetInfluences: new Array(52).fill(0),
+  };
+  const mapper = new VisemeMapper(mesh.morphTargetDictionary);
+  const controller = new MorphController(mesh, mapper);
+  controller.nextBlinkTime = 120;
+
+  controller.update(120);
+  assert.equal(controller.isBlinking, true);
+
+  controller.update(220);
+  assert.equal(controller.isBlinking, false);
+});
+
+test('morph controller applies expression targets underneath speech visemes', () => {
+  const mesh = {
+    morphTargetDictionary: createGenericArkitDictionary(),
+    morphTargetInfluences: new Array(52).fill(0),
+  };
+  const mapper = new VisemeMapper(mesh.morphTargetDictionary);
+  const controller = new MorphController(mesh, mapper);
+
+  controller.setExpression('happy', 1);
+  controller.setViseme('M', 0);
+  controller.update(16);
+
+  assert.ok(mesh.morphTargetInfluences[23] > 0.05);
+  assert.ok(mesh.morphTargetInfluences[24] > 0.05);
+});
+
+test('cartoon performance profile exaggerates jaw and vertical mouth shapes', () => {
+  const mesh = {
+    morphTargetDictionary: createGenericArkitDictionary(),
+    morphTargetInfluences: new Array(52).fill(0),
+  };
+  const mapper = new VisemeMapper(mesh.morphTargetDictionary);
+  const controller = new MorphController(mesh, mapper);
+
+  controller.setPerformanceIntensity(1);
+  controller.setViseme('A', 1);
+  controller.update(33);
+
+  assert.ok(mesh.morphTargetInfluences[17] > 0.85);
+  assert.ok(mesh.morphTargetInfluences[37] > 0.22);
+  assert.ok(mesh.morphTargetInfluences[38] > 0.22);
+});
+
+test('expression intensity controls upper-face exaggeration without snapping current influences', () => {
+  const mesh = {
+    morphTargetDictionary: createGenericArkitDictionary(),
+    morphTargetInfluences: new Array(52).fill(0),
+  };
+  const mapper = new VisemeMapper(mesh.morphTargetDictionary);
+  const controller = new MorphController(mesh, mapper);
+
+  controller.setPerformanceIntensity(1);
+  controller.setExpression('dramatic', 1);
+
+  assert.equal(mesh.morphTargetInfluences[43], 0);
+
+  controller.update(120);
+
+  assert.ok(mesh.morphTargetInfluences[43] > 0.2);
+  assert.ok(mesh.morphTargetInfluences[43] < 0.5);
+});
+
+test('speech blinks follow a natural close-open curve', () => {
+  const mesh = {
+    morphTargetDictionary: createGenericArkitDictionary(),
+    morphTargetInfluences: new Array(52).fill(0),
+  };
+  const mapper = new VisemeMapper(mesh.morphTargetDictionary);
+  const controller = new MorphController(mesh, mapper);
+  controller.nextBlinkTime = 16;
+
+  controller.update(16);
+  controller.update(45);
+  const closing = mesh.morphTargetInfluences[0];
+
+  controller.update(45);
+  const opening = mesh.morphTargetInfluences[0];
+
+  controller.update(160);
+
+  assert.ok(closing > 0.45);
+  assert.ok(opening > 0.1);
+  assert.ok(opening < closing);
+  assert.equal(controller.isBlinking, false);
+});
+
 test('audio alignment characters resolve to the current spoken viseme', () => {
   const viseme = pickVisemeFromAlignment({
     chars: ['h', 'e', 'l', 'o'],

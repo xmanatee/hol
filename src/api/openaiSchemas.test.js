@@ -20,7 +20,7 @@ test('persona response format uses strict JSON schema', () => {
   assert.equal(PERSONA_RESPONSE_FORMAT.json_schema.strict, true);
   assert.deepEqual(
     PERSONA_RESPONSE_FORMAT.json_schema.schema.required,
-    ['voiceStyle', 'tone', 'quirks', 'oneLiners']
+    ['voiceStyle', 'facialExpression', 'emotionalDelivery', 'animationIntensity', 'tone', 'quirks', 'oneLiners']
   );
   assert.equal(PERSONA_RESPONSE_FORMAT.json_schema.schema.additionalProperties, false);
 });

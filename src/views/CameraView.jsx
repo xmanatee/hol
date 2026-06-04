@@ -108,6 +108,7 @@ const CameraView = () => {
   // Enhanced microphone controls
   const [microphoneGain, setMicrophoneGain] = useState(3.0);
   const [microphoneDebugMode, setMicrophoneDebugMode] = useState(true);
+  const [microphoneBaselineResetToken, setMicrophoneBaselineResetToken] = useState(0);
 
 
   const { metrics, updateMetric } = useHudMetrics();
@@ -243,7 +244,8 @@ const CameraView = () => {
 
       const greeting = persona.oneLiners[0];
       const voiceStyle = persona.voiceStyle || 'cheerful';
-      await synthesizeSpeech(greeting, voiceStyle);
+      const emotionalDelivery = persona.emotionalDelivery || persona.tone;
+      await synthesizeSpeech(greeting, voiceStyle, emotionalDelivery);
       showAnchorFeedback('Object voice is live.', 'good');
     } catch (error) {
       logger.error('CameraView', 'Failed to start object voice:', error);
@@ -253,32 +255,20 @@ const CameraView = () => {
 
   // Microphone handlers
   const handleToggleMicrophoneMode = useCallback(async (enabled) => {
-    try {
-      setMicrophoneMode(enabled);
-      
-      // Update TTS client microphone mode
-      if (services.tts) {
-        await services.tts.setMicrophoneMode(enabled);
-      }
-      
-      logger.info('CameraView', 'Microphone mode toggled:', enabled);
-      
-      if (enabled) {
-        // Start microphone listening - always activate when enabled
-        setMicrophoneActive(true);
-        logger.info('CameraView', 'Microphone listening activated');
-      } else {
-        // Stop microphone mode
-        stopTTS();
-        setMicrophoneActive(false);
-        setIsVoiceActive(false);
-        setCurrentViseme('M');
-        setAudioEnergy(0);
-      }
-    } catch (error) {
-      logger.error('CameraView', 'Failed to toggle microphone mode:', error);
+    setMicrophoneMode(enabled);
+    logger.info('CameraView', 'Microphone mode toggled:', enabled);
+
+    if (enabled) {
+      setMicrophoneActive(true);
+      logger.info('CameraView', 'Microphone listening activated');
+    } else {
+      stopTTS();
+      setMicrophoneActive(false);
+      setIsVoiceActive(false);
+      setCurrentViseme('M');
+      setAudioEnergy(0);
     }
-  }, [services.tts, stopTTS]);
+  }, [stopTTS]);
 
   const handleVoiceActivityThresholdChange = useCallback((threshold) => {
     setVoiceActivityThreshold(threshold);
@@ -287,29 +277,18 @@ const CameraView = () => {
 
   const handleMicrophoneGainChange = useCallback((gain) => {
     setMicrophoneGain(gain);
-    // Update the microphone service if it exists
-    if (services.tts?.microphoneService) {
-      services.tts.microphoneService.setInputGain(gain);
-    }
     logger.info('CameraView', 'Microphone gain changed:', gain);
-  }, [services.tts]);
+  }, []);
 
   const handleToggleMicrophoneDebug = useCallback((enabled) => {
     setMicrophoneDebugMode(enabled);
-    // Update the microphone service if it exists
-    if (services.tts?.microphoneService) {
-      services.tts.microphoneService.setDebugMode(enabled);
-    }
     logger.info('CameraView', 'Microphone debug mode:', enabled);
-  }, [services.tts]);
+  }, []);
 
   const handleResetMicrophoneBaseline = useCallback(() => {
-    // Reset the microphone service baseline if it exists
-    if (services.tts?.microphoneService) {
-      services.tts.microphoneService.resetBaseline();
-    }
+    setMicrophoneBaselineResetToken(token => token + 1);
     logger.info('CameraView', 'Microphone baseline reset');
-  }, [services.tts]);
+  }, []);
 
   // Handle lip-sync updates from HeadAnchor
   const handleLipSyncUpdate = useCallback((lipSyncData) => {
@@ -530,36 +509,13 @@ const CameraView = () => {
           }
         }
         
-        // Update persistence metrics
-        if (services.anchor.persistenceTracker) {
-          const persistenceStats = services.anchor.persistenceTracker.getAnchorStats();
-          if (persistenceStats.length > 0) {
-            // Calculate short-loss survival rate
-            const survivedAnchors = persistenceStats.filter(anchor => 
-              anchor.flowPoints > 0 && anchor.missCount <= 10
-            );
-            const survivalRate = (survivedAnchors.length / persistenceStats.length) * 100;
-            updateMetric('Short-loss survival', survivalRate);
-            
-            // Calculate average reattach latency for recently reacquired tracks
-            const reacquiredAnchors = persistenceStats.filter(anchor => 
-              anchor.age < 5000 // Last 5 seconds
-            );
-            if (reacquiredAnchors.length > 0) {
-              const avgReattachTime = reacquiredAnchors.reduce((sum, anchor) => 
-                sum + (anchor.missCount * (1000/30)), 0) / reacquiredAnchors.length; // Estimate latency from miss count
-              updateMetric('Reattach latency', avgReattachTime);
-            }
-          }
-        }
-
         // Only draw debug stats on canvas if showStats is enabled
         if (showStats) {
           renderDebugStats(ctx, {
             fps,
             frameTime,
             processingTime: detectionState.processingTime,
-            objectCount: anchorSystemState?.mode === 'detection' ? (detectionState.detections?.length || 0) : 
+            objectCount: anchorSystemState?.mode === 'detection' ? (anchorSystemState.detections?.length || 0) : 
                         anchorSystemState?.activeAnchor ? 1 : 0
           });
         }
@@ -604,6 +560,12 @@ const CameraView = () => {
           microphoneMode={microphoneMode}
           agentAudioAnalysis={ttsData.audioAnalysis}
           agentAudioAlignment={ttsData.audioAlignment}
+          facialExpression={personalityData.currentPersona?.facialExpression || 'neutral'}
+          animationIntensity={personalityData.currentPersona?.animationIntensity ?? 0.65}
+          voiceActivityThreshold={voiceActivityThreshold}
+          microphoneGain={microphoneGain}
+          microphoneDebugMode={microphoneDebugMode}
+          microphoneBaselineResetToken={microphoneBaselineResetToken}
           activeAnchor={anchorSystemState.activeAnchor}
           anchorState={anchorSystemState.anchorState}
         />
@@ -623,7 +585,7 @@ const CameraView = () => {
           detectionInitialized={detectionState.isInitialized}
           isModelLoaded={detectionState.isModelLoaded}
           detectionError={detectionState.error}
-          trackedObjects={anchorSystemState?.mode === 'detection' ? (detectionState.detections || []) : []}
+          trackedObjects={anchorSystemState?.mode === 'detection' ? (anchorSystemState.detections || []) : []}
           activeTrackId={anchorSystemState?.activeAnchor ? 'anchor' : null}
           showStats={showStats}
           onToggleStats={() => setShowStats(!showStats)}
