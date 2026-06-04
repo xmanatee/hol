@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useRef, useCallback, useEffect, useMemo, useState } from 'react';
 import { useAnimationFrame, useFrameRate } from '../hooks/useAnimationFrame.js';
 import { useCameraSystem } from '../hooks/useCameraSystem.js';
 import { useHudMetrics } from '../hooks/useHudMetrics.js';
@@ -6,12 +6,12 @@ import { useHudMetrics } from '../hooks/useHudMetrics.js';
 import CameraVideo from '../components/CameraVideo.jsx';
 import DetectionCanvas from '../components/DetectionCanvas.jsx';
 import UnifiedControlPanel from '../components/ui/UnifiedControlPanel.jsx';
-import OverlayScene from '../scenes/OverlayScene.jsx';
-
 import { renderDetectionOverlay, renderDebugStats, renderKeypoints } from '../utils/detectionRenderer.js';
 import { logger } from '../utils/logger.js';
 import { describeAnchorState } from '../utils/anchorDiagnostics.js';
 import { collectRuntimeReadiness } from '../utils/runtimeReadiness.js';
+
+const OverlayScene = lazy(() => import('../scenes/OverlayScene.jsx'));
 
 // Start Screen Component - separate from control panel
 const getStartButtonLabel = (cameraState) => {
@@ -493,6 +493,22 @@ const CameraView = () => {
             if (anchorState.normal) {
               updateMetric('Normal (X,Y,Z)', `${anchorState.normal.x.toFixed(2)}, ${anchorState.normal.y.toFixed(2)}, ${anchorState.normal.z.toFixed(2)}`);
             }
+
+            if (anchorState.planarTransform) {
+              updateMetric('Tracked scale', anchorState.planarTransform.scale);
+              updateMetric('Tracked roll', anchorState.planarTransform.rotation * 180 / Math.PI);
+            }
+
+            if (anchorState.metrics) {
+              updateMetric('Pose patch points', anchorState.metrics.poseKeypointCount || 0);
+              updateMetric('Pose confidence', anchorState.metrics.poseConfidence || 0);
+              updateMetric('Pose inliers', anchorState.metrics.poseInliers || 0);
+              updateMetric('Object pose inliers', anchorState.metrics.objectPoseInliers || 0);
+              updateMetric('Pose residual', anchorState.metrics.poseAverageResidual || 0);
+              updateMetric('Pose foreshortening', anchorState.metrics.poseForeshortening || 1);
+              updateMetric('Pose source', anchorState.metrics.poseSource || 'None');
+              updateMetric('Pose rejection', anchorState.metrics.poseRejectedReason || 'None');
+            }
             
             updateMetric('Anchor State', anchorState.state || 'unknown');
           }
@@ -549,26 +565,28 @@ const CameraView = () => {
 
       {/* WebGL Overlay Scene */}
       {cameraState === 'active' && (
-        <OverlayScene
-          width={videoDimensions?.width || 1280}
-          height={videoDimensions?.height || 720}
-          isAgentSpeaking={microphoneMode ? microphoneActive : ttsData.isPlaying}
-          hiddenMeshes={hiddenMeshes}
-          manualRotation={manualRotation}
-          onMeshNamesDiscovered={handleMeshNamesDiscovered}
-          onLipSyncUpdate={handleLipSyncUpdate}
-          microphoneMode={microphoneMode}
-          agentAudioAnalysis={ttsData.audioAnalysis}
-          agentAudioAlignment={ttsData.audioAlignment}
-          facialExpression={personalityData.currentPersona?.facialExpression || 'neutral'}
-          animationIntensity={personalityData.currentPersona?.animationIntensity ?? 0.65}
-          voiceActivityThreshold={voiceActivityThreshold}
-          microphoneGain={microphoneGain}
-          microphoneDebugMode={microphoneDebugMode}
-          microphoneBaselineResetToken={microphoneBaselineResetToken}
-          activeAnchor={anchorSystemState.activeAnchor}
-          anchorState={anchorSystemState.anchorState}
-        />
+        <Suspense fallback={null}>
+          <OverlayScene
+            width={videoDimensions?.width || 1280}
+            height={videoDimensions?.height || 720}
+            isAgentSpeaking={microphoneMode ? microphoneActive : ttsData.isPlaying}
+            hiddenMeshes={hiddenMeshes}
+            manualRotation={manualRotation}
+            onMeshNamesDiscovered={handleMeshNamesDiscovered}
+            onLipSyncUpdate={handleLipSyncUpdate}
+            microphoneMode={microphoneMode}
+            agentAudioAnalysis={ttsData.audioAnalysis}
+            agentAudioAlignment={ttsData.audioAlignment}
+            facialExpression={personalityData.currentPersona?.facialExpression || 'neutral'}
+            animationIntensity={personalityData.currentPersona?.animationIntensity ?? 0.65}
+            voiceActivityThreshold={voiceActivityThreshold}
+            microphoneGain={microphoneGain}
+            microphoneDebugMode={microphoneDebugMode}
+            microphoneBaselineResetToken={microphoneBaselineResetToken}
+            activeAnchor={anchorSystemState.activeAnchor}
+            anchorState={anchorSystemState.anchorState}
+          />
+        </Suspense>
       )}
 
       {/* Start Screen - only when camera is not active */}

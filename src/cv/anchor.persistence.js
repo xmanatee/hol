@@ -16,7 +16,6 @@ export class AnchorPersistenceSystem {
     this.correlationThreshold = 0.7;
     this.maxSearchRadius = 100;
     this.recoveryAttempts = 0;
-    this.maxRecoveryAttempts = 5;
   }
 
   async initialize(cv) {
@@ -80,10 +79,6 @@ export class AnchorPersistenceSystem {
     }
 
     this.recoveryAttempts++;
-    
-    if (this.recoveryAttempts > this.maxRecoveryAttempts) {
-      return { success: false, reason: 'Max recovery attempts reached' };
-    }
 
     try {
       const center = searchCenter || this.lastKnownPosition;

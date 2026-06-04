@@ -3,7 +3,7 @@
 //
 // Source: http://www.lifl.fr/~casiez/1euro/
 //
-// This is a TypeScript version of the filter.
+// This implementation accepts either seconds or performance.now() milliseconds.
 // =============================================================================
 
 class LowPassFilter {
@@ -12,6 +12,10 @@ class LowPassFilter {
     this.a = alpha;
     this.s = 0;
     this.initialized = false;
+  }
+
+  setAlpha(alpha) {
+    this.a = alpha;
   }
 
   filter(value) {
@@ -24,6 +28,8 @@ class LowPassFilter {
     return this.s;
   }
 }
+
+const timestampDeltaToSeconds = delta => delta > 10 ? delta / 1000 : delta;
 
 export class OneEuroFilter {
   constructor(freq, minCutOff = 1.0, beta = 0.0, dCutOff = 1.0) {
@@ -45,15 +51,15 @@ export class OneEuroFilter {
 
   filter(value, timestamp = null) {
     if (this.lastTime && timestamp && this.lastTime !== timestamp) {
-      this.freq = 1.0 / (timestamp - this.lastTime);
+      this.freq = 1.0 / timestampDeltaToSeconds(timestamp - this.lastTime);
     }
     this.lastTime = timestamp || this.lastTime + 1.0 / this.freq;
 
-    const prev_x = this.x.filter(value);
-    const dvalue = this.initialized ? (value - prev_x) * this.freq : 0.0;
+    const previous = this.x.s;
+    const dvalue = this.initialized ? (value - previous) * this.freq : 0.0;
     const edvalue = this.dx.filter(dvalue);
     const cutOff = this.minCutOff + this.beta * Math.abs(edvalue);
-    this.x = new LowPassFilter(this.alpha(cutOff));
+    this.x.setAlpha(this.alpha(cutOff));
     this.initialized = true;
     return this.x.filter(value);
   }

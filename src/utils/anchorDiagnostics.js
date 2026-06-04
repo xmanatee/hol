@@ -3,10 +3,21 @@ const collectAnchorDetails = (anchorState) => {
 
   return {
     keypointCount: metrics.keypointCount ?? 0,
+    landmarkCount: metrics.landmarkCount ?? metrics.keypointCount ?? 0,
+    activeLandmarkCount: metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0,
+    inactiveLandmarkCount: metrics.inactiveLandmarkCount ?? 0,
+    landmarkRefreshAdded: metrics.landmarkRefreshAdded ?? 0,
     templateKeypoints: metrics.templateKeypoints ?? metrics.keypointCount ?? 0,
     templateQuality: metrics.templateQuality ?? null,
     trackingSuccessRate: metrics.trackingSuccessRate ?? null,
     homographyInliers: metrics.homographyInliers ?? 0,
+    affinePoseInliers: metrics.affinePoseInliers ?? 0,
+    objectPoseInliers: metrics.objectPoseInliers ?? 0,
+    poseInliers: metrics.poseInliers ?? 0,
+    poseModel: metrics.poseModel || null,
+    poseSource: metrics.poseSource || null,
+    poseAverageResidual: metrics.poseAverageResidual ?? null,
+    poseForeshortening: metrics.poseForeshortening ?? null,
     recoveryAttempts: metrics.recoveryAttempts ?? 0,
     lostFrameCount: metrics.lostFrameCount ?? 0,
     lastFailureReason: metrics.lastFailureReason || null,
@@ -101,7 +112,7 @@ export const describeAnchorState = ({
     return {
       status: 'recovering',
       severity: 'bad',
-      message: `Anchor lost; recovery ${details.recoveryAttempts}/5`,
+      message: `Anchor lost; recovery attempt ${details.recoveryAttempts}`,
       recommendation: 'Bring the original object back into view or tap to reset.',
       details
     };

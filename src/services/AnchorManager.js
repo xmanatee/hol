@@ -3,9 +3,8 @@ import { HomographyEstimator } from '../cv/anchor.homography.js';
 import { logger } from '../utils/logger.js';
 
 export class AnchorManager {
-  constructor(config = {}) {
+  constructor() {
     this.imageAnchorService = new ImageAnchorService();
-    this.config = config;
     
     // State management
     this.mode = 'detection'; // 'detection' or 'anchor'
@@ -181,22 +180,6 @@ export class AnchorManager {
    * @private
    */
   _onAnchorUpdate(anchorServiceState) {
-    // Handle auto-reset events from ImageAnchorService
-    if (anchorServiceState.type === 'auto-reset') {
-      logger.info('AnchorManager', 'Received auto-reset event:', anchorServiceState.reason);
-      
-      // The ImageAnchorService already called clearAnchor(), so we just need to sync our state
-      if (this.mode === 'anchor') {
-        this.mode = 'detection';
-        this.activeAnchor = null;
-        this.anchorState = null;
-        
-        logger.info('AnchorManager', 'Auto-reset completed - returned to detection mode');
-        this._notifyUpdate();
-      }
-      return;
-    }
-    
     logger.debug('AnchorManager', 'Received anchor service state update:', {
       anchored: anchorServiceState.anchored,
       state: anchorServiceState.state,
@@ -214,6 +197,7 @@ export class AnchorManager {
         y: anchorServiceState.position.y,
         z: anchorServiceState.position.z || 0
       };
+      this.activeAnchor.planarTransform = anchorServiceState.planarTransform || this.activeAnchor.planarTransform || null;
       this.activeAnchor.state = anchorServiceState.state;
       this.activeAnchor.keypoints = anchorServiceState.metrics?.keypointCount ?? this.activeAnchor.keypoints;
       this.activeAnchor.quality = anchorServiceState.metrics?.templateQuality ?? this.activeAnchor.quality;
@@ -221,6 +205,13 @@ export class AnchorManager {
         qualityState: anchorServiceState.metrics?.qualityState || null,
         trackingSuccessRate: anchorServiceState.metrics?.trackingSuccessRate ?? null,
         homographyInliers: anchorServiceState.metrics?.homographyInliers ?? 0,
+        affinePoseInliers: anchorServiceState.metrics?.affinePoseInliers ?? 0,
+        objectPoseInliers: anchorServiceState.metrics?.objectPoseInliers ?? 0,
+        poseInliers: anchorServiceState.metrics?.poseInliers ?? 0,
+        poseModel: anchorServiceState.metrics?.poseModel || null,
+        poseSource: anchorServiceState.metrics?.poseSource || null,
+        poseAverageResidual: anchorServiceState.metrics?.poseAverageResidual ?? null,
+        poseForeshortening: anchorServiceState.metrics?.poseForeshortening ?? null,
         recoveryAttempts: anchorServiceState.metrics?.recoveryAttempts ?? 0,
         lostFrameCount: anchorServiceState.metrics?.lostFrameCount ?? 0,
         lastFailureReason: anchorServiceState.metrics?.lastFailureReason || null
@@ -234,7 +225,6 @@ export class AnchorManager {
     
     // Handle anchor state transitions to detection mode
     if (this.mode === 'anchor' && !anchorServiceState.anchored) {
-      // Anchor was cleared (either manually or via auto-reset)
       logger.info('AnchorManager', 'Anchor cleared - transitioning to detection mode');
       this.mode = 'detection';
       this.activeAnchor = null;

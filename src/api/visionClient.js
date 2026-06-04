@@ -1,22 +1,17 @@
-import OpenAI from 'openai';
 import { VISION_RESPONSE_FORMAT } from './openaiSchemas.js';
+import { OpenAIChatClient, readViteEnv } from './openaiChatClient.js';
 
 export class VisionClient {
   constructor(config = {}) {
     this.config = {
-      model: config.model || import.meta.env.VITE_OPENAI_VISION_MODEL || 'gpt-4.1-mini',
-      maxTokens: config.maxTokens || 300,
+      model: config.model || readViteEnv('VITE_OPENAI_VISION_MODEL') || 'gpt-4.1-mini',
+      maxTokens: config.maxTokens ?? 300,
       ...config
     };
 
-    const apiKey = config.apiKey || import.meta.env.VITE_OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error('OpenAI API key is required. Set VITE_OPENAI_API_KEY in environment variables.');
-    }
-
-    this.openai = new OpenAI({
-      apiKey: apiKey,
-      dangerouslyAllowBrowser: true
+    this.chatClient = config.chatClient || new OpenAIChatClient({
+      apiKey: config.apiKey || readViteEnv('VITE_OPENAI_API_KEY'),
+      fetchImpl: config.fetchImpl
     });
   }
 
@@ -26,7 +21,7 @@ export class VisionClient {
     
     const prompt = this.buildVisionPrompt(objectInfo);
 
-    const response = await this.openai.chat.completions.create({
+    const response = await this.chatClient.create({
       model: this.config.model,
       messages: [
         {
@@ -88,14 +83,15 @@ Focus on details that would help create a unique personality for this object. Re
 
 
   async blobToBase64(blob) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result;
-        resolve(base64);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    let binary = '';
+
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+    }
+
+    return `data:${blob.type || 'application/octet-stream'};base64,${btoa(binary)}`;
   }
 }

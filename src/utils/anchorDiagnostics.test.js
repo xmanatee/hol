@@ -64,7 +64,8 @@ test('includes lost-anchor recovery context from service metrics', () => {
 
   assert.equal(result.status, 'recovering');
   assert.equal(result.severity, 'bad');
-  assert.match(result.message, /recovery 3/);
+  assert.match(result.message, /recovery attempt 3/);
+  assert.doesNotMatch(result.message, /\/5/);
   assert.equal(result.details.lastFailureReason, 'Insufficient keypoint tracking quality');
   assert.equal(result.details.lostFrameCount, 9);
 });

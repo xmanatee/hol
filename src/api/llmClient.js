@@ -1,30 +1,30 @@
-import OpenAI from 'openai';
 import { PERSONA_RESPONSE_FORMAT } from './openaiSchemas.js';
+import { OpenAIChatClient, readViteEnv } from './openaiChatClient.js';
+
+const parseNumberEnv = (key, fallback) => {
+  const parsed = Number.parseFloat(readViteEnv(key) || '');
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
 
 export class LLMClient {
   constructor(config = {}) {
     this.config = {
-      model: config.model || import.meta.env.VITE_OPENAI_CHAT_MODEL || 'gpt-4.1-mini',
-      maxTokens: config.maxTokens || parseInt(import.meta.env.VITE_OPENAI_MAX_TOKENS) || 300,
-      temperature: config.temperature || parseFloat(import.meta.env.VITE_OPENAI_TEMPERATURE) || 0.8,
+      model: config.model || readViteEnv('VITE_OPENAI_CHAT_MODEL') || 'gpt-4.1-mini',
+      maxTokens: config.maxTokens ?? parseNumberEnv('VITE_OPENAI_MAX_TOKENS', 300),
+      temperature: config.temperature ?? parseNumberEnv('VITE_OPENAI_TEMPERATURE', 0.8),
       ...config
     };
 
-    const apiKey = config.apiKey || import.meta.env.VITE_OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error('OpenAI API key is required. Set VITE_OPENAI_API_KEY in environment variables.');
-    }
-
-    this.openai = new OpenAI({
-      apiKey: apiKey,
-      dangerouslyAllowBrowser: true
+    this.chatClient = config.chatClient || new OpenAIChatClient({
+      apiKey: config.apiKey || readViteEnv('VITE_OPENAI_API_KEY'),
+      fetchImpl: config.fetchImpl
     });
   }
 
   async generatePersona(visionResult) {
     const prompt = this.buildPersonaPrompt(visionResult);
     
-    const response = await this.openai.chat.completions.create({
+    const response = await this.chatClient.create({
       model: this.config.model,
       messages: [
         {
@@ -61,14 +61,14 @@ Return a JSON object with exactly these fields:
 {
   "voiceStyle": "one of: cheerful, sassy, wise, gruff, bubbly, sarcastic, dramatic",
   "facialExpression": "one of: neutral, happy, sassy, wise, gruff, bubbly, sarcastic, dramatic",
-  "emotionalDelivery": "short direction for how the line should be performed emotionally",
+  "emotionalDelivery": "specific voice performance direction: emotion, pace, emphasis, and energy for text-to-speech",
   "animationIntensity": 0.0 to 1.0, where calm delivery is 0.25-0.45 and cartoonishly emotional delivery is 0.75-1.0,
   "tone": "brief description of personality tone",
   "quirks": ["unique trait 1", "unique trait 2", "unique trait 3"],
   "oneLiners": ["greeting line", "idle comment", "departure line"]
 }
 
-Make it witty, distinctive, and based on the object's specific characteristics. The facial expression and emotional delivery should match the one-liners instead of staying neutral. The personality should feel like it belongs to this specific object.`;
+Make it witty, distinctive, and based on the object's specific characteristics. The facial expression, voice style, emotional delivery, punctuation, and animation intensity must describe the same performance. Use higher animation intensity for theatrical, excited, or chaotic lines and lower intensity for calm, wise, or deadpan lines. The personality should feel like it belongs to this specific object.`;
   }
 
   validatePersona(result) {

@@ -98,6 +98,7 @@ const AnchorDiagnosticsSection = ({ diagnostics }) => {
   const trackingTone = !hasTrackingRate
     ? 'neutral'
     : details.trackingSuccessRate >= 0.5 ? 'good' : 'warn';
+  const poseTone = (details.poseInliers ?? 0) >= 15 ? 'good' : 'warn';
   const statusClass = diagnostics.severity === 'bad'
     ? 'border-red-700 bg-red-950 text-red-200'
     : diagnostics.severity === 'warn'
@@ -115,9 +116,19 @@ const AnchorDiagnosticsSection = ({ diagnostics }) => {
 
       <DiagnosticRow label="Status" value={diagnostics.status} tone={diagnostics.severity} />
       <DiagnosticRow label="Keypoints" value={details.keypointCount ?? 0} tone={keypointTone} />
+      <DiagnosticRow label="Landmarks" value={`${details.activeLandmarkCount ?? 0}/${details.landmarkCount ?? 0}`} tone={(details.landmarkCount ?? 0) >= 40 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Hidden landmarks" value={details.inactiveLandmarkCount ?? 0} tone={(details.inactiveLandmarkCount ?? 0) > 0 ? 'warn' : 'good'} />
+      <DiagnosticRow label="Last refresh" value={`+${details.landmarkRefreshAdded ?? 0}`} tone={(details.landmarkRefreshAdded ?? 0) > 0 ? 'good' : 'neutral'} />
       <DiagnosticRow label="Template quality" value={formatPercent(details.templateQuality)} tone={templateQualityTone} />
       <DiagnosticRow label="Tracking success" value={formatPercent(details.trackingSuccessRate)} tone={trackingTone} />
+      <DiagnosticRow label="Pose model" value={details.poseModel || 'N/A'} />
+      <DiagnosticRow label="Pose source" value={details.poseSource || 'N/A'} />
+      <DiagnosticRow label="Pose inliers" value={details.poseInliers ?? 0} tone={poseTone} />
+      <DiagnosticRow label="Object pose inliers" value={details.objectPoseInliers ?? 0} tone={(details.objectPoseInliers ?? 0) >= 15 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Pose residual" value={formatNumber(details.poseAverageResidual, 2)} tone={(details.poseAverageResidual ?? 99) <= 3 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Foreshortening" value={formatNumber(details.poseForeshortening, 2)} tone={(details.poseForeshortening ?? 1) < 0.88 ? 'good' : 'neutral'} />
       <DiagnosticRow label="Homography inliers" value={details.homographyInliers ?? 0} tone={(details.homographyInliers ?? 0) >= 15 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Affine inliers" value={details.affinePoseInliers ?? 0} tone={(details.affinePoseInliers ?? 0) >= 15 ? 'good' : 'warn'} />
       <DiagnosticRow label="Recovery attempts" value={details.recoveryAttempts ?? 0} tone={(details.recoveryAttempts ?? 0) > 0 ? 'warn' : 'good'} />
       <DiagnosticRow label="Lost frames" value={details.lostFrameCount ?? 0} tone={(details.lostFrameCount ?? 0) > 3 ? 'bad' : 'good'} />
       <DiagnosticRow label="Processing" value={`${formatNumber(details.processingTime, 1)} ms`} tone={(details.processingTime ?? 0) <= 6 ? 'good' : 'warn'} />
@@ -213,7 +224,7 @@ const StatusSection = ({
   detectionInitialized,
   isModelLoaded,
   detectionError,
-  trackedObjects,
+  trackedObjects = [],
   activeTrackId
 }) => (
   <div className="text-xs text-gray-300">
@@ -337,7 +348,7 @@ const LogsSection = () => {
   );
 };
 
-const MeshControlsSection = ({ discoveredMeshes, hiddenMeshes, onMeshVisibilityChange, onRotationChange }) => {
+const MeshControlsSection = ({ discoveredMeshes = [], hiddenMeshes = new Set(), onMeshVisibilityChange, onRotationChange }) => {
   const [rotation, setRotation] = useState({ x: 0, y: 0, z: 0 });
 
   const handleToggle = (meshName) => {
@@ -587,6 +598,10 @@ const ConfigSection = ({ onConfigChange }) => {
   
   return (
     <div className="text-xs">
+      <div className="mb-3 rounded border border-gray-700 bg-gray-950 px-2 py-2 text-gray-300">
+        <div className="text-[10px] uppercase tracking-wide text-gray-500">Pose Model</div>
+        <div className="mt-1 font-mono text-green-300">object-pose</div>
+      </div>
       <div className="mb-2">
         <label className="block text-gray-300 mb-0.5">
           Detection Interval: {detectionInterval} frames
@@ -613,22 +628,22 @@ const UnifiedControlPanel = ({
   detectionInitialized,
   isModelLoaded,
   detectionError,
-  trackedObjects,
+  trackedObjects = [],
   activeTrackId,
   showStats,
   onToggleStats,
   onUnlock,
   onStop,
   onConfigChange,
-  metrics,
+  metrics = {},
   anchorDiagnostics,
   runtimeReadiness,
   personalityData,
   ttsData,
   onGeneratePersonality,
   onSpeakGreeting,
-  discoveredMeshes,
-  hiddenMeshes,
+  discoveredMeshes = [],
+  hiddenMeshes = new Set(),
   onMeshVisibilityChange,
   onRotationChange,
   // Microphone props

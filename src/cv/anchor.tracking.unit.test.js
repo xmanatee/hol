@@ -127,3 +127,149 @@ test('keypoint refresh preserves the original reference frame for homography pos
   assert.ok(Math.abs(tracker.trackedPoints[0].original.x - originals[0].x) < 0.5);
   assert.ok(Math.abs(tracker.trackedPoints[0].original.y - originals[0].y) < 0.5);
 });
+
+test('keypoint refresh expands the landmark map instead of replacing tracked points', () => {
+  const tracker = new KeypointTracker();
+  tracker.initialized = true;
+  tracker.previousGray = { delete() {} };
+
+  const transform = {
+    tx: -9,
+    ty: 14,
+    scale: 1.04,
+    rotation: -16 * Math.PI / 180,
+  };
+  const originals = Array.from({ length: 16 }, (_, index) => ({
+    x: 80 + (index % 4) * 24,
+    y: 72 + Math.floor(index / 4) * 22,
+  }));
+  const newOriginals = Array.from({ length: 12 }, (_, index) => ({
+    x: 190 + (index % 4) * 18,
+    y: 74 + Math.floor(index / 4) * 20,
+  }));
+  tracker.trackedPoints = originals.map((point, index) => createTrackedPoint(index, point, transform));
+  tracker.nextPointId = originals.length;
+  tracker.keypointCentroid = { x: 116, y: 105 };
+  tracker.anchorOriginalPosition = { x: 124, y: 101 };
+  tracker.tapOffset = { x: 8, y: -4 };
+
+  const currentGray = {
+    cols: 360,
+    rows: 260,
+    empty: () => false,
+    clone: () => ({ delete() {} }),
+  };
+  const detector = {
+    extractKeypoints: () => ({
+      keypoints: [
+        ...originals.map(point => ({ pt: transformPoint(point, transform), response: 0.8 })),
+        ...newOriginals.map(point => ({ pt: transformPoint(point, transform), response: 1.0 })),
+      ],
+    }),
+  };
+
+  const refreshed = tracker.refreshKeypoints({}, currentGray, detector, {
+    x: 0,
+    y: 0,
+    width: 260,
+    height: 180,
+  }, transformPoint(tracker.anchorOriginalPosition, transform));
+
+  assert.equal(refreshed, true);
+  assert.equal(tracker.trackedPoints.filter(point => point.id < originals.length).length, originals.length);
+  assert.ok(Math.abs(tracker.trackedPoints.find(point => point.id === 0).original.x - originals[0].x) < 0.5);
+  assert.ok(Math.abs(tracker.trackedPoints.find(point => point.id === 0).original.y - originals[0].y) < 0.5);
+  assert.ok(tracker.trackedPoints.length > originals.length);
+  assert.ok(tracker.trackedPoints.some(point => point.original.x > 175));
+  assert.deepEqual(tracker.anchorOriginalPosition, { x: 124, y: 101 });
+});
+
+test('inactive cleanup preserves stable hidden landmarks and retires weak stale points', () => {
+  const tracker = new KeypointTracker();
+  tracker.trackedPoints = [
+    {
+      id: 1,
+      original: { x: 10, y: 10 },
+      current: { x: 12, y: 11 },
+      status: 'active',
+      inactiveAge: 0,
+      isStable: false,
+      stabilityScore: 0.3,
+      totalSuccessfulFrames: 5,
+    },
+    {
+      id: 2,
+      original: { x: 40, y: 10 },
+      current: { x: 42, y: 11 },
+      status: 'lost',
+      inactiveAge: 60,
+      isStable: true,
+      stabilityScore: 0.85,
+      totalSuccessfulFrames: 90,
+    },
+    {
+      id: 3,
+      original: { x: 70, y: 10 },
+      current: { x: 72, y: 11 },
+      status: 'lost',
+      inactiveAge: 60,
+      isStable: false,
+      stabilityScore: 0.1,
+      totalSuccessfulFrames: 2,
+    },
+  ];
+
+  tracker._cleanupInactiveKeypoints();
+
+  assert.deepEqual(tracker.trackedPoints.map(point => point.id), [1, 2]);
+  assert.equal(tracker.trackedPoints.find(point => point.id === 2).inactiveAge, 61);
+});
+
+test('pose correspondences prefer the local planar patch around the tapped anchor', () => {
+  const tracker = new KeypointTracker();
+  tracker.anchorOriginalPosition = { x: 100, y: 100 };
+  tracker.trackedPoints = [
+    ...Array.from({ length: 16 }, (_, index) => ({
+      id: index,
+      original: {
+        x: 82 + (index % 4) * 12,
+        y: 82 + Math.floor(index / 4) * 12,
+      },
+      current: {
+        x: 92 + (index % 4) * 12,
+        y: 88 + Math.floor(index / 4) * 12,
+      },
+      response: 1,
+      status: 'active',
+      age: 20,
+      errorHistory: [1],
+      stabilityScore: 0.8,
+    })),
+    ...Array.from({ length: 16 }, (_, index) => ({
+      id: 100 + index,
+      original: {
+        x: 220 + (index % 4) * 18,
+        y: 190 + Math.floor(index / 4) * 18,
+      },
+      current: {
+        x: 210 + (index % 4) * 8,
+        y: 194 + Math.floor(index / 4) * 22,
+      },
+      response: 1,
+      status: 'active',
+      age: 20,
+      errorHistory: [1],
+      stabilityScore: 0.8,
+    })),
+  ];
+
+  const correspondences = tracker.getCorrespondences({
+    maxReferenceDistance: 36,
+    minCount: 8,
+    maxCount: 12,
+  });
+
+  assert.equal(correspondences.length, 12);
+  assert.ok(correspondences.every(correspondence => correspondence.prev.x < 140));
+  assert.ok(correspondences.every(correspondence => correspondence.prev.y < 140));
+});

@@ -4,6 +4,7 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { ObjectPoseEstimator } from './anchor.objectPose.js';
 
 export class KeypointTracker {
   constructor() {
@@ -12,6 +13,9 @@ export class KeypointTracker {
     this.previousGray = null;
     this.trackingHistory = [];
     this.maxHistory = 30;
+    this.nextPointId = 0;
+    this.lastRefreshStats = null;
+    this.objectPoseEstimator = new ObjectPoseEstimator();
     
     // Adaptive tracking parameters
     this.trackingAttempts = 0;
@@ -50,20 +54,13 @@ export class KeypointTracker {
       .sort((a, b) => b.response - a.response)
       .slice(0, 80);
 
-    this.trackedPoints = sortedKeypoints.map((kp, index) => ({
-      id: index,
-      original: { x: kp.pt.x, y: kp.pt.y },
-      current: { x: kp.pt.x, y: kp.pt.y },
-      response: kp.response,
-      status: 'active',
-      errorHistory: [],
-      age: 0,
-      // Stability tracking
-      successfulTrackingStreak: 0,  // Consecutive successful tracking frames
-      totalSuccessfulFrames: 0,     // Total frames successfully tracked
-      stabilityScore: 0,            // Computed stability metric (0-1)
-      isStable: false               // High stability flag for protection
-    }));
+    this.trackedPoints = sortedKeypoints.map((kp, index) => this._createTrackedPoint(
+      index,
+      { x: kp.pt.x, y: kp.pt.y },
+      { x: kp.pt.x, y: kp.pt.y },
+      kp.response
+    ));
+    this.nextPointId = this.trackedPoints.length;
 
     // Calculate actual keypoint centroid (not geometric template center)
     const xSum = this.trackedPoints.reduce((sum, pt) => sum + pt.original.x, 0);
@@ -94,6 +91,7 @@ export class KeypointTracker {
     
     // Reset adaptive tracking state
     this.trackingAttempts = 0;
+    this.lastRefreshStats = null;
 
     logger.info('KeypointTracker', `Initialized tracking with ${this.trackedPoints.length} keypoints`);
     logger.info('KeypointTracker', `Keypoint centroid: (${this.keypointCentroid.x.toFixed(1)}, ${this.keypointCentroid.y.toFixed(1)})`);
@@ -224,6 +222,9 @@ export class KeypointTracker {
           point.errorHistory.push(trackingError);
           point.age++;
           point.status = 'active';
+          point.inactiveAge = 0;
+          point.lastSeenAttempt = this.trackingAttempts;
+          point.observations = (point.observations || 0) + 1;
           
           // Update stability tracking
           point.successfulTrackingStreak++;
@@ -673,6 +674,123 @@ export class KeypointTracker {
     }
     this.previousGray = currentGray.clone();
     this.trackingAttempts = 0;
+    this.nextPointId = this.trackedPoints.length;
+  }
+
+  _mergeTrackingPointsPreservingReference(keypoints, currentGray, transformation) {
+    const sortedKeypoints = [...keypoints]
+      .sort((a, b) => b.response - a.response);
+    const maxTrackedPoints = 96;
+    const minCurrentDistance = 8;
+    const minReferenceDistance = 8;
+    let added = 0;
+
+    for (const kp of sortedKeypoints) {
+      if (this.trackedPoints.length >= maxTrackedPoints) {
+        break;
+      }
+
+      const current = { x: kp.pt.x, y: kp.pt.y };
+      const original = this._invertReferenceTransformation(current, transformation);
+      const overlapsExisting = this.trackedPoints.some(point => {
+        const referenceDistance = Math.hypot(point.original.x - original.x, point.original.y - original.y);
+        const currentDistance = point.status === 'active'
+          ? Math.hypot(point.current.x - current.x, point.current.y - current.y)
+          : Infinity;
+        return referenceDistance < minReferenceDistance || currentDistance < minCurrentDistance;
+      });
+
+      if (overlapsExisting) {
+        continue;
+      }
+
+      const id = this.nextPointId ?? (Math.max(-1, ...this.trackedPoints.map(point => point.id)) + 1);
+      this.trackedPoints.push(this._createTrackedPoint(id, original, current, kp.response));
+      this.nextPointId = id + 1;
+      added++;
+    }
+
+    this._pruneLandmarkMap(maxTrackedPoints);
+    this._recalculateReferenceCentroid();
+
+    if (this.previousGray) {
+      this.previousGray.delete();
+    }
+    this.previousGray = currentGray.clone();
+    this.trackingAttempts = 0;
+    this.lastRefreshStats = {
+      added,
+      total: this.trackedPoints.length,
+      active: this.trackedPoints.filter(point => point.status === 'active').length,
+    };
+
+    return true;
+  }
+
+  _createTrackedPoint(id, original, current, response) {
+    return {
+      id,
+      original,
+      current,
+      response,
+      status: 'active',
+      errorHistory: [],
+      age: 0,
+      successfulTrackingStreak: 0,
+      totalSuccessfulFrames: 0,
+      stabilityScore: 0,
+      isStable: false,
+      inactiveAge: 0,
+      observations: 0,
+      createdAtAttempt: this.trackingAttempts,
+      lastSeenAttempt: this.trackingAttempts,
+    };
+  }
+
+  _pruneLandmarkMap(maxTrackedPoints) {
+    if (this.trackedPoints.length <= maxTrackedPoints) {
+      return;
+    }
+
+    this.trackedPoints = [...this.trackedPoints]
+      .sort((a, b) => {
+        const activeDelta = (b.status === 'active') - (a.status === 'active');
+        if (activeDelta !== 0) return activeDelta;
+        const stableDelta = (b.isStable === true) - (a.isStable === true);
+        if (stableDelta !== 0) return stableDelta;
+        const scoreDelta = (b.stabilityScore || 0) - (a.stabilityScore || 0);
+        if (Math.abs(scoreDelta) > 1e-6) return scoreDelta;
+        return (b.totalSuccessfulFrames || 0) - (a.totalSuccessfulFrames || 0);
+      })
+      .slice(0, maxTrackedPoints);
+  }
+
+  _recalculateReferenceCentroid() {
+    const referencePoints = this.trackedPoints.filter(point => (
+      point.status === 'active' ||
+      point.isStable ||
+      (point.inactiveAge || 0) < 30 ||
+      (point.totalSuccessfulFrames || 0) >= 45
+    ));
+    const pointsForCentroid = referencePoints.length > 0 ? referencePoints : this.trackedPoints;
+
+    if (pointsForCentroid.length === 0) {
+      return;
+    }
+
+    const xSum = pointsForCentroid.reduce((sum, pt) => sum + pt.original.x, 0);
+    const ySum = pointsForCentroid.reduce((sum, pt) => sum + pt.original.y, 0);
+    this.keypointCentroid = {
+      x: xSum / pointsForCentroid.length,
+      y: ySum / pointsForCentroid.length
+    };
+
+    if (this.anchorOriginalPosition) {
+      this.tapOffset = {
+        x: this.anchorOriginalPosition.x - this.keypointCentroid.x,
+        y: this.anchorOriginalPosition.y - this.keypointCentroid.y
+      };
+    }
   }
 
   _transformationResidual(point, transformation) {
@@ -736,15 +854,55 @@ export class KeypointTracker {
    * Get keypoint correspondences for homography estimation
    * @returns {Array} Array of {prev: {x,y}, curr: {x,y}} point pairs
    */
-  getCorrespondences() {
+  getCorrespondences(options = {}) {
     const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
-    
-    return activePoints.map(pt => ({
-      prev: { x: pt.original.x, y: pt.original.y },
-      curr: { x: pt.current.x, y: pt.current.y },
-      response: pt.response,
-      age: pt.age
+    const {
+      maxReferenceDistance = Infinity,
+      minCount = 8,
+      maxCount = Infinity,
+    } = options;
+
+    const anchorReference = this.anchorOriginalPosition || this.keypointCentroid;
+    const scoredPoints = activePoints.map(point => ({
+      point,
+      distance: anchorReference
+        ? Math.hypot(point.original.x - anchorReference.x, point.original.y - anchorReference.y)
+        : 0,
+      quality: (point.stabilityScore || 0) + Math.min(point.age || 0, 30) / 30 + (point.response || 0),
     }));
+    const locallySupported = Number.isFinite(maxReferenceDistance)
+      ? scoredPoints.filter(item => item.distance <= maxReferenceDistance)
+      : scoredPoints;
+    const selected = locallySupported.length >= minCount
+      ? locallySupported
+      : scoredPoints
+        .sort((a, b) => a.distance - b.distance || b.quality - a.quality)
+        .slice(0, Math.min(scoredPoints.length, minCount));
+
+    return selected
+      .sort((a, b) => a.distance - b.distance || b.quality - a.quality)
+      .slice(0, maxCount)
+      .map(({ point }) => ({
+        prev: { x: point.original.x, y: point.original.y },
+        curr: { x: point.current.x, y: point.current.y },
+        response: point.response,
+        age: point.age
+      }));
+  }
+
+  getObjectPose(options = {}) {
+    const anchorReference = options.anchorReference || this.anchorOriginalPosition || this.keypointCentroid;
+    const correspondences = this.getCorrespondences({
+      maxReferenceDistance: options.maxReferenceDistance || Infinity,
+      minCount: options.minCount || 8,
+      maxCount: options.maxCount || 80,
+    });
+
+    return this.objectPoseEstimator.estimate({
+      correspondences,
+      anchorReference,
+      previousPose: options.previousPose || null,
+    });
   }
 
   /**
@@ -788,7 +946,7 @@ export class KeypointTracker {
       
       if (newKeypoints.keypoints.length >= 15) {
         if (referenceTransformation && referenceTransformation.scale > 0.001) {
-          this._replaceTrackingPointsPreservingReference(newKeypoints.keypoints, currentGray, referenceTransformation);
+          this._mergeTrackingPointsPreservingReference(newKeypoints.keypoints, currentGray, referenceTransformation);
         } else {
           this.initializeTracking(cv, newKeypoints.keypoints, currentGray, anchorPosition);
         }
@@ -813,6 +971,7 @@ export class KeypointTracker {
   _cleanupInactiveKeypoints() {
     if (!this.trackedPoints || this.trackedPoints.length === 0) return;
 
+    const before = this.trackedPoints.length;
     this.trackedPoints.forEach(point => {
       if (point.status === 'lost' || point.status === 'outlier') {
         point.inactiveAge = (point.inactiveAge || 0) + 1;
@@ -820,6 +979,23 @@ export class KeypointTracker {
         point.inactiveAge = 0;
       }
     });
+
+    this.trackedPoints = this.trackedPoints.filter(point => {
+      if (point.status === 'active') {
+        return true;
+      }
+
+      const stableEnough = point.isStable ||
+        (point.stabilityScore || 0) >= 0.65 ||
+        (point.totalSuccessfulFrames || 0) >= 45;
+      const maxInactiveAge = stableEnough ? 120 : 45;
+      return (point.inactiveAge || 0) <= maxInactiveAge;
+    });
+
+    const removed = before - this.trackedPoints.length;
+    if (removed > 0) {
+      logger.info('KeypointTracker', `Retired ${removed} stale landmarks from tracking map`);
+    }
   }
 
   dispose() {
@@ -831,6 +1007,8 @@ export class KeypointTracker {
     this.trackingHistory = [];
     this.keypointCentroid = null;
     this.tapOffset = null;
+    this.nextPointId = 0;
+    this.lastRefreshStats = null;
     this.initialized = false;
   }
 }

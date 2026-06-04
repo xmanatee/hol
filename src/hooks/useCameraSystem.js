@@ -10,7 +10,7 @@ export const useCameraSystem = (config = {}) => {
   // Services
   const cameraServiceRef = useRef(new CameraService());
   const detectionServiceRef = useRef(new DetectionService());
-  const anchorManagerRef = useRef(new AnchorManager(config));
+  const anchorManagerRef = useRef(new AnchorManager());
   const personalityServiceRef = useRef(new PersonalityService(config.personality));
   const ttsClientRef = useRef(new TTSClient(config.tts));
   const currentCanvasRef = useRef(null);
@@ -265,8 +265,17 @@ export const useCameraSystem = (config = {}) => {
           const { metrics } = state.anchorState;
           if (metrics) {
             updateMetric('Keypoint count', metrics.keypointCount || 0);
+            updateMetric('Landmark count', metrics.landmarkCount || metrics.keypointCount || 0);
+            updateMetric('Active landmarks', metrics.activeLandmarkCount || metrics.keypointCount || 0);
+            updateMetric('Landmark refresh added', metrics.landmarkRefreshAdded || 0);
             updateMetric('Tracking success rate', (metrics.trackingSuccessRate || 0) * 100);
             updateMetric('Homography inliers', metrics.homographyInliers || 0);
+            updateMetric('Affine pose inliers', metrics.affinePoseInliers || 0);
+            updateMetric('Object pose inliers', metrics.objectPoseInliers || 0);
+            updateMetric('Pose model', metrics.poseModel || 'object-pose');
+            updateMetric('Pose source', metrics.poseSource || 'None');
+            updateMetric('Pose residual', metrics.poseAverageResidual || 0);
+            updateMetric('Pose foreshortening', metrics.poseForeshortening || 1);
             updateMetric('Anchor processing time', metrics.processingTime || 0);
             updateMetric('Recovery attempts', metrics.recoveryAttempts || 0);
             updateMetric('Lost frame count', metrics.lostFrameCount || 0);
@@ -281,6 +290,11 @@ export const useCameraSystem = (config = {}) => {
           // Update anchor stability metrics
           if (state.anchorState.normal) {
             updateMetric('Surface normal', `[${state.anchorState.normal.x.toFixed(2)}, ${state.anchorState.normal.y.toFixed(2)}, ${state.anchorState.normal.z.toFixed(2)}]`);
+          }
+
+          if (state.anchorState.planarTransform) {
+            updateMetric('Planar scale', state.anchorState.planarTransform.scale);
+            updateMetric('Planar roll', state.anchorState.planarTransform.rotation * 180 / Math.PI);
           }
           
           updateMetric('Anchor state', state.anchorState.state || 'inactive');

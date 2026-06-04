@@ -36,6 +36,21 @@ const METRIC_DEFINITIONS = {
     isRed: (value) => value < 8,
     unit: '',
   },
+  'Object pose inliers': {
+    target: 15,
+    isRed: (value) => value < 12,
+    unit: '',
+  },
+  'Pose residual': {
+    target: 3,
+    isRed: (value) => value > 5,
+    unit: 'px',
+  },
+  'Pose foreshortening': {
+    target: 0.9,
+    isRed: () => false,
+    unit: '',
+  },
   'Template quality': {
     target: 25,
     isRed: (value) => value < 12,

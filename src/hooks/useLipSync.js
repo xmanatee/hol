@@ -1,13 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useFrame } from '@react-three/fiber';
-import {
-  VisemeMapper, 
-  AudioAnalyzer, 
-  VisemePicker, 
-  MorphController,
-  LipSyncMetrics,
-  pickVisemeFromAlignment
-} from '../audio/lipSync.js';
+import { VisemeMapper, AudioAnalyzer, VisemePicker, MorphController, LipSyncMetrics, pickVisemeFromAlignment } from '../audio/lipSync.js';
 import { MicrophoneService } from '../audio/MicrophoneService.js';
 
 export const useLipSync = () => {
@@ -56,6 +49,8 @@ export const useLipSync = () => {
     visemeMapperRef.current = new VisemeMapper(headMesh.morphTargetDictionary);
     visemePickerRef.current = new VisemePicker();
     morphControllerRef.current = new MorphController(headMesh, visemeMapperRef.current);
+    morphControllerRef.current.setRestPose();
+    morphControllerRef.current.update(160);
     metricsRef.current = new LipSyncMetrics();
     audioAnalyzerRef.current = new AudioAnalyzer();
     audioAnalyzerRef.current.initialize();
@@ -80,7 +75,7 @@ export const useLipSync = () => {
     externalAgentAlignmentRef.current = null;
     setCurrentViseme('M');
     if (morphControllerRef.current) {
-      morphControllerRef.current.resetTargets();
+      morphControllerRef.current.setRestPose();
     }
   }, []);
 
@@ -92,7 +87,7 @@ export const useLipSync = () => {
       }
     } else {
       if (morphControllerRef.current) {
-        morphControllerRef.current.resetTargets();
+        morphControllerRef.current.setRestPose();
       }
       externalAgentAudioRef.current = null;
       externalAgentAlignmentRef.current = null;
@@ -187,7 +182,7 @@ export const useLipSync = () => {
     lastFrameTimeRef.current = currentTime;
 
     if (!isActive) {
-      morphControllerRef.current.setViseme('M', 0);
+      morphControllerRef.current.setRestPose();
       morphControllerRef.current.update(deltaTime);
       if (currentViseme !== 'M') {
         setCurrentViseme('M');
@@ -225,7 +220,11 @@ export const useLipSync = () => {
 
     const intensity = isCurrentlyVoiceActive ? audioData.energy : 0;
 
-    morphControllerRef.current.setViseme(selectedViseme, intensity);
+    morphControllerRef.current.setSpeechFrame({
+      viseme: selectedViseme,
+      energy: intensity,
+      voiceActive: isCurrentlyVoiceActive,
+    });
     morphControllerRef.current.update(deltaTime);
 
     if (metricsRef.current) {

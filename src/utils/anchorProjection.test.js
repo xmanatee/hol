@@ -105,6 +105,100 @@ test('uses angular surface rotation for strong object turns', () => {
   assert.ok(transform.rotation[1] > -0.95);
 });
 
+test('uses tracked planar scale and in-plane rotation from the anchor transform', () => {
+  const base = computeAnchorOverlayTransform({
+    width: 1280,
+    height: 720,
+    activeAnchor: {
+      position: { x: 640, y: 360 },
+      sourceDetection: { x1: 560, y1: 280, x2: 720, y2: 440 },
+    },
+    anchorState: {
+      anchored: true,
+      state: 'stable',
+      normal: { x: 0, y: 0, z: 1 },
+    },
+  });
+  const transformed = computeAnchorOverlayTransform({
+    width: 1280,
+    height: 720,
+    activeAnchor: {
+      position: { x: 640, y: 360 },
+      sourceDetection: { x1: 560, y1: 280, x2: 720, y2: 440 },
+    },
+    anchorState: {
+      anchored: true,
+      state: 'stable',
+      normal: { x: 0, y: 0, z: 1 },
+      planarTransform: {
+        scale: 1.45,
+        rotation: 0.42,
+      },
+    },
+  });
+
+  assert.ok(transformed.scale > base.scale * 1.35);
+  assert.equal(round(transformed.rotation[2]), -0.42);
+});
+
+test('uses live service position instead of stale active anchor position', () => {
+  const transform = computeAnchorOverlayTransform({
+    width: 1280,
+    height: 720,
+    activeAnchor: {
+      position: { x: 100, y: 100 },
+      sourceDetection: { x1: 560, y1: 280, x2: 720, y2: 440 },
+    },
+    anchorState: {
+      anchored: true,
+      state: 'tracking',
+      position: { x: 640, y: 360, z: 0 },
+      normal: { x: 0, y: 0, z: 1 },
+    },
+  });
+
+  assert.equal(transform.visible, true);
+  assert.deepEqual(transform.position.map(round), [0, 0, 0]);
+});
+
+test('uses selected template region as the overlay footprint before whole detection box', () => {
+  const fullDetectionScale = computeAnchorOverlayTransform({
+    width: 1280,
+    height: 720,
+    activeAnchor: {
+      position: { x: 640, y: 360 },
+      sourceDetection: { x1: 420, y1: 120, x2: 860, y2: 680 },
+    },
+    anchorState: {
+      anchored: true,
+      state: 'stable',
+      position: { x: 640, y: 360, z: 0 },
+      normal: { x: 0, y: 0, z: 1 },
+    },
+  }).scale;
+
+  const templateScale = computeAnchorOverlayTransform({
+    width: 1280,
+    height: 720,
+    activeAnchor: {
+      position: { x: 640, y: 360 },
+      sourceDetection: { x1: 420, y1: 120, x2: 860, y2: 680 },
+    },
+    anchorState: {
+      anchored: true,
+      state: 'stable',
+      position: { x: 640, y: 360, z: 0 },
+      normal: { x: 0, y: 0, z: 1 },
+      metrics: {
+        templateRegion: { x: 588, y: 300, width: 104, height: 120 },
+      },
+    },
+  }).scale;
+
+  assert.ok(templateScale < fullDetectionScale * 0.35);
+  assert.ok(templateScale > 0.28);
+});
+
 test('hides the overlay when no live anchor is available', () => {
   const transform = computeAnchorOverlayTransform({
     width: 1280,

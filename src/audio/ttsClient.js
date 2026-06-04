@@ -1,41 +1,7 @@
 import { Conversation } from '@elevenlabs/client';
 import { createAudioAnalysisFromFrequencyData } from './lipSync.js';
+import { buildExpressivePrompt } from './ttsPerformance.js';
 import { logger } from '../utils/logger.js';
-
-const EMOTIONAL_DELIVERY_PROFILES = {
-  cheerful: {
-    tag: '[excited]',
-    delivery: 'bright, warm, quick, and playful',
-  },
-  bubbly: {
-    tag: '[excited]',
-    delivery: 'sparkly, delighted, and high-energy',
-  },
-  sassy: {
-    tag: '[laughs]',
-    delivery: 'confident, teasing, and amused',
-  },
-  sarcastic: {
-    tag: '[laughs]',
-    delivery: 'dry, amused, and sharply timed',
-  },
-  wise: {
-    tag: '[sighs]',
-    delivery: 'calm, knowing, and gently amused',
-  },
-  gruff: {
-    tag: '[sighs]',
-    delivery: 'raspy, impatient, and low-energy',
-  },
-  dramatic: {
-    tag: '[excited]',
-    delivery: 'big, theatrical, suspenseful, and emphatic',
-  },
-  neutral: {
-    tag: '',
-    delivery: 'natural and conversational',
-  },
-};
 
 export class TTSClient {
   constructor(config = {}) {
@@ -51,6 +17,11 @@ export class TTSClient {
     this.isPlaying = false;
     this.micPermissionGranted = false;
     this.currentRequest = null;
+    this.speechStartedAt = null;
+    this.lastOutputActivityAt = null;
+    this.outputSilenceEnergyThreshold = config.outputSilenceEnergyThreshold ?? 0.018;
+    this.outputSilenceCompletionMs = config.outputSilenceCompletionMs ?? 1200;
+    this.minimumOutputDurationMs = config.minimumOutputDurationMs ?? 420;
     
     this.listeners = new Set();
     
@@ -109,17 +80,7 @@ export class TTSClient {
   }
 
   buildExpressivePrompt(text, voiceStyle = 'cheerful', emotionalDelivery = '') {
-    const profile = EMOTIONAL_DELIVERY_PROFILES[voiceStyle] || EMOTIONAL_DELIVERY_PROFILES.neutral;
-    const delivery = emotionalDelivery || profile.delivery;
-    const tagInstruction = profile.tag
-      ? `Use the expressive cue ${profile.tag} at the start if it improves delivery; the cue is audio direction, not an extra spoken word.`
-      : 'Use no nonverbal expressive cue.';
-
-    return `Speak exactly this line as the animated object. Do not add extra words.
-Voice style: ${voiceStyle}.
-Emotional delivery: ${delivery}.
-${tagInstruction}
-Line: "${text}"`;
+    return buildExpressivePrompt(text, voiceStyle, emotionalDelivery);
   }
 
   async synthesizeSpeech(text, voiceStyle = 'cheerful', emotionalDelivery = '') {
@@ -165,9 +126,12 @@ Line: "${text}"`;
       },
       onDisconnect: (details) => {
         logger.info('TTSClient', 'Disconnected from agent:', details);
-        this._stopAudioAnalysisLoop();
+        if (this.isPlaying) {
+          this._completePlayback();
+        } else {
+          this._stopAudioAnalysisLoop();
+        }
         this.isConnected = false;
-        this.isPlaying = false;
         this.conversation = null;
         this.emit('onDisconnected', { details });
       },
@@ -177,7 +141,11 @@ Line: "${text}"`;
       },
       onError: (error, context) => {
         logger.error('TTSClient', 'Agent error:', error, context);
-        this._stopAudioAnalysisLoop();
+        if (this.isPlaying) {
+          this._completePlayback();
+        } else {
+          this._stopAudioAnalysisLoop();
+        }
         this.emit('onError', { error: error.message || String(error) });
       },
       onAudioAlignment: (alignment) => {
@@ -218,8 +186,11 @@ Line: "${text}"`;
 
     if (mode === 'speaking') {
       this.isPlaying = true;
-      const requestStart = this.currentRequestStart || performance.now();
-      const latencyToFirstAudio = performance.now() - requestStart;
+      const now = performance.now();
+      this.speechStartedAt = now;
+      this.lastOutputActivityAt = now;
+      const requestStart = this.currentRequestStart || now;
+      const latencyToFirstAudio = now - requestStart;
 
       this.emit('onAudioStart', {
         latencyToFirstAudio: latencyToFirstAudio
@@ -228,26 +199,65 @@ Line: "${text}"`;
 
       logger.info('TTSClient', 'Agent started speaking, latency:', latencyToFirstAudio, 'ms');
     } else if (mode === 'listening' && this.isPlaying) {
-      this.isPlaying = false;
-      this._stopAudioAnalysisLoop();
-      const requestStart = this.currentRequestStart || performance.now();
-      const totalLatency = performance.now() - requestStart;
-
-      this.metrics.successfulRequests++;
-      this.metrics.lastLatency = totalLatency;
-      this.metrics.averageLatency = this.calculateMovingAverage(this.metrics.averageLatency, totalLatency);
-
-      this.emit('onPlaybackComplete');
-      this.emit('onSynthesisComplete', {
-        text: this.currentRequest?.text,
-        voiceStyle: this.currentRequest?.voiceStyle,
-        emotionalDelivery: this.currentRequest?.emotionalDelivery,
-        latency: totalLatency
-      });
-      this.currentRequest = null;
-
-      logger.info('TTSClient', 'Agent finished speaking, total latency:', totalLatency, 'ms');
+      this._completePlayback();
     }
+  }
+
+  _completePlayback() {
+    this.isPlaying = false;
+    this._stopAudioAnalysisLoop();
+    const requestStart = this.currentRequestStart || performance.now();
+    const totalLatency = performance.now() - requestStart;
+
+    this.metrics.successfulRequests++;
+    this.metrics.lastLatency = totalLatency;
+    this.metrics.averageLatency = this.calculateMovingAverage(this.metrics.averageLatency, totalLatency);
+
+    this.emit('onPlaybackComplete');
+    this.emit('onSynthesisComplete', {
+      text: this.currentRequest?.text,
+      voiceStyle: this.currentRequest?.voiceStyle,
+      emotionalDelivery: this.currentRequest?.emotionalDelivery,
+      latency: totalLatency
+    });
+    this.currentRequest = null;
+    this.speechStartedAt = null;
+    this.lastOutputActivityAt = null;
+
+    logger.info('TTSClient', 'Agent finished speaking, total latency:', totalLatency, 'ms');
+  }
+
+  _handleOutputAnalysis(analysis, timestamp = performance.now()) {
+    this.emit('onAudioAnalysis', analysis);
+
+    if (!this.isPlaying) {
+      return;
+    }
+
+    const energy = Number.isFinite(analysis.energy) ? analysis.energy : 0;
+    if (energy >= this.outputSilenceEnergyThreshold) {
+      this.lastOutputActivityAt = timestamp;
+      return;
+    }
+
+    const speechStartedAt = this.speechStartedAt ?? timestamp;
+    const lastOutputActivityAt = this.lastOutputActivityAt ?? speechStartedAt;
+    const longEnoughToBeSpeech = timestamp - speechStartedAt >= this.minimumOutputDurationMs;
+    const silentLongEnough = timestamp - lastOutputActivityAt >= this.outputSilenceCompletionMs;
+
+    if (longEnoughToBeSpeech && silentLongEnough) {
+      logger.info('TTSClient', 'Completing playback after sustained output silence');
+      this._completePlayback();
+    }
+  }
+
+  _handleOutputAnalysisError(error) {
+    if (this.isPlaying) {
+      this._completePlayback();
+    } else {
+      this._stopAudioAnalysisLoop();
+    }
+    this.emit('onError', { error: error.message || String(error) });
   }
 
   _startAudioAnalysisLoop() {
@@ -262,13 +272,12 @@ Line: "${text}"`;
         const frequencyData = await this.conversation.getOutputByteFrequencyData();
         const volume = await this.conversation.getOutputVolume();
         if (!frequencyData) {
+          this._handleOutputAnalysis({ energy: 0, centroid: 0, spectrum: [] });
           return;
         }
-        this.emit('onAudioAnalysis', createAudioAnalysisFromFrequencyData(frequencyData, volume));
+        this._handleOutputAnalysis(createAudioAnalysisFromFrequencyData(frequencyData, volume));
       } catch (error) {
-        this.isPlaying = false;
-        this._stopAudioAnalysisLoop();
-        this.emit('onError', { error: error.message || String(error) });
+        this._handleOutputAnalysisError(error);
       }
     }, 33);
   }
@@ -291,11 +300,8 @@ Line: "${text}"`;
 
   stopCurrentAudio() {
     if (this.conversation && this.isPlaying) {
-      // For agents, we might not have direct control to stop mid-speech
-      // But we can end the conversation session
       logger.info('TTSClient', 'Stopping current speech...');
-      this.isPlaying = false;
-      this._stopAudioAnalysisLoop();
+      this._completePlayback();
     }
   }
 
