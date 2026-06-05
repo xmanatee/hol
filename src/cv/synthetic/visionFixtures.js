@@ -75,6 +75,30 @@ const backgroundBase = (x, y, imageData, frameIndex, seed, variant) => {
     ];
   }
 
+  if (variant === 'window') {
+    const brightBand = x > imageData.width * 0.58 && y < imageData.height * 0.7 ? 38 : 0;
+    const blind = Math.abs(((y + frameIndex * 1.7) % 54) - 27) < 3 ? -34 : 0;
+    const base = 118 - vignette * 46 + grain * 20 + brightBand + blind;
+    return [
+      clamp(base + 24, 28, 238),
+      clamp(base + 26, 28, 238),
+      clamp(base + 18, 28, 238),
+      255,
+    ];
+  }
+
+  if (variant === 'kitchen') {
+    const tile = (Math.floor((x + movingOffset * 0.5) / 52) + Math.floor(y / 52)) % 2 ? 10 : -6;
+    const grout = Math.abs((x % 52) - 26) < 1 || Math.abs((y % 52) - 26) < 1 ? -30 : 0;
+    const base = 112 - vignette * 38 + grain * 22 + tile + grout;
+    return [
+      clamp(base + 30, 22, 230),
+      clamp(base + 25, 22, 230),
+      clamp(base + 18, 22, 230),
+      255,
+    ];
+  }
+
   const deskLine = y > imageData.height * 0.62 ? 18 : 0;
   const stripe = (Math.floor((x + y * 0.35) / 46) % 2) * 5;
   const base = 116 - vignette * 56 + grain * 18 + deskLine + stripe;
@@ -367,6 +391,80 @@ const boxTexture = face => (u, v) => {
   return [132 + grid + n, 86 + grid * 0.42 + n, 52 + grid * 0.22 + n, 255];
 };
 
+const phoneTexture = (u, v) => {
+  const glassNoise = (noise(u * 130, v * 180, 61) - 0.5) * 16;
+  const bezel = u < 0.06 || u > 0.94 || v < 0.05 || v > 0.95;
+  const glare = Math.abs((u - 0.72) + (v - 0.22) * 0.68) < 0.035;
+  const iconColumn = Math.floor((u - 0.14) * 6);
+  const iconRow = Math.floor((v - 0.2) * 8);
+  const iconGrid = u > 0.14 && u < 0.86 && v > 0.2 && v < 0.82 &&
+    iconColumn >= 0 &&
+    iconRow >= 0 &&
+    Math.abs(((u - 0.14) * 6) % 1 - 0.5) < 0.27 &&
+    Math.abs(((v - 0.2) * 8) % 1 - 0.5) < 0.22;
+  const qr = u > 0.64 && u < 0.86 && v > 0.68 && v < 0.9 &&
+    ((Math.floor(u * 74) + Math.floor(v * 86)) % 5 < 2);
+  const cameraIsland = u > 0.12 && u < 0.32 && v > 0.08 && v < 0.2;
+
+  if (bezel) return [10 + glassNoise, 12 + glassNoise, 16 + glassNoise, 255];
+  if (cameraIsland) return [34 + glassNoise, 36 + glassNoise, 42 + glassNoise, 255];
+  if (qr) return [220 + glassNoise * 0.2, 224 + glassNoise * 0.2, 232 + glassNoise * 0.2, 255];
+  if (glare) return [192 + glassNoise * 0.2, 216 + glassNoise * 0.2, 238 + glassNoise * 0.2, 255];
+  if (iconGrid) {
+    const colorPick = (iconColumn + iconRow * 3) % 5;
+    const colors = [
+      [60, 118, 196],
+      [58, 154, 112],
+      [190, 92, 78],
+      [202, 158, 62],
+      [128, 96, 178],
+    ];
+    const color = colors[colorPick];
+    return [color[0] + glassNoise, color[1] + glassNoise, color[2] + glassNoise, 255];
+  }
+
+  return [24 + glassNoise, 34 + glassNoise, 52 + glassNoise, 255];
+};
+
+const bottleTexture = (u, v) => {
+  const n = (noise(u * 120, v * 115, 73) - 0.5) * 24;
+  const label = v > 0.22 && v < 0.72;
+  const labelStripe = label && Math.abs(u - 0.52) < 0.055;
+  const barcode = label && u > 0.66 && u < 0.86 && v > 0.48 && v < 0.66 && Math.floor(u * 145) % 4 < 2;
+  const smallText = label && u > 0.18 && u < 0.58 && v > 0.34 && v < 0.6 &&
+    ((Math.floor(u * 130) + Math.floor(v * 170)) % 11 < 3);
+  const emboss = Math.floor(v * 88) % 13 === 0;
+  const shoulder = v < 0.16;
+
+  if (barcode) return [34 + n * 0.15, 38 + n * 0.15, 42 + n * 0.15, 255];
+  if (smallText) return [28 + n * 0.1, 56 + n * 0.1, 84 + n * 0.1, 255];
+  if (labelStripe) return [236 + n * 0.2, 216 + n * 0.2, 82 + n * 0.2, 255];
+  if (label) return [224 + n * 0.25, 236 + n * 0.2, 230 + n * 0.2, 255];
+  if (emboss) return [42 + n, 106 + n * 0.6, 124 + n * 0.45, 255];
+  if (shoulder) return [36 + n, 120 + n * 0.7, 142 + n * 0.5, 255];
+  return [30 + n, 96 + n * 0.65, 118 + n * 0.45, 255];
+};
+
+const pouchTexture = (u, v) => {
+  const crinkle = Math.sin(u * 44 + Math.sin(v * 19) * 2.2) * 18 +
+    Math.cos(v * 38 + u * 5) * 16 +
+    (noise(u * 170, v * 150, 89) - 0.5) * 28;
+  const seal = v < 0.08 || v > 0.9 || u < 0.06 || u > 0.94;
+  const logo = u > 0.22 && u < 0.76 && v > 0.18 && v < 0.44 &&
+    Math.abs(Math.sin((u - 0.2) * Math.PI * 4.4) * 0.06 + 0.31 - v) < 0.025;
+  const productPhoto = u > 0.18 && u < 0.82 && v > 0.52 && v < 0.8 &&
+    ((Math.floor(u * 28) + Math.floor(v * 31)) % 2 === 0);
+  const nutrition = u > 0.62 && u < 0.88 && v > 0.42 && v < 0.86;
+  const rows = nutrition && Math.floor(v * 92) % 6 === 0;
+
+  if (seal) return [150 + crinkle, 52 + crinkle * 0.18, 28 + crinkle * 0.12, 255];
+  if (logo) return [250 + crinkle * 0.1, 238 + crinkle * 0.1, 210 + crinkle * 0.1, 255];
+  if (rows) return [34 + crinkle * 0.1, 34 + crinkle * 0.1, 30 + crinkle * 0.1, 255];
+  if (nutrition) return [230 + crinkle * 0.15, 226 + crinkle * 0.15, 206 + crinkle * 0.15, 255];
+  if (productPhoto) return [202 + crinkle * 0.25, 136 + crinkle * 0.18, 54 + crinkle * 0.12, 255];
+  return [196 + crinkle, 64 + crinkle * 0.24, 34 + crinkle * 0.18, 255];
+};
+
 const createPlaneGroundTruth = ({ pose, camera, objectWidth, objectHeight, anchorUv, reference = null }) => {
   const modelPoint = uv => ({
     x: (uv.u - 0.5) * objectWidth,
@@ -548,6 +646,7 @@ export const createPlanarBookSequence = ({
     height: DEFAULT_HEIGHT,
     tap: frames[0].groundTruth.anchor,
     boundingBox: frames[0].boundingBox,
+    targetClass: 'book',
     camera: DEFAULT_CAMERA,
     frames,
     metadata: {
@@ -558,6 +657,74 @@ export const createPlanarBookSequence = ({
       hasOcclusion: occlusionFrames.length > 0,
       hasMovingBackground: true,
       backgroundVariant,
+      targetClass: 'book',
+      targetModel: 'planar-homography',
+    },
+  };
+};
+
+const phonePoseAt = (index, count) => {
+  const t = index / Math.max(1, count - 1);
+  return {
+    yaw: (Math.sin(t * Math.PI * 1.65) * 32 + 8) * Math.PI / 180,
+    pitch: (Math.sin(t * Math.PI * 1.35 + 0.5) * 18 - 4) * Math.PI / 180,
+    roll: Math.sin(t * Math.PI * 2.1) * 16 * Math.PI / 180,
+    tx: -20 + Math.sin(t * Math.PI * 2.4) * 32,
+    ty: Math.cos(t * Math.PI * 1.7) * 22,
+    distance: 680 - Math.sin(t * Math.PI * 1.05) * 130,
+  };
+};
+
+export const createGlossyPhoneSequence = ({
+  frameCount = 34,
+  occlusionFrames = [12, 13, 25],
+  backgroundVariant = 'window',
+  backgroundSeed = 67,
+} = {}) => {
+  const objectWidth = 126;
+  const objectHeight = 244;
+  const anchorUv = { u: 0.52, v: 0.56 };
+  const referencePose = phonePoseAt(0, frameCount);
+  const reference = createPlaneGroundTruth({
+    pose: referencePose,
+    camera: DEFAULT_CAMERA,
+    objectWidth,
+    objectHeight,
+    anchorUv,
+  });
+  const occlusionSet = new Set(occlusionFrames);
+  const frames = Array.from({ length: frameCount }, (_, index) => drawPlaneFrame({
+    kind: 'glossy-phone',
+    frameIndex: index,
+    pose: phonePoseAt(index, frameCount),
+    objectWidth,
+    objectHeight,
+    anchorUv,
+    reference,
+    occluded: occlusionSet.has(index),
+    texture: phoneTexture,
+    backgroundSeed,
+    backgroundVariant,
+  }));
+
+  return {
+    kind: 'glossy-phone',
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
+    tap: frames[0].groundTruth.anchor,
+    boundingBox: frames[0].boundingBox,
+    targetClass: 'cell phone',
+    camera: DEFAULT_CAMERA,
+    frames,
+    metadata: {
+      hasBackground: true,
+      hasDarkRegions: true,
+      hasFineTexture: true,
+      hasLightingVariation: true,
+      hasOcclusion: occlusionFrames.length > 0,
+      hasMovingBackground: true,
+      backgroundVariant,
+      targetClass: 'cell phone',
       targetModel: 'planar-homography',
     },
   };
@@ -572,6 +739,118 @@ const canPoseAt = (index, count) => {
     tx: 18 + Math.sin(t * Math.PI * 1.8) * 34,
     ty: Math.cos(t * Math.PI * 1.3) * 16,
     distance: 690 - Math.sin(t * Math.PI) * 70,
+  };
+};
+
+const bottlePoseAt = (index, count) => {
+  const t = index / Math.max(1, count - 1);
+  return {
+    yaw: (Math.sin(t * Math.PI * 1.7) * 38 - 10) * Math.PI / 180,
+    pitch: Math.sin(t * Math.PI * 1.45 + 0.2) * 10 * Math.PI / 180,
+    roll: Math.sin(t * Math.PI * 1.55) * 8 * Math.PI / 180,
+    tx: 12 + Math.sin(t * Math.PI * 2.2) * 26,
+    ty: Math.cos(t * Math.PI * 1.5) * 18,
+    distance: 700 - Math.sin(t * Math.PI) * 86,
+  };
+};
+
+const drawBottleFrame = ({ frameIndex, frameCount, occluded, reference, backgroundSeed, backgroundVariant }) => {
+  const imageData = createImageData(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+  fillBackground(imageData, frameIndex, backgroundSeed, backgroundVariant);
+  const pose = bottlePoseAt(frameIndex, frameCount);
+  const bodyRadius = 50;
+  const bodyHeight = 220;
+  const projected = [];
+  const strips = 42;
+
+  for (let strip = 0; strip < strips; strip++) {
+    const a0 = -Math.PI * 0.5 + strip / strips * Math.PI;
+    const a1 = -Math.PI * 0.5 + (strip + 1) / strips * Math.PI;
+    const quad3 = [
+      { x: Math.sin(a0) * bodyRadius, y: -bodyHeight / 2, z: Math.cos(a0) * bodyRadius - bodyRadius },
+      { x: Math.sin(a1) * bodyRadius, y: -bodyHeight / 2, z: Math.cos(a1) * bodyRadius - bodyRadius },
+      { x: Math.sin(a1) * bodyRadius, y: bodyHeight / 2, z: Math.cos(a1) * bodyRadius - bodyRadius },
+      { x: Math.sin(a0) * bodyRadius, y: bodyHeight / 2, z: Math.cos(a0) * bodyRadius - bodyRadius },
+    ];
+    const quad = quad3.map(point => project3(point, pose, DEFAULT_CAMERA));
+    projected.push(...quad);
+    const shade = clamp(0.42 + Math.cos((a0 + a1) * 0.5) * 0.32 + projectNormal(pose).z * 0.17, 0.3, 1);
+    drawQuad(imageData, quad, (u, v) => bottleTexture((strip + u) / strips, v), shade);
+  }
+
+  const neckWidth = 42;
+  const neckHeight = 58;
+  const neckCorners = [
+    { x: -neckWidth / 2, y: -bodyHeight / 2 - neckHeight, z: -bodyRadius * 0.55 },
+    { x: neckWidth / 2, y: -bodyHeight / 2 - neckHeight, z: -bodyRadius * 0.55 },
+    { x: neckWidth / 2, y: -bodyHeight / 2, z: -bodyRadius * 0.55 },
+    { x: -neckWidth / 2, y: -bodyHeight / 2, z: -bodyRadius * 0.55 },
+  ].map(point => project3(point, pose, DEFAULT_CAMERA));
+  projected.push(...neckCorners);
+  drawQuad(imageData, neckCorners, (u, v) => bottleTexture(u, v * 0.18), 0.82);
+
+  const boundingBox = bboxFor(projected);
+  if (occluded) drawOcclusion(imageData, boundingBox, frameIndex, 'label-bottle');
+  const groundTruth = createLocalSurfaceGroundTruth({
+    pose,
+    camera: DEFAULT_CAMERA,
+    anchorPoint: { x: 0, y: 0, z: 0 },
+    basisXPoint: { x: 42, y: 0, z: 0 },
+    basisYPoint: { x: 0, y: 42, z: 0 },
+    reference,
+  });
+
+  return {
+    imageData,
+    corners: projected.map(point => ({ x: point.x, y: point.y })),
+    boundingBox,
+    groundTruth,
+  };
+};
+
+export const createLabelBottleSequence = ({
+  frameCount = 34,
+  occlusionFrames = [9, 10, 26],
+  backgroundVariant = 'kitchen',
+  backgroundSeed = 79,
+} = {}) => {
+  const reference = createLocalSurfaceGroundTruth({
+    pose: bottlePoseAt(0, frameCount),
+    camera: DEFAULT_CAMERA,
+    anchorPoint: { x: 0, y: 0, z: 0 },
+    basisXPoint: { x: 42, y: 0, z: 0 },
+    basisYPoint: { x: 0, y: 42, z: 0 },
+  });
+  const occlusionSet = new Set(occlusionFrames);
+  const frames = Array.from({ length: frameCount }, (_, index) => drawBottleFrame({
+    frameIndex: index,
+    frameCount,
+    occluded: occlusionSet.has(index),
+    reference,
+    backgroundSeed,
+    backgroundVariant,
+  }));
+
+  return {
+    kind: 'label-bottle',
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
+    tap: frames[0].groundTruth.anchor,
+    boundingBox: frames[0].boundingBox,
+    targetClass: 'bottle',
+    camera: DEFAULT_CAMERA,
+    frames,
+    metadata: {
+      hasBackground: true,
+      hasDarkRegions: true,
+      hasFineTexture: true,
+      hasLightingVariation: true,
+      hasOcclusion: occlusionFrames.length > 0,
+      hasMovingBackground: true,
+      backgroundVariant,
+      targetClass: 'bottle',
+      targetModel: 'curved-sparse-reconstruction',
+    },
   };
 };
 
@@ -651,6 +930,7 @@ export const createCylindricalCanSequence = ({
     height: DEFAULT_HEIGHT,
     tap: frames[0].groundTruth.anchor,
     boundingBox: frames[0].boundingBox,
+    targetClass: 'can',
     camera: DEFAULT_CAMERA,
     frames,
     metadata: {
@@ -661,6 +941,7 @@ export const createCylindricalCanSequence = ({
       hasOcclusion: occlusionFrames.length > 0,
       hasMovingBackground: true,
       backgroundVariant,
+      targetClass: 'can',
       targetModel: 'curved-sparse-reconstruction',
     },
   };
@@ -756,6 +1037,7 @@ export const createTexturedCupSequence = ({
     height: DEFAULT_HEIGHT,
     tap: frames[0].groundTruth.anchor,
     boundingBox: frames[0].boundingBox,
+    targetClass: 'cup',
     camera: DEFAULT_CAMERA,
     frames,
     metadata: {
@@ -766,7 +1048,75 @@ export const createTexturedCupSequence = ({
       hasOcclusion: occlusionFrames.length > 0,
       hasMovingBackground: true,
       backgroundVariant,
+      targetClass: 'cup',
       targetModel: 'tapered-curved-sparse-reconstruction',
+    },
+  };
+};
+
+const pouchPoseAt = (index, count) => {
+  const t = index / Math.max(1, count - 1);
+  return {
+    yaw: (Math.sin(t * Math.PI * 1.25) * 26 - 7) * Math.PI / 180,
+    pitch: (Math.sin(t * Math.PI * 1.9 + 0.2) * 19) * Math.PI / 180,
+    roll: Math.sin(t * Math.PI * 2.3) * 13 * Math.PI / 180,
+    tx: 22 + Math.sin(t * Math.PI * 2.0) * 36,
+    ty: Math.cos(t * Math.PI * 1.6) * 19,
+    distance: 735 - Math.sin(t * Math.PI * 1.15) * 105,
+  };
+};
+
+export const createSnackPouchSequence = ({
+  frameCount = 34,
+  occlusionFrames = [11, 12, 21],
+  backgroundVariant = 'busy',
+  backgroundSeed = 97,
+} = {}) => {
+  const objectWidth = 210;
+  const objectHeight = 236;
+  const anchorUv = { u: 0.48, v: 0.57 };
+  const referencePose = pouchPoseAt(0, frameCount);
+  const reference = createPlaneGroundTruth({
+    pose: referencePose,
+    camera: DEFAULT_CAMERA,
+    objectWidth,
+    objectHeight,
+    anchorUv,
+  });
+  const occlusionSet = new Set(occlusionFrames);
+  const frames = Array.from({ length: frameCount }, (_, index) => drawPlaneFrame({
+    kind: 'snack-pouch',
+    frameIndex: index,
+    pose: pouchPoseAt(index, frameCount),
+    objectWidth,
+    objectHeight,
+    anchorUv,
+    reference,
+    occluded: occlusionSet.has(index),
+    texture: pouchTexture,
+    backgroundSeed,
+    backgroundVariant,
+  }));
+
+  return {
+    kind: 'snack-pouch',
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
+    tap: frames[0].groundTruth.anchor,
+    boundingBox: frames[0].boundingBox,
+    targetClass: 'bag',
+    camera: DEFAULT_CAMERA,
+    frames,
+    metadata: {
+      hasBackground: true,
+      hasDarkRegions: true,
+      hasFineTexture: true,
+      hasLightingVariation: true,
+      hasOcclusion: occlusionFrames.length > 0,
+      hasMovingBackground: true,
+      backgroundVariant,
+      targetClass: 'bag',
+      targetModel: 'planar-homography',
     },
   };
 };
@@ -868,6 +1218,7 @@ export const createRigidBoxSequence = ({
     height: DEFAULT_HEIGHT,
     tap: frames[0].groundTruth.anchor,
     boundingBox: frames[0].boundingBox,
+    targetClass: 'box',
     camera: DEFAULT_CAMERA,
     frames,
     metadata: {
@@ -878,6 +1229,7 @@ export const createRigidBoxSequence = ({
       hasOcclusion: occlusionFrames.length > 0,
       hasMovingBackground: true,
       backgroundVariant,
+      targetClass: 'box',
       targetModel: 'multi-plane-sparse-reconstruction',
     },
   };
@@ -890,4 +1242,7 @@ export const createSyntheticObjectSuite = () => [
   createCylindricalCanSequence(),
   createTexturedCupSequence(),
   createRigidBoxSequence(),
+  createGlossyPhoneSequence(),
+  createLabelBottleSequence(),
+  createSnackPouchSequence(),
 ];

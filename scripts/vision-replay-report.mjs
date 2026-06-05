@@ -6,26 +6,33 @@ import {
   summarizeReplay,
 } from '../src/cv/synthetic/anchorReplayHarness.js';
 import { scoreHeadPoseReplay } from '../src/cv/synthetic/headPoseReplayHarness.js';
+import { RECONSTRUCTION_MODES } from '../src/cv/anchor.reconstructionModes.js';
 
 const cv = await loadOpenCvForNode();
 const replaySummaries = [];
 
 for (const scenario of reportReplayScenarios) {
-  const sequence = scenario.create();
-  const replay = await replayImageAnchorSequence({
-    cv,
-    sequence,
-    trackingMode: 'sparse-reconstruction',
-  });
-  replaySummaries.push({
-    name: scenario.name,
-    kind: sequence.kind,
-    backgroundVariant: sequence.metadata.backgroundVariant,
-    anchorCreated: replay.anchorCreated,
-    createFailure: replay.createFailure || null,
-    ...summarizeReplay(replay),
-    headPose: scoreHeadPoseReplay({ replay, sequence }).summary,
-  });
+  for (const mode of RECONSTRUCTION_MODES) {
+    const sequence = scenario.create();
+    const replay = await replayImageAnchorSequence({
+      cv,
+      sequence,
+      trackingMode: mode.id,
+    });
+    const lastFrame = replay.frames.at(-1);
+    replaySummaries.push({
+      name: scenario.name,
+      kind: sequence.kind,
+      mode: mode.id,
+      targetClass: sequence.targetClass,
+      surfaceModel: lastFrame?.metrics?.reconstructionPreview?.surface?.model || null,
+      backgroundVariant: sequence.metadata.backgroundVariant,
+      anchorCreated: replay.anchorCreated,
+      createFailure: replay.createFailure || null,
+      ...summarizeReplay(replay),
+      headPose: scoreHeadPoseReplay({ replay, sequence }).summary,
+    });
+  }
 }
 
 const generatedFixtures = createSyntheticObjectSuite().map(sequence => ({
@@ -34,6 +41,7 @@ const generatedFixtures = createSyntheticObjectSuite().map(sequence => ({
   width: sequence.width,
   height: sequence.height,
   targetModel: sequence.metadata.targetModel,
+  targetClass: sequence.targetClass,
   backgroundVariant: sequence.metadata.backgroundVariant,
   hasBackground: sequence.metadata.hasBackground,
   hasDarkRegions: sequence.metadata.hasDarkRegions,

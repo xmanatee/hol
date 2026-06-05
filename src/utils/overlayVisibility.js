@@ -1,4 +1,4 @@
-import { RECONSTRUCTION_POSE_MODEL } from '../cv/anchor.reconstruction.js';
+import { isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
 
 export const shouldRenderAnchorOverlay = ({ activeAnchor, anchorState }) => {
   if (!activeAnchor) {
@@ -6,7 +6,7 @@ export const shouldRenderAnchorOverlay = ({ activeAnchor, anchorState }) => {
   }
 
   const metrics = anchorState?.metrics;
-  if (metrics?.poseModel !== RECONSTRUCTION_POSE_MODEL) {
+  if (!isReconstructionMode(metrics?.poseModel)) {
     return true;
   }
 

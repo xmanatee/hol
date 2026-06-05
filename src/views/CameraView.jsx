@@ -10,7 +10,7 @@ import { renderDetectionOverlay, renderDebugStats, renderKeypoints } from '../ut
 import { logger } from '../utils/logger.js';
 import { describeAnchorState } from '../utils/anchorDiagnostics.js';
 import { collectRuntimeReadiness } from '../utils/runtimeReadiness.js';
-import { RECONSTRUCTION_POSE_MODEL } from '../cv/anchor.reconstruction.js';
+import { RECONSTRUCTION_POSE_MODEL, isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
 import { shouldAutoStartObjectVoice } from '../audio/objectVoicePolicy.js';
 import { shouldRenderAnchorOverlay } from '../utils/overlayVisibility.js';
 
@@ -358,7 +358,7 @@ const CameraView = () => {
               position: result.position
             });
             const qualityLabel = result.state === 'degraded' ? 'weak' : 'solid';
-            if (result.trackingMode === RECONSTRUCTION_POSE_MODEL) {
+            if (isReconstructionMode(result.trackingMode)) {
               showAnchorFeedback(`Anchor created with ${result.keypoints} keypoints. Slowly turn and tilt the object to build the 3D map.`, 'warn');
             } else {
               showAnchorFeedback(`Anchor created with ${result.keypoints} keypoints (${qualityLabel} lock).`, result.state === 'degraded' ? 'warn' : 'good');
@@ -403,8 +403,8 @@ const CameraView = () => {
   useEffect(() => {
     const activeAnchor = anchorSystemState.activeAnchor;
     const diagnostics = activeAnchor?.diagnostics;
-    const isReconstructionAnchor = activeAnchor?.trackingMode === RECONSTRUCTION_POSE_MODEL ||
-      anchorSystemState.anchorState?.metrics?.poseModel === RECONSTRUCTION_POSE_MODEL;
+    const activeMode = anchorSystemState.anchorState?.metrics?.poseModel || activeAnchor?.trackingMode;
+    const isReconstructionAnchor = isReconstructionMode(activeMode);
 
     if (!activeAnchor || !isReconstructionAnchor || !diagnostics?.reconstructionReady || !canvasRef.current) {
       return;
@@ -417,7 +417,7 @@ const CameraView = () => {
     mapReadyAnchorRef.current = activeAnchor.createdAt;
 
     if (shouldAutoStartObjectVoice({
-      trackingMode: RECONSTRUCTION_POSE_MODEL,
+      trackingMode: activeMode,
       reconstructionReady: true,
       hasUserGesture: false,
     })) {

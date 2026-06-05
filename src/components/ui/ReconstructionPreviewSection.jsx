@@ -6,6 +6,7 @@ import {
   formatVector3,
 } from './diagnosticFormat.js';
 import { DiagnosticRow } from './DiagnosticRow.jsx';
+import { isReconstructionMode } from '../../cv/anchor.reconstructionModes.js';
 
 const PREVIEW_WIDTH = 112;
 const PREVIEW_HEIGHT = 82;
@@ -55,7 +56,7 @@ const edgeSegments = (edges, byId) => edges
   .filter(segment => segment.from && segment.to);
 
 const PreviewSvg = ({ title, points, anchor, surface, normal, projector }) => {
-  if (!points.length) {
+  if (!points.length && !(surface.mesh || []).length) {
     return (
       <div className="rounded border border-gray-800 bg-gray-950 px-2 py-3 text-center text-[10px] text-gray-500">
         {title}: no points
@@ -63,12 +64,19 @@ const PreviewSvg = ({ title, points, anchor, surface, normal, projector }) => {
     );
   }
 
-  const pointsWithAnchor = anchor ? [...points, { ...anchor, id: 'anchor' }] : points;
+  const meshPoints = (surface.mesh || []).map(point => ({ ...point, id: `mesh:${point.id}`, meshPoint: true }));
+  const meshEdges = (surface.edges || []).map(edge => ({
+    ...edge,
+    from: `mesh:${edge.from}`,
+    to: `mesh:${edge.to}`,
+  }));
+  const meshHull = (surface.hull || []).map(id => `mesh:${id}`);
+  const pointsWithAnchor = anchor ? [...meshPoints, ...points, { ...anchor, id: 'anchor' }] : [...meshPoints, ...points];
   const projectedPoints = normalizePreviewPoints(pointsWithAnchor, projector);
   const anchorPoint = projectedPoints.find(point => point.id === 'anchor');
-  const landmarkPoints = projectedPoints.filter(point => point.id !== 'anchor');
+  const landmarkPoints = projectedPoints.filter(point => point.id !== 'anchor' && !String(point.id).startsWith('mesh:'));
   const byId = new Map(projectedPoints.map(point => [point.id, point]));
-  const hullPoints = surface.hull.map(id => byId.get(id)).filter(Boolean);
+  const hullPoints = meshHull.map(id => byId.get(id)).filter(Boolean);
   const normalEnd = anchorPoint && normal ? {
     x: anchorPoint.x + normal.x * 24,
     y: anchorPoint.y - normal.y * 24,
@@ -88,7 +96,7 @@ const PreviewSvg = ({ title, points, anchor, surface, normal, projector }) => {
             strokeWidth="0.7"
           />
         )}
-        {edgeSegments(surface.edges, byId).map(({ edge, from, to }) => (
+        {edgeSegments(meshEdges, byId).map(({ edge, from, to }) => (
           <line
             key={`${edge.from}:${edge.to}`}
             x1={from.x}
@@ -152,11 +160,11 @@ export const ReconstructionPreviewSection = ({ details }) => {
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-[10px] uppercase tracking-wide text-gray-500">3D Reconstruction</span>
         <span className={`rounded border px-1.5 py-0.5 text-[10px] ${
-          details.poseModel === 'sparse-reconstruction'
+          isReconstructionMode(details.poseModel)
             ? 'border-green-700 bg-green-950 text-green-300'
             : 'border-gray-700 bg-gray-900 text-gray-400'
         }`}>
-          {details.poseModel === 'sparse-reconstruction' ? 'ON' : 'OFF'}
+          {isReconstructionMode(details.poseModel) ? 'ON' : 'OFF'}
         </span>
       </div>
 
@@ -191,6 +199,8 @@ export const ReconstructionPreviewSection = ({ details }) => {
         <DiagnosticRow label="Inferred normal" value={formatVector3(normal)} tone={normal ? 'good' : 'warn'} />
         <DiagnosticRow label="Inferred scale" value={formatNumber(planar?.scale, 2)} tone={planar?.scale ? 'good' : 'warn'} />
         <DiagnosticRow label="Inferred roll" value={formatDegrees(planar?.rotation)} tone={typeof planar?.rotation === 'number' ? 'good' : 'warn'} />
+        <DiagnosticRow label="Target class" value={details.targetClass || 'N/A'} tone={details.targetClass ? 'good' : 'warn'} />
+        <DiagnosticRow label="Surface model" value={previewSurface.model || 'N/A'} tone={previewSurface.model ? 'good' : 'warn'} />
         <DiagnosticRow label="Preview points" value={`${previewPoints.length}/${totalLandmarks}`} tone={previewPoints.length >= 18 ? 'good' : 'warn'} />
         <DiagnosticRow label="Map confidence" value={formatPercent(mapConfidence)} tone={(mapConfidence ?? 0) > 0.55 ? 'good' : 'warn'} />
         <DiagnosticRow label="Avg support" value={formatPercent(averageSupport)} tone={(averageSupport ?? 0) > 0.65 ? 'good' : 'warn'} />

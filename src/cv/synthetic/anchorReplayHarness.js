@@ -55,6 +55,7 @@ export const replayImageAnchorSequence = async ({ cv, sequence, trackingMode = '
       y1: sequence.boundingBox.y1,
       x2: sequence.boundingBox.x2,
       y2: sequence.boundingBox.y2,
+      class: sequence.targetClass,
     }
   ));
 

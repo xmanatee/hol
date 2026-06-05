@@ -12,6 +12,7 @@ import { loadOpenCvForNode } from './synthetic/opencvNodeLoader.js';
 import { replayImageAnchorSequence, summarizeReplay } from './synthetic/anchorReplayHarness.js';
 import { scoreHeadPoseReplay } from './synthetic/headPoseReplayHarness.js';
 import { realisticReplayScenarios } from './synthetic/visionReplayScenarios.js';
+import { RECONSTRUCTION_MODES } from './anchor.reconstructionModes.js';
 
 const createPerfectHeadPoseReplay = () => {
   const templateRegion = { x: 270, y: 178, width: 112, height: 126 };
@@ -66,6 +67,9 @@ const assertReplayWithinLimits = ({ name, replay, summary, headPose, limits }) =
   assert.ok(summary.maxAnchorError <= limits.maxAnchorError, `${name}: max anchor error ${summary.maxAnchorError.toFixed(2)}px`);
   assert.ok(summary.meanAnchorError <= limits.meanAnchorError, `${name}: mean anchor error ${summary.meanAnchorError.toFixed(2)}px`);
   assert.ok(summary.maxFrameJump <= limits.maxFrameJump, `${name}: max frame jump ${summary.maxFrameJump.toFixed(2)}px`);
+  if (limits.maxScaleError != null) {
+    assert.ok(summary.maxScaleError <= limits.maxScaleError, `${name}: max scale error ${summary.maxScaleError.toFixed(3)}`);
+  }
   assert.equal(headPose.visibleMismatches, 0, `${name}: visible mismatches ${headPose.visibleMismatches}`);
   assert.ok(headPose.maxWorldPositionError <= limits.maxWorldPositionError, `${name}: head world error ${headPose.maxWorldPositionError.toFixed(3)}`);
   assert.ok(headPose.maxScaleLogError <= limits.maxScaleLogError, `${name}: head scale log error ${headPose.maxScaleLogError.toFixed(3)}`);
@@ -89,7 +93,17 @@ test('synthetic object suite contains realistic textured planar and curved targe
 
   assert.deepEqual(
     suite.map(item => item.kind),
-    ['planar-book', 'dark-book', 'depth-book', 'cylindrical-can', 'textured-cup', 'rigid-box']
+    [
+      'planar-book',
+      'dark-book',
+      'depth-book',
+      'cylindrical-can',
+      'textured-cup',
+      'rigid-box',
+      'glossy-phone',
+      'label-bottle',
+      'snack-pouch',
+    ]
   );
 
   suite.forEach(sequence => {
@@ -115,22 +129,93 @@ test('real OpenCV replay tracks a realistic multi-object background matrix', asy
   const cv = await loadOpenCvForNode();
 
   for (const scenario of realisticReplayScenarios) {
-    const sequence = scenario.create();
-    const replay = await replayImageAnchorSequence({
-      cv,
-      sequence,
-      trackingMode: 'sparse-reconstruction',
-    });
-    const summary = summarizeReplay(replay);
-    const headPose = scoreHeadPoseReplay({ replay, sequence }).summary;
+    for (const mode of RECONSTRUCTION_MODES) {
+      const sequence = scenario.create();
+      const replay = await replayImageAnchorSequence({
+        cv,
+        sequence,
+        trackingMode: mode.id,
+      });
+      const summary = summarizeReplay(replay);
+      const headPose = scoreHeadPoseReplay({ replay, sequence }).summary;
+      const lastFrame = replay.frames.at(-1);
 
-    assertReplayWithinLimits({
-      name: scenario.name,
-      replay,
-      summary,
-      headPose,
-      limits: scenario.limits,
-    });
+      assertReplayWithinLimits({
+        name: `${mode.id}/${scenario.name}`,
+        replay,
+        summary,
+        headPose,
+        limits: scenario.limitsByMode?.[mode.id] || scenario.limits,
+      });
+
+      if (scenario.surfaceByMode && mode.id !== 'sparse-reconstruction') {
+        const selectedPoseFrames = summary.poseSourceCounts[mode.id] || 0;
+        assert.ok(selectedPoseFrames >= 6, `${mode.id}/${scenario.name}: selected pose frames ${selectedPoseFrames}`);
+        assert.equal(
+          lastFrame.metrics.reconstructionPreview.surface.model,
+          scenario.surfaceByMode[mode.id],
+          `${mode.id}/${scenario.name}: surface model`
+        );
+      }
+    }
+  }
+});
+
+test('real OpenCV replay exercises every selectable reconstruction engine on book can and cup', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenarios = [
+    {
+      name: 'book',
+      sequence: createPlanarBookSequence({ frameCount: 18, occlusionFrames: [] }),
+      surfaceByMode: {
+        'parametric-surface': 'plane',
+        'direct-photometric': 'photometric-surfels',
+      },
+    },
+    {
+      name: 'can',
+      sequence: createCylindricalCanSequence({ frameCount: 18, occlusionFrames: [] }),
+      surfaceByMode: {
+        'parametric-surface': 'cylinder',
+        'direct-photometric': 'photometric-surfels',
+      },
+    },
+    {
+      name: 'cup',
+      sequence: createTexturedCupSequence({ frameCount: 18, occlusionFrames: [] }),
+      surfaceByMode: {
+        'parametric-surface': 'tapered-cylinder',
+        'direct-photometric': 'photometric-surfels',
+      },
+    },
+  ];
+
+  for (const mode of RECONSTRUCTION_MODES) {
+    for (const scenario of scenarios) {
+      const replay = await replayImageAnchorSequence({
+        cv,
+        sequence: scenario.sequence,
+        trackingMode: mode.id,
+      });
+      const summary = summarizeReplay(replay);
+      const lastFrame = replay.frames.at(-1);
+
+      assert.equal(replay.anchorCreated, true, `${mode.id}/${scenario.name}: ${replay.createFailure || 'anchor failed'}`);
+      assert.equal(summary.failedFrames, 0, `${mode.id}/${scenario.name}: ${summary.failureReasons.join(', ')}`);
+      assert.ok(summary.maxAnchorError <= 26, `${mode.id}/${scenario.name}: max anchor error ${summary.maxAnchorError.toFixed(2)}px`);
+      assert.ok(summary.maxFrameJump <= 12, `${mode.id}/${scenario.name}: max jump ${summary.maxFrameJump.toFixed(2)}px`);
+      assert.ok(summary.maxScaleError <= 0.24, `${mode.id}/${scenario.name}: max scale error ${summary.maxScaleError.toFixed(3)}`);
+
+      if (mode.id !== 'sparse-reconstruction') {
+        const selectedPoseFrames = summary.poseSourceCounts[mode.id] || 0;
+        assert.ok(selectedPoseFrames >= 6, `${mode.id}/${scenario.name}: selected pose frames ${selectedPoseFrames}`);
+        assert.equal(
+          lastFrame.metrics.reconstructionPreview.surface.model,
+          scenario.surfaceByMode[mode.id],
+          `${mode.id}/${scenario.name}: surface model`
+        );
+      }
+    }
   }
 });
 

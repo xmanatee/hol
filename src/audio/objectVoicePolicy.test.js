@@ -14,6 +14,12 @@ test('object voice does not auto-start from anchor or reconstruction events', ()
     reconstructionReady: true,
     hasUserGesture: false,
   }), false);
+
+  assert.equal(shouldAutoStartObjectVoice({
+    trackingMode: 'parametric-surface',
+    reconstructionReady: true,
+    hasUserGesture: false,
+  }), false);
 });
 
 test('object voice can start from user gestures once the selected tracking mode is ready', () => {
@@ -31,6 +37,18 @@ test('object voice can start from user gestures once the selected tracking mode 
 
   assert.equal(shouldAutoStartObjectVoice({
     trackingMode: 'sparse-reconstruction',
+    reconstructionReady: true,
+    hasUserGesture: true,
+  }), true);
+
+  assert.equal(shouldAutoStartObjectVoice({
+    trackingMode: 'parametric-surface',
+    reconstructionReady: true,
+    hasUserGesture: true,
+  }), true);
+
+  assert.equal(shouldAutoStartObjectVoice({
+    trackingMode: 'direct-photometric',
     reconstructionReady: true,
     hasUserGesture: true,
   }), true);

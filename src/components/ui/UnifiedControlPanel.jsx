@@ -4,6 +4,7 @@ import { ReconstructionPreviewSection } from './ReconstructionPreviewSection.jsx
 import { DiagnosticRow } from './DiagnosticRow.jsx';
 import { formatNumber, formatPercent, formatRegion } from './diagnosticFormat.js';
 import { logger } from '../../utils/logger.js';
+import { RECONSTRUCTION_MODES, isReconstructionMode } from '../../cv/anchor.reconstructionModes.js';
 
 const sectionIdForTitle = title => `control-panel-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 
@@ -599,7 +600,7 @@ const ConfigSection = ({ onConfigChange, anchorTrackingMode }) => {
         <div className="text-[10px] uppercase tracking-wide text-gray-500">Pose Model</div>
         <div className="mt-1 grid grid-cols-2 gap-1">
           {[
-            ['sparse-reconstruction', '3D map'],
+            ...RECONSTRUCTION_MODES.map(mode => [mode.id, mode.label]),
             ['object-pose', 'Object pose']
           ].map(([mode, label]) => (
             <button
@@ -706,7 +707,7 @@ const UnifiedControlPanel = ({
     ...(anchorDiagnostics?.details || {}),
     poseModel: anchorDiagnostics?.details?.poseModel || anchorTrackingMode,
   };
-  const reconstructionMode = reconstructionDetails.poseModel === 'sparse-reconstruction';
+  const reconstructionMode = isReconstructionMode(reconstructionDetails.poseModel);
   const reconstructionPhase = reconstructionDetails.reconstructionReady
     ? 'ready'
     : (reconstructionDetails.reconstructionFrames ?? 0) > 0

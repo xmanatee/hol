@@ -1,6 +1,6 @@
 import { ImageAnchorService } from './ImageAnchorService.js';
 import { HomographyEstimator } from '../cv/anchor.homography.js';
-import { RECONSTRUCTION_POSE_MODEL } from '../cv/anchor.reconstruction.js';
+import { RECONSTRUCTION_POSE_MODEL } from '../cv/anchor.reconstructionModes.js';
 import { logger } from '../utils/logger.js';
 
 export class AnchorManager {
@@ -222,6 +222,7 @@ export class AnchorManager {
         poseInliers: anchorServiceState.metrics?.poseInliers ?? 0,
         poseModel: anchorServiceState.metrics?.poseModel || null,
         poseSource: anchorServiceState.metrics?.poseSource || null,
+        targetClass: anchorServiceState.metrics?.targetClass || null,
         poseAverageResidual: anchorServiceState.metrics?.poseAverageResidual ?? null,
         poseForeshortening: anchorServiceState.metrics?.poseForeshortening ?? null,
         reconstructionState: anchorServiceState.metrics?.reconstructionState || null,

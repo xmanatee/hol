@@ -1021,6 +1021,81 @@ test('planar homography dominates sparse reconstruction for flat textured object
   assert.equal(service.getState().metrics.poseSource, 'planar-homography');
 });
 
+test('selected surface reconstruction owns pose over planar homography when its map is ready', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.planarDominanceScore = 8;
+  service.metrics = {
+    reconstructionMapConfidence: 0.66,
+  };
+  const correspondences = Array.from({ length: 30 }, (_, index) => ({
+    prev: { x: 40 + index * 3, y: 80 + (index % 5) * 9 },
+    curr: { x: 54 + index * 3.2, y: 92 + (index % 5) * 9.4 },
+  }));
+  const planarPose = {
+    success: true,
+    method: 'planar-homography',
+    position: { x: 140, y: 132, z: 0 },
+    normal: { x: 0.04, y: -0.02, z: 0.999 },
+    planarTransform: { scale: 1.05, rotation: 0.02, confidence: 0.9, inlierCount: 28 },
+    confidence: 0.9,
+    inlierCount: 28,
+    inlierRatio: 0.93,
+    averageResidual: 0.9,
+  };
+  const reconstructionPose = {
+    success: true,
+    method: 'parametric-surface',
+    position: { x: 143, y: 135, z: 0 },
+    normal: { x: 0.34, y: -0.07, z: 0.94 },
+    planarTransform: { scale: 1.11, rotation: 0.17, confidence: 0.72, inlierCount: 24 },
+    confidence: 0.72,
+    inlierCount: 24,
+    inlierRatio: 0.8,
+    averageResidual: 2.1,
+    depthQuality: 0.18,
+    preview: {
+      statistics: {
+        mapConfidence: 0.66,
+      },
+    },
+  };
+
+  assert.equal(service._shouldPreferPlanarHomography({ planarPose, reconstructionPose, correspondences }), false);
+  assert.equal(service._shouldUsePlanarPatchTransform({ planarPose, reconstructionPose, correspondences }), false);
+  assert.equal(service._selectNormalPose({
+    reconstructionPose,
+    planarPose,
+    objectPose: { success: false, confidence: 0 },
+    poseResult: null,
+    correspondences,
+    reconstructionConsistentWithTracker: true,
+  }).method, 'parametric-surface');
+});
+
+test('selected reconstruction modes accept robust surface residuals without relaxing object pose gates', () => {
+  const service = new ImageAnchorService();
+  const correspondences = Array.from({ length: 28 }, (_, index) => ({
+    prev: { x: 40 + index * 4, y: 70 + (index % 6) * 11 },
+    curr: { x: 55 + index * 4.2, y: 82 + (index % 6) * 11.3 },
+  }));
+  const pose = {
+    success: true,
+    method: 'parametric-surface',
+    normal: { x: 0.28, y: -0.05, z: 0.96 },
+    confidence: 0.48,
+    inlierCount: 18,
+    inlierRatio: 0.42,
+    averageResidual: 10.5,
+  };
+
+  service.setTrackingMode('parametric-surface');
+  assert.equal(service._isUsablePoseResult(pose, correspondences), true);
+
+  service.setTrackingMode('object-pose');
+  assert.equal(service._isUsablePoseResult({ ...pose, method: 'object-pose-affine' }, correspondences), false);
+});
+
 test('real-depth sparse reconstruction owns orientation while local planar patch owns attachment transform', () => {
   const service = new ImageAnchorService();
   const anchorReference = { x: 120, y: 118 };

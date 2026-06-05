@@ -1,3 +1,5 @@
+import { isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
+
 const collectAnchorDetails = (anchorState) => {
   const metrics = anchorState?.metrics || {};
 
@@ -17,6 +19,8 @@ const collectAnchorDetails = (anchorState) => {
     poseInliers: metrics.poseInliers ?? 0,
     poseModel: metrics.poseModel || null,
     poseSource: metrics.poseSource || null,
+    targetClass: metrics.targetClass || null,
+    surfaceModel: metrics.reconstructionPreview?.surface?.model || null,
     poseAverageResidual: metrics.poseAverageResidual ?? null,
     poseForeshortening: metrics.poseForeshortening ?? null,
     reconstructionState: metrics.reconstructionState || null,
@@ -94,11 +98,11 @@ export const describeAnchorState = ({
   }
 
   if (serviceState?.state === 'stable') {
-    if (details.poseModel === 'sparse-reconstruction' && !details.reconstructionReady) {
+    if (isReconstructionMode(details.poseModel) && !details.reconstructionReady) {
       return {
         status: 'mapping',
         severity: 'warn',
-        message: 'Building sparse 3D object map',
+        message: 'Building 3D object map',
         recommendation: 'Slowly turn and tilt the object while keeping the clicked area visible.',
         details
       };
@@ -114,11 +118,11 @@ export const describeAnchorState = ({
   }
 
   if (serviceState?.state === 'tracking') {
-    if (details.poseModel === 'sparse-reconstruction' && !details.reconstructionReady) {
+    if (isReconstructionMode(details.poseModel) && !details.reconstructionReady) {
       return {
         status: 'mapping',
         severity: 'warn',
-        message: 'Building sparse 3D object map',
+        message: 'Building 3D object map',
         recommendation: 'Move the object through a small left/right and up/down turn before expecting the face.',
         details
       };
@@ -134,11 +138,11 @@ export const describeAnchorState = ({
   }
 
   if (serviceState?.state === 'degraded') {
-    if (details.poseModel === 'sparse-reconstruction' && !details.reconstructionReady) {
+    if (isReconstructionMode(details.poseModel) && !details.reconstructionReady) {
       return {
         status: 'mapping',
         severity: 'warn',
-        message: 'Sparse 3D map needs more stable landmarks',
+        message: '3D map needs more stable observations',
         recommendation: details.reconstructionFailureReason || 'Move slower and keep a textured part of the object in view.',
         details
       };

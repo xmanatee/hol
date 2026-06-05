@@ -27,3 +27,33 @@ test('hides sparse reconstruction overlay while no stable pose source is ready',
     }
   }), false);
 });
+
+test('renders any reconstruction overlay once the selected map is ready', () => {
+  for (const poseModel of ['parametric-surface', 'direct-photometric']) {
+    assert.equal(shouldRenderAnchorOverlay({
+      activeAnchor: { id: 'anchor' },
+      anchorState: {
+        metrics: {
+          poseModel,
+          reconstructionReady: true,
+          poseSource: poseModel,
+        }
+      }
+    }), true, poseModel);
+  }
+});
+
+test('hides any reconstruction overlay while selected map has no stable pose source', () => {
+  for (const poseModel of ['parametric-surface', 'direct-photometric']) {
+    assert.equal(shouldRenderAnchorOverlay({
+      activeAnchor: { id: 'anchor' },
+      anchorState: {
+        metrics: {
+          poseModel,
+          reconstructionReady: false,
+          poseSource: poseModel,
+        }
+      }
+    }), false, poseModel);
+  }
+});
