@@ -1,4 +1,6 @@
-// Message-based logger for worker context - forwards to main thread
+import * as ort from 'onnxruntime-web';
+import { COCO_CLASSES, TARGET_CLASS_IDS } from './cocoClasses.js';
+
 const log = {
   info: (tag, ...args) => postMessage({ type: 'log', level: 'info', tag, args }),
   error: (tag, ...args) => postMessage({ type: 'log', level: 'error', tag, args }),
@@ -6,25 +8,12 @@ const log = {
 };
 
 log.info('Worker', 'Starting detector worker...');
-import * as ort from 'onnxruntime-web';
 
 log.info('Worker', 'ONNX Runtime imported successfully');
 postMessage({ type: 'worker_loaded', message: 'Worker script executed successfully' });
 
 let session = null;
 let isInitialized = false;
-
-// COCO class names - we'll filter for bottle (39) and cup (41)
-const COCO_CLASSES = [
-  'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
-  'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat',
-  'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack',
-  'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
-  'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
-  'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple'
-];
-
-const TARGET_CLASSES = new Set([0, 39, 41, 73]); // person, bottle, cup, book
 
 async function initializeONNX() {
   log.info('Worker', 'initializeONNX called, current state:', isInitialized);
@@ -230,13 +219,12 @@ function postprocessDetections(output, preprocessInfo, confidenceThreshold = 0.1
       const className = COCO_CLASSES[bestClass] || `class_${bestClass}`;
       classStats[className] = (classStats[className] || 0) + 1;
       
-      if (TARGET_CLASSES.has(bestClass)) {
+      if (TARGET_CLASS_IDS.has(bestClass)) {
         _bottleCupDetections++;
       }
     }
     
-    // Only keep person, bottles and cups above threshold
-    if (!TARGET_CLASSES.has(bestClass) || maxClassScore < confidenceThreshold) continue;
+    if (!TARGET_CLASS_IDS.has(bestClass) || maxClassScore < confidenceThreshold) continue;
     
     // YOLO11n outputs coordinates in pixel space for the 480x480 input
     // Convert back to original image space

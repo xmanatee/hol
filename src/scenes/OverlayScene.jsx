@@ -1,8 +1,16 @@
 import { Canvas } from '@react-three/fiber'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import HeadAnchor from '../components/organisms/HeadAnchor.jsx'
 import { logger } from '../utils/logger.js'
 import { computeAnchorOverlayTransform } from '../utils/anchorProjection.js'
+
+const MAX_DEVICE_PIXEL_RATIO = 1.5
+const WEBGL_OPTIONS = {
+  alpha: true,
+  antialias: false,
+  powerPreference: 'high-performance',
+  preserveDrawingBuffer: false,
+}
 
 const useRenderSize = () => {
   const [renderSize, setRenderSize] = useState(() => ({
@@ -54,6 +62,7 @@ const OverlayScene = ({
   const cameraDistance = 3
   const far = 100
   const renderSize = useRenderSize()
+  const dpr = useMemo(() => [1, Math.min(window.devicePixelRatio || 1, MAX_DEVICE_PIXEL_RATIO)], [])
   const anchorTransform = useMemo(() => computeAnchorOverlayTransform({
     width,
     height,
@@ -64,6 +73,22 @@ const OverlayScene = ({
     fov,
     cameraDistance,
   }), [width, height, renderSize.width, renderSize.height, activeAnchor, anchorState])
+  const handleCanvasCreated = useCallback((state) => {
+    logger.info('OverlayScene', 'Canvas created successfully!')
+    state.gl.setClearColor(0x000000, 0.0)
+    state.gl.alpha = true
+
+    const canvas = state.gl.domElement
+    canvas.addEventListener('webglcontextlost', (event) => {
+      event.preventDefault()
+      setWebglStatus('lost')
+      logger.warn('OverlayScene', 'WebGL context lost')
+    })
+    canvas.addEventListener('webglcontextrestored', () => {
+      setWebglStatus('active')
+      logger.info('OverlayScene', 'WebGL context restored')
+    })
+  }, [])
 
   return (
     <div 
@@ -81,28 +106,14 @@ const OverlayScene = ({
     >
       
       <Canvas
-        gl={{ alpha: true, antialias: true }}
+        dpr={dpr}
+        gl={WEBGL_OPTIONS}
         style={{
           width: '100%',
           height: '100%',
           pointerEvents: 'none'
         }}
-        onCreated={(state) => {
-          logger.info('OverlayScene', 'Canvas created successfully!');
-          state.gl.setClearColor(0x000000, 0.0); // Transparent background
-          state.gl.alpha = true; // Enable alpha blending
-
-          const canvas = state.gl.domElement
-          canvas.addEventListener('webglcontextlost', (event) => {
-            event.preventDefault()
-            setWebglStatus('lost')
-            logger.warn('OverlayScene', 'WebGL context lost')
-          })
-          canvas.addEventListener('webglcontextrestored', () => {
-            setWebglStatus('active')
-            logger.info('OverlayScene', 'WebGL context restored')
-          })
-        }}
+        onCreated={handleCanvasCreated}
         camera={{
           position: [0, 0, cameraDistance],
           fov: fov,
@@ -110,7 +121,6 @@ const OverlayScene = ({
           far: far
         }}
       >
-        {/* Lighting for head visibility */}
         <ambientLight intensity={0.8} />
         <directionalLight position={[2, 2, 2]} intensity={0.6} />
         <directionalLight position={[-1, -1, -1]} intensity={0.3} />

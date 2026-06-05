@@ -41,7 +41,8 @@ const settle = promise => promise.then(
 export const replayImageAnchorSequence = async ({ cv, sequence, trackingMode = 'sparse-reconstruction' }) => {
   setupOpenCvGlobals(cv);
 
-  const service = new ImageAnchorService();
+  let replayTime = 1000;
+  const service = new ImageAnchorService({ now: () => replayTime });
   service.setTrackingMode(trackingMode);
   await service.initialize(cv, getCameraParams(sequence));
 
@@ -69,6 +70,7 @@ export const replayImageAnchorSequence = async ({ cv, sequence, trackingMode = '
 
   const frames = [];
   for (let index = 1; index < sequence.frames.length; index++) {
+    replayTime += 1000 / 30;
     const frame = sequence.frames[index];
     const result = service.updateAnchor(frame.imageData);
     const state = service.getState();
@@ -80,6 +82,7 @@ export const replayImageAnchorSequence = async ({ cv, sequence, trackingMode = '
     frames.push({
       index,
       success: result.success,
+      positionSource: result.method || null,
       method: result.method || null,
       poseSource: result.poseSource || state.metrics.poseSource || null,
       failureReason: result.reason || state.metrics.lastFailureReason || null,
@@ -121,6 +124,11 @@ export const summarizeReplay = replay => {
     counts[source] = (counts[source] || 0) + 1;
     return counts;
   }, {});
+  const positionSourceCounts = successful.reduce((counts, frame) => {
+    const source = frame.positionSource || frame.method || 'none';
+    counts[source] = (counts[source] || 0) + 1;
+    return counts;
+  }, {});
 
   for (let index = 1; index < successful.length; index++) {
     const previous = successful[index - 1].predicted;
@@ -141,8 +149,11 @@ export const summarizeReplay = replay => {
     meanNormalError: successful.reduce((sum, frame) => sum + frame.normalError, 0) / Math.max(1, successful.length),
     maxFrameJump: Math.max(...jumps, 0),
     minPoseInliers: Math.min(...successful.map(frame => frame.metrics.poseInliers || 0), Infinity),
-    planarPoseUsage: successful.filter(frame => frame.poseSource === 'planar-homography' || frame.method === 'planar-homography').length / Math.max(1, successful.length),
-    sparsePoseUsage: successful.filter(frame => frame.poseSource === 'sparse-reconstruction' || frame.method === 'sparse-reconstruction').length / Math.max(1, successful.length),
+    planarPoseUsage: successful.filter(frame => frame.poseSource === 'planar-homography').length / Math.max(1, successful.length),
+    planarPositionUsage: successful.filter(frame => frame.positionSource === 'planar-homography').length / Math.max(1, successful.length),
+    sparsePoseUsage: successful.filter(frame => frame.poseSource === 'sparse-reconstruction').length / Math.max(1, successful.length),
+    sparsePositionUsage: successful.filter(frame => frame.positionSource === 'sparse-reconstruction').length / Math.max(1, successful.length),
     poseSourceCounts,
+    positionSourceCounts,
   };
 };

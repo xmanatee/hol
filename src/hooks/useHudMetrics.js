@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 const METRIC_DEFINITIONS = {
   'Capture FPS': {
@@ -214,24 +214,83 @@ const DEFAULT_METRIC_DEFINITION = {
   unit: '',
 };
 
+const createMetricEntry = (previousEntry, name, value) => {
+  const definition = METRIC_DEFINITIONS[name] || DEFAULT_METRIC_DEFINITION;
+
+  return {
+    ...previousEntry,
+    value,
+    isRed: definition.isRed(value),
+    unit: definition.unit,
+    target: definition.target,
+  };
+};
+
+export const createHudMetricStore = () => {
+  let metrics = {};
+  let pendingMetrics = {};
+  const listeners = new Set();
+
+  return {
+    getSnapshot: () => metrics,
+    subscribe: listener => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    updateMetric: (name, value) => {
+      pendingMetrics = {
+        ...pendingMetrics,
+        [name]: createMetricEntry(pendingMetrics[name] || metrics[name], name, value),
+      };
+    },
+    flush: () => {
+      const pendingNames = Object.keys(pendingMetrics);
+      if (pendingNames.length === 0) return;
+
+      metrics = {
+        ...metrics,
+        ...pendingMetrics,
+      };
+      pendingMetrics = {};
+      listeners.forEach(listener => listener(metrics));
+    },
+  };
+};
+
+const scheduleMetricFlush = callback => {
+  if (typeof requestAnimationFrame === 'function') {
+    const frameId = requestAnimationFrame(callback);
+    return () => cancelAnimationFrame(frameId);
+  }
+
+  const timeoutId = setTimeout(callback, 100);
+  return () => clearTimeout(timeoutId);
+};
+
 export const useHudMetrics = () => {
-  const [metrics, setMetrics] = useState({});
+  const storeRef = useRef(null);
+  if (!storeRef.current) {
+    storeRef.current = createHudMetricStore();
+  }
+
+  const cancelFlushRef = useRef(null);
+  const [metrics, setMetrics] = useState(() => storeRef.current.getSnapshot());
+
+  useEffect(() => storeRef.current.subscribe(setMetrics), []);
+
+  useEffect(() => () => {
+    if (cancelFlushRef.current) {
+      cancelFlushRef.current();
+    }
+  }, []);
 
   const updateMetric = useCallback((name, value) => {
-    setMetrics((prevMetrics) => {
-      const definition = METRIC_DEFINITIONS[name] || DEFAULT_METRIC_DEFINITION;
-      const isRed = definition.isRed(value);
+    storeRef.current.updateMetric(name, value);
+    if (cancelFlushRef.current) return;
 
-      return {
-        ...prevMetrics,
-        [name]: {
-          ...prevMetrics[name],
-          value,
-          isRed,
-          unit: definition.unit,
-          target: definition.target,
-        },
-      };
+    cancelFlushRef.current = scheduleMetricFlush(() => {
+      cancelFlushRef.current = null;
+      storeRef.current.flush();
     });
   }, []);
 

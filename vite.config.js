@@ -33,6 +33,9 @@ export default defineConfig({
     }
   },
   server: {
+    host: '127.0.0.1',
+    port: 5274,
+    strictPort: true,
     headers: {
       'Cross-Origin-Embedder-Policy': 'require-corp',
       'Cross-Origin-Opener-Policy': 'same-origin',
@@ -42,6 +45,9 @@ export default defineConfig({
     }
   },
   preview: {
+    host: '127.0.0.1',
+    port: 4274,
+    strictPort: true,
     headers: {
       'Cross-Origin-Embedder-Policy': 'require-corp',
       'Cross-Origin-Opener-Policy': 'same-origin',

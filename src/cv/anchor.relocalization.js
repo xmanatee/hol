@@ -5,12 +5,12 @@ const DEFAULT_CONFIG = {
   maxEntriesPerKeyframe: 80,
   maxReferenceEntries: 260,
   maxQueryEntries: 150,
-  minMatches: 8,
-  minInliers: 8,
-  minInlierRatio: 0.42,
-  ratioThreshold: 0.78,
-  maxDescriptorDistance: 0.92,
-  inlierThreshold: 6,
+  minMatches: 5,
+  minInliers: 4,
+  minInlierRatio: 0.35,
+  ratioThreshold: 0.9,
+  maxDescriptorDistance: 1.2,
+  inlierThreshold: 10,
   minPairDistance: 12,
 };
 

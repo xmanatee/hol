@@ -92,7 +92,8 @@ const scoreFrame = ({ frame, sequence, renderWidth, renderHeight, previous }) =>
   return {
     index: frame.index,
     success: frame.success,
-    poseSource: frame.poseSource || frame.method || null,
+    positionSource: frame.positionSource || frame.method || null,
+    poseSource: frame.poseSource || null,
     predicted,
     expected,
     worldPositionError,
@@ -117,6 +118,7 @@ const worstFrames = frames => [...frames]
   .slice(0, 6)
   .map(frame => ({
     index: frame.index,
+    positionSource: frame.positionSource,
     poseSource: frame.poseSource,
     worldPositionError: frame.worldPositionError,
     scaleLogError: frame.scaleLogError,

@@ -5,24 +5,32 @@ import { DiagnosticRow } from './DiagnosticRow.jsx';
 import { formatNumber, formatPercent, formatRegion } from './diagnosticFormat.js';
 import { logger } from '../../utils/logger.js';
 
-const CollapsibleSection = ({ title, isExpanded, onToggle, children }) => (
-  <div className="mb-2 border border-gray-600 rounded">
-    <button
-      onClick={onToggle}
-      className="w-full px-3 py-2 bg-gray-800 text-white border-0 text-sm cursor-pointer flex justify-between items-center hover:bg-gray-700"
-    >
-      <span>{title}</span>
-      <span className="text-xs text-gray-400">
-        {isExpanded ? '▲' : '▼'}
-      </span>
-    </button>
-    {isExpanded && (
-      <div className="p-3 bg-gray-900">
-        {children}
-      </div>
-    )}
-  </div>
-);
+const sectionIdForTitle = title => `control-panel-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+
+const CollapsibleSection = ({ title, isExpanded, onToggle, children }) => {
+  const sectionId = sectionIdForTitle(title);
+
+  return (
+    <div className="mb-2 border border-gray-600 rounded">
+      <button
+        onClick={onToggle}
+        aria-expanded={isExpanded}
+        aria-controls={sectionId}
+        className="min-h-11 w-full px-3 py-2 bg-gray-800 text-white border-0 text-sm cursor-pointer flex justify-between items-center hover:bg-gray-700"
+      >
+        <span>{title}</span>
+        <span className="text-xs text-gray-400">
+          {isExpanded ? '▲' : '▼'}
+        </span>
+      </button>
+      {isExpanded && (
+        <div id={sectionId} className="p-3 bg-gray-900">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const MetricsSection = ({ metrics }) => (
   <div className="grid grid-cols-1 gap-1 max-h-48 overflow-y-auto">
@@ -712,7 +720,7 @@ const UnifiedControlPanel = ({
     return (
       <button
         onClick={() => setIsVisible(true)}
-        className="fixed top-4 right-4 z-50 px-3 py-2 text-sm bg-gray-800 text-white border border-gray-600 rounded cursor-pointer hover:bg-gray-700 transition-all duration-200"
+        className="fixed top-4 right-4 z-50 min-h-11 px-3 py-2 text-sm bg-gray-800 text-white border border-gray-600 rounded cursor-pointer hover:bg-gray-700 transition-all duration-200"
       >
         Controls
       </button>
@@ -729,7 +737,7 @@ const UnifiedControlPanel = ({
         </div>
         <button
           onClick={() => setIsVisible(false)}
-          className="px-2 py-1 text-xs bg-gray-700 text-white border border-gray-600 rounded cursor-pointer hover:bg-gray-600"
+          className="min-h-11 px-3 py-2 text-xs bg-gray-700 text-white border border-gray-600 rounded cursor-pointer hover:bg-gray-600"
         >
           Hide
         </button>

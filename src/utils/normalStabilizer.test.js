@@ -136,3 +136,114 @@ test('surface normal stabilizer trusts mature reconstruction corrections', () =>
   assert.ok(corrected.x < -0.08, `corrected x ${corrected.x.toFixed(3)}`);
   assert.ok(corrected.z < 0.98);
 });
+
+test('surface normal stabilizer follows a confident wide turn from face-on with modest homography inliers', () => {
+  const stabilizer = new SurfaceNormalStabilizer({
+    historySize: 7,
+    outlierRadians: 0.2,
+  });
+
+  for (let i = 0; i < 6; i++) {
+    stabilizer.update(
+      { x: -0.04, y: 0.02, z: 0.999 },
+      { confidence: 0.58, inliers: 8, foreshortening: 0.999 }
+    );
+  }
+
+  const firstTurn = stabilizer.update(
+    { x: -0.82, y: 0.04, z: 0.57 },
+    { confidence: 0.64, inliers: 8, foreshortening: 0.57 }
+  );
+  const secondTurn = stabilizer.update(
+    { x: -0.83, y: 0.02, z: 0.56 },
+    { confidence: 0.63, inliers: 8, foreshortening: 0.56 }
+  );
+
+  assert.ok(firstTurn.x < -0.02, `first turn x ${firstTurn.x.toFixed(3)}`);
+  assert.ok(secondTurn.x < -0.28, `second turn x ${secondTurn.x.toFixed(3)}`);
+});
+
+test('surface normal stabilizer rejects an abrupt mirrored homography turn after a stable turned pose', () => {
+  const stabilizer = new SurfaceNormalStabilizer({
+    historySize: 7,
+    outlierRadians: 0.2,
+  });
+
+  for (let i = 0; i < 4; i++) {
+    stabilizer.update(
+      { x: -0.58, y: 0.18, z: 0.79 },
+      { confidence: 0.86, inliers: 22, foreshortening: 0.79, trusted: true }
+    );
+  }
+
+  const held = stabilizer.update(
+    { x: 0.75, y: -0.30, z: 0.59 },
+    { confidence: 0.65, inliers: 9, foreshortening: 0.59 }
+  );
+
+  assert.ok(held.x < -0.32, `held x ${held.x.toFixed(3)}`);
+});
+
+test('surface normal stabilizer holds through repeated ambiguous low-confidence mirror poses', () => {
+  const stabilizer = new SurfaceNormalStabilizer({
+    historySize: 7,
+    outlierRadians: 0.2,
+  });
+
+  for (let i = 0; i < 4; i++) {
+    stabilizer.update(
+      { x: -0.22, y: 0.09, z: 0.97 },
+      { confidence: 0.72, inliers: 12, foreshortening: 0.97 }
+    );
+  }
+
+  const ambiguous = [
+    { normal: { x: 0.36, y: -0.48, z: 0.80 }, confidence: 0.49, foreshortening: 0.80 },
+    { normal: { x: 0.39, y: -0.55, z: 0.74 }, confidence: 0.59, foreshortening: 0.74 },
+    { normal: { x: 0.42, y: -0.54, z: 0.73 }, confidence: 0.49, foreshortening: 0.73 },
+    { normal: { x: 0.52, y: -0.40, z: 0.75 }, confidence: 0.45, foreshortening: 0.75 },
+  ];
+
+  let held;
+  for (const sample of ambiguous) {
+    held = stabilizer.update(sample.normal, {
+      confidence: sample.confidence,
+      inliers: 8,
+      foreshortening: sample.foreshortening,
+    });
+  }
+
+  const recovered = stabilizer.update(
+    { x: -0.82, y: 0.04, z: 0.57 },
+    { confidence: 0.62, inliers: 8, foreshortening: 0.57 }
+  );
+
+  assert.ok(held.x < 0.02, `held x ${held.x.toFixed(3)}`);
+  assert.ok(recovered.x < -0.42, `recovered x ${recovered.x.toFixed(3)}`);
+});
+
+test('surface normal stabilizer recenters quickly on modest-inlier face-on evidence', () => {
+  const stabilizer = new SurfaceNormalStabilizer({
+    historySize: 7,
+    outlierRadians: 0.2,
+  });
+
+  for (let i = 0; i < 5; i++) {
+    stabilizer.update(
+      { x: 0.62, y: -0.05, z: 0.78 },
+      { confidence: 0.75, inliers: 14, foreshortening: 0.78 }
+    );
+  }
+
+  stabilizer.update(
+    { x: -0.05, y: -0.08, z: 0.996 },
+    { confidence: 0.64, inliers: 12, foreshortening: 0.996 }
+  );
+  const centered = stabilizer.update(
+    { x: -0.01, y: 0.01, z: 1 },
+    { confidence: 0.61, inliers: 10, foreshortening: 1 }
+  );
+
+  assert.ok(centered.x < 0.24, `centered x ${centered.x.toFixed(3)}`);
+  assert.ok(centered.z > 0.9, `centered z ${centered.z.toFixed(3)}`);
+});

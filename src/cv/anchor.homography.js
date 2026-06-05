@@ -4,6 +4,8 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { estimatePlanarPnPPose } from './anchor.planarPnP.js';
+import { seedHomographyRansac } from './opencvRng.js';
 
 export class HomographyEstimator {
   constructor() {
@@ -63,7 +65,7 @@ export class HomographyEstimator {
       const dstMat = cv.matFromArray(correspondences.length, 1, cv.CV_32FC2, dstPoints);
       const mask = new cv.Mat();
 
-      // Estimate homography with RANSAC
+      seedHomographyRansac(cv);
       const homography = cv.findHomography(
         srcMat,
         dstMat,
@@ -110,6 +112,7 @@ export class HomographyEstimator {
           inlier: inlierMask[index],
         };
       });
+      const inlierCorrespondences = correspondences.filter((_, index) => inlierMask[index]);
       const inlierResiduals = residuals.filter(item => item.inlier).map(item => item.value);
       const averageResidual = inlierResiduals.reduce((sum, value) => sum + value, 0) / Math.max(1, inlierResiduals.length);
       const maxResidual = Math.max(...inlierResiduals, 0);
@@ -134,7 +137,8 @@ export class HomographyEstimator {
         conditionNumber: this._calculateConditionNumber(homographyData),
         averageResidual,
         maxResidual,
-        matrix: homographyData
+        matrix: homographyData,
+        inlierCorrespondences
       };
 
       return result;
@@ -231,14 +235,23 @@ export class HomographyEstimator {
    * @param {Array} correspondences - Keypoint correspondences
    * @returns {Object} - Complete pose estimation result
    */
-  estimatePose(cv, correspondences) {
+  estimatePose(cv, correspondences, options = {}) {
     const homographyResult = this.estimateHomography(cv, correspondences);
     
     if (!homographyResult.success) {
       return homographyResult;
     }
 
-    const poseResult = this.decomposeHomography(cv, homographyResult.homography);
+    const planarPnPPose = options.anchorReference
+      ? this.estimatePlanarPnPPose(
+          cv,
+          homographyResult.inlierCorrespondences || correspondences,
+          options.anchorReference
+        )
+      : null;
+    const poseResult = planarPnPPose?.success
+      ? planarPnPPose
+      : this.decomposeHomography(cv, homographyResult.homography);
     
     // Clean up homography matrix
     homographyResult.homography.delete();
@@ -260,8 +273,21 @@ export class HomographyEstimator {
       inlierRatio: homographyResult.inlierRatio,
       conditionNumber: homographyResult.conditionNumber,
       confidence: poseResult.confidence,
+      averageResidual: homographyResult.averageResidual,
+      maxResidual: homographyResult.maxResidual,
+      foreshortening: poseResult.foreshortening ?? poseResult.normal.z,
+      referenceSpread: poseResult.referenceSpread,
       homographyMatrix: homographyResult.matrix
     };
+  }
+
+  estimatePlanarPnPPose(cv, correspondences, anchorReference) {
+    return estimatePlanarPnPPose({
+      cv,
+      correspondences,
+      anchorReference,
+      cameraParams: this.cameraParams,
+    });
   }
 
   /**
@@ -434,6 +460,7 @@ export class HomographyEstimator {
         normal: normal,
         rotation: rotation,
         translation: translation,
+        foreshortening: normal.z,
         confidence: Math.max(0, Math.min(1, scaleBalance * 0.55 + orthogonality * 0.45))
       };
 

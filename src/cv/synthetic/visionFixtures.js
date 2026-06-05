@@ -46,22 +46,70 @@ const blendPixel = (imageData, x, y, color, alpha) => {
   imageData.data[index + 3] = 255;
 };
 
-const fillBackground = (imageData, frameIndex, seed) => {
-  for (let y = 0; y < imageData.height; y++) {
-    for (let x = 0; x < imageData.width; x++) {
-      const vignette = Math.hypot(x / imageData.width - 0.5, y / imageData.height - 0.5);
-      const grain = noise(x * 0.09, y * 0.09, seed + frameIndex * 0.17) - 0.5;
-      const deskLine = y > imageData.height * 0.62 ? 18 : 0;
-      const stripe = (Math.floor((x + y * 0.35) / 46) % 2) * 5;
-      const base = 116 - vignette * 56 + grain * 18 + deskLine + stripe;
-      setPixel(imageData, x, y, [
-        clamp(base + 18, 20, 210),
-        clamp(base + 12, 20, 210),
-        clamp(base + 4, 20, 210),
-        255,
-      ]);
+const backgroundBase = (x, y, imageData, frameIndex, seed, variant) => {
+  const vignette = Math.hypot(x / imageData.width - 0.5, y / imageData.height - 0.5);
+  const grain = noise(x * 0.09, y * 0.09, seed + frameIndex * 0.17) - 0.5;
+  const movingOffset = Math.sin(frameIndex * 0.21 + seed) * 16;
+
+  if (variant === 'shelf') {
+    const panel = (Math.floor((x + movingOffset) / 84) % 2) * 12;
+    const horizontal = Math.abs((y % 96) - 48) < 2 ? -22 : 0;
+    const base = 96 - vignette * 42 + grain * 22 + panel + horizontal;
+    return [
+      clamp(base + 24, 18, 214),
+      clamp(base + 18, 18, 214),
+      clamp(base + 10, 18, 214),
+      255,
+    ];
+  }
+
+  if (variant === 'busy') {
+    const block = ((Math.floor((x + movingOffset) / 58) + Math.floor((y - movingOffset * 0.4) / 42)) % 2) * 26;
+    const diagonal = Math.abs(((x + y + frameIndex * 2) % 120) - 60) < 4 ? -28 : 0;
+    const base = 104 - vignette * 48 + grain * 26 + block + diagonal;
+    return [
+      clamp(base + 8, 20, 220),
+      clamp(base + 18, 20, 220),
+      clamp(base + 28, 20, 220),
+      255,
+    ];
+  }
+
+  const deskLine = y > imageData.height * 0.62 ? 18 : 0;
+  const stripe = (Math.floor((x + y * 0.35) / 46) % 2) * 5;
+  const base = 116 - vignette * 56 + grain * 18 + deskLine + stripe;
+  return [
+    clamp(base + 18, 20, 210),
+    clamp(base + 12, 20, 210),
+    clamp(base + 4, 20, 210),
+    255,
+  ];
+};
+
+const drawMovingBackgroundObject = (imageData, frameIndex, seed, variant) => {
+  if (variant === 'desk') return;
+
+  const width = variant === 'busy' ? 82 : 118;
+  const height = variant === 'busy' ? 34 : 24;
+  const centerX = imageData.width * (0.18 + 0.64 * noise(frameIndex * 0.06, seed, 4));
+  const centerY = imageData.height * (0.17 + 0.26 * noise(seed, frameIndex * 0.04, 7));
+  const color = variant === 'busy' ? [34, 46, 58] : [62, 54, 44];
+
+  for (let y = Math.floor(centerY - height / 2); y <= Math.ceil(centerY + height / 2); y++) {
+    for (let x = Math.floor(centerX - width / 2); x <= Math.ceil(centerX + width / 2); x++) {
+      blendPixel(imageData, x, y, color, 0.5);
     }
   }
+};
+
+const fillBackground = (imageData, frameIndex, seed, variant = 'desk') => {
+  for (let y = 0; y < imageData.height; y++) {
+    for (let x = 0; x < imageData.width; x++) {
+      setPixel(imageData, x, y, backgroundBase(x, y, imageData, frameIndex, seed, variant));
+    }
+  }
+
+  drawMovingBackgroundObject(imageData, frameIndex, seed, variant);
 };
 
 const rotate3 = (point, pose) => {
@@ -291,6 +339,23 @@ const canTexture = (u, v) => {
   return [166 + speckle, 28 + speckle * 0.15, 36 + speckle * 0.12, 255];
 };
 
+const cupTexture = (u, v) => {
+  const ceramicNoise = (noise(u * 86, v * 74, 31) - 0.5) * 22;
+  const verticalRib = Math.floor(u * 42) % 6 === 0;
+  const logo = u > 0.28 && u < 0.72 && v > 0.28 && v < 0.58 &&
+    Math.abs(Math.sin((u - 0.25) * Math.PI * 4) * 0.08 + 0.43 - v) < 0.022;
+  const darkBand = v > 0.72 && v < 0.86;
+  const rim = v < 0.08 || v > 0.93;
+  const check = ((Math.floor(u * 18) + Math.floor(v * 22)) % 2) === 0;
+
+  if (logo) return [44 + ceramicNoise * 0.2, 84 + ceramicNoise * 0.2, 128 + ceramicNoise * 0.2, 255];
+  if (darkBand && check) return [38 + ceramicNoise * 0.3, 42 + ceramicNoise * 0.3, 48 + ceramicNoise * 0.3, 255];
+  if (rim) return [228 + ceramicNoise * 0.25, 224 + ceramicNoise * 0.25, 212 + ceramicNoise * 0.25, 255];
+  if (verticalRib) return [172 + ceramicNoise, 154 + ceramicNoise * 0.7, 136 + ceramicNoise * 0.45, 255];
+
+  return [196 + ceramicNoise, 184 + ceramicNoise * 0.8, 164 + ceramicNoise * 0.55, 255];
+};
+
 const boxTexture = face => (u, v) => {
   const grid = ((Math.floor(u * 16) + Math.floor(v * 19)) % 2) * 36;
   const label = u > 0.18 && u < 0.82 && v > 0.22 && v < 0.42;
@@ -370,12 +435,24 @@ const createLocalSurfaceGroundTruth = ({ pose, camera, anchorPoint, basisXPoint,
   };
 };
 
-const drawPlaneFrame = ({ kind, frameIndex, pose, objectWidth, objectHeight, anchorUv, reference, occluded, texture }) => {
+const drawPlaneFrame = ({
+  kind,
+  frameIndex,
+  pose,
+  objectWidth,
+  objectHeight,
+  anchorUv,
+  reference,
+  occluded,
+  texture,
+  backgroundSeed,
+  backgroundVariant,
+}) => {
   const width = DEFAULT_WIDTH;
   const height = DEFAULT_HEIGHT;
   const camera = DEFAULT_CAMERA;
   const imageData = createImageData(width, height);
-  fillBackground(imageData, frameIndex, kind.length);
+  fillBackground(imageData, frameIndex, backgroundSeed, backgroundVariant);
 
   const modelCorners = [
     { x: -objectWidth / 2, y: -objectHeight / 2, z: 0 },
@@ -411,6 +488,17 @@ const drawPlaneFrame = ({ kind, frameIndex, pose, objectWidth, objectHeight, anc
 
 const bookPoseAt = (index, count, variant) => {
   const t = index / Math.max(1, count - 1);
+  if (variant === 'depth-book') {
+    return {
+      yaw: Math.sin(t * Math.PI * 1.35) * 34 * Math.PI / 180,
+      pitch: Math.sin(t * Math.PI * 1.7) * 16 * Math.PI / 180,
+      roll: Math.sin(t * Math.PI * 2.05) * 12 * Math.PI / 180,
+      tx: Math.sin(t * Math.PI * 2.4) * 34,
+      ty: Math.sin(t * Math.PI * 1.8) * 22,
+      distance: 780 - Math.sin(t * Math.PI) * 170,
+    };
+  }
+
   return {
     yaw: (Math.sin(t * Math.PI * 1.24) * 28 - 10) * Math.PI / 180,
     pitch: (Math.sin(t * Math.PI * 1.8 + 0.4) * 13) * Math.PI / 180,
@@ -425,6 +513,8 @@ export const createPlanarBookSequence = ({
   kind = 'planar-book',
   frameCount = 32,
   occlusionFrames = [14, 15, 16, 17],
+  backgroundVariant = 'desk',
+  backgroundSeed = kind.length,
 } = {}) => {
   const objectWidth = 205;
   const objectHeight = 285;
@@ -448,6 +538,8 @@ export const createPlanarBookSequence = ({
     reference,
     occluded: occlusionSet.has(index),
     texture: bookTexture(kind),
+    backgroundSeed,
+    backgroundVariant,
   }));
 
   return {
@@ -464,6 +556,8 @@ export const createPlanarBookSequence = ({
       hasFineTexture: true,
       hasLightingVariation: true,
       hasOcclusion: occlusionFrames.length > 0,
+      hasMovingBackground: true,
+      backgroundVariant,
       targetModel: 'planar-homography',
     },
   };
@@ -481,12 +575,12 @@ const canPoseAt = (index, count) => {
   };
 };
 
-const drawCylinderFrame = ({ frameIndex, frameCount, occluded, reference }) => {
+const drawCylinderFrame = ({ frameIndex, frameCount, occluded, reference, backgroundSeed, backgroundVariant }) => {
   const width = DEFAULT_WIDTH;
   const height = DEFAULT_HEIGHT;
   const camera = DEFAULT_CAMERA;
   const imageData = createImageData(width, height);
-  fillBackground(imageData, frameIndex, 29);
+  fillBackground(imageData, frameIndex, backgroundSeed, backgroundVariant);
   const pose = canPoseAt(frameIndex, frameCount);
   const radius = 66;
   const objectHeight = 205;
@@ -528,7 +622,12 @@ const drawCylinderFrame = ({ frameIndex, frameCount, occluded, reference }) => {
   };
 };
 
-export const createCylindricalCanSequence = ({ frameCount = 30, occlusionFrames = [12, 13, 14] } = {}) => {
+export const createCylindricalCanSequence = ({
+  frameCount = 30,
+  occlusionFrames = [12, 13, 14],
+  backgroundVariant = 'desk',
+  backgroundSeed = 29,
+} = {}) => {
   const occlusionSet = new Set(occlusionFrames);
   const reference = createLocalSurfaceGroundTruth({
     pose: canPoseAt(0, frameCount),
@@ -542,6 +641,8 @@ export const createCylindricalCanSequence = ({ frameCount = 30, occlusionFrames 
     frameCount,
     occluded: occlusionSet.has(index),
     reference,
+    backgroundSeed,
+    backgroundVariant,
   }));
 
   return {
@@ -558,7 +659,114 @@ export const createCylindricalCanSequence = ({ frameCount = 30, occlusionFrames 
       hasFineTexture: true,
       hasLightingVariation: true,
       hasOcclusion: occlusionFrames.length > 0,
+      hasMovingBackground: true,
+      backgroundVariant,
       targetModel: 'curved-sparse-reconstruction',
+    },
+  };
+};
+
+const cupPoseAt = (index, count) => {
+  const t = index / Math.max(1, count - 1);
+  return {
+    yaw: Math.sin(t * Math.PI * 1.55) * 36 * Math.PI / 180,
+    pitch: Math.sin(t * Math.PI * 1.25) * 11 * Math.PI / 180,
+    roll: Math.sin(t * Math.PI * 1.85) * 9 * Math.PI / 180,
+    tx: -14 + Math.sin(t * Math.PI * 2.1) * 30,
+    ty: Math.cos(t * Math.PI * 1.4) * 18,
+    distance: 720 - Math.sin(t * Math.PI) * 120,
+  };
+};
+
+const drawCupFrame = ({ frameIndex, frameCount, occluded, reference, backgroundSeed, backgroundVariant }) => {
+  const imageData = createImageData(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+  fillBackground(imageData, frameIndex, backgroundSeed, backgroundVariant);
+  const pose = cupPoseAt(frameIndex, frameCount);
+  const objectHeight = 188;
+  const strips = 46;
+  const projected = [];
+
+  for (let strip = 0; strip < strips; strip++) {
+    const a0 = -Math.PI * 0.52 + strip / strips * Math.PI * 1.04;
+    const a1 = -Math.PI * 0.52 + (strip + 1) / strips * Math.PI * 1.04;
+    const pointAt = (angle, y) => {
+      const v = (y + objectHeight / 2) / objectHeight;
+      const radius = 58 + v * 22;
+      return {
+        x: Math.sin(angle) * radius,
+        y,
+        z: Math.cos(angle) * radius - radius,
+      };
+    };
+    const p0 = pointAt(a0, -objectHeight / 2);
+    const p1 = pointAt(a1, -objectHeight / 2);
+    const p2 = pointAt(a1, objectHeight / 2);
+    const p3 = pointAt(a0, objectHeight / 2);
+    const quad = [p0, p1, p2, p3].map(point => project3(point, pose, DEFAULT_CAMERA));
+    projected.push(...quad);
+    const shade = clamp(0.48 + Math.cos((a0 + a1) * 0.5) * 0.28 + projectNormal(pose).z * 0.16, 0.34, 1);
+    drawQuad(imageData, quad, (u, v) => cupTexture((strip + u) / strips, v), shade);
+  }
+
+  const boundingBox = bboxFor(projected);
+  if (occluded) drawOcclusion(imageData, boundingBox, frameIndex, 'textured-cup');
+  const groundTruth = createLocalSurfaceGroundTruth({
+    pose,
+    camera: DEFAULT_CAMERA,
+    anchorPoint: { x: 0, y: 0, z: 0 },
+    basisXPoint: { x: 42, y: 0, z: 0 },
+    basisYPoint: { x: 0, y: 42, z: 0 },
+    reference,
+  });
+
+  return {
+    imageData,
+    corners: projected.map(point => ({ x: point.x, y: point.y })),
+    boundingBox,
+    groundTruth,
+  };
+};
+
+export const createTexturedCupSequence = ({
+  frameCount = 32,
+  occlusionFrames = [15, 16, 17],
+  backgroundVariant = 'desk',
+  backgroundSeed = 53,
+} = {}) => {
+  const occlusionSet = new Set(occlusionFrames);
+  const reference = createLocalSurfaceGroundTruth({
+    pose: cupPoseAt(0, frameCount),
+    camera: DEFAULT_CAMERA,
+    anchorPoint: { x: 0, y: 0, z: 0 },
+    basisXPoint: { x: 42, y: 0, z: 0 },
+    basisYPoint: { x: 0, y: 42, z: 0 },
+  });
+  const frames = Array.from({ length: frameCount }, (_, index) => drawCupFrame({
+    frameIndex: index,
+    frameCount,
+    occluded: occlusionSet.has(index),
+    reference,
+    backgroundSeed,
+    backgroundVariant,
+  }));
+
+  return {
+    kind: 'textured-cup',
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
+    tap: frames[0].groundTruth.anchor,
+    boundingBox: frames[0].boundingBox,
+    camera: DEFAULT_CAMERA,
+    frames,
+    metadata: {
+      hasBackground: true,
+      hasDarkRegions: true,
+      hasFineTexture: true,
+      hasLightingVariation: true,
+      hasOcclusion: occlusionFrames.length > 0,
+      hasMovingBackground: true,
+      backgroundVariant,
+      targetModel: 'tapered-curved-sparse-reconstruction',
     },
   };
 };
@@ -575,9 +783,9 @@ const boxPoseAt = (frameIndex, frameCount) => {
   };
 };
 
-const createRigidBoxFrame = ({ frameIndex, frameCount, occluded, reference }) => {
+const createRigidBoxFrame = ({ frameIndex, frameCount, occluded, reference, backgroundSeed, backgroundVariant }) => {
   const imageData = createImageData(DEFAULT_WIDTH, DEFAULT_HEIGHT);
-  fillBackground(imageData, frameIndex, 41);
+  fillBackground(imageData, frameIndex, backgroundSeed, backgroundVariant);
   const pose = boxPoseAt(frameIndex, frameCount);
   const w = 210;
   const h = 175;
@@ -630,7 +838,12 @@ const createRigidBoxFrame = ({ frameIndex, frameCount, occluded, reference }) =>
   };
 };
 
-export const createRigidBoxSequence = ({ frameCount = 28, occlusionFrames = [10, 11, 12] } = {}) => {
+export const createRigidBoxSequence = ({
+  frameCount = 28,
+  occlusionFrames = [10, 11, 12],
+  backgroundVariant = 'desk',
+  backgroundSeed = 41,
+} = {}) => {
   const occlusionSet = new Set(occlusionFrames);
   const d = 78;
   const reference = createLocalSurfaceGroundTruth({
@@ -645,6 +858,8 @@ export const createRigidBoxSequence = ({ frameCount = 28, occlusionFrames = [10,
     frameCount,
     occluded: occlusionSet.has(index),
     reference,
+    backgroundSeed,
+    backgroundVariant,
   }));
 
   return {
@@ -661,6 +876,8 @@ export const createRigidBoxSequence = ({ frameCount = 28, occlusionFrames = [10,
       hasFineTexture: true,
       hasLightingVariation: true,
       hasOcclusion: occlusionFrames.length > 0,
+      hasMovingBackground: true,
+      backgroundVariant,
       targetModel: 'multi-plane-sparse-reconstruction',
     },
   };
@@ -669,6 +886,8 @@ export const createRigidBoxSequence = ({ frameCount = 28, occlusionFrames = [10,
 export const createSyntheticObjectSuite = () => [
   createPlanarBookSequence({ kind: 'planar-book' }),
   createPlanarBookSequence({ kind: 'dark-book' }),
+  createPlanarBookSequence({ kind: 'depth-book', frameCount: 36, occlusionFrames: [18, 19, 20] }),
   createCylindricalCanSequence(),
+  createTexturedCupSequence(),
   createRigidBoxSequence(),
 ];

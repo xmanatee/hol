@@ -5,6 +5,7 @@
 
 import { logger } from '../utils/logger.js';
 import { ObjectPoseEstimator } from './anchor.objectPose.js';
+import { seedHomographyRansac } from './opencvRng.js';
 
 export class KeypointTracker {
   constructor() {
@@ -310,7 +311,8 @@ export class KeypointTracker {
         activePoints: activePoints.length,
         successfulPoints: successCount,
         successRate: successRate,
-        averageError: avgError
+        averageError: avgError,
+        anchorPosition: this.getAnchorPosition()
       };
       
       this.trackingHistory.push(trackingStats);
@@ -503,6 +505,7 @@ export class KeypointTracker {
         rotation: transformation.rotation,
         scale: transformation.scale,
         inlierCount: transformation.inlierCount,
+        averageResidual: transformation.averageResidual,
       };
     }
 
@@ -691,6 +694,7 @@ export class KeypointTracker {
     const srcMat = cv.matFromArray(activePoints.length, 1, cv.CV_32FC2, srcPoints);
     const dstMat = cv.matFromArray(activePoints.length, 1, cv.CV_32FC2, dstPoints);
     const mask = new cv.Mat();
+    seedHomographyRansac(cv);
     const homography = cv.findHomography(srcMat, dstMat, cv.RANSAC, 3, mask, 1000, 0.99);
 
     let inlierCount = 0;
@@ -948,16 +952,14 @@ export class KeypointTracker {
       };
     }
 
-    const recent = this.trackingHistory.slice(-10); // Last 10 frames
-    
-    // Calculate velocity stability
+    const recent = this.trackingHistory.slice(-10);
     const velocities = [];
     for (let i = 1; i < recent.length; i++) {
-      const prev = this.getAnchorPositionAtTime(recent[i-1].timestamp);
-      const curr = this.getAnchorPositionAtTime(recent[i].timestamp);
+      const prev = recent[i - 1].anchorPosition;
+      const curr = recent[i].anchorPosition;
       
       if (prev && curr) {
-        const dt = (recent[i].timestamp - recent[i-1].timestamp) / 1000; // seconds
+        const dt = (recent[i].timestamp - recent[i - 1].timestamp) / 1000;
         const dx = curr.x - prev.x;
         const dy = curr.y - prev.y;
         const velocity = Math.sqrt(dx*dx + dy*dy) / dt;
@@ -968,12 +970,9 @@ export class KeypointTracker {
     const avgVelocity = velocities.length > 0 ? 
       velocities.reduce((sum, v) => sum + v, 0) / velocities.length : 0;
     
-    // Calculate success rate stability
     const avgSuccessRate = recent.reduce((sum, stat) => sum + stat.successRate, 0) / recent.length;
-    
-    // Stability criteria
-    const velocityStable = avgVelocity < 20; // pixels per second
-    const coherenceStable = avgSuccessRate > 0.7; // 70% success rate
+    const velocityStable = avgVelocity < 20;
+    const coherenceStable = avgSuccessRate > 0.7;
     
     return {
       velocityStable: velocityStable,
@@ -1042,18 +1041,7 @@ export class KeypointTracker {
     });
   }
 
-  /**
-   * Helper method to get anchor position at specific timestamp
-   */
-  getAnchorPositionAtTime() {
-    // This is a simplified version - in practice you'd interpolate
-    return this.getAnchorPosition();
-  }
-
-  /**
-   * Refresh tracking by re-detecting keypoints in current region
-   */
-  refreshKeypoints(cv, currentGray, keypointDetector, region, anchorPosition) {
+  refreshKeypoints(cv, currentGray, keypointDetector, region) {
     try {
       // Validate inputs
       if (!cv || !currentGray || !keypointDetector || !region) {
@@ -1076,16 +1064,20 @@ export class KeypointTracker {
       }
 
       const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
-      const referenceTransformation = activePoints.length >= 3
-        ? this._estimateReferenceHomography(cv, activePoints) || this._estimateReferenceTransformation(activePoints)
-        : null;
+      const referenceTransformation = this._selectRefreshReferenceTransformation(cv, activePoints);
       const newKeypoints = keypointDetector.extractKeypoints(cv, currentGray, region);
       
       if (newKeypoints.keypoints.length >= 15) {
-        if (referenceTransformation && referenceTransformation.scale > 0.001) {
+        if (referenceTransformation) {
           this._mergeTrackingPointsPreservingReference(newKeypoints.keypoints, currentGray, referenceTransformation);
         } else {
-          this.initializeTracking(cv, newKeypoints.keypoints, currentGray, anchorPosition);
+          this.lastRefreshStats = {
+            added: 0,
+            total: this.trackedPoints.length,
+            active: activePoints.length,
+            rejected: true,
+          };
+          return false;
         }
         logger.info('KeypointTracker', `Refreshed tracking with ${this.trackedPoints.length} current-frame keypoints`);
         return true;
@@ -1099,6 +1091,48 @@ export class KeypointTracker {
     }
     
     return false;
+  }
+
+  _selectRefreshReferenceTransformation(cv, activePoints) {
+    if (activePoints.length < 3) {
+      return null;
+    }
+
+    const candidates = [
+      activePoints.length >= 8 ? this._estimateReferenceHomography(cv, activePoints) : null,
+      this._estimateReferenceTransformation(activePoints),
+    ].filter(Boolean);
+
+    return candidates
+      .map(candidate => ({
+        transform: candidate,
+        score: this._refreshTransformationScore(candidate, activePoints.length),
+      }))
+      .filter(candidate => candidate.score > 0)
+      .sort((left, right) => right.score - left.score)[0]?.transform || null;
+  }
+
+  _refreshTransformationScore(transform, activeCount) {
+    const residual = transform.averageResidual ?? Infinity;
+    const confidence = transform.confidence ?? 0;
+    const inlierRatio = (transform.inlierCount || 0) / Math.max(activeCount, 1);
+
+    if (!Number.isFinite(residual) || transform.scale <= 0.001) {
+      return 0;
+    }
+
+    if (transform.type === 'homography') {
+      if (confidence < 0.32 || residual > 5.5 || inlierRatio < 0.5) {
+        return 0;
+      }
+      return confidence * 2.2 + inlierRatio * 0.8 + Math.max(0, 1 - residual / 5.5) + 0.18;
+    }
+
+    if (confidence < 0.2 || residual > 12 || inlierRatio < 0.45) {
+      return 0;
+    }
+
+    return confidence * 2 + inlierRatio * 0.7 + Math.max(0, 1 - residual / 12);
   }
 
   /**

@@ -184,6 +184,73 @@ test('keypoint refresh expands the landmark map instead of replacing tracked poi
   assert.deepEqual(tracker.anchorOriginalPosition, { x: 124, y: 101 });
 });
 
+test('keypoint refresh rejects a weak homography when similarity keeps the reference frame coherent', () => {
+  const tracker = new KeypointTracker();
+  tracker.initialized = true;
+  tracker.previousGray = { delete() {} };
+
+  const transform = {
+    tx: -7,
+    ty: 11,
+    scale: 1.07,
+    rotation: 14 * Math.PI / 180,
+  };
+  const originals = Array.from({ length: 16 }, (_, index) => ({
+    x: 78 + (index % 4) * 24,
+    y: 68 + Math.floor(index / 4) * 22,
+  }));
+  const newOriginals = Array.from({ length: 8 }, (_, index) => ({
+    x: 194 + (index % 4) * 18,
+    y: 80 + Math.floor(index / 4) * 20,
+  }));
+  tracker.trackedPoints = originals.map((point, index) => createTrackedPoint(index, point, transform));
+  tracker.nextPointId = originals.length;
+  tracker.keypointCentroid = { x: 114, y: 101 };
+  tracker.anchorOriginalPosition = { x: 122, y: 98 };
+  tracker.tapOffset = { x: 8, y: -3 };
+  tracker._estimateReferenceHomography = () => ({
+    type: 'homography',
+    matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    inverseMatrix: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    scale: 1,
+    rotation: 0,
+    confidence: 0.08,
+    inlierCount: 9,
+    averageResidual: 8.4,
+  });
+
+  const currentGray = {
+    cols: 360,
+    rows: 260,
+    empty: () => false,
+    clone: () => ({ delete() {} }),
+  };
+  const detector = {
+    extractKeypoints: () => ({
+      keypoints: [
+        ...originals.map(point => ({ pt: transformPoint(point, transform), response: 0.8 })),
+        ...newOriginals.map(point => ({ pt: transformPoint(point, transform), response: 1.0 })),
+      ],
+    }),
+  };
+
+  const refreshed = tracker.refreshKeypoints({}, currentGray, detector, {
+    x: 0,
+    y: 0,
+    width: 300,
+    height: 200,
+  }, transformPoint(tracker.anchorOriginalPosition, transform));
+
+  const added = tracker.trackedPoints.filter(point => point.id >= originals.length);
+
+  assert.equal(refreshed, true);
+  assert.ok(added.length > 0);
+  assert.ok(added.some(point => (
+    Math.abs(point.original.x - newOriginals[0].x) < 0.6 &&
+    Math.abs(point.original.y - newOriginals[0].y) < 0.6
+  )));
+});
+
 test('inactive cleanup preserves stable hidden landmarks and retires weak stale points', () => {
   const tracker = new KeypointTracker();
   tracker.trackedPoints = [
@@ -316,4 +383,19 @@ test('tracker restores lost landmarks from a descriptor relocalization transform
     assert.ok(Math.abs(point.current.y - expected.y) < 0.01);
     assert.equal(point.inactiveAge, 0);
   });
+});
+
+test('stability metrics use stored anchor history instead of an unimplemented timestamp lookup', () => {
+  const tracker = new KeypointTracker();
+  tracker.trackingHistory = Array.from({ length: 6 }, (_, index) => ({
+    timestamp: 1000 + index * 100,
+    successRate: 0.86,
+    anchorPosition: { x: 120 + index, y: 140 },
+  }));
+
+  const stability = tracker.getStabilityMetrics();
+
+  assert.equal(stability.velocityStable, true);
+  assert.equal(stability.coherenceStable, true);
+  assert.equal(stability.overallStable, true);
 });

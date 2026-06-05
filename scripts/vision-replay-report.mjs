@@ -1,10 +1,6 @@
 import { loadOpenCvForNode } from '../src/cv/synthetic/opencvNodeLoader.js';
-import {
-  createCylindricalCanSequence,
-  createPlanarBookSequence,
-  createRigidBoxSequence,
-  createSyntheticObjectSuite,
-} from '../src/cv/synthetic/visionFixtures.js';
+import { createSyntheticObjectSuite } from '../src/cv/synthetic/visionFixtures.js';
+import { reportReplayScenarios } from '../src/cv/synthetic/visionReplayScenarios.js';
 import {
   replayImageAnchorSequence,
   summarizeReplay,
@@ -12,36 +8,19 @@ import {
 import { scoreHeadPoseReplay } from '../src/cv/synthetic/headPoseReplayHarness.js';
 
 const cv = await loadOpenCvForNode();
-const replaySequences = [
-  createPlanarBookSequence({
-    kind: 'planar-book',
-    frameCount: 32,
-    occlusionFrames: [14, 15, 16, 17],
-  }),
-  createPlanarBookSequence({
-    kind: 'dark-book',
-    frameCount: 32,
-    occlusionFrames: [14, 15, 16, 17],
-  }),
-  createCylindricalCanSequence({
-    frameCount: 30,
-    occlusionFrames: [12, 13, 14],
-  }),
-  createRigidBoxSequence({
-    frameCount: 28,
-    occlusionFrames: [10, 11, 12],
-  }),
-];
 const replaySummaries = [];
 
-for (const sequence of replaySequences) {
+for (const scenario of reportReplayScenarios) {
+  const sequence = scenario.create();
   const replay = await replayImageAnchorSequence({
     cv,
     sequence,
     trackingMode: 'sparse-reconstruction',
   });
   replaySummaries.push({
+    name: scenario.name,
     kind: sequence.kind,
+    backgroundVariant: sequence.metadata.backgroundVariant,
     anchorCreated: replay.anchorCreated,
     createFailure: replay.createFailure || null,
     ...summarizeReplay(replay),
@@ -55,11 +34,13 @@ const generatedFixtures = createSyntheticObjectSuite().map(sequence => ({
   width: sequence.width,
   height: sequence.height,
   targetModel: sequence.metadata.targetModel,
+  backgroundVariant: sequence.metadata.backgroundVariant,
   hasBackground: sequence.metadata.hasBackground,
   hasDarkRegions: sequence.metadata.hasDarkRegions,
   hasFineTexture: sequence.metadata.hasFineTexture,
   hasLightingVariation: sequence.metadata.hasLightingVariation,
   hasOcclusion: sequence.metadata.hasOcclusion,
+  hasMovingBackground: sequence.metadata.hasMovingBackground,
 }));
 
 console.log(JSON.stringify({

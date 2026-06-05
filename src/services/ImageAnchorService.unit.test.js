@@ -13,6 +13,7 @@ const createObjectPose = ({
   inlierRatio = 0.78,
   foreshortening = 1,
   method = 'object-pose-affine',
+  averageResidual = 1.4,
 } = {}) => ({
   success: true,
   method,
@@ -28,7 +29,7 @@ const createObjectPose = ({
   confidence,
   inlierCount,
   inlierRatio,
-  averageResidual: 1.4,
+  averageResidual,
   foreshortening,
   referenceSpread: { width: 120, height: 90, minAxis: 90 },
 });
@@ -111,8 +112,8 @@ test('reconstruction position updates are step-limited to prevent head teleports
     'sparse-reconstruction'
   );
 
-  assert.ok(Math.hypot(limited.x - 200, limited.y - 160) <= 13.3);
-  assert.ok(limited.x > 212);
+  assert.ok(Math.hypot(limited.x - 200, limited.y - 160) <= 12.1);
+  assert.ok(limited.x > 211);
   assert.equal(limited.z, 0);
 });
 
@@ -525,6 +526,25 @@ test('foreshortened object pose normal is not replaced by face-on homography', (
   assert.ok(selected.normal.z < 0.65);
 });
 
+test('noisy affine object pose is rejected before it can poison the stabilized normal', () => {
+  const service = new ImageAnchorService();
+  const pose = createObjectPose({
+    confidence: 0.64,
+    inlierCount: 18,
+    inlierRatio: 0.72,
+    averageResidual: 8.8,
+  });
+  const correspondences = Array.from({ length: 24 }, (_, index) => ({
+    prev: { x: 70 + (index % 6) * 20, y: 80 + Math.floor(index / 6) * 18 },
+    curr: { x: 72 + (index % 6) * 14, y: 82 + Math.floor(index / 6) * 18 },
+  }));
+
+  assert.equal(
+    service._getPoseRejectionReason(pose, correspondences),
+    'High pose residual'
+  );
+});
+
 test('template recovery preserves partial reference tracking before full reinitialization', () => {
   const service = new ImageAnchorService();
   let refreshed = 0;
@@ -709,7 +729,7 @@ test('keypoint updates drive the overlay from the object pose model', () => {
   assert.equal(result.poseSource, 'object-pose-affine');
 });
 
-test('reconstruction tracking mode drives the overlay from the sparse 3D map when ready', () => {
+test('reconstruction tracking mode drives the overlay from the sparse 3D map when ready and consistent', () => {
   const service = new ImageAnchorService();
   const reconstructionPose = {
     success: true,
@@ -816,8 +836,8 @@ test('reconstruction tracking mode drives the overlay from the sparse 3D map whe
     }),
     getCorrespondences: () => [],
     getAnchorPosition: () => ({
-      x: 130,
-      y: 140,
+      x: 232,
+      y: 176,
       method: 'reference_similarity_transform',
       rotation: 0,
       scale: 1,
@@ -1001,7 +1021,7 @@ test('planar homography dominates sparse reconstruction for flat textured object
   assert.equal(service.getState().metrics.poseSource, 'planar-homography');
 });
 
-test('real-depth sparse reconstruction overrides early planar dominance on curved objects', () => {
+test('real-depth sparse reconstruction owns orientation while local planar patch owns attachment transform', () => {
   const service = new ImageAnchorService();
   const anchorReference = { x: 120, y: 118 };
   const homographyMatrix = [
@@ -1019,7 +1039,7 @@ test('real-depth sparse reconstruction overrides early planar dominance on curve
   const reconstructionPose = {
     success: true,
     method: 'sparse-reconstruction',
-    position: { x: 214, y: 166, z: 0 },
+    position: { x: 140, y: 129, z: 0 },
     normal: { x: 0.58, y: -0.08, z: 0.81 },
     planarTransform: {
       scale: 1.24,
@@ -1148,12 +1168,14 @@ test('real-depth sparse reconstruction overrides early planar dominance on curve
   });
 
   const result = service._updateWithKeypoints({ cols: 640, rows: 480 }, 1000);
+  const expectedPatchPosition = project(anchorReference);
 
   assert.equal(result.success, true);
-  assert.equal(result.method, 'sparse-reconstruction');
-  assert.equal(result.position.x, 214);
-  assert.equal(result.position.y, 166);
-  assert.equal(result.planarTransform.scale, 1.24);
+  assert.equal(result.method, 'planar-homography');
+  assert.ok(Math.abs(result.position.x - expectedPatchPosition.x) < 1e-9);
+  assert.ok(Math.abs(result.position.y - expectedPatchPosition.y) < 1e-9);
+  assert.equal(result.planarTransform.method, 'planar-homography');
+  assert.ok(result.normal.x > 0.25);
   assert.equal(service.getState().metrics.poseSource, 'sparse-reconstruction');
 });
 
@@ -1374,4 +1396,89 @@ test('pose estimation retries with wider landmark support when the tapped patch 
   assert.ok(Math.abs(result.normal.x) > 0.4);
   assert.ok(calls.some(radius => radius >= 100));
   assert.ok(service.getState().metrics.posePatchRadius >= 100);
+});
+
+test('pose estimation compares local and wide candidates when both are usable', () => {
+  const service = new ImageAnchorService();
+  const localCorrespondences = Array.from({ length: 12 }, (_, index) => ({
+    prev: { x: 90 + (index % 4) * 18, y: 100 + Math.floor(index / 4) * 22 },
+    curr: { x: 92 + (index % 4) * 16, y: 102 + Math.floor(index / 4) * 21 },
+  }));
+  const wideCorrespondences = Array.from({ length: 24 }, (_, index) => ({
+    prev: { x: 54 + (index % 6) * 24, y: 62 + Math.floor(index / 6) * 22 },
+    curr: { x: 62 + (index % 6) * 16, y: 70 + Math.floor(index / 6) * 22 },
+  }));
+
+  service.templateRegion = { width: 180, height: 160 };
+  service.cv = {};
+  service.keypointTracker = {
+    anchorOriginalPosition: { x: 120, y: 130 },
+    getCorrespondences: options => (
+      options.maxReferenceDistance < 100 ? localCorrespondences : wideCorrespondences
+    ),
+  };
+  service.homographyEstimator = {
+    estimatePose: (_cv, correspondences) => {
+      const wide = correspondences.length > 12;
+      return {
+        success: true,
+        method: 'homography',
+        normal: wide
+          ? { x: 0.62, y: -0.08, z: 0.78 }
+          : { x: -0.38, y: 0.12, z: 0.92 },
+        confidence: wide ? 0.84 : 0.58,
+        inlierCount: wide ? 17 : 10,
+        inlierRatio: wide ? 0.71 : 0.83,
+        averageResidual: wide ? 0.6 : 1.9,
+        referenceSpread: wide
+          ? { width: 132, height: 88, minAxis: 88 }
+          : { width: 54, height: 44, minAxis: 44 },
+      };
+    },
+  };
+
+  const result = service._estimatePoseFromTracker();
+
+  assert.equal(result.correspondences.length, 24);
+  assert.ok(result.options.maxReferenceDistance >= 100);
+  assert.ok(result.poseResult.normal.x > 0.5);
+});
+
+test('inconsistent reconstruction does not replace tracked attachment scale', () => {
+  const service = new ImageAnchorService();
+  service.planarDominanceScore = 8;
+  service.currentPlanarTransform = {
+    scale: 1.32,
+    rotation: 0.24,
+    confidence: 0.8,
+    inlierCount: 20,
+    method: 'planar-homography',
+  };
+  const trackerAnchorPosition = {
+    scale: 0.92,
+    rotation: -0.08,
+    confidence: 0.5,
+    inlierCount: 18,
+    method: 'reference_similarity_transform',
+  };
+  const reconstructionPose = {
+    success: true,
+    planarTransform: {
+      scale: 1.45,
+      rotation: 0.31,
+      confidence: 0.86,
+      inlierCount: 24,
+      method: 'sparse-reconstruction',
+    },
+  };
+
+  const transform = service._selectTrackedAttachmentTransform({
+    trackerAnchorPosition,
+    reconstructionPose,
+    useTrackedTransform: true,
+  });
+
+  assert.equal(transform.scale, trackerAnchorPosition.scale);
+  assert.equal(transform.rotation, trackerAnchorPosition.rotation);
+  assert.equal(transform.method, 'reference_similarity_transform');
 });
