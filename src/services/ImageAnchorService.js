@@ -6,8 +6,10 @@
 
 import { KeypointDetector } from '../cv/anchor.keypoints.js';
 import { KeypointTracker } from '../cv/anchor.tracking.js';
+import { PatchKeyframeRelocalizer } from '../cv/anchor.relocalization.js';
 import { HomographyEstimator } from '../cv/anchor.homography.js';
 import { AffineParallaxPoseEstimator } from '../cv/anchor.affinePose.js';
+import { SparseObjectReconstructor, RECONSTRUCTION_POSE_MODEL } from '../cv/anchor.reconstruction.js';
 import { AnchorPersistenceSystem } from '../cv/anchor.persistence.js';
 import { OneEuroFilter } from '../cv/oneEuroFilter.js';
 import { checkCriticalFeatures } from '../cv/opencv.features.test.js';
@@ -16,6 +18,21 @@ import { SurfaceNormalStabilizer } from '../utils/normalStabilizer.js';
 import { logger } from '../utils/logger.js';
 
 const POSE_MODEL = 'object-pose';
+const TRACKING_MODES = new Set([POSE_MODEL, RECONSTRUCTION_POSE_MODEL]);
+
+const createPositionFilter = () => new OneEuroFilter(60, 2.4, 0.075, 1.0);
+const createPlanarScaleFilter = () => new OneEuroFilter(60, 1.2, 0.08, 1.0);
+const createPlanarRotationFilter = () => new OneEuroFilter(60, 1.1, 0.08, 1.0);
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const transformHomographyPoint = (matrix, point) => {
+  const denominator = matrix[6] * point.x + matrix[7] * point.y + matrix[8];
+
+  return {
+    x: (matrix[0] * point.x + matrix[1] * point.y + matrix[2]) / denominator,
+    y: (matrix[3] * point.x + matrix[4] * point.y + matrix[5]) / denominator
+  };
+};
 
 const unwrapAngle = (target, reference) => {
   let unwrapped = target;
@@ -32,30 +49,38 @@ export class ImageAnchorService {
     // Core components
     this.keypointDetector = new KeypointDetector();
     this.keypointTracker = new KeypointTracker();
+    this.relocalizer = new PatchKeyframeRelocalizer();
     this.homographyEstimator = new HomographyEstimator();
     this.affinePoseEstimator = new AffineParallaxPoseEstimator();
+    this.reconstructor = new SparseObjectReconstructor();
     this.persistenceSystem = new AnchorPersistenceSystem();
     
     // Filters for smoothing
-    this.positionFilterX = new OneEuroFilter(30);
-    this.positionFilterY = new OneEuroFilter(30);
-    this.planarScaleFilter = new OneEuroFilter(30);
-    this.planarRotationFilter = new OneEuroFilter(30);
+    this.positionFilterX = createPositionFilter();
+    this.positionFilterY = createPositionFilter();
+    this.planarScaleFilter = createPlanarScaleFilter();
+    this.planarRotationFilter = createPlanarRotationFilter();
     this.normalStabilizer = new SurfaceNormalStabilizer();
+    this.framesWithoutNormalPose = 0;
     
     // State
     this.anchored = false;
     this.anchorState = 'inactive'; // inactive, initializing, tracking, stable, degraded, lost
     this.template = null;
     this.templateRegion = null;
+    this.trackingRegion = null;
     this.templateCenter = null; // Reference center point for stable positioning
     this.templateAnchorOffset = null;
     this.currentPosition = null;
     this.currentNormal = null;
     this.currentPlanarTransform = null;
+    this.trackingMode = POSE_MODEL;
+    this.planarDominanceScore = 0;
     this.lastFrameTime = 0;
     this.framesSinceRefresh = 0;
     this.refreshInterval = 15; // Refresh keypoints every N frames
+    this.framesSinceRelocalizationKeyframe = 0;
+    this.relocalizationKeyframeInterval = 10;
     this.fullFrameRecoveryInterval = 6;
     this.framesSinceFullFrameRecovery = this.fullFrameRecoveryInterval;
     
@@ -73,9 +98,11 @@ export class ImageAnchorService {
       lostFrameCount: 0,
       keypointFailureCount: 0,
       poseModel: POSE_MODEL,
+      trackingMode: this.trackingMode,
       poseSource: null,
       poseInliers: 0,
       affinePoseInliers: 0,
+      reconstructionPreview: null,
       landmarkCount: 0,
       activeLandmarkCount: 0,
       inactiveLandmarkCount: 0,
@@ -83,7 +110,12 @@ export class ImageAnchorService {
       lastFailureReason: null,
       lastFailureStage: null,
       lastUpdateResult: null,
-      lastUpdateMethod: null
+      lastUpdateMethod: null,
+      relocalizationKeyframes: 0,
+      relocalizationDescriptors: 0,
+      relocalizationMatches: 0,
+      relocalizationInliers: 0,
+      relocalizationResult: null
     };
     
     // Event listeners
@@ -92,6 +124,26 @@ export class ImageAnchorService {
     this.minAnchorKeypoints = 12;
     this.minimumTemplateQuality = 0.12;
     this.targetTemplateQuality = 0.25;
+  }
+
+  setTrackingMode(mode) {
+    if (!TRACKING_MODES.has(mode)) {
+      throw new Error(`Unsupported anchor tracking mode: ${mode}`);
+    }
+
+    this.trackingMode = mode;
+    this.metrics.trackingMode = mode;
+    this.metrics.poseModel = mode === RECONSTRUCTION_POSE_MODEL ? RECONSTRUCTION_POSE_MODEL : POSE_MODEL;
+
+    if (this.anchored && this.currentPosition) {
+      this.reconstructor.reset({
+        anchorReference: this.keypointTracker.anchorOriginalPosition || this.currentPosition
+      });
+      this.metrics.reconstructionState = this.reconstructor.getState().state;
+      this.metrics.reconstructionReady = false;
+    }
+
+    this._notifyStateChange();
   }
 
   async initialize(cv, cameraParams) {
@@ -139,6 +191,7 @@ export class ImageAnchorService {
 
     const startTime = performance.now();
     this.anchorState = 'initializing';
+    this.planarDominanceScore = 0;
     this._notifyStateChange();
 
     try {
@@ -210,8 +263,28 @@ export class ImageAnchorService {
         y: tapPosition.y - templateCenter.y
       };
 
-      // Initialize tracking with extracted keypoints and tap position (not template center)
-      this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, gray, tapPosition);
+      const trackingRegion = this._calculateTrackingRegion(
+        boundingBox,
+        imageData.width,
+        imageData.height,
+        templateRegion
+      );
+      const trackingKeypointResult = trackingRegion
+        ? this.keypointDetector.extractKeypoints(this.cv, gray, trackingRegion)
+        : keypointResult;
+      const trackingKeypoints = this._mergeTrackingKeypoints(
+        keypointResult.keypoints,
+        trackingKeypointResult.keypoints
+      );
+
+      this.keypointTracker.initializeTracking(this.cv, trackingKeypoints, gray, tapPosition);
+      this.reconstructor.reset({ anchorReference: tapPosition });
+      const keyframeResult = this.relocalizer.storeKeyframeFromTrackedPoints(
+        gray,
+        this.keypointTracker.trackedPoints,
+        startTime
+      );
+      this.framesSinceRelocalizationKeyframe = 0;
 
       // Store template for persistence system
       this.persistenceSystem.storeTemplate(this.cv, gray, templateRegion, tapPosition);
@@ -219,6 +292,7 @@ export class ImageAnchorService {
       // Store anchor state
       this.anchored = true;
       this.templateRegion = templateRegion;
+      this.trackingRegion = trackingRegion || { ...templateRegion };
       this.templateCenter = templateCenter; // Store for template persistence (not positioning)
       this.templateAnchorOffset = templateAnchorOffset;
       this.currentPosition = { x: tapPosition.x, y: tapPosition.y, z: 0 }; // Anchor at tap position
@@ -229,6 +303,9 @@ export class ImageAnchorService {
         inlierCount: keypointResult.keypoints.length,
         method: 'created'
       };
+      this.currentNormal = { x: 0, y: 0, z: 1 };
+      this.normalStabilizer.reset(this.currentNormal);
+      this.framesWithoutNormalPose = 0;
       this.planarScaleFilter.filter(1, startTime);
       this.planarRotationFilter.filter(0, startTime);
       this.anchorState = this._getInitialAnchorState(qualityAssessment.overall);
@@ -237,11 +314,13 @@ export class ImageAnchorService {
       
       // Initialize metrics
       this.metrics = {
-        keypointCount: keypointResult.keypoints.length,
+        keypointCount: trackingKeypoints.length,
         templateKeypoints: keypointResult.keypoints.length,
+        trackingKeypoints: trackingKeypoints.length,
         templateQuality: qualityAssessment.overall,
         qualityState: this._getTemplateQualityState(qualityAssessment.overall),
         templateRegion: { ...templateRegion },
+        trackingRegion: this.trackingRegion ? { ...this.trackingRegion } : null,
         templateCenter: { ...templateCenter },
         templateAnchorOffset: { ...templateAnchorOffset },
         templateRegionArea: templateRegion.width * templateRegion.height,
@@ -251,8 +330,21 @@ export class ImageAnchorService {
         homographyInliers: 0,
         affinePoseInliers: 0,
         poseInliers: 0,
-        poseModel: POSE_MODEL,
+        poseModel: this.trackingMode === RECONSTRUCTION_POSE_MODEL ? RECONSTRUCTION_POSE_MODEL : POSE_MODEL,
+        trackingMode: this.trackingMode,
         poseSource: null,
+        reconstructionState: this.reconstructor.getState().state,
+        reconstructionReady: false,
+        reconstructionFrames: 0,
+        reconstructionLandmarks: 0,
+        reconstructionDepthQuality: 0,
+        reconstructionPreview: this.reconstructor.getState().preview,
+        relocalizationKeyframes: keyframeResult.keyframeCount || 0,
+        relocalizationDescriptors: keyframeResult.descriptorCount || 0,
+        relocalizationMatches: 0,
+        relocalizationInliers: 0,
+        relocalizationResult: keyframeResult.success ? 'keyframe-stored' : 'keyframe-skipped',
+        relocalizationReason: keyframeResult.reason || null,
         recoveryAttempts: 0,
         lostFrameCount: 0,
         keypointFailureCount: 0,
@@ -276,7 +368,10 @@ export class ImageAnchorService {
         keypoints: keypointResult.keypoints.length,
         quality: qualityAssessment.overall,
         method: keypointResult.method,
-        state: this.anchorState
+        state: this.anchorState,
+        trackingMode: this.trackingMode,
+        reconstructionState: this.metrics.reconstructionState,
+        reconstructionReady: this.metrics.reconstructionReady
       };
 
     } catch (error) {
@@ -335,7 +430,7 @@ export class ImageAnchorService {
           this.metrics.keypointFailureCount = this.keypointFailureCount;
           this.metrics.lastFailureReason = updateResult.reason || 'Keypoint tracking failed';
           this.metrics.lastFailureStage = 'keypoint-tracking';
-          
+
           logger.warn('ImageAnchor', 'Keypoint tracking failed:', {
             reason: updateResult.reason,
             keypointCount: this.metrics.keypointCount,
@@ -343,7 +438,7 @@ export class ImageAnchorService {
             failureCount: this.keypointFailureCount,
             maxFailures: this.maxKeypointFailures
           });
-          
+
           // Only degrade after multiple consecutive failures
           if (this.keypointFailureCount >= this.maxKeypointFailures) {
             logger.info('ImageAnchor', `Max keypoint failures reached (${this.keypointFailureCount}), degrading to template matching`);
@@ -351,11 +446,14 @@ export class ImageAnchorService {
             updateResult = this._updateWithTemplate(gray);
           } else {
             logger.info('ImageAnchor', `Keypoint failure ${this.keypointFailureCount}/${this.maxKeypointFailures}, will retry next frame`);
-            // Return the failed result but don't change state yet
             updateResult = {
-              success: false,
+              success: true,
               reason: `Keypoint failure ${this.keypointFailureCount}/${this.maxKeypointFailures}: ${updateResult.reason}`,
               position: this.currentPosition,
+              normal: this.currentNormal,
+              planarTransform: this.currentPlanarTransform,
+              confidence: Math.max(0, (this.metrics.trackingSuccessRate || 0) * 0.5),
+              method: 'held-last-pose',
               state: this.anchorState,
               recoverable: true
             };
@@ -369,7 +467,7 @@ export class ImageAnchorService {
         }
       } else if (this.anchorState === 'degraded' || this.anchorState === 'lost') {
         // Try keypoint tracking recovery first if we have tracked points
-        if (this.anchorState === 'degraded' && this.keypointTracker.trackedPoints?.length > 10) {
+        if (this.keypointTracker.trackedPoints?.length > 0) {
           logger.debug('ImageAnchor', 'Attempting keypoint tracking recovery from degraded state');
           const recoveryResult = this._updateWithKeypoints(gray, timestamp);
           
@@ -490,7 +588,7 @@ export class ImageAnchorService {
   _updateWithKeypoints(grayImage, timestamp) {
     try {
       logger.debug('ImageAnchor', 'Keypoint tracking - starting trackToFrame');
-      const trackingResult = this.keypointTracker.trackToFrame(this.cv, grayImage);
+      let trackingResult = this.keypointTracker.trackToFrame(this.cv, grayImage);
       
       logger.info('ImageAnchor', 'Keypoint tracking result:', {
         success: trackingResult.success,
@@ -501,19 +599,30 @@ export class ImageAnchorService {
       });
       
       if (!trackingResult.success) {
-        logger.warn('ImageAnchor', 'Keypoint tracking failed:', {
-          ...trackingResult,
-          trackerState: {
-            initialized: this.keypointTracker.initialized,
-            hasTrackedPoints: this.keypointTracker.trackedPoints?.length || 0,
-            hasPreviousGray: !!this.keypointTracker.previousGray
-          }
-        });
-        return {
-          success: false,
-          reason: trackingResult.reason || 'Keypoint tracking failed',
-          state: this.anchorState
-        };
+        const relocalizationResult = this._attemptKeyframeRelocalization(grayImage, timestamp, trackingResult.reason);
+        if (relocalizationResult.success) {
+          trackingResult = relocalizationResult.trackingResult;
+          logger.info('ImageAnchor', 'Recovered keypoint tracking through descriptor relocalization:', {
+            restored: relocalizationResult.restore?.restored,
+            matches: relocalizationResult.matches,
+            inliers: relocalizationResult.inliers,
+            confidence: relocalizationResult.confidence
+          });
+        } else {
+          logger.warn('ImageAnchor', 'Keypoint tracking failed:', {
+            ...trackingResult,
+            trackerState: {
+              initialized: this.keypointTracker.initialized,
+              hasTrackedPoints: this.keypointTracker.trackedPoints?.length || 0,
+              hasPreviousGray: !!this.keypointTracker.previousGray
+            }
+          });
+          return {
+            success: false,
+            reason: relocalizationResult.reason || trackingResult.reason || 'Keypoint tracking failed',
+            state: this.anchorState
+          };
+        }
       }
 
       // Update metrics  
@@ -522,56 +631,67 @@ export class ImageAnchorService {
       this._recordLandmarkMetrics();
 
       // Check if we have sufficient tracking quality
-      const minSuccessRate = 0.5;
-      const minActivePoints = 12;
+      const minSuccessRate = 0.45;
+      const minActivePoints = 8;
       
       if (this.metrics.trackingSuccessRate < minSuccessRate || this.metrics.keypointCount < minActivePoints) {
-        logger.warn('ImageAnchor', 'Keypoint tracking quality insufficient:', {
-          successRate: this.metrics.trackingSuccessRate,
-          activePointCount: this.metrics.keypointCount,
-          minSuccessRate,
-          minActivePoints
-        });
-        
-        // Try to get position from available tracking data
-        if (trackingResult.centroid) {
-          this.currentPosition = {
-            x: this.positionFilterX.filter(trackingResult.centroid.x, timestamp),
-            y: this.positionFilterY.filter(trackingResult.centroid.y, timestamp),
-            z: 0
-          };
+        const relocalizationResult = this._attemptKeyframeRelocalization(grayImage, timestamp, 'Insufficient keypoint tracking quality');
+        if (relocalizationResult.success) {
+          trackingResult = relocalizationResult.trackingResult;
+          this.metrics.trackingSuccessRate = trackingResult.successRate || 0;
+          this.metrics.keypointCount = trackingResult.activePointCount || 0;
+          this._recordLandmarkMetrics();
+        } else {
+          logger.warn('ImageAnchor', 'Keypoint tracking quality insufficient:', {
+            successRate: this.metrics.trackingSuccessRate,
+            activePointCount: this.metrics.keypointCount,
+            minSuccessRate,
+            minActivePoints
+          });
+
+          if (trackingResult.centroid) {
+            this.currentPosition = {
+              x: this.positionFilterX.filter(trackingResult.centroid.x, timestamp),
+              y: this.positionFilterY.filter(trackingResult.centroid.y, timestamp),
+              z: 0
+            };
+
+            return {
+              success: true,
+              position: this.currentPosition,
+              normal: this.currentNormal,
+              confidence: this.metrics.trackingSuccessRate,
+              method: 'keypoint_centroid_only',
+              state: this.anchorState
+            };
+          }
           
           return {
-            success: true,
-            position: this.currentPosition,
-            normal: this.currentNormal,
-            confidence: this.metrics.trackingSuccessRate,
-            method: 'keypoint_centroid_only',
+            success: false,
+            reason: 'Insufficient keypoint tracking quality',
             state: this.anchorState
           };
         }
-        
-        return {
-          success: false,
-          reason: 'Insufficient keypoint tracking quality',
-          state: this.anchorState
-        };
       }
 
       // Try pose estimation if we have enough local correspondences
       let poseResult = null;
-      const objectPose = this._estimateObjectPoseFromTracker();
       this.metrics.homographyInliers = 0;
       this.metrics.affinePoseInliers = 0;
       this.metrics.objectPoseInliers = 0;
+      this.metrics.reconstructionPoseInliers = 0;
       this.metrics.poseInliers = 0;
       this.metrics.poseSource = null;
-      this.metrics.poseModel = POSE_MODEL;
+      this.metrics.poseModel = this.trackingMode === RECONSTRUCTION_POSE_MODEL ? RECONSTRUCTION_POSE_MODEL : POSE_MODEL;
+      const objectPose = this._estimateObjectPoseFromTracker();
+      const reconstructionPose = this._updateReconstructionPoseFromTracker(timestamp);
       
       const poseAttempt = this._estimatePoseFromTracker();
       const poseCorrespondenceOptions = poseAttempt.options;
       const correspondences = poseAttempt.correspondences;
       poseResult = poseAttempt.poseResult;
+      const planarPose = this._createPlanarHomographyPose(poseResult, correspondences);
+      this._updatePlanarDominance(planarPose, correspondences);
       this.metrics.poseKeypointCount = correspondences.length;
       this.metrics.posePatchRadius = poseCorrespondenceOptions.maxReferenceDistance;
       logger.debug('ImageAnchor', 'Pose correspondences check:', {
@@ -605,25 +725,39 @@ export class ImageAnchorService {
       let positionMethod = 'unknown';
       let planarTransform = this.currentPlanarTransform;
       
+      const reconstructionPoseUsableForTransform = this._isUsablePoseResult(reconstructionPose, reconstructionPose?.correspondences || correspondences);
+      const planarPoseUsableForTransform = this._isUsablePoseResult(planarPose, correspondences);
       const objectPoseUsableForTransform = this._isUsablePoseResult(objectPose, objectPose.correspondences || correspondences);
+      const suppressReconstructionForPlanarTarget = this._hasPlanarDominance() &&
+        !this._hasStrongNonPlanarReconstruction(reconstructionPose) &&
+        !planarPoseUsableForTransform;
       const trackerAnchorPosition = this.keypointTracker.getAnchorPosition();
+      const preferPlanarPose = this._shouldPreferPlanarHomography({
+        planarPose,
+        reconstructionPose,
+        correspondences
+      });
 
-      if (objectPoseUsableForTransform) {
-        newPosition = {
-          x: this.positionFilterX.filter(objectPose.position.x, timestamp),
-          y: this.positionFilterY.filter(objectPose.position.y, timestamp),
-          z: 0
-        };
+      if (planarPoseUsableForTransform && preferPlanarPose) {
+        newPosition = this._filterPositionCandidate(planarPose.position, timestamp, planarPose.method);
+        positionMethod = planarPose.method;
+        planarTransform = this._updatePlanarTransform(planarPose.planarTransform, timestamp);
+        this._recordPlanarHomographyMetrics(planarPose);
+        logger.debug('ImageAnchor', `Using planar homography positioning: ${positionMethod}`);
+      } else if (reconstructionPoseUsableForTransform && !suppressReconstructionForPlanarTarget) {
+        newPosition = this._filterPositionCandidate(reconstructionPose.position, timestamp, reconstructionPose.method);
+        positionMethod = reconstructionPose.method;
+        planarTransform = this._updatePlanarTransform(reconstructionPose.planarTransform, timestamp);
+        this._recordReconstructionPoseMetrics(reconstructionPose);
+        logger.debug('ImageAnchor', `Using sparse reconstruction positioning: ${positionMethod}`);
+      } else if (objectPoseUsableForTransform) {
+        newPosition = this._filterPositionCandidate(objectPose.position, timestamp, objectPose.method);
         positionMethod = objectPose.method;
         planarTransform = this._updatePlanarTransform(objectPose.planarTransform, timestamp);
         this._recordObjectPoseMetrics(objectPose);
         logger.debug('ImageAnchor', `Using object pose positioning: ${positionMethod}`);
       } else if (trackerAnchorPosition) {
-        newPosition = {
-          x: this.positionFilterX.filter(trackerAnchorPosition.x, timestamp),
-          y: this.positionFilterY.filter(trackerAnchorPosition.y, timestamp),
-          z: 0
-        };
+        newPosition = this._filterPositionCandidate(trackerAnchorPosition, timestamp, trackerAnchorPosition.method);
         positionMethod = trackerAnchorPosition.method;
         planarTransform = this._updatePlanarTransform({
           scale: trackerAnchorPosition.scale,
@@ -650,23 +784,36 @@ export class ImageAnchorService {
       
       this.currentPosition = newPosition;
 
-      const normalPose = this._selectNormalPose({ objectPose, poseResult, correspondences });
+      const normalPose = this._selectNormalPose({ reconstructionPose, planarPose, objectPose, poseResult, correspondences });
 
       if (normalPose) {
         const poseConfidence = this._calculatePoseConfidence(normalPose, normalPose.correspondences || correspondences);
+        const reacquiredPose = this.framesWithoutNormalPose >= 3;
+        this.metrics.rawPoseNormal = normalPose.normal ? { ...normalPose.normal } : null;
         this.currentNormal = this.normalStabilizer.update(normalPose.normal, {
           confidence: poseConfidence,
           inliers: normalPose.inlierCount,
+          foreshortening: normalPose.foreshortening,
+          reacquired: reacquiredPose,
+          trusted: normalPose.method === RECONSTRUCTION_POSE_MODEL && this._hasStrongNonPlanarReconstruction(normalPose),
         });
+        this.framesWithoutNormalPose = 0;
         this.metrics.poseConfidence = poseConfidence;
         this.metrics.poseSource = normalPose.method;
         this.metrics.poseInliers = normalPose.inlierCount;
         this.metrics.poseRejectedReason = null;
         logger.debug('ImageAnchor', `Updated stabilized surface normal from ${normalPose.method}`);
       } else if (poseResult?.success) {
+        this.framesWithoutNormalPose++;
+        this.metrics.rawPoseNormal = null;
         this.metrics.poseRejectedReason = this._getPoseRejectionReason(poseResult, correspondences);
       } else if (poseResult) {
+        this.framesWithoutNormalPose++;
+        this.metrics.rawPoseNormal = null;
         this.metrics.poseRejectedReason = poseResult.reason;
+      } else {
+        this.framesWithoutNormalPose++;
+        this.metrics.rawPoseNormal = null;
       }
 
       // Determine anchor state based on tracking quality
@@ -695,6 +842,7 @@ export class ImageAnchorService {
         this.framesSinceRefresh = 0;
         logger.debug('ImageAnchor', 'Refreshed keypoints for landmark map growth');
       }
+      this._storeRelocalizationKeyframe(grayImage, { overallQuality, poseInliers });
 
       logger.debug('ImageAnchor', 'Keypoint tracking successful:', {
         method: positionMethod,
@@ -769,6 +917,105 @@ export class ImageAnchorService {
     return recoveryResult;
   }
 
+  _attemptKeyframeRelocalization(grayImage, timestamp, failureReason) {
+    if (!this.relocalizer.hasKeyframes()) {
+      return {
+        success: false,
+        reason: failureReason || 'No descriptor keyframes available for relocalization'
+      };
+    }
+
+    const keypointResult = this.keypointDetector.extractKeypoints(this.cv, grayImage, null);
+    const relocalizationResult = this.relocalizer.relocalize(grayImage, keypointResult.keypoints);
+    this.metrics.relocalizationKeyframes = relocalizationResult.keyframeCount || this.metrics.relocalizationKeyframes || 0;
+    this.metrics.relocalizationQueryKeypoints = keypointResult.keypoints.length;
+    this.metrics.relocalizationMatches = relocalizationResult.matchCount || 0;
+    this.metrics.relocalizationInliers = relocalizationResult.inlierCount || 0;
+    this.metrics.relocalizationConfidence = relocalizationResult.confidence || 0;
+    this.metrics.relocalizationResult = relocalizationResult.success ? 'success' : 'failed';
+    this.metrics.relocalizationReason = relocalizationResult.reason || null;
+
+    if (!relocalizationResult.success) {
+      return {
+        success: false,
+        reason: relocalizationResult.reason || failureReason || 'Descriptor relocalization failed'
+      };
+    }
+
+    const restore = this.keypointTracker.restoreFromReferenceTransform(
+      grayImage,
+      relocalizationResult.transform,
+      relocalizationResult.inlierIds
+    );
+
+    if (restore.restored < 8) {
+      const reason = `Descriptor relocalization restored only ${restore.restored} landmarks`;
+      this.metrics.relocalizationResult = 'failed';
+      this.metrics.relocalizationReason = reason;
+      return { success: false, reason };
+    }
+
+    this.keypointFailureCount = 0;
+    this.metrics.relocalizationRestored = restore.restored;
+    this.metrics.relocalizationActiveLandmarks = restore.active;
+
+    return {
+      success: true,
+      method: relocalizationResult.method,
+      restore,
+      matches: relocalizationResult.matchCount,
+      inliers: relocalizationResult.inlierCount,
+      confidence: relocalizationResult.confidence,
+      trackingResult: {
+        success: true,
+        successRate: Math.max(0.5, Math.min(1, relocalizationResult.confidence)),
+        activePointCount: restore.active,
+        averageError: relocalizationResult.averageResidual,
+        method: relocalizationResult.method,
+        relocalized: true,
+        statistics: {
+          timestamp,
+          totalPoints: restore.total,
+          activePoints: restore.active,
+          successfulPoints: restore.restored,
+          successRate: Math.max(0.5, Math.min(1, relocalizationResult.confidence)),
+          averageError: relocalizationResult.averageResidual,
+        }
+      }
+    };
+  }
+
+  _storeRelocalizationKeyframe(grayImage, { overallQuality = 1, poseInliers = 0, force = false } = {}) {
+    this.framesSinceRelocalizationKeyframe++;
+    const activeCount = this.keypointTracker.trackedPoints
+      ? this.keypointTracker.trackedPoints.filter(point => point.status === 'active').length
+      : 0;
+
+    if (!force && this.framesSinceRelocalizationKeyframe < this.relocalizationKeyframeInterval) {
+      return null;
+    }
+
+    if (!force && (overallQuality < 0.58 || activeCount < 16 || poseInliers < 8)) {
+      return null;
+    }
+
+    const result = this.relocalizer.storeKeyframeFromTrackedPoints(
+      grayImage,
+      this.keypointTracker.trackedPoints
+    );
+
+    this.metrics.relocalizationKeyframes = result.keyframeCount || this.metrics.relocalizationKeyframes || 0;
+    this.metrics.relocalizationDescriptors = result.descriptorCount || this.metrics.relocalizationDescriptors || 0;
+    this.metrics.relocalizationKeyframeResult = result.success ? 'stored' : 'skipped';
+    this.metrics.relocalizationKeyframeReason = result.reason || null;
+
+    if (result.success) {
+      this.framesSinceRelocalizationKeyframe = 0;
+    }
+
+    return result;
+  }
+
   /**
    * Refresh keypoints in current region
    */
@@ -798,17 +1045,26 @@ export class ImageAnchorService {
         this.metrics.landmarkRefreshAdded = refreshStats.added;
         this.metrics.landmarkRefreshTotal = refreshStats.total;
       }
+      this._storeRelocalizationKeyframe(grayImage, {
+        force: true,
+        overallQuality: this.metrics.trackingSuccessRate || 1,
+        poseInliers: this.metrics.poseInliers || 0
+      });
       logger.info('ImageAnchor', 'Keypoints refreshed successfully');
     }
   }
 
   _shouldRefreshKeypoints({ overallQuality, poseInliers }) {
-    if (this.framesSinceRefresh < this.refreshInterval) {
+    const needsOcclusionSupport = this.metrics.trackingSuccessRate >= 0.6 &&
+      this.metrics.keypointCount >= 8 &&
+      this.metrics.keypointCount < 18;
+
+    if (this.framesSinceRefresh < this.refreshInterval && !needsOcclusionSupport) {
       return false;
     }
 
     if (this.metrics.trackingSuccessRate < 0.55 || this.metrics.keypointCount < 12) {
-      return false;
+      return needsOcclusionSupport;
     }
 
     if (!['tracking', 'stable', 'degraded'].includes(this.anchorState)) {
@@ -820,7 +1076,7 @@ export class ImageAnchorService {
     const poseNeedsSupport = poseInliers < 24;
     const trackingIsUseful = overallQuality >= 0.5 || this.anchorState === 'stable';
 
-    return trackingIsUseful && (mapNeedsExpansion || poseNeedsSupport || this.anchorState === 'stable');
+    return needsOcclusionSupport || (trackingIsUseful && (mapNeedsExpansion || poseNeedsSupport || this.anchorState === 'stable'));
   }
 
   _recordLandmarkMetrics() {
@@ -868,6 +1124,65 @@ export class ImageAnchorService {
    */
   _calculateTemplateRegion(tapPosition, boundingBox, imageWidth, imageHeight) {
     return calculateTemplateRegion(tapPosition, boundingBox, imageWidth, imageHeight);
+  }
+
+  _calculateTrackingRegion(boundingBox, imageWidth, imageHeight, templateRegion) {
+    if (!boundingBox ||
+        !Number.isFinite(boundingBox.x1) ||
+        !Number.isFinite(boundingBox.y1) ||
+        !Number.isFinite(boundingBox.x2) ||
+        !Number.isFinite(boundingBox.y2)) {
+      return { ...templateRegion };
+    }
+
+    const templateArea = templateRegion.width * templateRegion.height;
+    const detectionWidth = Math.max(1, boundingBox.x2 - boundingBox.x1);
+    const detectionHeight = Math.max(1, boundingBox.y2 - boundingBox.y1);
+    const detectionArea = detectionWidth * detectionHeight;
+    const padding = Math.max(8, Math.min(24, Math.max(templateRegion.width, templateRegion.height) * 0.12));
+    const objectRegion = this._clampTemplateRegion({
+      x: Math.min(boundingBox.x1, templateRegion.x) - padding,
+      y: Math.min(boundingBox.y1, templateRegion.y) - padding,
+      width: Math.max(boundingBox.x2, templateRegion.x + templateRegion.width) -
+        Math.min(boundingBox.x1, templateRegion.x) + padding * 2,
+      height: Math.max(boundingBox.y2, templateRegion.y + templateRegion.height) -
+        Math.min(boundingBox.y1, templateRegion.y) + padding * 2,
+    }, imageWidth, imageHeight);
+
+    if (detectionArea < templateArea * 1.2) {
+      return { ...templateRegion };
+    }
+
+    return objectRegion;
+  }
+
+  _mergeTrackingKeypoints(templateKeypoints, objectKeypoints) {
+    const normalizeKeypoint = keypoint => keypoint.pt
+      ? keypoint
+      : {
+          ...keypoint,
+          pt: { x: keypoint.x, y: keypoint.y },
+        };
+    const minDistance = 7;
+    const candidates = [
+      ...templateKeypoints.map(normalizeKeypoint).map(keypoint => ({
+        ...keypoint,
+        response: (keypoint.response || 1) + 0.25,
+      })),
+      ...objectKeypoints.map(normalizeKeypoint),
+    ].sort((left, right) => (right.response || 0) - (left.response || 0));
+    const merged = [];
+
+    for (const keypoint of candidates) {
+      const overlaps = merged.some(existing => (
+        Math.hypot(existing.pt.x - keypoint.pt.x, existing.pt.y - keypoint.pt.y) < minDistance
+      ));
+      if (!overlaps) {
+        merged.push(keypoint);
+      }
+    }
+
+    return merged;
   }
 
   _getTemplateCenterFromAnchorPosition() {
@@ -974,9 +1289,194 @@ export class ImageAnchorService {
     });
   }
 
-  _selectNormalPose({ objectPose, poseResult, correspondences }) {
+  _createPlanarHomographyPose(poseResult, correspondences) {
+    if (!poseResult?.success || poseResult.method !== 'homography' || !poseResult.homographyMatrix) {
+      return null;
+    }
+
+    const anchorReference = this.keypointTracker.anchorOriginalPosition;
+    const referenceSpread = poseResult.referenceSpread || this._measureReferenceSpread(correspondences);
+    const basis = Math.max(18, Math.min(72, referenceSpread.minAxis * 0.28));
+    const position2d = transformHomographyPoint(poseResult.homographyMatrix, anchorReference);
+    const basisX = transformHomographyPoint(poseResult.homographyMatrix, {
+      x: anchorReference.x + basis,
+      y: anchorReference.y
+    });
+    const basisY = transformHomographyPoint(poseResult.homographyMatrix, {
+      x: anchorReference.x,
+      y: anchorReference.y + basis
+    });
+    const vectorX = {
+      x: basisX.x - position2d.x,
+      y: basisX.y - position2d.y
+    };
+    const vectorY = {
+      x: basisY.x - position2d.x,
+      y: basisY.y - position2d.y
+    };
+    const scale = Math.sqrt(Math.max(1e-9, Math.hypot(vectorX.x, vectorX.y) * Math.hypot(vectorY.x, vectorY.y))) / basis;
+    const residualScore = clamp(1 - (poseResult.averageResidual || 0) / 8, 0, 1);
+    const inlierRatio = poseResult.inlierRatio ?? poseResult.inlierCount / Math.max(1, correspondences.length);
+    const confidence = clamp((poseResult.confidence || 0) * 0.46 + inlierRatio * 0.36 + residualScore * 0.18, 0, 1);
+
+    return {
+      success: true,
+      method: 'planar-homography',
+      position: { x: position2d.x, y: position2d.y, z: 0 },
+      normal: poseResult.normal,
+      planarTransform: {
+        scale,
+        rotation: Math.atan2(vectorX.y, vectorX.x),
+        confidence,
+        inlierCount: poseResult.inlierCount,
+        method: 'planar-homography',
+      },
+      confidence,
+      inlierCount: poseResult.inlierCount,
+      inlierRatio,
+      averageResidual: poseResult.averageResidual || 0,
+      foreshortening: poseResult.normal?.z ?? 1,
+      referenceSpread,
+      homographyMatrix: poseResult.homographyMatrix,
+      correspondences
+    };
+  }
+
+  _updateReconstructionPoseFromTracker() {
+    if (this.trackingMode !== RECONSTRUCTION_POSE_MODEL) {
+      this._recordReconstructionMetrics(this.reconstructor.getState());
+      return null;
+    }
+
+    const reconstructionState = this.reconstructor.addFrameFromTrackedPoints(this.keypointTracker.trackedPoints);
+    this._recordReconstructionMetrics(reconstructionState);
+
+    const pose = this.reconstructor.estimatePoseFromTrackedPoints(this.keypointTracker.trackedPoints);
+    if (!pose.success) {
+      this.metrics.reconstructionPoseRejectedReason = pose.reason;
+      return pose;
+    }
+
+    this.metrics.reconstructionPoseRejectedReason = null;
+    return {
+      ...pose,
+      correspondences: this.keypointTracker.trackedPoints
+        .filter(point => point.status === 'active')
+        .map(point => ({
+          prev: { x: point.original.x, y: point.original.y },
+          curr: { x: point.current.x, y: point.current.y },
+        }))
+    };
+  }
+
+  _shouldPreferPlanarHomography({ planarPose, reconstructionPose, correspondences }) {
+    const planarUsable = this._isUsablePoseResult(planarPose, correspondences);
+    if (!planarUsable) {
+      return false;
+    }
+
+    const reconstructionUsable = this._isUsablePoseResult(reconstructionPose, reconstructionPose?.correspondences || correspondences);
+    const reconstructionHasRealDepth = reconstructionUsable && this._hasStrongNonPlanarReconstruction(reconstructionPose);
+
+    if (reconstructionHasRealDepth) {
+      return false;
+    }
+
+    if (this._hasPlanarDominance() && !reconstructionHasRealDepth) {
+      return true;
+    }
+
+    if (!reconstructionUsable) {
+      return true;
+    }
+
+    const planarStrong = planarPose.inlierCount >= 16 && planarPose.inlierRatio >= 0.58 && planarPose.confidence >= 0.48;
+
+    if (planarStrong && !reconstructionHasRealDepth) {
+      return true;
+    }
+
+    return planarStrong &&
+      planarPose.inlierCount >= reconstructionPose.inlierCount + 6 &&
+      planarPose.confidence >= reconstructionPose.confidence - 0.08;
+  }
+
+  _hasEmergingNonPlanarReconstruction(reconstructionPose) {
+    const depthQuality = reconstructionPose?.depthQuality ?? this.metrics.reconstructionDepthQuality ?? 0;
+    const mapConfidence = reconstructionPose?.preview?.statistics?.mapConfidence ??
+      this.metrics.reconstructionMapConfidence ??
+      reconstructionPose?.confidence ??
+      0;
+    const inliers = reconstructionPose?.inlierCount || 0;
+    const mapReady = reconstructionPose?.success || this.metrics.reconstructionReady;
+
+    return mapReady &&
+      depthQuality >= 0.04 &&
+      mapConfidence >= 0.72 &&
+      (inliers >= 18 || this.metrics.reconstructionReady);
+  }
+
+  _shouldHoldPlanarNormalForNonPlanarCalibration({ planarPose, reconstructionPose }) {
+    if (this.trackingMode !== RECONSTRUCTION_POSE_MODEL || !planarPose?.normal) {
+      return false;
+    }
+
+    const planarTilt = Math.hypot(planarPose.normal.x, planarPose.normal.y);
+
+    return planarTilt >= 0.34 &&
+      !this._hasStrongNonPlanarReconstruction(reconstructionPose) &&
+      this._hasEmergingNonPlanarReconstruction(reconstructionPose);
+  }
+
+  _createNeutralNormalPose(method, sourcePose, correspondences) {
+    return {
+      success: true,
+      method,
+      position: sourcePose.position,
+      normal: { x: 0, y: 0, z: 1 },
+      planarTransform: sourcePose.planarTransform,
+      confidence: Math.max(0.45, Math.min(0.82, sourcePose.confidence ?? 0.6)),
+      inlierCount: sourcePose.inlierCount ?? correspondences.length,
+      inlierRatio: sourcePose.inlierRatio ?? sourcePose.inlierCount / Math.max(1, correspondences.length),
+      averageResidual: sourcePose.averageResidual ?? 0,
+      foreshortening: 1,
+      referenceSpread: sourcePose.referenceSpread,
+      correspondences,
+    };
+  }
+
+  _selectNormalPose({ reconstructionPose, planarPose, objectPose, poseResult, correspondences }) {
+    if (this._shouldPreferPlanarHomography({ planarPose, reconstructionPose, correspondences })) {
+      if (this._shouldHoldPlanarNormalForNonPlanarCalibration({ planarPose, reconstructionPose })) {
+        return this._createNeutralNormalPose('nonplanar-calibration-hold', planarPose, correspondences);
+      }
+
+      return { ...planarPose, correspondences };
+    }
+
+    const reconstructionPoseUsable = this._isUsablePoseResult(reconstructionPose, reconstructionPose?.correspondences || correspondences) &&
+      (!this._hasPlanarDominance() || this._hasStrongNonPlanarReconstruction(reconstructionPose));
     const objectPoseUsable = this._isUsablePoseResult(objectPose, objectPose.correspondences || correspondences);
     const correspondencePoseUsable = this._isUsablePoseResult(poseResult, correspondences);
+    const objectTiltMagnitude = objectPose?.normal
+      ? Math.hypot(objectPose.normal.x, objectPose.normal.y)
+      : 0;
+    const correspondenceTiltMagnitude = poseResult?.normal
+      ? Math.hypot(poseResult.normal.x, poseResult.normal.y)
+      : 0;
+    const objectPoseShowsForeshortening = objectPoseUsable &&
+      objectPose.foreshortening < 0.92 &&
+      objectTiltMagnitude > 0.18;
+    const correspondencePoseLooksFaceOn = !correspondencePoseUsable ||
+      correspondenceTiltMagnitude < objectTiltMagnitude * 0.45;
+
+    if (reconstructionPoseUsable) {
+      return { ...reconstructionPose, correspondences: reconstructionPose.correspondences || correspondences };
+    }
+
+    if (objectPoseShowsForeshortening && correspondencePoseLooksFaceOn) {
+      return { ...objectPose, correspondences };
+    }
 
     if (correspondencePoseUsable && poseResult.method === 'homography' && poseResult.confidence > objectPose.confidence + 0.12) {
       return { ...poseResult, correspondences };
@@ -998,7 +1498,7 @@ export class ImageAnchorService {
 
     this.metrics.poseInliers = inliers;
 
-    if (poseResult.method === 'homography') {
+    if (poseResult.method === 'homography' || poseResult.method === 'planar-homography') {
       this.metrics.homographyInliers = inliers;
       this.metrics.affinePoseInliers = 0;
     } else if (poseResult.method === 'affine-parallax') {
@@ -1016,6 +1516,81 @@ export class ImageAnchorService {
     this.metrics.poseConfidence = objectPose.confidence;
     this.metrics.poseAverageResidual = objectPose.averageResidual;
     this.metrics.poseForeshortening = objectPose.foreshortening;
+  }
+
+  _recordPlanarHomographyMetrics(planarPose) {
+    this._recordPoseInlierMetrics(planarPose);
+    this.metrics.poseSource = planarPose.method;
+    this.metrics.poseConfidence = planarPose.confidence;
+    this.metrics.poseAverageResidual = planarPose.averageResidual;
+    this.metrics.poseForeshortening = planarPose.foreshortening;
+  }
+
+  _updatePlanarDominance(planarPose, correspondences) {
+    const inlierRatio = planarPose
+      ? planarPose.inlierRatio ?? planarPose.inlierCount / Math.max(1, correspondences.length)
+      : 0;
+    const strongPlanarEvidence = planarPose?.success &&
+      planarPose.inlierCount >= 10 &&
+      inlierRatio >= 0.45 &&
+      (planarPose.averageResidual ?? 0) <= 4;
+
+    if (strongPlanarEvidence) {
+      this.planarDominanceScore = Math.min(8, this.planarDominanceScore + 1);
+    } else if ((this.metrics.keypointCount || 0) >= 12) {
+      this.planarDominanceScore = Math.max(0, this.planarDominanceScore - 0.1);
+    }
+
+    this.metrics.planarDominanceScore = this.planarDominanceScore;
+    this.metrics.planarDominant = this._hasPlanarDominance();
+  }
+
+  _hasPlanarDominance() {
+    return this.planarDominanceScore >= 4;
+  }
+
+  _hasStrongNonPlanarReconstruction(reconstructionPose) {
+    if (!reconstructionPose?.success) {
+      return false;
+    }
+
+    const depthQuality = reconstructionPose.depthQuality ?? this.metrics.reconstructionDepthQuality ?? 0;
+    const mapConfidence = reconstructionPose.preview?.statistics?.mapConfidence ??
+      this.metrics.reconstructionMapConfidence ??
+      reconstructionPose.confidence ??
+      0;
+    const inliers = reconstructionPose.inlierCount || 0;
+
+    return depthQuality >= 0.065 && mapConfidence >= 0.55 && inliers >= 14;
+  }
+
+  _recordReconstructionMetrics(reconstructionState) {
+    const statistics = reconstructionState.statistics || reconstructionState.preview?.statistics || null;
+    this.metrics.reconstructionState = reconstructionState.state;
+    this.metrics.reconstructionReady = reconstructionState.ready;
+    this.metrics.reconstructionFrames = reconstructionState.frameCount;
+    this.metrics.reconstructionLandmarks = reconstructionState.landmarkCount;
+    this.metrics.reconstructionDepthQuality = reconstructionState.depthQuality;
+    this.metrics.reconstructionFailureReason = reconstructionState.lastFailureReason;
+    this.metrics.reconstructionPreview = reconstructionState.preview || null;
+    this.metrics.reconstructionMapConfidence = statistics?.mapConfidence;
+    this.metrics.reconstructionAverageSupport = statistics?.averageSupport;
+    this.metrics.reconstructionAverageReliability = statistics?.averageReliability;
+    this.metrics.reconstructionMatureLandmarks = statistics?.matureLandmarks;
+  }
+
+  _recordReconstructionPoseMetrics(reconstructionPose) {
+    this.metrics.reconstructionPoseInliers = reconstructionPose.inlierCount || 0;
+    this.metrics.poseInliers = Math.max(this.metrics.poseInliers || 0, reconstructionPose.inlierCount || 0);
+    this.metrics.poseSource = reconstructionPose.method;
+    this.metrics.poseConfidence = reconstructionPose.confidence;
+    this.metrics.poseAverageResidual = reconstructionPose.averageResidual;
+    this.metrics.poseForeshortening = reconstructionPose.depthQuality;
+    this.metrics.reconstructionPreview = reconstructionPose.preview || this.metrics.reconstructionPreview || null;
+    this.metrics.reconstructionMapConfidence = reconstructionPose.preview?.statistics?.mapConfidence ?? this.metrics.reconstructionMapConfidence;
+    this.metrics.reconstructionAverageSupport = reconstructionPose.preview?.statistics?.averageSupport ?? this.metrics.reconstructionAverageSupport;
+    this.metrics.reconstructionAverageReliability = reconstructionPose.preview?.statistics?.averageReliability ?? this.metrics.reconstructionAverageReliability;
+    this.metrics.reconstructionMatureLandmarks = reconstructionPose.preview?.statistics?.matureLandmarks ?? this.metrics.reconstructionMatureLandmarks;
   }
 
   _updatePlanarTransform(anchorPosition, timestamp = null) {
@@ -1043,6 +1618,42 @@ export class ImageAnchorService {
     return this.currentPlanarTransform;
   }
 
+  _filterPositionCandidate(position, timestamp, method) {
+    const filtered = {
+      x: this.positionFilterX.filter(position.x, timestamp),
+      y: this.positionFilterY.filter(position.y, timestamp),
+      z: 0
+    };
+
+    return this._limitPositionStep(filtered, method);
+  }
+
+  _limitPositionStep(position, method = 'unknown') {
+    if (!this.currentPosition || !this.metrics.lastUpdateResult) {
+      return position;
+    }
+
+    const deltaX = position.x - this.currentPosition.x;
+    const deltaY = position.y - this.currentPosition.y;
+    const distance = Math.hypot(deltaX, deltaY);
+    const templateSize = this.templateRegion
+      ? Math.max(this.templateRegion.width, this.templateRegion.height)
+      : 120;
+    const ratio = method === RECONSTRUCTION_POSE_MODEL ? 0.11 : 0.14;
+    const maxStep = clamp(templateSize * ratio, 10, 24);
+
+    if (distance <= maxStep || distance === 0) {
+      return position;
+    }
+
+    const scale = maxStep / distance;
+    return {
+      x: this.currentPosition.x + deltaX * scale,
+      y: this.currentPosition.y + deltaY * scale,
+      z: position.z ?? 0
+    };
+  }
+
   _measureReferenceSpread(correspondences) {
     if (correspondences.length === 0) {
       return { width: 0, height: 0, minAxis: 0 };
@@ -1067,15 +1678,27 @@ export class ImageAnchorService {
     if (poseResult.inlierCount < 8) {
       return 'Insufficient pose inliers';
     }
-    if ((poseResult.inlierRatio ?? 0) < 0.5) {
+
+    const method = poseResult.method || '';
+    const isPlanarHomography = method === 'homography' || method === 'planar-homography';
+    const averageResidual = poseResult.averageResidual ?? 0;
+    const allowPlanarRecovery = isPlanarHomography &&
+      this._hasPlanarDominance() &&
+      poseResult.inlierCount >= 8 &&
+      averageResidual <= 3.25;
+    const minInlierRatio = allowPlanarRecovery ? 0.32 : 0.5;
+    const minConfidence = allowPlanarRecovery ? 0.24 : 0.32;
+    const minSpread = allowPlanarRecovery ? 14 : 18;
+
+    if ((poseResult.inlierRatio ?? 0) < minInlierRatio) {
       return 'Low pose inlier ratio';
     }
-    if ((poseResult.confidence ?? 0) < 0.32) {
+    if ((poseResult.confidence ?? 0) < minConfidence) {
       return 'Low pose confidence';
     }
 
     const spread = poseResult.referenceSpread || this._measureReferenceSpread(correspondences);
-    if (spread.minAxis < 18) {
+    if (spread.minAxis < minSpread) {
       return 'Degenerate local pose spread';
     }
 
@@ -1174,21 +1797,27 @@ export class ImageAnchorService {
       this.currentPosition = null;
       this.currentNormal = null;
       this.currentPlanarTransform = null;
+      this.planarDominanceScore = 0;
       this.templateRegion = null;
+      this.trackingRegion = null;
       this.templateCenter = null; // Clear template center reference
       this.templateAnchorOffset = null;
       this.framesSinceRefresh = 0;
+      this.framesSinceRelocalizationKeyframe = 0;
       this.framesSinceFullFrameRecovery = this.fullFrameRecoveryInterval;
+      this.framesWithoutNormalPose = 0;
       
       // Reset resilience counters
       this.keypointFailureCount = 0;
       
       // Reset filters
-      this.positionFilterX = new OneEuroFilter(30);
-      this.positionFilterY = new OneEuroFilter(30);
-      this.planarScaleFilter = new OneEuroFilter(30);
-      this.planarRotationFilter = new OneEuroFilter(30);
+      this.positionFilterX = createPositionFilter();
+      this.positionFilterY = createPositionFilter();
+      this.planarScaleFilter = createPlanarScaleFilter();
+      this.planarRotationFilter = createPlanarRotationFilter();
       this.normalStabilizer.reset();
+      this.reconstructor.reset({ anchorReference: { x: 0, y: 0 } });
+      this.relocalizer.clear();
       
       logger.info('ImageAnchor', 'Anchor cleared');
       this._notifyStateChange();

@@ -3,7 +3,7 @@ import { CameraService } from '../services/CameraService.js';
 import { DetectionService } from '../services/DetectionService.js';
 import { AnchorManager } from '../services/AnchorManager.js';
 import { PersonalityService } from '../services/PersonalityService.js';
-import { TTSClient } from '../audio/ttsClient.js';
+import { LazyTTSClient } from '../audio/lazyTTSClient.js';
 import { logger } from '../utils/logger.js';
 
 export const useCameraSystem = (config = {}) => {
@@ -12,7 +12,7 @@ export const useCameraSystem = (config = {}) => {
   const detectionServiceRef = useRef(new DetectionService());
   const anchorManagerRef = useRef(new AnchorManager());
   const personalityServiceRef = useRef(new PersonalityService(config.personality));
-  const ttsClientRef = useRef(new TTSClient(config.tts));
+  const ttsClientRef = useRef(new LazyTTSClient(config.tts));
   const currentCanvasRef = useRef(null);
   const metricUpdateRef = useRef(config.onMetricUpdate || null);
   const [_initialized, setInitialized] = useState(false);
@@ -35,6 +35,7 @@ export const useCameraSystem = (config = {}) => {
     detections: [],
     activeAnchor: null,
     anchorState: null,
+    trackingMode: 'sparse-reconstruction',
     initialized: false
   });
   
@@ -272,10 +273,15 @@ export const useCameraSystem = (config = {}) => {
             updateMetric('Homography inliers', metrics.homographyInliers || 0);
             updateMetric('Affine pose inliers', metrics.affinePoseInliers || 0);
             updateMetric('Object pose inliers', metrics.objectPoseInliers || 0);
+            updateMetric('Reconstruction inliers', metrics.reconstructionPoseInliers || 0);
             updateMetric('Pose model', metrics.poseModel || 'object-pose');
             updateMetric('Pose source', metrics.poseSource || 'None');
             updateMetric('Pose residual', metrics.poseAverageResidual || 0);
             updateMetric('Pose foreshortening', metrics.poseForeshortening || 1);
+            updateMetric('Reconstruction state', metrics.reconstructionState || 'inactive');
+            updateMetric('Reconstruction frames', metrics.reconstructionFrames || 0);
+            updateMetric('Reconstruction landmarks', metrics.reconstructionLandmarks || 0);
+            updateMetric('Reconstruction depth', metrics.reconstructionDepthQuality || 0);
             updateMetric('Anchor processing time', metrics.processingTime || 0);
             updateMetric('Recovery attempts', metrics.recoveryAttempts || 0);
             updateMetric('Lost frame count', metrics.lostFrameCount || 0);
@@ -452,6 +458,11 @@ export const useCameraSystem = (config = {}) => {
     updateMetric('Anchor cleared', 'Returned to detection mode');
   }, [updateMetric]);
 
+  const setAnchorTrackingMode = useCallback((mode) => {
+    anchorManagerRef.current.setTrackingMode(mode);
+    updateMetric('Anchor tracking mode', mode);
+  }, [updateMetric]);
+
   const findDetectionAtPosition = useCallback((position) => {
     if (anchorSystemState.mode === 'detection') {
       return anchorManagerRef.current.findDetectionAtPosition(position);
@@ -539,6 +550,7 @@ export const useCameraSystem = (config = {}) => {
     createAnchorFromTap,
     clearAnchor,
     findDetectionAtPosition,
+    setAnchorTrackingMode,
 
     // Personality generation
     generatePersonality,

@@ -2,6 +2,7 @@ import {
   STANDARD_VISEME_WEIGHTS,
   STANDARD_VISEMES,
   normalizeMorphName,
+  resolveGenericTargetIndexMap,
   resolveGenericTargetOrder,
 } from './facialRig.js';
 
@@ -17,11 +18,12 @@ const VISEME_NAME_PATTERNS = {
 export class VisemeMapper {
   constructor(morphTargetDictionary, options = {}) {
     this.morphDict = morphTargetDictionary || {};
+    this.genericTargetOrder = options.genericTargetOrder || 'holBundledHead';
     this.genericBlendShapeNames = options.genericBlendShapeNames ||
-      resolveGenericTargetOrder(options.genericTargetOrder || 'mediapipeModelCard');
-    this.genericNameToIndex = Object.fromEntries(
-      this.genericBlendShapeNames.map((name, index) => [name, index])
-    );
+      resolveGenericTargetOrder(this.genericTargetOrder);
+    this.genericNameToIndex = options.genericBlendShapeNames
+      ? Object.fromEntries(this.genericBlendShapeNames.map((name, index) => [name, index]))
+      : resolveGenericTargetIndexMap(this.genericTargetOrder);
     this.visemeMap = this.createVisemeMapping();
   }
 

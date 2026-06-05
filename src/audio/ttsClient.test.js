@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Conversation } from '@elevenlabs/client';
 import { TTSClient } from './ttsClient.js';
 
 test('ElevenLabs sessions are configured as voice conversations with WebRTC output analysis', () => {
@@ -98,4 +99,108 @@ test('output analysis errors complete playback so speech morphs cannot hang open
     ['complete'],
     ['error', 'output analyser failed'],
   ]);
+});
+
+const flushAsyncStart = async () => {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+};
+
+test('startConversation shares a single in-flight ElevenLabs WebRTC session', async (t) => {
+  const originalStartSession = Conversation.startSession;
+  t.after(() => {
+    Conversation.startSession = originalStartSession;
+  });
+  let startCalls = 0;
+  let releaseStart;
+  const session = { sendUserMessage() {} };
+  const startGate = new Promise(resolve => {
+    releaseStart = resolve;
+  });
+
+  Conversation.startSession = async () => {
+    startCalls++;
+    await startGate;
+    return session;
+  };
+
+  const client = new TTSClient({ agentId: 'agent_test' });
+  client._ensureAudioContextReady = async () => {};
+  client.requestMicrophoneAccess = async () => {};
+
+  const firstStart = client.startConversation();
+  const secondStart = client.startConversation();
+  await flushAsyncStart();
+
+  assert.equal(startCalls, 1);
+
+  releaseStart();
+  const [firstSession, secondSession] = await Promise.all([firstStart, secondStart]);
+
+  assert.equal(firstSession, session);
+  assert.equal(secondSession, session);
+  assert.equal(client.conversation, session);
+  assert.equal(startCalls, 1);
+
+});
+
+test('startConversation clears failed setup promises so the next attempt can retry', async () => {
+  const client = new TTSClient({ agentId: 'agent_test' });
+  let attempts = 0;
+
+  client._ensureAudioContextReady = async () => {};
+  client.requestMicrophoneAccess = async () => {
+    attempts++;
+    throw new Error('microphone denied');
+  };
+
+  await assert.rejects(() => client.startConversation(), /microphone denied/);
+  assert.equal(client.conversationPromise, null);
+
+  await assert.rejects(() => client.startConversation(), /microphone denied/);
+  assert.equal(attempts, 2);
+});
+
+test('synthesizeSpeech waits for the in-flight conversation instead of opening another room', async (t) => {
+  const originalStartSession = Conversation.startSession;
+  t.after(() => {
+    Conversation.startSession = originalStartSession;
+  });
+  let startCalls = 0;
+  let releaseStart;
+  const messages = [];
+  const session = {
+    sendUserMessage(message) {
+      messages.push(message);
+    }
+  };
+  const startGate = new Promise(resolve => {
+    releaseStart = resolve;
+  });
+
+  Conversation.startSession = async () => {
+    startCalls++;
+    await startGate;
+    return session;
+  };
+
+  const client = new TTSClient({ agentId: 'agent_test' });
+  client._ensureAudioContextReady = async () => {};
+  client.requestMicrophoneAccess = async () => {};
+
+  const firstStart = client.startConversation();
+  const speech = client.synthesizeSpeech('hello there', 'cheerful', 'warm');
+  await flushAsyncStart();
+
+  assert.equal(startCalls, 1);
+
+  releaseStart();
+  await firstStart;
+  await speech;
+
+  assert.equal(startCalls, 1);
+  assert.equal(messages.length, 1);
+  assert.match(messages[0], /hello there/);
+
 });

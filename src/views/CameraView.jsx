@@ -10,6 +10,9 @@ import { renderDetectionOverlay, renderDebugStats, renderKeypoints } from '../ut
 import { logger } from '../utils/logger.js';
 import { describeAnchorState } from '../utils/anchorDiagnostics.js';
 import { collectRuntimeReadiness } from '../utils/runtimeReadiness.js';
+import { RECONSTRUCTION_POSE_MODEL } from '../cv/anchor.reconstruction.js';
+import { shouldAutoStartObjectVoice } from '../audio/objectVoicePolicy.js';
+import { shouldRenderAnchorOverlay } from '../utils/overlayVisibility.js';
 
 const OverlayScene = lazy(() => import('../scenes/OverlayScene.jsx'));
 
@@ -90,6 +93,7 @@ const CameraView = () => {
   const ctxRef = useRef(null);
   const anchorFeedbackTimeoutRef = useRef(null);
   const autoVoiceRequestRef = useRef(0);
+  const mapReadyAnchorRef = useRef(null);
 
   const [showStats, setShowStats] = useState(false);
   const [lastProcessedDetections, setLastProcessedDetections] = useState(null);
@@ -138,7 +142,8 @@ const CameraView = () => {
     synthesizeSpeech,
     stopTTS,
     speakGreeting,
-    setCurrentCanvas
+    setCurrentCanvas,
+    setAnchorTrackingMode
   } = useCameraSystem({ onMetricUpdate: updateMetric });
   const throttledFrame = useFrameRate(30);
   const anchorDiagnostics = useMemo(() => describeAnchorState({
@@ -206,7 +211,10 @@ const CameraView = () => {
     if (config.detectionInterval) {
       services.detection.setDetectionInterval(config.detectionInterval);
     }
-  }, [services.detection]);
+    if (config.anchorTrackingMode) {
+      setAnchorTrackingMode(config.anchorTrackingMode);
+    }
+  }, [services.detection, setAnchorTrackingMode]);
 
   const handleGeneratePersonality = useCallback(async () => {
     if (anchorSystemState.mode !== 'anchor' || !anchorSystemState.activeAnchor || !canvasRef.current) {
@@ -235,7 +243,6 @@ const CameraView = () => {
 
     try {
       showAnchorFeedback('Generating object voice...', 'warn');
-      await services.tts.startConversation();
       const persona = await generatePersonality(imageData, roi);
 
       if (requestId !== autoVoiceRequestRef.current) {
@@ -251,7 +258,7 @@ const CameraView = () => {
       logger.error('CameraView', 'Failed to start object voice:', error);
       showAnchorFeedback(`Voice not started: ${error.message}`, 'bad');
     }
-  }, [generatePersonality, services.tts, showAnchorFeedback, synthesizeSpeech]);
+  }, [generatePersonality, showAnchorFeedback, synthesizeSpeech]);
 
   // Microphone handlers
   const handleToggleMicrophoneMode = useCallback(async (enabled) => {
@@ -351,8 +358,18 @@ const CameraView = () => {
               position: result.position
             });
             const qualityLabel = result.state === 'degraded' ? 'weak' : 'solid';
-            showAnchorFeedback(`Anchor created with ${result.keypoints} keypoints (${qualityLabel} lock).`, result.state === 'degraded' ? 'warn' : 'good');
-            generateAndSpeakForAnchor(imageData, result.position, detection);
+            if (result.trackingMode === RECONSTRUCTION_POSE_MODEL) {
+              showAnchorFeedback(`Anchor created with ${result.keypoints} keypoints. Slowly turn and tilt the object to build the 3D map.`, 'warn');
+            } else {
+              showAnchorFeedback(`Anchor created with ${result.keypoints} keypoints (${qualityLabel} lock).`, result.state === 'degraded' ? 'warn' : 'good');
+              if (shouldAutoStartObjectVoice({
+                trackingMode: result.trackingMode,
+                reconstructionReady: false,
+                hasUserGesture: true,
+              })) {
+                generateAndSpeakForAnchor(imageData, result.position, detection);
+              }
+            }
           } else {
             logger.warn('CameraView', 'Anchor creation failed:', result);
             showAnchorFeedback('Anchor was not created. Try a sharper textured area.', 'warn');
@@ -377,10 +394,42 @@ const CameraView = () => {
       // In anchor mode: clear anchor on tap
       logger.info('CameraView', 'Clearing anchor to return to detection mode');
       autoVoiceRequestRef.current++;
+      mapReadyAnchorRef.current = null;
       clearAnchor();
       showAnchorFeedback('Anchor cleared. Detection is active again.', 'good');
     }
   }, [cvLoaded, anchorSystemState, findDetectionAtPosition, createAnchorFromTap, clearAnchor, updateMetric, showAnchorFeedback, generateAndSpeakForAnchor]);
+
+  useEffect(() => {
+    const activeAnchor = anchorSystemState.activeAnchor;
+    const diagnostics = activeAnchor?.diagnostics;
+    const isReconstructionAnchor = activeAnchor?.trackingMode === RECONSTRUCTION_POSE_MODEL ||
+      anchorSystemState.anchorState?.metrics?.poseModel === RECONSTRUCTION_POSE_MODEL;
+
+    if (!activeAnchor || !isReconstructionAnchor || !diagnostics?.reconstructionReady || !canvasRef.current) {
+      return;
+    }
+
+    if (mapReadyAnchorRef.current === activeAnchor.createdAt) {
+      return;
+    }
+
+    mapReadyAnchorRef.current = activeAnchor.createdAt;
+
+    if (shouldAutoStartObjectVoice({
+      trackingMode: RECONSTRUCTION_POSE_MODEL,
+      reconstructionReady: true,
+      hasUserGesture: false,
+    })) {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      showAnchorFeedback('3D map locked. Starting object voice.', 'good');
+      generateAndSpeakForAnchor(imageData, activeAnchor.position, activeAnchor.sourceDetection);
+    } else {
+      showAnchorFeedback('3D map locked. Voice controls are ready.', 'good');
+    }
+  }, [anchorSystemState.activeAnchor, anchorSystemState.anchorState, generateAndSpeakForAnchor, showAnchorFeedback]);
 
   // Main animation frame loop
   useAnimationFrame(() => {
@@ -583,7 +632,10 @@ const CameraView = () => {
             microphoneGain={microphoneGain}
             microphoneDebugMode={microphoneDebugMode}
             microphoneBaselineResetToken={microphoneBaselineResetToken}
-            activeAnchor={anchorSystemState.activeAnchor}
+            activeAnchor={shouldRenderAnchorOverlay({
+              activeAnchor: anchorSystemState.activeAnchor,
+              anchorState: anchorSystemState.anchorState
+            }) ? anchorSystemState.activeAnchor : null}
             anchorState={anchorSystemState.anchorState}
           />
         </Suspense>
@@ -612,6 +664,7 @@ const CameraView = () => {
           onConfigChange={handleConfigChange}
           metrics={metrics}
           anchorDiagnostics={anchorDiagnostics}
+          anchorTrackingMode={anchorSystemState.trackingMode}
           runtimeReadiness={runtimeReadiness}
           personalityData={personalityData}
           ttsData={ttsData}

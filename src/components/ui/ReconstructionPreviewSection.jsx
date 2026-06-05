@@ -1,0 +1,202 @@
+import {
+  formatDegrees,
+  formatNumber,
+  formatPercent,
+  formatPoint2,
+  formatVector3,
+} from './diagnosticFormat.js';
+import { DiagnosticRow } from './DiagnosticRow.jsx';
+
+const PREVIEW_WIDTH = 112;
+const PREVIEW_HEIGHT = 82;
+const EMPTY_POINTS = [];
+const EMPTY_SURFACE = { hull: EMPTY_POINTS, edges: EMPTY_POINTS };
+
+const normalizePreviewPoints = (points, projector, width = PREVIEW_WIDTH, height = PREVIEW_HEIGHT) => {
+  const projected = points.map(point => ({
+    id: point.id,
+    reliability: point.reliability ?? 0,
+    ...projector(point),
+  }));
+  const xs = projected.map(point => point.x);
+  const ys = projected.map(point => point.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const scale = Math.min(
+    width / Math.max(1e-6, maxX - minX),
+    height / Math.max(1e-6, maxY - minY)
+  );
+  const offsetX = (width - (maxX - minX) * scale) / 2;
+  const offsetY = (height - (maxY - minY) * scale) / 2;
+
+  return projected.map(point => ({
+    id: point.id,
+    x: offsetX + (point.x - minX) * scale,
+    y: offsetY + (point.y - minY) * scale,
+    depth: point.depth ?? 0,
+    reliability: point.reliability,
+  }));
+};
+
+const pointTone = reliability => {
+  if (reliability >= 0.72) return '#22c55e';
+  if (reliability >= 0.52) return '#38bdf8';
+  return '#f59e0b';
+};
+
+const edgeSegments = (edges, byId) => edges
+  .map(edge => ({
+    edge,
+    from: byId.get(edge.from),
+    to: byId.get(edge.to),
+  }))
+  .filter(segment => segment.from && segment.to);
+
+const PreviewSvg = ({ title, points, anchor, surface, normal, projector }) => {
+  if (!points.length) {
+    return (
+      <div className="rounded border border-gray-800 bg-gray-950 px-2 py-3 text-center text-[10px] text-gray-500">
+        {title}: no points
+      </div>
+    );
+  }
+
+  const pointsWithAnchor = anchor ? [...points, { ...anchor, id: 'anchor' }] : points;
+  const projectedPoints = normalizePreviewPoints(pointsWithAnchor, projector);
+  const anchorPoint = projectedPoints.find(point => point.id === 'anchor');
+  const landmarkPoints = projectedPoints.filter(point => point.id !== 'anchor');
+  const byId = new Map(projectedPoints.map(point => [point.id, point]));
+  const hullPoints = surface.hull.map(id => byId.get(id)).filter(Boolean);
+  const normalEnd = anchorPoint && normal ? {
+    x: anchorPoint.x + normal.x * 24,
+    y: anchorPoint.y - normal.y * 24,
+  } : null;
+
+  return (
+    <div className="rounded border border-gray-800 bg-gray-950 px-2 py-2">
+      <div className="mb-1 text-[10px] uppercase tracking-wide text-gray-500">{title}</div>
+      <svg viewBox={`0 0 ${PREVIEW_WIDTH} ${PREVIEW_HEIGHT}`} className="h-24 w-full rounded bg-black">
+        <rect x="0" y="0" width={PREVIEW_WIDTH} height={PREVIEW_HEIGHT} fill="#020617" />
+        {hullPoints.length >= 3 && (
+          <polygon
+            points={hullPoints.map(point => `${point.x},${point.y}`).join(' ')}
+            fill="#0f766e"
+            opacity="0.16"
+            stroke="#14b8a6"
+            strokeWidth="0.7"
+          />
+        )}
+        {edgeSegments(surface.edges, byId).map(({ edge, from, to }) => (
+          <line
+            key={`${edge.from}:${edge.to}`}
+            x1={from.x}
+            y1={from.y}
+            x2={to.x}
+            y2={to.y}
+            stroke={edge.reliability >= 0.7 ? '#0f766e' : '#334155'}
+            strokeWidth="0.55"
+            opacity={edge.reliability >= 0.7 ? '0.8' : '0.5'}
+          />
+        ))}
+        {landmarkPoints.map(point => (
+          <circle
+            key={point.id}
+            cx={point.x}
+            cy={point.y}
+            r="1.7"
+            fill={pointTone(point.reliability)}
+            opacity="0.88"
+          />
+        ))}
+        {anchorPoint && normalEnd && (
+          <line
+            x1={anchorPoint.x}
+            y1={anchorPoint.y}
+            x2={normalEnd.x}
+            y2={normalEnd.y}
+            stroke="#f8fafc"
+            strokeWidth="1.1"
+            opacity="0.86"
+          />
+        )}
+        {anchorPoint && (
+          <g>
+            <circle cx={anchorPoint.x} cy={anchorPoint.y} r="4" fill="none" stroke="#22c55e" strokeWidth="1.4" />
+            <circle cx={anchorPoint.x} cy={anchorPoint.y} r="1.6" fill="#22c55e" />
+          </g>
+        )}
+      </svg>
+    </div>
+  );
+};
+
+export const ReconstructionPreviewSection = ({ details }) => {
+  const preview = details.reconstructionPreview;
+  const current = preview?.current;
+  const planar = details.planarTransform ?? current?.planarTransform;
+  const normal = details.normal ?? current?.normal;
+  const position = details.position ?? current?.anchor;
+  const previewPoints = preview?.points ?? EMPTY_POINTS;
+  const currentPoints = current?.points ?? EMPTY_POINTS;
+  const previewSurface = preview?.surface ?? EMPTY_SURFACE;
+  const currentSurface = current?.surface ?? previewSurface;
+  const mapConfidence = details.reconstructionMapConfidence ?? preview?.statistics?.mapConfidence;
+  const averageSupport = details.reconstructionAverageSupport ?? preview?.statistics?.averageSupport;
+  const matureLandmarks = details.reconstructionMatureLandmarks ?? preview?.statistics?.matureLandmarks ?? 0;
+  const totalLandmarks = preview?.landmarkCount ?? details.reconstructionLandmarks ?? 0;
+
+  return (
+    <div className="mt-3 rounded border border-gray-800 bg-gray-950/70 p-2">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[10px] uppercase tracking-wide text-gray-500">3D Reconstruction</span>
+        <span className={`rounded border px-1.5 py-0.5 text-[10px] ${
+          details.poseModel === 'sparse-reconstruction'
+            ? 'border-green-700 bg-green-950 text-green-300'
+            : 'border-gray-700 bg-gray-900 text-gray-400'
+        }`}>
+          {details.poseModel === 'sparse-reconstruction' ? 'ON' : 'OFF'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-1 text-[10px]">
+        <PreviewSvg
+          title="Map"
+          points={previewPoints}
+          anchor={preview?.anchor}
+          surface={previewSurface}
+          projector={point => ({
+            x: point.x - point.z * 0.45,
+            y: point.y * 0.35 + point.z * 0.75,
+            depth: point.z,
+          })}
+        />
+        <PreviewSvg
+          title="Live"
+          points={currentPoints}
+          anchor={current?.anchor}
+          surface={currentSurface}
+          normal={normal}
+          projector={point => ({
+            x: point.x,
+            y: point.y,
+            depth: 0,
+          })}
+        />
+      </div>
+
+      <div className="mt-2 text-[10px]">
+        <DiagnosticRow label="Inferred position" value={formatPoint2(position)} tone={position ? 'good' : 'warn'} />
+        <DiagnosticRow label="Inferred normal" value={formatVector3(normal)} tone={normal ? 'good' : 'warn'} />
+        <DiagnosticRow label="Inferred scale" value={formatNumber(planar?.scale, 2)} tone={planar?.scale ? 'good' : 'warn'} />
+        <DiagnosticRow label="Inferred roll" value={formatDegrees(planar?.rotation)} tone={typeof planar?.rotation === 'number' ? 'good' : 'warn'} />
+        <DiagnosticRow label="Preview points" value={`${previewPoints.length}/${totalLandmarks}`} tone={previewPoints.length >= 18 ? 'good' : 'warn'} />
+        <DiagnosticRow label="Map confidence" value={formatPercent(mapConfidence)} tone={(mapConfidence ?? 0) > 0.55 ? 'good' : 'warn'} />
+        <DiagnosticRow label="Avg support" value={formatPercent(averageSupport)} tone={(averageSupport ?? 0) > 0.65 ? 'good' : 'warn'} />
+        <DiagnosticRow label="Mature points" value={matureLandmarks} tone={matureLandmarks >= 18 ? 'good' : 'warn'} />
+        <DiagnosticRow label="Surface edges" value={previewSurface.edges.length} tone={previewSurface.edges.length >= 18 ? 'good' : 'warn'} />
+      </div>
+    </div>
+  );
+};

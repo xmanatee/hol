@@ -273,3 +273,47 @@ test('pose correspondences prefer the local planar patch around the tapped ancho
   assert.ok(correspondences.every(correspondence => correspondence.prev.x < 140));
   assert.ok(correspondences.every(correspondence => correspondence.prev.y < 140));
 });
+
+test('tracker restores lost landmarks from a descriptor relocalization transform', () => {
+  const tracker = new KeypointTracker();
+  const transform = {
+    tx: 33,
+    ty: -17,
+    scale: 1.22,
+    rotation: -19 * Math.PI / 180,
+  };
+  const originals = Array.from({ length: 12 }, (_, index) => ({
+    x: 90 + (index % 4) * 20,
+    y: 80 + Math.floor(index / 4) * 18,
+  }));
+  tracker.trackedPoints = originals.map((point, index) => ({
+    ...createTrackedPoint(index, point, { tx: 0, ty: 0, scale: 1, rotation: 0 }),
+    status: 'lost',
+    inactiveAge: 12,
+    successfulTrackingStreak: 0,
+  }));
+  tracker.keypointCentroid = { x: 120, y: 100 };
+  tracker.anchorOriginalPosition = { x: 126, y: 96 };
+  tracker.tapOffset = { x: 6, y: -4 };
+  tracker.previousGray = { delete() {} };
+
+  const currentGray = {
+    clone: () => ({ delete() {} }),
+  };
+
+  const restored = tracker.restoreFromReferenceTransform(
+    currentGray,
+    transform,
+    originals.map((_, index) => index)
+  );
+
+  assert.equal(restored.restored, 12);
+  assert.equal(tracker.trackedPoints.filter(point => point.status === 'active').length, 12);
+  assert.deepEqual(tracker.anchorOriginalPosition, { x: 126, y: 96 });
+  tracker.trackedPoints.forEach((point, index) => {
+    const expected = transformPoint(originals[index], transform);
+    assert.ok(Math.abs(point.current.x - expected.x) < 0.01);
+    assert.ok(Math.abs(point.current.y - expected.y) < 0.01);
+    assert.equal(point.inactiveAge, 0);
+  });
+});

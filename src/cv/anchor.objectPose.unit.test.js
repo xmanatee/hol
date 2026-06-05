@@ -99,3 +99,34 @@ test('object pose scale follows projected area instead of the largest foreshorte
   assert.ok(Math.abs(pose.planarTransform.scale - projectedAreaScale) < 0.04);
   assert.ok(pose.planarTransform.scale < 1);
 });
+
+test('object pose accepts strong absolute affine support when optical flow leaves half outliers', () => {
+  const estimator = new ObjectPoseEstimator();
+  const transform = {
+    tx: 22,
+    ty: -12,
+    scaleX: 0.64,
+    scaleY: 1.18,
+    rotation: 0.16,
+  };
+  const coherent = createForeshortenedCorrespondences(transform).slice(0, 12);
+  const outliers = createForeshortenedCorrespondences(transform).slice(12, 24).map((correspondence, index) => ({
+    prev: correspondence.prev,
+    curr: {
+      x: 430 + index * 7,
+      y: 80 + index * 11,
+    },
+  }));
+  const anchorReference = { x: 137, y: 111 };
+  const pose = estimator.estimate({
+    correspondences: [...coherent, ...outliers],
+    anchorReference,
+  });
+  const expectedPosition = transformPoint(anchorReference, transform);
+
+  assert.equal(pose.success, true);
+  assert.equal(pose.inlierCount, 12);
+  assert.ok(Math.abs(pose.position.x - expectedPosition.x) < 1);
+  assert.ok(Math.abs(pose.position.y - expectedPosition.y) < 1);
+  assert.ok(Math.hypot(pose.normal.x, pose.normal.y) > 0.45);
+});

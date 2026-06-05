@@ -5,7 +5,8 @@ export const readViteEnv = (key) => import.meta.env?.[key];
 export class OpenAIChatClient {
   constructor(config = {}) {
     this.apiKey = config.apiKey;
-    this.fetchImpl = config.fetchImpl || globalThis.fetch;
+    const browserFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
+    this.fetchImpl = config.fetchImpl ?? browserFetch;
 
     if (!this.apiKey) {
       throw new Error('OpenAI API key is required. Set VITE_OPENAI_API_KEY in environment variables.');

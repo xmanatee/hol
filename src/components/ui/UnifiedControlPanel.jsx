@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
 import { PersonalityPanel } from './PersonalityPanel.jsx';
+import { ReconstructionPreviewSection } from './ReconstructionPreviewSection.jsx';
+import { DiagnosticRow } from './DiagnosticRow.jsx';
+import { formatNumber, formatPercent, formatRegion } from './diagnosticFormat.js';
 import { logger } from '../../utils/logger.js';
 
 const CollapsibleSection = ({ title, isExpanded, onToggle, children }) => (
@@ -47,35 +50,6 @@ const MetricsSection = ({ metrics }) => (
     ))}
   </div>
 );
-
-const formatPercent = (value) => (
-  typeof value === 'number' ? `${(value * 100).toFixed(0)}%` : 'N/A'
-);
-
-const formatNumber = (value, digits = 0) => (
-  typeof value === 'number' ? value.toFixed(digits) : 'N/A'
-);
-
-const formatRegion = (region) => (
-  region ? `${region.width}x${region.height} @ ${region.x},${region.y}` : 'N/A'
-);
-
-const DiagnosticRow = ({ label, value, tone = 'neutral' }) => {
-  const toneClass = tone === 'bad'
-    ? 'text-red-300'
-    : tone === 'warn'
-      ? 'text-yellow-300'
-      : tone === 'good'
-        ? 'text-green-300'
-        : 'text-gray-300';
-
-  return (
-    <div className="flex justify-between gap-2 border-b border-gray-800 py-1 last:border-b-0">
-      <span className="text-gray-500">{label}</span>
-      <span className={`text-right font-mono ${toneClass}`}>{value}</span>
-    </div>
-  );
-};
 
 const AnchorDiagnosticsSection = ({ diagnostics }) => {
   if (!diagnostics) {
@@ -125,6 +99,11 @@ const AnchorDiagnosticsSection = ({ diagnostics }) => {
       <DiagnosticRow label="Pose source" value={details.poseSource || 'N/A'} />
       <DiagnosticRow label="Pose inliers" value={details.poseInliers ?? 0} tone={poseTone} />
       <DiagnosticRow label="Object pose inliers" value={details.objectPoseInliers ?? 0} tone={(details.objectPoseInliers ?? 0) >= 15 ? 'good' : 'warn'} />
+      <DiagnosticRow label="3D map state" value={details.reconstructionState || 'inactive'} tone={details.reconstructionReady ? 'good' : 'warn'} />
+      <DiagnosticRow label="3D map frames" value={details.reconstructionFrames ?? 0} tone={(details.reconstructionFrames ?? 0) >= 6 ? 'good' : 'warn'} />
+      <DiagnosticRow label="3D map landmarks" value={details.reconstructionLandmarks ?? 0} tone={(details.reconstructionLandmarks ?? 0) >= 18 ? 'good' : 'warn'} />
+      <DiagnosticRow label="3D map depth" value={formatNumber(details.reconstructionDepthQuality, 2)} tone={(details.reconstructionDepthQuality ?? 0) > 0.03 ? 'good' : 'warn'} />
+      <DiagnosticRow label="3D pose inliers" value={details.reconstructionPoseInliers ?? 0} tone={(details.reconstructionPoseInliers ?? 0) >= 15 ? 'good' : 'warn'} />
       <DiagnosticRow label="Pose residual" value={formatNumber(details.poseAverageResidual, 2)} tone={(details.poseAverageResidual ?? 99) <= 3 ? 'good' : 'warn'} />
       <DiagnosticRow label="Foreshortening" value={formatNumber(details.poseForeshortening, 2)} tone={(details.poseForeshortening ?? 1) < 0.88 ? 'good' : 'neutral'} />
       <DiagnosticRow label="Homography inliers" value={details.homographyInliers ?? 0} tone={(details.homographyInliers ?? 0) >= 15 ? 'good' : 'warn'} />
@@ -136,6 +115,11 @@ const AnchorDiagnosticsSection = ({ diagnostics }) => {
       {details.lastFailureReason && (
         <div className="mt-2 rounded border border-red-800 bg-red-950/50 px-2 py-1 text-[10px] text-red-200">
           {details.lastFailureReason}
+        </div>
+      )}
+      {details.reconstructionFailureReason && (
+        <div className="mt-2 rounded border border-yellow-800 bg-yellow-950/50 px-2 py-1 text-[10px] text-yellow-200">
+          {details.reconstructionFailureReason}
         </div>
       )}
     </div>
@@ -593,14 +577,39 @@ const MicrophoneSection = ({
   );
 };
 
-const ConfigSection = ({ onConfigChange }) => {
+const ConfigSection = ({ onConfigChange, anchorTrackingMode }) => {
   const [detectionInterval, setDetectionInterval] = useState(4);
+  const [trackingMode, setTrackingMode] = useState(anchorTrackingMode || 'sparse-reconstruction');
+
+  useEffect(() => {
+    setTrackingMode(anchorTrackingMode || 'sparse-reconstruction');
+  }, [anchorTrackingMode]);
   
   return (
     <div className="text-xs">
       <div className="mb-3 rounded border border-gray-700 bg-gray-950 px-2 py-2 text-gray-300">
         <div className="text-[10px] uppercase tracking-wide text-gray-500">Pose Model</div>
-        <div className="mt-1 font-mono text-green-300">object-pose</div>
+        <div className="mt-1 grid grid-cols-2 gap-1">
+          {[
+            ['sparse-reconstruction', '3D map'],
+            ['object-pose', 'Object pose']
+          ].map(([mode, label]) => (
+            <button
+              key={mode}
+              onClick={() => {
+                setTrackingMode(mode);
+                onConfigChange?.({ anchorTrackingMode: mode });
+              }}
+              className={`rounded border px-2 py-1 text-[10px] ${
+                trackingMode === mode
+                  ? 'border-green-600 bg-green-950 text-green-300'
+                  : 'border-gray-700 bg-gray-900 text-gray-400 hover:bg-gray-800'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="mb-2">
         <label className="block text-gray-300 mb-0.5">
@@ -637,6 +646,7 @@ const UnifiedControlPanel = ({
   onConfigChange,
   metrics = {},
   anchorDiagnostics,
+  anchorTrackingMode = 'sparse-reconstruction',
   runtimeReadiness,
   personalityData,
   ttsData,
@@ -665,6 +675,7 @@ const UnifiedControlPanel = ({
   const [isVisible, setIsVisible] = useState(false); // Minimized by default
   const [expandedSections, setExpandedSections] = useState({
     status: false, // Collapsed by default
+    reconstruction: true,
     diagnostics: true,
     runtime: false,
     controls: true,
@@ -682,6 +693,20 @@ const UnifiedControlPanel = ({
       [section]: !prev[section]
     }));
   };
+
+  const reconstructionDetails = {
+    ...(anchorDiagnostics?.details || {}),
+    poseModel: anchorDiagnostics?.details?.poseModel || anchorTrackingMode,
+  };
+  const reconstructionMode = reconstructionDetails.poseModel === 'sparse-reconstruction';
+  const reconstructionPhase = reconstructionDetails.reconstructionReady
+    ? 'ready'
+    : (reconstructionDetails.reconstructionFrames ?? 0) > 0
+      ? 'mapping'
+      : 'waiting';
+  const reconstructionTitle = reconstructionMode
+    ? `3D Reconstruction (${reconstructionPhase})`
+    : '3D Reconstruction (off)';
 
   if (!isVisible) {
     return (
@@ -723,6 +748,14 @@ const UnifiedControlPanel = ({
           trackedObjects={trackedObjects}
           activeTrackId={activeTrackId}
         />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title={reconstructionTitle}
+        isExpanded={expandedSections.reconstruction}
+        onToggle={() => toggleSection('reconstruction')}
+      >
+        <ReconstructionPreviewSection details={reconstructionDetails} />
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -827,6 +860,7 @@ const UnifiedControlPanel = ({
       >
         <ConfigSection 
           onConfigChange={onConfigChange}
+          anchorTrackingMode={anchorTrackingMode}
         />
       </CollapsibleSection>
     </div>

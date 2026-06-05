@@ -11,6 +11,7 @@ export class TTSClient {
     };
     
     this.conversation = null;
+    this.conversationPromise = null;
     this.audioContext = null;
     this.audioAnalysisInterval = null;
     this.isConnected = false;
@@ -98,10 +99,7 @@ export class TTSClient {
 
     logger.info('TTSClient', 'Starting agent conversation:', { text, voiceStyle, emotionalDelivery, agentId: this.config.agentId });
 
-    // Start conversation session if not already connected
-    if (!this.conversation) {
-      await this.startConversation();
-    }
+    const conversation = await this.startConversation();
 
     const messageWithContext = this.buildExpressivePrompt(text, voiceStyle, emotionalDelivery);
     
@@ -110,7 +108,7 @@ export class TTSClient {
     this.currentRequest = { text, voiceStyle, emotionalDelivery };
     
     logger.info('TTSClient', 'Sending message to agent:', messageWithContext);
-    this.conversation.sendUserMessage(messageWithContext);
+    conversation.sendUserMessage(messageWithContext);
     return true;
   }
 
@@ -133,6 +131,7 @@ export class TTSClient {
         }
         this.isConnected = false;
         this.conversation = null;
+        this.conversationPromise = null;
         this.emit('onDisconnected', { details });
       },
       onMessage: (message) => {
@@ -165,7 +164,11 @@ export class TTSClient {
 
   async startConversation() {
     if (this.conversation) {
-      return;
+      return this.conversation;
+    }
+
+    if (this.conversationPromise) {
+      return this.conversationPromise;
     }
 
     if (!this.config.agentId) {
@@ -173,12 +176,22 @@ export class TTSClient {
     }
 
     logger.info('TTSClient', 'Starting conversation session...');
+    this.conversationPromise = this._openConversationSession()
+      .catch(error => {
+        this.conversationPromise = null;
+        throw error;
+      });
+    return this.conversationPromise;
+  }
+
+  async _openConversationSession() {
     await this._ensureAudioContextReady();
     await this.requestMicrophoneAccess();
 
-    this.conversation = await Conversation.startSession(this._buildSessionOptions());
-
+    const conversation = await Conversation.startSession(this._buildSessionOptions());
+    this.conversation = conversation;
     logger.info('TTSClient', 'Conversation session started successfully');
+    return conversation;
   }
 
   _handleModeChange(mode) {
@@ -311,6 +324,7 @@ export class TTSClient {
       await this.conversation.endSession();
       logger.info('TTSClient', 'Conversation session ended');
       this.conversation = null;
+      this.conversationPromise = null;
       this.isConnected = false;
     }
   }

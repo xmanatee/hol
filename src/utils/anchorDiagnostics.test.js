@@ -69,3 +69,48 @@ test('includes lost-anchor recovery context from service metrics', () => {
   assert.equal(result.details.lastFailureReason, 'Insufficient keypoint tracking quality');
   assert.equal(result.details.lostFrameCount, 9);
 });
+
+test('includes reconstruction preview and current inferred pose for control panel visualization', () => {
+  const preview = {
+    ready: true,
+    points: [{ id: 1, x: 0, y: 0, z: 0 }],
+    current: {
+      anchor: { x: 214, y: 156 },
+      normal: { x: 0.2, y: -0.1, z: 0.97 },
+    }
+  };
+  const result = describeAnchorState({
+    cameraState: 'active',
+    anchorSystemState: {
+      mode: 'anchor',
+      activeAnchor: { keypoints: 34, quality: 0.4 },
+      anchorState: {
+        anchored: true,
+        state: 'stable',
+        position: { x: 214, y: 156, z: 0 },
+        normal: { x: 0.2, y: -0.1, z: 0.97 },
+        planarTransform: { scale: 1.16, rotation: 0.21 },
+        metrics: {
+          keypointCount: 34,
+          templateQuality: 0.4,
+          poseModel: 'sparse-reconstruction',
+          reconstructionReady: true,
+          reconstructionPreview: preview,
+          reconstructionMapConfidence: 0.77,
+          reconstructionAverageSupport: 0.81,
+          reconstructionAverageReliability: 0.74,
+          reconstructionMatureLandmarks: 29,
+        }
+      }
+    }
+  });
+
+  assert.equal(result.status, 'stable');
+  assert.deepEqual(result.details.position, { x: 214, y: 156, z: 0 });
+  assert.deepEqual(result.details.normal, { x: 0.2, y: -0.1, z: 0.97 });
+  assert.deepEqual(result.details.planarTransform, { scale: 1.16, rotation: 0.21 });
+  assert.equal(result.details.reconstructionPreview, preview);
+  assert.equal(result.details.reconstructionMapConfidence, 0.77);
+  assert.equal(result.details.reconstructionAverageSupport, 0.81);
+  assert.equal(result.details.reconstructionMatureLandmarks, 29);
+});

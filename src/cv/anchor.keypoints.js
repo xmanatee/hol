@@ -10,9 +10,9 @@ export class KeypointDetector {
     this.initialized = false;
     
     // Shi-Tomasi corner detection parameters - optimized for higher quality, fewer points
-    this.maxCorners = 150; // Reduced from 500 - fewer but better keypoints
-    this.qualityLevel = 0.05; // High quality but not extreme - prevents flickering of good corners
-    this.minDistance = 15; // Increased from 10 - better spatial distribution
+    this.maxCorners = 150;
+    this.qualityLevel = 0.05;
+    this.minDistance = 15;
     this.blockSize = 3;
     this.useHarrisDetector = false;
     this.k = 0.04;

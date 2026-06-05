@@ -40,6 +40,31 @@ test('direct OpenAI chat client surfaces API error messages', async () => {
   await assert.rejects(() => client.create({ model: 'gpt-test', messages: [] }), /invalid api key/);
 });
 
+test('direct OpenAI chat client binds browser fetch to the global object', async () => {
+  const originalFetch = globalThis.fetch;
+  let called = false;
+
+  globalThis.fetch = async function(url, options) {
+    called = true;
+    if (this !== globalThis) {
+      throw new TypeError('Illegal invocation');
+    }
+    assert.equal(url, OPENAI_CHAT_COMPLETIONS_URL);
+    assert.equal(options.method, 'POST');
+    return jsonResponse({ choices: [] });
+  };
+
+  try {
+    const client = new OpenAIChatClient({ apiKey: 'sk-test' });
+    const result = await client.create({ model: 'gpt-test', messages: [] });
+
+    assert.equal(called, true);
+    assert.deepEqual(result, { choices: [] });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('vision client sends image analysis through strict chat completion schema', async () => {
   let payload = null;
   const client = new VisionClient({

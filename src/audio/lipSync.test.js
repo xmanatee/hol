@@ -56,13 +56,13 @@ test('generic 52-target ARKit rigs remain supported when the target order is exp
   assert.ok(mapper.getMorphIndicesForViseme('I').some(morph => morph.index === 23));
 });
 
-test('generic target-numbered rigs use the bundled MediaPipe model-card order', () => {
+test('generic target-numbered rigs use the bundled HOL head target order', () => {
   const mapper = new VisemeMapper(createGenericArkitDictionary());
 
   assert.ok(mapper.getMorphIndicesForViseme('A').some(morph => morph.name === 'target_24'));
-  assert.ok(mapper.getMorphIndicesForViseme('M').some(morph => morph.name === 'target_26'));
-  assert.ok(mapper.getMorphIndicesForViseme('O').some(morph => morph.name === 'target_31'));
-  assert.ok(mapper.getMorphIndicesForViseme('U').some(morph => morph.name === 'target_37'));
+  assert.ok(mapper.getMorphIndicesForViseme('M').some(morph => morph.name === 'target_25'));
+  assert.ok(mapper.getMorphIndicesForViseme('O').some(morph => morph.name === 'target_28'));
+  assert.ok(mapper.getMorphIndicesForViseme('U').some(morph => morph.name === 'target_29'));
 });
 
 test('bundled head model mouth targets are mapped for lip-sync', () => {
@@ -72,8 +72,21 @@ test('bundled head model mouth targets are mapped for lip-sync', () => {
 
   assert.equal(targetNames.length, 52);
   assert.ok(mapper.getMorphIndicesForViseme('A').some(morph => morph.name === 'target_24'));
-  assert.ok(mapper.getMorphIndicesForViseme('O').some(morph => morph.name === 'target_31'));
-  assert.ok(mapper.getMorphIndicesForViseme('U').some(morph => morph.name === 'target_37'));
+  assert.ok(mapper.getMorphIndicesForViseme('M').some(morph => morph.name === 'target_25'));
+  assert.ok(mapper.getMorphIndicesForViseme('O').some(morph => morph.name === 'target_28'));
+  assert.ok(mapper.getMorphIndicesForViseme('U').some(morph => morph.name === 'target_29'));
+});
+
+test('bundled head resolves observed eye and mouth controls instead of MediaPipe indices', () => {
+  const mapper = new VisemeMapper(createGenericArkitDictionary());
+
+  assert.equal(mapper.resolveBlendShapeIndex('eyeBlinkLeft'), 14);
+  assert.equal(mapper.resolveBlendShapeIndex('eyeBlinkRight'), 13);
+  assert.equal(mapper.resolveBlendShapeIndex('mouthClose'), 25);
+  assert.equal(mapper.resolveBlendShapeIndex('mouthRight'), 26);
+  assert.equal(mapper.resolveBlendShapeIndex('mouthLeft'), 27);
+  assert.equal(mapper.resolveBlendShapeIndex('mouthFunnel'), 28);
+  assert.equal(mapper.resolveBlendShapeIndex('mouthPucker'), 29);
 });
 
 test('bundled head model returns to closed mouth after speech completion', () => {
@@ -96,9 +109,10 @@ test('bundled head model returns to closed mouth after speech completion', () =>
   controller.update(320);
 
   assert.ok(mesh.morphTargetInfluences[24] < 0.04);
-  assert.ok(mesh.morphTargetInfluences[26] > 0.5);
-  assert.ok(mesh.morphTargetInfluences[31] < 0.04);
-  assert.ok(mesh.morphTargetInfluences[37] < 0.04);
+  assert.ok(mesh.morphTargetInfluences[25] > 0.5);
+  assert.ok(mesh.morphTargetInfluences[26] < 0.04);
+  assert.ok(mesh.morphTargetInfluences[28] < 0.04);
+  assert.ok(mesh.morphTargetInfluences[29] < 0.04);
 });
 
 test('morph controller opens the bundled jaw quickly on voice attack', () => {
@@ -139,8 +153,8 @@ test('morph controller blinks bundled model-card eye targets while speaking', ()
 
   controller.setBlinkInfluence(0.85);
 
-  assert.equal(controller.targetInfluences[8], 0.85);
-  assert.equal(controller.targetInfluences[9], 0.85);
+  assert.equal(controller.targetInfluences[13], 0.85);
+  assert.equal(controller.targetInfluences[14], 0.85);
 });
 
 test('morph controller blinks the bundled model eyelid targets, not brow or cheek targets', () => {
@@ -153,10 +167,11 @@ test('morph controller blinks the bundled model eyelid targets, not brow or chee
 
   controller.setBlinkInfluence(0.85);
 
-  assert.equal(controller.targetInfluences[8], 0.85);
-  assert.equal(controller.targetInfluences[9], 0.85);
+  assert.equal(controller.targetInfluences[13], 0.85);
+  assert.equal(controller.targetInfluences[14], 0.85);
   assert.equal(controller.targetInfluences[0], 0);
   assert.equal(controller.targetInfluences[7], 0);
+  assert.equal(controller.targetInfluences[8], 0);
 });
 
 test('speech blink completes near its configured duration after a delayed blink start', () => {
@@ -187,8 +202,8 @@ test('morph controller applies expression targets underneath speech visemes', ()
   controller.setRestPose();
   controller.update(16);
 
-  assert.ok(mesh.morphTargetInfluences[43] > 0.05);
-  assert.ok(mesh.morphTargetInfluences[44] > 0.05);
+  assert.ok(mesh.morphTargetInfluences[30] > 0.05);
+  assert.ok(mesh.morphTargetInfluences[31] > 0.05);
 });
 
 test('idle rest pose closes the mouth instead of leaving the exported base pose open', () => {
@@ -202,7 +217,7 @@ test('idle rest pose closes the mouth instead of leaving the exported base pose 
   controller.setRestPose();
   controller.update(80);
 
-  assert.ok(mesh.morphTargetInfluences[26] > 0.55);
+  assert.ok(mesh.morphTargetInfluences[25] > 0.55);
   assert.equal(mesh.morphTargetInfluences[24], 0);
 });
 
@@ -217,8 +232,9 @@ test('idle rest pose drives the bundled mouthClose target instead of an eye targ
   controller.setRestPose();
   controller.update(80);
 
-  assert.ok(mesh.morphTargetInfluences[26] > 0.55);
+  assert.ok(mesh.morphTargetInfluences[25] > 0.55);
   assert.equal(mesh.morphTargetInfluences[18], 0);
+  assert.equal(mesh.morphTargetInfluences[26], 0);
 });
 
 test('rest frame releases an open vowel back to closed mouth', () => {
@@ -237,7 +253,8 @@ test('rest frame releases an open vowel back to closed mouth', () => {
   controller.update(240);
 
   assert.ok(mesh.morphTargetInfluences[24] < 0.05);
-  assert.ok(mesh.morphTargetInfluences[26] > 0.55);
+  assert.ok(mesh.morphTargetInfluences[25] > 0.55);
+  assert.ok(mesh.morphTargetInfluences[26] < 0.05);
 });
 
 test('expression layer does not hold the jaw open when the agent is idle', () => {
@@ -254,8 +271,8 @@ test('expression layer does not hold the jaw open when the agent is idle', () =>
   controller.update(120);
 
   assert.equal(mesh.morphTargetInfluences[24], 0);
-  assert.ok(mesh.morphTargetInfluences[26] > 0.5);
-  assert.ok(mesh.morphTargetInfluences[2] > 0.2);
+  assert.ok(mesh.morphTargetInfluences[25] > 0.5);
+  assert.ok(mesh.morphTargetInfluences[0] > 0.2);
 });
 
 test('cartoon performance profile exaggerates jaw and vertical mouth shapes', () => {
@@ -271,8 +288,8 @@ test('cartoon performance profile exaggerates jaw and vertical mouth shapes', ()
   controller.update(33);
 
   assert.ok(mesh.morphTargetInfluences[24] > 0.85);
-  assert.ok(mesh.morphTargetInfluences[33] > 0.22);
-  assert.ok(mesh.morphTargetInfluences[34] > 0.22);
+  assert.ok(mesh.morphTargetInfluences[45] > 0.22);
+  assert.ok(mesh.morphTargetInfluences[46] > 0.22);
 });
 
 test('emotional speech profile opens dramatic vowels more than calm speech', () => {
@@ -300,7 +317,7 @@ test('emotional speech profile opens dramatic vowels more than calm speech', () 
   dramatic.update(33);
 
   assert.ok(dramaticMesh.morphTargetInfluences[24] > calmJawOpen + 0.18);
-  assert.ok(dramaticMesh.morphTargetInfluences[33] > 0.25);
+  assert.ok(dramaticMesh.morphTargetInfluences[45] > 0.25);
 });
 
 test('expression intensity controls upper-face exaggeration without snapping current influences', () => {
@@ -314,12 +331,12 @@ test('expression intensity controls upper-face exaggeration without snapping cur
   controller.setPerformanceIntensity(1);
   controller.setExpression('dramatic', 1);
 
-  assert.equal(mesh.morphTargetInfluences[2], 0);
+  assert.equal(mesh.morphTargetInfluences[0], 0);
 
   controller.update(120);
 
-  assert.ok(mesh.morphTargetInfluences[2] > 0.2);
-  assert.ok(mesh.morphTargetInfluences[2] < 0.5);
+  assert.ok(mesh.morphTargetInfluences[0] > 0.2);
+  assert.ok(mesh.morphTargetInfluences[0] < 0.5);
 });
 
 test('speech blinks follow a natural close-open curve', () => {
@@ -333,10 +350,10 @@ test('speech blinks follow a natural close-open curve', () => {
 
   controller.update(16);
   controller.update(45);
-  const closing = mesh.morphTargetInfluences[8];
+  const closing = mesh.morphTargetInfluences[13];
 
   controller.update(45);
-  const opening = mesh.morphTargetInfluences[8];
+  const opening = mesh.morphTargetInfluences[13];
 
   controller.update(160);
 
@@ -358,9 +375,9 @@ test('mouth expression pairs stay symmetric while upper-face expression can stay
   controller.setRestPose();
   controller.update(120);
 
-  assert.equal(Number(mesh.morphTargetInfluences[43].toFixed(4)), Number(mesh.morphTargetInfluences[44].toFixed(4)));
-  assert.equal(Number(mesh.morphTargetInfluences[27].toFixed(4)), Number(mesh.morphTargetInfluences[28].toFixed(4)));
-  assert.ok(mesh.morphTargetInfluences[4] > mesh.morphTargetInfluences[3]);
+  assert.equal(Number(mesh.morphTargetInfluences[30].toFixed(4)), Number(mesh.morphTargetInfluences[31].toFixed(4)));
+  assert.equal(Number(mesh.morphTargetInfluences[41].toFixed(4)), Number(mesh.morphTargetInfluences[42].toFixed(4)));
+  assert.ok(mesh.morphTargetInfluences[3] > mesh.morphTargetInfluences[4]);
 });
 
 test('audio alignment characters resolve to the current spoken viseme', () => {

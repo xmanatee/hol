@@ -1,10 +1,13 @@
 import { ImageAnchorService } from './ImageAnchorService.js';
 import { HomographyEstimator } from '../cv/anchor.homography.js';
+import { RECONSTRUCTION_POSE_MODEL } from '../cv/anchor.reconstruction.js';
 import { logger } from '../utils/logger.js';
 
 export class AnchorManager {
   constructor() {
     this.imageAnchorService = new ImageAnchorService();
+    this.trackingMode = RECONSTRUCTION_POSE_MODEL;
+    this.imageAnchorService.setTrackingMode(this.trackingMode);
     
     // State management
     this.mode = 'detection'; // 'detection' or 'anchor'
@@ -112,6 +115,7 @@ export class AnchorManager {
         quality: result.quality,
         method: result.method,
         state: result.state,
+        trackingMode: this.trackingMode,
         sourceDetection: selectedDetection,
         createdAt: Date.now()
       };
@@ -171,8 +175,15 @@ export class AnchorManager {
       detections: this.detections,
       activeAnchor: this.activeAnchor,
       anchorState: this.anchorState,
+      trackingMode: this.trackingMode,
       initialized: this.initialized
     };
+  }
+
+  setTrackingMode(mode) {
+    this.trackingMode = mode;
+    this.imageAnchorService.setTrackingMode(mode);
+    this._notifyUpdate();
   }
 
   /**
@@ -207,11 +218,19 @@ export class AnchorManager {
         homographyInliers: anchorServiceState.metrics?.homographyInliers ?? 0,
         affinePoseInliers: anchorServiceState.metrics?.affinePoseInliers ?? 0,
         objectPoseInliers: anchorServiceState.metrics?.objectPoseInliers ?? 0,
+        reconstructionPoseInliers: anchorServiceState.metrics?.reconstructionPoseInliers ?? 0,
         poseInliers: anchorServiceState.metrics?.poseInliers ?? 0,
         poseModel: anchorServiceState.metrics?.poseModel || null,
         poseSource: anchorServiceState.metrics?.poseSource || null,
         poseAverageResidual: anchorServiceState.metrics?.poseAverageResidual ?? null,
         poseForeshortening: anchorServiceState.metrics?.poseForeshortening ?? null,
+        reconstructionState: anchorServiceState.metrics?.reconstructionState || null,
+        reconstructionReady: anchorServiceState.metrics?.reconstructionReady ?? false,
+        reconstructionFrames: anchorServiceState.metrics?.reconstructionFrames ?? 0,
+        reconstructionLandmarks: anchorServiceState.metrics?.reconstructionLandmarks ?? 0,
+        reconstructionDepthQuality: anchorServiceState.metrics?.reconstructionDepthQuality ?? 0,
+        reconstructionPreview: anchorServiceState.metrics?.reconstructionPreview || null,
+        reconstructionFailureReason: anchorServiceState.metrics?.reconstructionFailureReason || null,
         recoveryAttempts: anchorServiceState.metrics?.recoveryAttempts ?? 0,
         lostFrameCount: anchorServiceState.metrics?.lostFrameCount ?? 0,
         lastFailureReason: anchorServiceState.metrics?.lastFailureReason || null

@@ -138,8 +138,8 @@ export class AnchorPersistenceSystem {
    * @param {cv.Mat} template - Template to find
    * @returns {Object} Match result
    */
-  _multiScaleTemplateMatch(cv, searchImage, template) {
-    const scales = [0.8, 0.9, 1.0, 1.1, 1.2]; // Scale factors to try
+  _multiScaleTemplateMatch(cv, searchImage, template, options = {}) {
+    const scales = this._getTemplateScales(options);
     let bestMatch = { confidence: 0, location: null, scale: 1.0 };
 
     for (const scale of scales) {
@@ -188,6 +188,12 @@ export class AnchorPersistenceSystem {
       success: bestMatch.confidence > this.correlationThreshold,
       ...bestMatch
     };
+  }
+
+  _getTemplateScales({ fullFrame = false } = {}) {
+    return fullFrame
+      ? [0.65, 0.8, 1.0, 1.25, 1.55]
+      : [0.8, 0.9, 1.0, 1.1, 1.2];
   }
 
   /**
@@ -313,20 +319,13 @@ export class AnchorPersistenceSystem {
     logger.info('AnchorPersistenceSystem', 'Performing full-frame search...');
 
     try {
-      // Use only 1.0 scale for full-frame search to avoid performance issues
-      const result = new cv.Mat();
-      cv.matchTemplate(currentGray, this.template, result, cv.TM_CCOEFF_NORMED);
+      const matchResult = this._multiScaleTemplateMatch(cv, currentGray, this.template, { fullFrame: true });
 
-      const minMaxLoc = cv.minMaxLoc(result);
-      const confidence = minMaxLoc.maxVal;
-
-      result.delete();
-
-      if (confidence > this.correlationThreshold) {
+      if (matchResult.success) {
         const matchCenter = this._matchLocationToAnchorPosition(
-          minMaxLoc.maxLoc,
+          matchResult.location,
           { x: 0, y: 0 },
-          1
+          matchResult.scale
         );
 
         this.lastKnownPosition = matchCenter;
@@ -337,12 +336,12 @@ export class AnchorPersistenceSystem {
         return {
           success: true,
           position: matchCenter,
-          confidence: confidence,
-          scale: 1.0,
+          confidence: matchResult.confidence,
+          scale: matchResult.scale,
           method: 'full_frame_search'
         };
       } else {
-        return { success: false, reason: `Low confidence: ${confidence.toFixed(3)}` };
+        return { success: false, reason: `Low confidence: ${matchResult.confidence.toFixed(3)}` };
       }
 
     } catch (error) {

@@ -613,6 +613,10 @@ export class KeypointTracker {
   }
 
   _applyReferenceTransformation(point, transformation) {
+    if (transformation.type === 'homography') {
+      return this._transformHomographyPoint(point, transformation.matrix);
+    }
+
     const cos = Math.cos(transformation.rotation);
     const sin = Math.sin(transformation.rotation);
     return {
@@ -622,6 +626,10 @@ export class KeypointTracker {
   }
 
   _invertReferenceTransformation(point, transformation) {
+    if (transformation.type === 'homography') {
+      return this._transformHomographyPoint(point, transformation.inverseMatrix);
+    }
+
     const cos = Math.cos(transformation.rotation);
     const sin = Math.sin(transformation.rotation);
     const translatedX = point.x - transformation.tx;
@@ -631,6 +639,92 @@ export class KeypointTracker {
     return {
       x: inverseScale * (cos * translatedX + sin * translatedY),
       y: inverseScale * (-sin * translatedX + cos * translatedY),
+    };
+  }
+
+  _transformHomographyPoint(point, matrix) {
+    const denominator = matrix[6] * point.x + matrix[7] * point.y + matrix[8];
+    return {
+      x: (matrix[0] * point.x + matrix[1] * point.y + matrix[2]) / denominator,
+      y: (matrix[3] * point.x + matrix[4] * point.y + matrix[5]) / denominator,
+    };
+  }
+
+  _invertHomographyMatrix(matrix) {
+    const [
+      a, b, c,
+      d, e, f,
+      g, h, i,
+    ] = matrix;
+    const determinant =
+      a * (e * i - f * h) -
+      b * (d * i - f * g) +
+      c * (d * h - e * g);
+
+    if (Math.abs(determinant) < 1e-9) return null;
+
+    return [
+      (e * i - f * h) / determinant,
+      (c * h - b * i) / determinant,
+      (b * f - c * e) / determinant,
+      (f * g - d * i) / determinant,
+      (a * i - c * g) / determinant,
+      (c * d - a * f) / determinant,
+      (d * h - e * g) / determinant,
+      (b * g - a * h) / determinant,
+      (a * e - b * d) / determinant,
+    ];
+  }
+
+  _estimateReferenceHomography(cv, activePoints) {
+    if (!cv || activePoints.length < 8 || typeof cv.findHomography !== 'function') {
+      return null;
+    }
+
+    const srcPoints = [];
+    const dstPoints = [];
+    activePoints.forEach(point => {
+      srcPoints.push(point.original.x, point.original.y);
+      dstPoints.push(point.current.x, point.current.y);
+    });
+
+    const srcMat = cv.matFromArray(activePoints.length, 1, cv.CV_32FC2, srcPoints);
+    const dstMat = cv.matFromArray(activePoints.length, 1, cv.CV_32FC2, dstPoints);
+    const mask = new cv.Mat();
+    const homography = cv.findHomography(srcMat, dstMat, cv.RANSAC, 3, mask, 1000, 0.99);
+
+    let inlierCount = 0;
+    for (let index = 0; index < mask.rows; index++) {
+      if (mask.data[index] === 1) inlierCount++;
+    }
+
+    const matrix = homography.empty() ? null : Array.from(homography.data64F);
+    const inverseMatrix = matrix ? this._invertHomographyMatrix(matrix) : null;
+
+    srcMat.delete();
+    dstMat.delete();
+    mask.delete();
+    if (!homography.empty()) homography.delete();
+
+    if (!matrix || !inverseMatrix || inlierCount < 8 || inlierCount / activePoints.length < 0.5) {
+      return null;
+    }
+
+    const residuals = activePoints.map(point => {
+      const projected = this._transformHomographyPoint(point.original, matrix);
+      return Math.hypot(projected.x - point.current.x, projected.y - point.current.y);
+    });
+    const averageResidual = residuals.reduce((sum, residual) => sum + residual, 0) / residuals.length;
+
+    return {
+      type: 'homography',
+      matrix,
+      inverseMatrix,
+      scale: 1,
+      rotation: 0,
+      confidence: Math.max(0, Math.min(1, (inlierCount / activePoints.length) * (1 - Math.min(1, averageResidual / 12)))),
+      inlierCount,
+      averageResidual,
     };
   }
 
@@ -725,6 +819,49 @@ export class KeypointTracker {
     };
 
     return true;
+  }
+
+  restoreFromReferenceTransform(currentGray, transformation, inlierIds = null) {
+    const inlierIdSet = inlierIds ? new Set(inlierIds) : null;
+    let restored = 0;
+
+    this.trackedPoints.forEach(point => {
+      if (inlierIdSet && !inlierIdSet.has(point.id)) {
+        return;
+      }
+
+      point.current = this._applyReferenceTransformation(point.original, transformation);
+      point.status = 'active';
+      point.inactiveAge = 0;
+      point.lastSeenAttempt = this.trackingAttempts;
+      point.age = (point.age || 0) + 1;
+      point.observations = (point.observations || 0) + 1;
+      point.successfulTrackingStreak = Math.max(point.successfulTrackingStreak || 0, 1);
+      point.totalSuccessfulFrames = (point.totalSuccessfulFrames || 0) + 1;
+      point.stabilityScore = Math.max(point.stabilityScore || 0, transformation.confidence || 0.5);
+      point.errorHistory = [...(point.errorHistory || []), transformation.averageResidual || 0].slice(-10);
+      restored++;
+    });
+
+    this._pruneLandmarkMap(96);
+    this._recalculateReferenceCentroid();
+
+    if (this.previousGray) {
+      this.previousGray.delete();
+    }
+    this.previousGray = currentGray.clone();
+    this.trackingAttempts = 0;
+    this.lastRefreshStats = {
+      restored,
+      total: this.trackedPoints.length,
+      active: this.trackedPoints.filter(point => point.status === 'active').length,
+    };
+
+    return {
+      restored,
+      total: this.trackedPoints.length,
+      active: this.lastRefreshStats.active,
+    };
   }
 
   _createTrackedPoint(id, original, current, response) {
@@ -940,7 +1077,7 @@ export class KeypointTracker {
 
       const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
       const referenceTransformation = activePoints.length >= 3
-        ? this._estimateReferenceTransformation(activePoints)
+        ? this._estimateReferenceHomography(cv, activePoints) || this._estimateReferenceTransformation(activePoints)
         : null;
       const newKeypoints = keypointDetector.extractKeypoints(cv, currentGray, region);
       

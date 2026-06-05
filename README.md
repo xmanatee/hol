@@ -34,7 +34,7 @@ Camera access on iPhone requires HTTPS. For local device testing, expose the Vit
 
 ## Optional Services
 
-Personality generation uses OpenAI and is lazy-loaded only when requested. Voice playback uses ElevenLabs Conversational AI. Copy `.env.example` to `.env.local` and fill the service values for those paths.
+Personality generation uses OpenAI only when requested. Voice playback lazy-loads the ElevenLabs Conversational AI runtime at the first conversation boundary. Copy `.env.example` to `.env.local` and fill the service values for those paths.
 
 Without service configuration, the camera, detection, anchoring, model rendering, and microphone lip-sync paths still load.
 

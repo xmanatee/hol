@@ -35,16 +35,25 @@ const kInverse = [
 
 const homographyFromRotation = rotation => multiply3(multiply3(k, rotation), kInverse);
 
+test('homography initialization stores camera intrinsics without OpenCV matrix allocation', async () => {
+  const estimator = new HomographyEstimator();
+  const cv = {
+    matFromArray() {
+      throw new Error('matFromArray should not be used for camera intrinsics');
+    },
+  };
+
+  await estimator.initialize(cv, camera);
+
+  assert.deepEqual(estimator.cameraParams, camera);
+  assert.equal(estimator.cameraMatrix, null);
+  assert.equal(estimator.initialized, true);
+});
+
 test('homography pose extraction recovers a large yaw normal instead of preferring face-on', () => {
   const estimator = new HomographyEstimator();
   estimator.initialized = true;
-  estimator.cameraMatrix = {
-    data64F: [
-      camera.fx, 0, camera.cx,
-      0, camera.fy, camera.cy,
-      0, 0, 1,
-    ],
-  };
+  estimator.cameraParams = camera;
 
   const yaw = 38 * Math.PI / 180;
   const rotation = [

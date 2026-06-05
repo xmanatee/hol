@@ -70,10 +70,32 @@ export class SurfaceNormalStabilizer {
     const confidence = clamp(options.confidence ?? 1, 0, 1);
     const inlierWeight = clamp((options.inliers ?? 0) / 25, 0, 1);
     const weight = clamp(confidence * 0.75 + inlierWeight * 0.25, 0.2, 1);
+    const foreshortening = options.foreshortening ?? 1;
+    const measurementTilt = Math.hypot(measurement.x, measurement.y);
+    const currentTilt = this.current ? Math.hypot(this.current.x, this.current.y) : 0;
+    const confidentForeshortenedTurn = foreshortening < 0.9 &&
+      confidence >= 0.5 &&
+      (options.inliers ?? 0) >= 12 &&
+      measurementTilt > 0.18;
+    const confidentFaceOnReturn = foreshortening > 0.96 &&
+      confidence >= 0.5 &&
+      (options.inliers ?? 0) >= 12 &&
+      measurementTilt < 0.08 &&
+      currentTilt > 0.12;
+    const reacquiredPose = options.reacquired === true &&
+      confidence >= 0.42 &&
+      (options.inliers ?? 0) >= 8;
+    const trustedExternalPose = options.trusted === true &&
+      confidence >= 0.55 &&
+      (options.inliers ?? 0) >= 12;
+    const trustedPoseChange = confidentForeshortenedTurn || confidentFaceOnReturn || reacquiredPose || trustedExternalPose;
 
-    this.history.push({ normal: measurement, weight });
+    this.history.push({ normal: measurement, weight, trustedPoseChange });
     if (this.history.length > this.historySize) {
       this.history.shift();
+    }
+    if (reacquiredPose) {
+      this.history = [{ normal: measurement, weight, trustedPoseChange }];
     }
 
     const componentMedian = normalize({
@@ -83,9 +105,12 @@ export class SurfaceNormalStabilizer {
     });
     const accepted = this.history.filter(sample => {
       return this.history.length < 4 ||
+        sample.trustedPoseChange ||
         angularDistanceBetweenNormals(sample.normal, componentMedian) <= this.outlierRadians;
     });
-    const target = weightedAverage(accepted.length ? accepted : this.history);
+    const target = trustedPoseChange
+      ? measurement
+      : weightedAverage(accepted.length ? accepted : this.history);
 
     if (!this.current) {
       this.current = target;
@@ -98,7 +123,16 @@ export class SurfaceNormalStabilizer {
     }
 
     const speedRatio = clamp(angle / this.fastAngleRadians, 0, 1);
-    const alpha = (this.baseAlpha + (this.fastAlpha - this.baseAlpha) * speedRatio) * (0.65 + confidence * 0.35);
+    let alpha = (this.baseAlpha + (this.fastAlpha - this.baseAlpha) * speedRatio) * (0.65 + confidence * 0.35);
+    if (trustedPoseChange) {
+      alpha = Math.max(alpha, 0.44 * (0.75 + confidence * 0.25));
+    }
+    if (trustedExternalPose) {
+      alpha = Math.max(alpha, 0.64 * (0.75 + confidence * 0.25));
+    }
+    if (reacquiredPose) {
+      alpha = Math.max(alpha, 0.82 * (0.75 + confidence * 0.25));
+    }
 
     this.current = normalize({
       x: this.current.x + (target.x - this.current.x) * alpha,

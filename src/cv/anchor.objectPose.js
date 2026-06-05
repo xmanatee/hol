@@ -24,7 +24,7 @@ export class ObjectPoseEstimator {
   constructor(config = {}) {
     this.affinePoseEstimator = config.affinePoseEstimator || new AffineParallaxPoseEstimator();
     this.maxResidual = config.maxResidual || 5;
-    this.minInlierRatio = config.minInlierRatio || 0.62;
+    this.minInlierRatio = config.minInlierRatio ?? 0.5;
   }
 
   estimate({ correspondences, anchorReference, previousPose = null }) {

@@ -8,6 +8,9 @@
     "build": "vite build",
     "lint": "eslint .",
     "test": "node --test \"src/api/*.test.js\" \"src/audio/*.test.js\" \"src/utils/*.test.js\" \"src/cv/*.unit.test.js\" \"src/services/*.unit.test.js\"",
+    "test:vision": "node --test src/cv/syntheticVisionReplay.unit.test.js",
+    "vision:report": "node scripts/vision-replay-report.mjs",
+    "vision:debug": "node scripts/vision-debug-report.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

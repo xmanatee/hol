@@ -9,6 +9,7 @@ export class HomographyEstimator {
   constructor() {
     this.initialized = false;
     this.cameraMatrix = null;
+    this.cameraParams = null;
     this.homographyHistory = [];
     this.maxHistory = 10;
   }
@@ -18,12 +19,13 @@ export class HomographyEstimator {
       throw new Error('OpenCV not available');
     }
     
-    // Store camera parameters
-    this.cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, [
-      cameraParams.fx, 0, cameraParams.cx,
-      0, cameraParams.fy, cameraParams.cy,
-      0, 0, 1
-    ]);
+    this.cameraParams = {
+      fx: cameraParams.fx,
+      fy: cameraParams.fy,
+      cx: cameraParams.cx,
+      cy: cameraParams.cy
+    };
+    this.cameraMatrix = null;
     
     this.initialized = true;
     logger.info('HomographyEstimator', 'Initialized with camera matrix');
@@ -73,9 +75,12 @@ export class HomographyEstimator {
       );
 
       // Count inliers
+      const inlierMask = [];
       let inlierCount = 0;
       for (let i = 0; i < mask.rows; i++) {
-        if (mask.data[i] === 1) {
+        const isInlier = mask.data[i] === 1;
+        inlierMask.push(isInlier);
+        if (isInlier) {
           inlierCount++;
         }
       }
@@ -96,11 +101,25 @@ export class HomographyEstimator {
 
       // Store homography in history
       const homographyData = new Float64Array(homography.data64F);
+      const residuals = correspondences.map((corr, index) => {
+        const denominator = homographyData[6] * corr.prev.x + homographyData[7] * corr.prev.y + homographyData[8];
+        const projectedX = (homographyData[0] * corr.prev.x + homographyData[1] * corr.prev.y + homographyData[2]) / denominator;
+        const projectedY = (homographyData[3] * corr.prev.x + homographyData[4] * corr.prev.y + homographyData[5]) / denominator;
+        return {
+          value: Math.hypot(projectedX - corr.curr.x, projectedY - corr.curr.y),
+          inlier: inlierMask[index],
+        };
+      });
+      const inlierResiduals = residuals.filter(item => item.inlier).map(item => item.value);
+      const averageResidual = inlierResiduals.reduce((sum, value) => sum + value, 0) / Math.max(1, inlierResiduals.length);
+      const maxResidual = Math.max(...inlierResiduals, 0);
+
       this.homographyHistory.push({
         timestamp: performance.now(),
         matrix: homographyData,
         inlierCount: inlierCount,
-        correspondenceCount: correspondences.length
+        correspondenceCount: correspondences.length,
+        averageResidual,
       });
 
       if (this.homographyHistory.length > this.maxHistory) {
@@ -113,6 +132,8 @@ export class HomographyEstimator {
         inlierCount: inlierCount,
         inlierRatio: inlierCount / correspondences.length,
         conditionNumber: this._calculateConditionNumber(homographyData),
+        averageResidual,
+        maxResidual,
         matrix: homographyData
       };
 
@@ -139,112 +160,22 @@ export class HomographyEstimator {
     }
 
     try {
-      const rotations = new cv.MatVector();
-      const translations = new cv.MatVector();
-      const normals = new cv.MatVector();
-
-      // Extract pose using direct mathematical decomposition
       const poseResult = this._extractPoseFromHomography(cv, homography);
       
       if (!poseResult.success) {
-        rotations.delete();
-        translations.delete();
-        normals.delete();
         return { success: false, reason: poseResult.reason };
-      }
-
-      // Create matrices for the single solution
-      const rotation = new cv.Mat(3, 3, cv.CV_64FC1);
-      const translation = new cv.Mat(3, 1, cv.CV_64FC1);
-      const normal = new cv.Mat(3, 1, cv.CV_64FC1);
-
-      // Fill rotation matrix
-      const rotData = rotation.data64F;
-      poseResult.rotation.forEach((val, i) => { rotData[i] = val; });
-
-      // Fill translation vector
-      const transData = translation.data64F;
-      transData[0] = poseResult.translation.x;
-      transData[1] = poseResult.translation.y;
-      transData[2] = poseResult.translation.z;
-
-      // Fill normal vector
-      const normalData = normal.data64F;
-      normalData[0] = poseResult.normal.x;
-      normalData[1] = poseResult.normal.y;
-      normalData[2] = poseResult.normal.z;
-
-      // Add to output vectors
-      rotations.push_back(rotation);
-      translations.push_back(translation);
-      normals.push_back(normal);
-
-      const solutions = 1;
-
-      if (solutions === 0) {
-        rotations.delete();
-        translations.delete();
-        normals.delete();
-        return { success: false, reason: 'Decomposition failed' };
-      }
-
-      // Find best solution (normal pointing towards camera)
-      let bestNormal = null;
-      let bestRotation = null;
-      let bestTranslation = null;
-      let maxZ = -Infinity;
-
-      for (let i = 0; i < solutions; i++) {
-        const normal = normals.get(i);
-        const rotation = rotations.get(i);
-        const translation = translations.get(i);
-
-        if (normal.rows >= 3) {
-          const normalData = normal.data64F;
-          const norm = Math.sqrt(normalData[0] * normalData[0] + 
-                                normalData[1] * normalData[1] + 
-                                normalData[2] * normalData[2]);
-          
-          if (norm > 0) {
-            let normalVec = {
-              x: normalData[0] / norm,
-              y: normalData[1] / norm,
-              z: normalData[2] / norm
-            };
-
-            // Ensure normal points towards camera (positive Z)
-            if (normalVec.z < 0) {
-              normalVec.x *= -1;
-              normalVec.y *= -1;
-              normalVec.z *= -1;
-            }
-
-            // Select solution with largest Z component (most face-on)
-            if (normalVec.z > maxZ) {
-              maxZ = normalVec.z;
-              bestNormal = normalVec;
-              bestRotation = rotation.data64F ? Array.from(rotation.data64F) : null;
-              bestTranslation = translation.data64F ? Array.from(translation.data64F) : null;
-            }
-          }
-        }
-      }
-
-      // Cleanup
-      rotations.delete();
-      translations.delete();
-      normals.delete();
-
-      if (!bestNormal) {
-        return { success: false, reason: 'No valid normal found' };
       }
 
       return {
         success: true,
-        normal: bestNormal,
-        rotation: bestRotation,
-        translation: bestTranslation,
-        confidence: Math.min(1.0, maxZ) // Z component as confidence measure
+        normal: poseResult.normal,
+        rotation: poseResult.rotation,
+        translation: [
+          poseResult.translation.x,
+          poseResult.translation.y,
+          poseResult.translation.z
+        ],
+        confidence: poseResult.confidence
       };
 
     } catch (error) {
@@ -426,10 +357,7 @@ export class HomographyEstimator {
         return { success: false, reason: 'Invalid homography matrix' };
       }
 
-      const fx = this.cameraMatrix.data64F[0];
-      const fy = this.cameraMatrix.data64F[4];
-      const cx = this.cameraMatrix.data64F[2];
-      const cy = this.cameraMatrix.data64F[5];
+      const { fx, fy, cx, cy } = this.cameraParams;
       const k = [
         fx, 0, cx,
         0, fy, cy,
@@ -520,6 +448,7 @@ export class HomographyEstimator {
       this.cameraMatrix.delete();
       this.cameraMatrix = null;
     }
+    this.cameraParams = null;
     this.homographyHistory = [];
     this.initialized = false;
   }

@@ -13,11 +13,23 @@ const collectAnchorDetails = (anchorState) => {
     homographyInliers: metrics.homographyInliers ?? 0,
     affinePoseInliers: metrics.affinePoseInliers ?? 0,
     objectPoseInliers: metrics.objectPoseInliers ?? 0,
+    reconstructionPoseInliers: metrics.reconstructionPoseInliers ?? 0,
     poseInliers: metrics.poseInliers ?? 0,
     poseModel: metrics.poseModel || null,
     poseSource: metrics.poseSource || null,
     poseAverageResidual: metrics.poseAverageResidual ?? null,
     poseForeshortening: metrics.poseForeshortening ?? null,
+    reconstructionState: metrics.reconstructionState || null,
+    reconstructionReady: metrics.reconstructionReady ?? false,
+    reconstructionFrames: metrics.reconstructionFrames ?? 0,
+    reconstructionLandmarks: metrics.reconstructionLandmarks ?? 0,
+    reconstructionDepthQuality: metrics.reconstructionDepthQuality ?? 0,
+    reconstructionMapConfidence: metrics.reconstructionMapConfidence ?? 0,
+    reconstructionAverageSupport: metrics.reconstructionAverageSupport ?? 0,
+    reconstructionAverageReliability: metrics.reconstructionAverageReliability ?? 0,
+    reconstructionMatureLandmarks: metrics.reconstructionMatureLandmarks ?? 0,
+    reconstructionPreview: metrics.reconstructionPreview || null,
+    reconstructionFailureReason: metrics.reconstructionFailureReason || null,
     recoveryAttempts: metrics.recoveryAttempts ?? 0,
     lostFrameCount: metrics.lostFrameCount ?? 0,
     lastFailureReason: metrics.lastFailureReason || null,
@@ -25,7 +37,10 @@ const collectAnchorDetails = (anchorState) => {
     lastUpdateMethod: metrics.lastUpdateMethod || null,
     processingTime: metrics.processingTime ?? 0,
     templateRegion: metrics.templateRegion || null,
-    qualityState: metrics.qualityState || null
+    qualityState: metrics.qualityState || null,
+    position: anchorState?.position || null,
+    normal: anchorState?.normal || null,
+    planarTransform: anchorState?.planarTransform || null
   };
 };
 
@@ -79,6 +94,16 @@ export const describeAnchorState = ({
   }
 
   if (serviceState?.state === 'stable') {
+    if (details.poseModel === 'sparse-reconstruction' && !details.reconstructionReady) {
+      return {
+        status: 'mapping',
+        severity: 'warn',
+        message: 'Building sparse 3D object map',
+        recommendation: 'Slowly turn and tilt the object while keeping the clicked area visible.',
+        details
+      };
+    }
+
     return {
       status: 'stable',
       severity: 'good',
@@ -89,6 +114,16 @@ export const describeAnchorState = ({
   }
 
   if (serviceState?.state === 'tracking') {
+    if (details.poseModel === 'sparse-reconstruction' && !details.reconstructionReady) {
+      return {
+        status: 'mapping',
+        severity: 'warn',
+        message: 'Building sparse 3D object map',
+        recommendation: 'Move the object through a small left/right and up/down turn before expecting the face.',
+        details
+      };
+    }
+
     return {
       status: 'tracking',
       severity: 'good',
@@ -99,6 +134,16 @@ export const describeAnchorState = ({
   }
 
   if (serviceState?.state === 'degraded') {
+    if (details.poseModel === 'sparse-reconstruction' && !details.reconstructionReady) {
+      return {
+        status: 'mapping',
+        severity: 'warn',
+        message: 'Sparse 3D map needs more stable landmarks',
+        recommendation: details.reconstructionFailureReason || 'Move slower and keep a textured part of the object in view.',
+        details
+      };
+    }
+
     return {
       status: 'weak',
       severity: 'warn',
