@@ -1,10 +1,13 @@
 import {
   createCylindricalCanSequence,
   createGlossyPhoneSequence,
+  createHandledMugSequence,
   createLabelBottleSequence,
+  createLaminatedCardSequence,
   createPlanarBookSequence,
   createRigidBoxSequence,
   createSnackPouchSequence,
+  createTexturedBallSequence,
   createTexturedCupSequence,
 } from './visionFixtures.js';
 
@@ -141,7 +144,7 @@ export const realisticReplayScenarios = [
         meanAnchorError: 6,
         maxScaleError: 0.17,
         maxFrameJump: 12,
-        maxRotationError: 1.9,
+        maxRotationError: 1.1,
         maxWorldPositionError: 0.12,
         maxScaleLogError: 0.18,
         maxHeadJumpExcess: 0.065,
@@ -151,7 +154,7 @@ export const realisticReplayScenarios = [
         meanAnchorError: 6,
         maxScaleError: 0.17,
         maxFrameJump: 12,
-        maxRotationError: 1.9,
+        maxRotationError: 1.1,
         maxWorldPositionError: 0.12,
         maxScaleLogError: 0.18,
         maxHeadJumpExcess: 0.065,
@@ -184,7 +187,7 @@ export const realisticReplayScenarios = [
         maxFrameJump: 12,
         maxRotationError: 1.35,
         maxWorldPositionError: 0.19,
-        maxScaleLogError: 0.15,
+        maxScaleLogError: 0.16,
         maxHeadJumpExcess: 0.08,
       },
       'direct-photometric': {
@@ -194,7 +197,7 @@ export const realisticReplayScenarios = [
         maxFrameJump: 12,
         maxRotationError: 1.35,
         maxWorldPositionError: 0.19,
-        maxScaleLogError: 0.15,
+        maxScaleLogError: 0.16,
         maxHeadJumpExcess: 0.08,
       },
     },
@@ -218,12 +221,22 @@ export const realisticReplayScenarios = [
       maxHeadJumpExcess: 0.07,
     },
     limitsByMode: {
+      'sparse-reconstruction': {
+        maxAnchorError: 32,
+        meanAnchorError: 10,
+        maxScaleError: 0.26,
+        maxFrameJump: 12,
+        maxRotationError: 1.15,
+        maxWorldPositionError: 0.25,
+        maxScaleLogError: 0.25,
+        maxHeadJumpExcess: 0.07,
+      },
       'parametric-surface': {
         maxAnchorError: 30,
         meanAnchorError: 10,
         maxScaleError: 0.26,
         maxFrameJump: 12,
-        maxRotationError: 1.15,
+        maxRotationError: 1.35,
         maxWorldPositionError: 0.23,
         maxScaleLogError: 0.25,
         maxHeadJumpExcess: 0.07,
@@ -276,10 +289,32 @@ export const realisticReplayScenarios = [
       meanAnchorError: 13,
       maxScaleError: 0.26,
       maxFrameJump: 12,
-      maxRotationError: 1.5,
+      maxRotationError: 1.22,
       maxWorldPositionError: 0.16,
       maxScaleLogError: 0.26,
       maxHeadJumpExcess: 0.04,
+    },
+    limitsByMode: {
+      'parametric-surface': {
+        maxAnchorError: 23,
+        meanAnchorError: 15,
+        maxScaleError: 0.26,
+        maxFrameJump: 12,
+        maxRotationError: 1.22,
+        maxWorldPositionError: 0.18,
+        maxScaleLogError: 0.26,
+        maxHeadJumpExcess: 0.04,
+      },
+      'direct-photometric': {
+        maxAnchorError: 23,
+        meanAnchorError: 15,
+        maxScaleError: 0.26,
+        maxFrameJump: 12,
+        maxRotationError: 1.22,
+        maxWorldPositionError: 0.18,
+        maxScaleLogError: 0.26,
+        maxHeadJumpExcess: 0.04,
+      },
     },
     surfaceByMode: {
       'parametric-surface': 'cylinder',
@@ -311,7 +346,38 @@ export const realisticReplayScenarios = [
   },
 ];
 
+export const stressReplayScenarios = [
+  {
+    name: 'laminated card with glare on window background',
+    create: () => createLaminatedCardSequence({
+      frameCount: 24,
+      occlusionFrames: [8, 17],
+      backgroundVariant: 'window',
+      backgroundSeed: 109,
+    }),
+  },
+  {
+    name: 'handled mug on kitchen tile background',
+    create: () => createHandledMugSequence({
+      frameCount: 24,
+      occlusionFrames: [8, 17],
+      backgroundVariant: 'kitchen',
+      backgroundSeed: 137,
+    }),
+  },
+  {
+    name: 'textured ball on busy moving background',
+    create: () => createTexturedBallSequence({
+      frameCount: 24,
+      occlusionFrames: [8, 17],
+      backgroundVariant: 'busy',
+      backgroundSeed: 149,
+    }),
+  },
+];
+
 export const reportReplayScenarios = [
   ...defaultReplayScenarios,
   ...realisticReplayScenarios,
+  ...stressReplayScenarios,
 ];

@@ -1,11 +1,15 @@
 import { clamp, normalizeAngle } from './anchor.reconstruction.math.js';
 import {
   boundsForPoints,
+  fitRobustAffine2D,
   fitRobustSimilarity,
+  selectCoherentObservations,
   toActiveObservations,
   transformPoint2,
 } from './anchor.reconstructionRobust.js';
 import { descriptorDistance, samplePatchDescriptor } from './anchor.photometricDescriptors.js';
+import { createSurfacePreview } from './anchor.reconstruction.preview.js';
+import { modelFromRegion, SURFACE_MODEL_PLANE } from './anchor.parametricGeometry.js';
 
 export const DIRECT_PHOTOMETRIC_POSE_MODEL = 'direct-photometric';
 
@@ -13,9 +17,21 @@ const emptyStats = {
   averageSupport: 0,
   averageReliability: 0,
   matureLandmarks: 0,
+  geometricConsistency: 0,
   mapConfidence: 0,
   mappedFrames: 0,
 };
+
+const transformPointAffine2 = (point, transform) => ({
+  x: transform.rowX[0] * point.x + transform.rowX[1] * point.y + transform.rowX[2],
+  y: transform.rowY[0] * point.x + transform.rowY[1] * point.y + transform.rowY[2],
+});
+
+const affineVerticalScale = transform => Math.hypot(transform.rowX[1], transform.rowY[1]);
+
+const affineRotation = transform => Math.atan2(transform.rowY[0], transform.rowX[0]);
+
+const readinessFromGeometry = consistency => clamp((consistency - 0.45) / 0.22, 0, 1);
 
 export class DirectPhotometricReconstructor {
   constructor(config = {}) {
@@ -28,11 +44,17 @@ export class DirectPhotometricReconstructor {
     });
   }
 
-  reset({ anchorReference, templateRegion = { x: 0, y: 0, width: 1, height: 1 } }) {
+  configure() {
+    return null;
+  }
+
+  reset({ anchorReference, templateRegion = { x: 0, y: 0, width: 1, height: 1 }, targetClass = null }) {
     this.anchorReference = { x: anchorReference.x, y: anchorReference.y };
     this.templateRegion = { ...templateRegion };
+    this.surfaceModel = modelFromRegion(templateRegion, targetClass);
     this.frames = [];
     this.surfels = new Map();
+    this.consistency = [];
     this.state = 'mapping';
     this.lastFailureReason = null;
   }
@@ -41,40 +63,65 @@ export class DirectPhotometricReconstructor {
     const observations = toActiveObservations(trackedPoints)
       .map(observation => this._attachPhotometricData(observation, grayImage))
       .filter(observation => observation.photometric);
-    this._recordSurfels(observations);
 
     if (observations.length < this.minSurfels) {
       this.lastFailureReason = 'Insufficient photometric surfels';
       return this.getState();
     }
 
-    this.frames.push({ timestamp, observations });
+    const consensus = this._consensusOptions();
+    const coherent = selectCoherentObservations(observations, {
+      minInliers: this.minSurfels,
+      threshold: consensus.threshold,
+      minInlierRatio: consensus.minInlierRatio,
+      model: consensus.model,
+    });
+    if (!coherent.success) {
+      this.lastFailureReason = coherent.reason;
+      return this.getState();
+    }
+
+    this._recordSurfels(coherent.observations);
+    this.frames.push({ timestamp, observations: coherent.observations });
+    this.consistency.push(coherent.consistency);
     if (this.frames.length > this.maxFrames) {
       this.frames = this.frames.slice(-this.maxFrames);
+      this.consistency = this.consistency.slice(-this.maxFrames);
     }
-    this.state = this.frames.length >= this.minFrames ? 'ready' : 'mapping';
+    this.state = this.frames.length >= this.minFrames && this._statistics().mapConfidence >= 0.45 ? 'ready' : 'mapping';
     this.lastFailureReason = this.state === 'ready' ? null : 'Move object through more photometric views';
     return this.getState();
   }
 
   estimatePoseFromTrackedPoints(trackedPoints, grayImage = null) {
-    const observations = toActiveObservations(trackedPoints)
+    const rawObservations = toActiveObservations(trackedPoints)
       .map(observation => this._attachPhotometricData(observation, grayImage))
       .filter(observation => this._isUsableObservation(observation));
-    const fit = fitRobustSimilarity(observations, { minInliers: this.minSurfels, threshold: 12 });
+    const consensus = this._consensusOptions();
+    const coherent = selectCoherentObservations(rawObservations, {
+      minInliers: this.minSurfels,
+      threshold: consensus.threshold,
+      minInlierRatio: consensus.minInlierRatio,
+      model: consensus.model,
+    });
+    const observations = coherent.success ? coherent.observations : [];
+    const fit = this._fitAttachmentTransform(observations, {
+      minInliers: this.minSurfels,
+      threshold: consensus.threshold,
+    });
 
     if (!fit.success || this.state !== 'ready') {
       return {
         success: false,
         method: DIRECT_PHOTOMETRIC_POSE_MODEL,
-        reason: fit.reason || this.lastFailureReason,
+        reason: coherent.reason || fit.reason || this.lastFailureReason,
       };
     }
 
-    const position = transformPoint2(this.anchorReference, fit.transform);
-    const normal = this._estimateNormal(fit.transform);
+    const position = this._transformReferencePoint(this.anchorReference, fit);
+    const normal = this._estimateNormal(fit);
     const preview = this._createPreview({
-      transform: fit.transform,
+      fit,
       anchor: position,
       normal,
     });
@@ -85,8 +132,8 @@ export class DirectPhotometricReconstructor {
       position: { x: position.x, y: position.y, z: 0 },
       normal,
       planarTransform: {
-        scale: fit.transform.scale / this._referenceScale(),
-        rotation: normalizeAngle(fit.transform.rotation - this._referenceRotation()),
+        scale: this._transformScale(fit) / this._referenceScale(),
+        rotation: normalizeAngle(this._transformRotation(fit) - this._referenceRotation()),
         confidence: fit.confidence,
         inlierCount: fit.inlierCount,
         method: DIRECT_PHOTOMETRIC_POSE_MODEL,
@@ -158,16 +205,18 @@ export class DirectPhotometricReconstructor {
   _referenceFit() {
     const frame = this.frames[0];
     if (!frame) return null;
-    const fit = fitRobustSimilarity(frame.observations, { minInliers: 4, threshold: 6 });
-    return fit.success ? fit.transform : null;
+    const fit = this._fitAttachmentTransform(frame.observations, { minInliers: 4, threshold: 8 });
+    return fit.success ? fit : null;
   }
 
   _referenceScale() {
-    return this._referenceFit()?.scale || 1;
+    const fit = this._referenceFit();
+    return fit ? this._transformScale(fit) : 1;
   }
 
   _referenceRotation() {
-    return this._referenceFit()?.rotation || 0;
+    const fit = this._referenceFit();
+    return fit ? this._transformRotation(fit) : 0;
   }
 
   _referenceBounds() {
@@ -184,9 +233,60 @@ export class DirectPhotometricReconstructor {
       };
   }
 
-  _estimateNormal(transform) {
-    const x = Math.sin(transform.rotation) * 0.48;
-    const y = -Math.cos(transform.rotation) * 0.12;
+  _consensusOptions() {
+    return this.surfaceModel === SURFACE_MODEL_PLANE
+      ? { model: 'similarity', threshold: 12, minInlierRatio: 0.45 }
+      : { model: 'affine', threshold: 18, minInlierRatio: 0.36 };
+  }
+
+  _fitAttachmentTransform(observations, options) {
+    if (this.surfaceModel !== SURFACE_MODEL_PLANE) {
+      const fit = fitRobustAffine2D(observations, options);
+      if (fit.success) {
+        const similarityFit = fitRobustSimilarity(fit.inliers, {
+          minInliers: Math.min(options.minInliers, fit.inliers.length),
+          threshold: Math.max(10, options.threshold * 0.75),
+        });
+        return {
+          ...fit,
+          transformKind: 'affine',
+          similarityTransform: similarityFit.success ? similarityFit.transform : null,
+        };
+      }
+    }
+
+    const fit = fitRobustSimilarity(observations, options);
+    return fit.success
+      ? { ...fit, transformKind: 'similarity' }
+      : fit;
+  }
+
+  _transformReferencePoint(point, fit) {
+    return fit.transformKind === 'affine'
+      ? transformPointAffine2(point, fit.transform)
+      : transformPoint2(point, fit.transform);
+  }
+
+  _transformScale(fit) {
+    return fit.transformKind === 'affine'
+      ? affineVerticalScale(fit.transform)
+      : fit.transform.scale;
+  }
+
+  _transformRotation(fit) {
+    if (fit.similarityTransform) {
+      return fit.similarityTransform.rotation;
+    }
+
+    return fit.transformKind === 'affine'
+      ? affineRotation(fit.transform)
+      : fit.transform.rotation;
+  }
+
+  _estimateNormal(fit) {
+    const rotation = this._transformRotation(fit);
+    const x = Math.sin(rotation) * 0.48;
+    const y = -Math.cos(rotation) * 0.12;
     const z = Math.sqrt(Math.max(0.25, 1 - x * x - y * y));
     return { x, y, z };
   }
@@ -203,16 +303,21 @@ export class DirectPhotometricReconstructor {
     }, 0) / surfels.length;
     const matureLandmarks = surfels.filter(item => item.observations >= this.minFrames && item.gradient >= 6).length;
     const frameProgress = clamp(this.frames.length / Math.max(this.minFrames, 1), 0, 1);
+    const geometricConsistency = this.consistency.reduce((sum, value) => sum + value / Math.max(this.consistency.length, 1), 0);
+    const matureScore = clamp(matureLandmarks / Math.max(this.minSurfels, 1), 0, 1);
+    const geometryReadiness = readinessFromGeometry(geometricConsistency);
 
     return {
       averageSupport,
       averageReliability,
       matureLandmarks,
-      mapConfidence: clamp(
-        averageSupport * 0.28 +
-        averageReliability * 0.27 +
-        matureLandmarks / Math.max(this.minSurfels, 1) * 0.28 +
-        frameProgress * 0.17,
+      geometricConsistency,
+      mapConfidence: frameProgress * geometryReadiness * clamp(
+        averageSupport * 0.23 +
+        averageReliability * 0.23 +
+        matureScore * 0.24 +
+        frameProgress * 0.13 +
+        geometricConsistency * 0.17,
         0,
         1
       ),
@@ -238,6 +343,11 @@ export class DirectPhotometricReconstructor {
       y: this.anchorReference.y - (bounds.min.y + bounds.max.y) / 2,
       z: 0,
     };
+    const surface = {
+      ...createSurfacePreview(points),
+      model: 'photometric-surfels',
+      mesh: points,
+    };
 
     return {
       ready: this.state === 'ready',
@@ -249,28 +359,21 @@ export class DirectPhotometricReconstructor {
       points,
       anchor,
       bounds: boundsForPoints([...points, anchor]),
-      surface: {
-        model: 'photometric-surfels',
-        hull: points.map(point => point.id),
-        edges: [],
-        mesh: points,
-      },
+      surface,
       current: current ? {
         points: points.map(point => ({
           id: point.id,
-          ...transformPoint2(point.reference, current.transform),
+          ...this._transformReferencePoint(point.reference, current.fit),
           reliability: point.reliability,
         })),
         anchor: current.anchor,
         normal: current.normal,
         planarTransform: {
-          scale: current.transform.scale / this._referenceScale(),
-          rotation: normalizeAngle(current.transform.rotation - this._referenceRotation()),
+          scale: this._transformScale(current.fit) / this._referenceScale(),
+          rotation: normalizeAngle(this._transformRotation(current.fit) - this._referenceRotation()),
         },
         surface: {
-          model: 'photometric-surfels',
-          hull: points.map(point => point.id),
-          edges: [],
+          ...surface,
           mesh: points,
         },
       } : null,

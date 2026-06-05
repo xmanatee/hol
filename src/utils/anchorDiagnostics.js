@@ -31,6 +31,7 @@ const collectAnchorDetails = (anchorState) => {
     reconstructionMapConfidence: metrics.reconstructionMapConfidence ?? 0,
     reconstructionAverageSupport: metrics.reconstructionAverageSupport ?? 0,
     reconstructionAverageReliability: metrics.reconstructionAverageReliability ?? 0,
+    reconstructionGeometricConsistency: metrics.reconstructionGeometricConsistency ?? 0,
     reconstructionMatureLandmarks: metrics.reconstructionMatureLandmarks ?? 0,
     reconstructionPreview: metrics.reconstructionPreview || null,
     reconstructionFailureReason: metrics.reconstructionFailureReason || null,

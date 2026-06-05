@@ -11,7 +11,7 @@ import { isReconstructionMode } from '../../cv/anchor.reconstructionModes.js';
 const PREVIEW_WIDTH = 112;
 const PREVIEW_HEIGHT = 82;
 const EMPTY_POINTS = [];
-const EMPTY_SURFACE = { hull: EMPTY_POINTS, edges: EMPTY_POINTS };
+const EMPTY_SURFACE = { hull: EMPTY_POINTS, edges: EMPTY_POINTS, faces: EMPTY_POINTS, mesh: EMPTY_POINTS };
 
 const normalizePreviewPoints = (points, projector, width = PREVIEW_WIDTH, height = PREVIEW_HEIGHT) => {
   const projected = points.map(point => ({
@@ -55,6 +55,13 @@ const edgeSegments = (edges, byId) => edges
   }))
   .filter(segment => segment.from && segment.to);
 
+const facePolygons = (faces, byId) => faces
+  .map(face => ({
+    face,
+    points: face.points.map(pointId => byId.get(pointId)).filter(Boolean),
+  }))
+  .filter(item => item.points.length >= 3);
+
 const PreviewSvg = ({ title, points, anchor, surface, normal, projector }) => {
   if (!points.length && !(surface.mesh || []).length) {
     return (
@@ -70,13 +77,21 @@ const PreviewSvg = ({ title, points, anchor, surface, normal, projector }) => {
     from: `mesh:${edge.from}`,
     to: `mesh:${edge.to}`,
   }));
+  const meshFaces = (surface.faces || []).map(face => ({
+    ...face,
+    points: face.points.map(id => `mesh:${id}`),
+  }));
   const meshHull = (surface.hull || []).map(id => `mesh:${id}`);
+  const hasMesh = meshPoints.length > 0;
+  const faces = hasMesh ? meshFaces : (surface.faces || []);
+  const edges = hasMesh ? meshEdges : (surface.edges || []);
+  const hull = hasMesh ? meshHull : (surface.hull || []);
   const pointsWithAnchor = anchor ? [...meshPoints, ...points, { ...anchor, id: 'anchor' }] : [...meshPoints, ...points];
   const projectedPoints = normalizePreviewPoints(pointsWithAnchor, projector);
   const anchorPoint = projectedPoints.find(point => point.id === 'anchor');
   const landmarkPoints = projectedPoints.filter(point => point.id !== 'anchor' && !String(point.id).startsWith('mesh:'));
   const byId = new Map(projectedPoints.map(point => [point.id, point]));
-  const hullPoints = meshHull.map(id => byId.get(id)).filter(Boolean);
+  const hullPoints = hull.map(id => byId.get(id)).filter(Boolean);
   const normalEnd = anchorPoint && normal ? {
     x: anchorPoint.x + normal.x * 24,
     y: anchorPoint.y - normal.y * 24,
@@ -87,6 +102,16 @@ const PreviewSvg = ({ title, points, anchor, surface, normal, projector }) => {
       <div className="mb-1 text-[10px] uppercase tracking-wide text-gray-500">{title}</div>
       <svg viewBox={`0 0 ${PREVIEW_WIDTH} ${PREVIEW_HEIGHT}`} className="h-24 w-full rounded bg-black">
         <rect x="0" y="0" width={PREVIEW_WIDTH} height={PREVIEW_HEIGHT} fill="#020617" />
+        {facePolygons(faces, byId).map(({ face, points: polygonPoints }, index) => (
+          <polygon
+            key={`${title}:face:${index}`}
+            points={polygonPoints.map(point => `${point.x},${point.y}`).join(' ')}
+            fill={face.reliability >= 0.68 ? '#115e59' : '#1e293b'}
+            opacity={face.reliability >= 0.68 ? '0.28' : '0.16'}
+            stroke="#0f766e"
+            strokeWidth="0.25"
+          />
+        ))}
         {hullPoints.length >= 3 && (
           <polygon
             points={hullPoints.map(point => `${point.x},${point.y}`).join(' ')}
@@ -96,7 +121,7 @@ const PreviewSvg = ({ title, points, anchor, surface, normal, projector }) => {
             strokeWidth="0.7"
           />
         )}
-        {edgeSegments(meshEdges, byId).map(({ edge, from, to }) => (
+        {edgeSegments(edges, byId).map(({ edge, from, to }) => (
           <line
             key={`${edge.from}:${edge.to}`}
             x1={from.x}
@@ -152,6 +177,7 @@ export const ReconstructionPreviewSection = ({ details }) => {
   const currentSurface = current?.surface ?? previewSurface;
   const mapConfidence = details.reconstructionMapConfidence ?? preview?.statistics?.mapConfidence;
   const averageSupport = details.reconstructionAverageSupport ?? preview?.statistics?.averageSupport;
+  const geometricConsistency = details.reconstructionGeometricConsistency ?? preview?.statistics?.geometricConsistency;
   const matureLandmarks = details.reconstructionMatureLandmarks ?? preview?.statistics?.matureLandmarks ?? 0;
   const totalLandmarks = preview?.landmarkCount ?? details.reconstructionLandmarks ?? 0;
 
@@ -204,8 +230,10 @@ export const ReconstructionPreviewSection = ({ details }) => {
         <DiagnosticRow label="Preview points" value={`${previewPoints.length}/${totalLandmarks}`} tone={previewPoints.length >= 18 ? 'good' : 'warn'} />
         <DiagnosticRow label="Map confidence" value={formatPercent(mapConfidence)} tone={(mapConfidence ?? 0) > 0.55 ? 'good' : 'warn'} />
         <DiagnosticRow label="Avg support" value={formatPercent(averageSupport)} tone={(averageSupport ?? 0) > 0.65 ? 'good' : 'warn'} />
+        <DiagnosticRow label="Geometry consistency" value={formatPercent(geometricConsistency)} tone={(geometricConsistency ?? 0) > 0.62 ? 'good' : 'warn'} />
         <DiagnosticRow label="Mature points" value={matureLandmarks} tone={matureLandmarks >= 18 ? 'good' : 'warn'} />
         <DiagnosticRow label="Surface edges" value={previewSurface.edges.length} tone={previewSurface.edges.length >= 18 ? 'good' : 'warn'} />
+        <DiagnosticRow label="Surface faces" value={previewSurface.faces.length} tone={previewSurface.faces.length >= 12 ? 'good' : 'warn'} />
       </div>
     </div>
   );

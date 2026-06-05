@@ -176,8 +176,8 @@ const project3 = (point, pose, camera) => {
   };
 };
 
-const projectNormal = pose => {
-  const normal = rotate3({ x: 0, y: 0, z: 1 }, pose);
+const projectNormal = (pose, localNormal = { x: 0, y: 0, z: 1 }) => {
+  const normal = rotate3(localNormal, pose);
   const length = Math.hypot(normal.x, normal.y, normal.z);
   const result = {
     x: normal.x / length,
@@ -185,6 +185,31 @@ const projectNormal = pose => {
     z: normal.z / length,
   };
   return result.z >= 0 ? result : { x: -result.x, y: -result.y, z: -result.z };
+};
+
+const localSurfaceNormal = ({ anchorPoint, basisXPoint, basisYPoint }) => {
+  const tangentX = {
+    x: basisXPoint.x - anchorPoint.x,
+    y: basisXPoint.y - anchorPoint.y,
+    z: basisXPoint.z - anchorPoint.z,
+  };
+  const tangentY = {
+    x: basisYPoint.x - anchorPoint.x,
+    y: basisYPoint.y - anchorPoint.y,
+    z: basisYPoint.z - anchorPoint.z,
+  };
+  const normal = {
+    x: tangentX.y * tangentY.z - tangentX.z * tangentY.y,
+    y: tangentX.z * tangentY.x - tangentX.x * tangentY.z,
+    z: tangentX.x * tangentY.y - tangentX.y * tangentY.x,
+  };
+  const length = Math.hypot(normal.x, normal.y, normal.z);
+
+  return {
+    x: normal.x / length,
+    y: normal.y / length,
+    z: normal.z / length,
+  };
 };
 
 const bboxFor = points => {
@@ -380,6 +405,22 @@ const cupTexture = (u, v) => {
   return [196 + ceramicNoise, 184 + ceramicNoise * 0.8, 164 + ceramicNoise * 0.55, 255];
 };
 
+const mugTexture = (u, v) => {
+  const ceramicNoise = (noise(u * 100, v * 90, 117) - 0.5) * 24;
+  const verticalRib = Math.floor(u * 48) % 7 === 0;
+  const rim = v < 0.08 || v > 0.92;
+  const logo = u > 0.2 && u < 0.78 && v > 0.25 && v < 0.58 &&
+    Math.abs(Math.cos((u - 0.18) * Math.PI * 4.6) * 0.08 + 0.42 - v) < 0.026;
+  const darkPatch = u > 0.58 && u < 0.86 && v > 0.62 && v < 0.82;
+  const speckles = ((Math.floor(u * 72) + Math.floor(v * 84)) % 19) === 0;
+
+  if (rim) return [232 + ceramicNoise * 0.2, 230 + ceramicNoise * 0.2, 220 + ceramicNoise * 0.2, 255];
+  if (logo) return [26 + ceramicNoise * 0.2, 96 + ceramicNoise * 0.2, 132 + ceramicNoise * 0.2, 255];
+  if (darkPatch) return [44 + ceramicNoise * 0.25, 48 + ceramicNoise * 0.25, 54 + ceramicNoise * 0.25, 255];
+  if (verticalRib || speckles) return [148 + ceramicNoise, 118 + ceramicNoise * 0.65, 98 + ceramicNoise * 0.45, 255];
+  return [202 + ceramicNoise, 182 + ceramicNoise * 0.7, 154 + ceramicNoise * 0.5, 255];
+};
+
 const boxTexture = face => (u, v) => {
   const grid = ((Math.floor(u * 16) + Math.floor(v * 19)) % 2) * 36;
   const label = u > 0.18 && u < 0.82 && v > 0.22 && v < 0.42;
@@ -426,6 +467,25 @@ const phoneTexture = (u, v) => {
   return [24 + glassNoise, 34 + glassNoise, 52 + glassNoise, 255];
 };
 
+const cardTexture = (u, v) => {
+  const printNoise = (noise(u * 180, v * 130, 103) - 0.5) * 24;
+  const border = u < 0.045 || u > 0.955 || v < 0.055 || v > 0.945;
+  const portrait = u > 0.08 && u < 0.31 && v > 0.18 && v < 0.62;
+  const magneticStripe = v > 0.72 && v < 0.84;
+  const barcode = u > 0.58 && u < 0.9 && v > 0.13 && v < 0.3 && Math.floor(u * 170) % 5 < 2;
+  const microText = u > 0.38 && u < 0.88 && v > 0.38 && v < 0.64 &&
+    ((Math.floor(u * 150) + Math.floor(v * 180)) % 8 < 3);
+  const hologram = Math.abs((u - 0.73) * 0.8 - (v - 0.48)) < 0.025;
+
+  if (border) return [18 + printNoise * 0.2, 24 + printNoise * 0.2, 36 + printNoise * 0.2, 255];
+  if (magneticStripe) return [26 + printNoise * 0.1, 30 + printNoise * 0.1, 36 + printNoise * 0.1, 255];
+  if (portrait) return [62 + printNoise, 88 + printNoise * 0.7, 116 + printNoise * 0.5, 255];
+  if (barcode) return [34 + printNoise * 0.15, 34 + printNoise * 0.15, 34 + printNoise * 0.15, 255];
+  if (microText) return [44 + printNoise * 0.2, 58 + printNoise * 0.2, 82 + printNoise * 0.2, 255];
+  if (hologram) return [172 + printNoise, 198 + printNoise * 0.7, 226 + printNoise * 0.35, 255];
+  return [218 + printNoise * 0.45, 226 + printNoise * 0.4, 210 + printNoise * 0.35, 255];
+};
+
 const bottleTexture = (u, v) => {
   const n = (noise(u * 120, v * 115, 73) - 0.5) * 24;
   const label = v > 0.22 && v < 0.72;
@@ -463,6 +523,20 @@ const pouchTexture = (u, v) => {
   if (nutrition) return [230 + crinkle * 0.15, 226 + crinkle * 0.15, 206 + crinkle * 0.15, 255];
   if (productPhoto) return [202 + crinkle * 0.25, 136 + crinkle * 0.18, 54 + crinkle * 0.12, 255];
   return [196 + crinkle, 64 + crinkle * 0.24, 34 + crinkle * 0.18, 255];
+};
+
+const ballTexture = (u, v) => {
+  const n = (noise(u * 130, v * 120, 127) - 0.5) * 28;
+  const seam = Math.abs(Math.sin(u * Math.PI * 6)) < 0.06 || Math.abs(Math.cos(v * Math.PI * 5)) < 0.05;
+  const panel = ((Math.floor(u * 8) + Math.floor(v * 6)) % 2) === 0;
+  const logo = u > 0.36 && u < 0.64 && v > 0.36 && v < 0.58 &&
+    Math.abs(Math.sin((u - 0.36) * Math.PI * 7) * 0.06 + 0.47 - v) < 0.02;
+  const dot = Math.floor(u * 42) % 9 === 0 && Math.floor(v * 46) % 9 === 0;
+
+  if (seam) return [24 + n * 0.12, 28 + n * 0.12, 34 + n * 0.12, 255];
+  if (logo || dot) return [238 + n * 0.15, 230 + n * 0.15, 210 + n * 0.15, 255];
+  if (panel) return [184 + n, 56 + n * 0.3, 64 + n * 0.25, 255];
+  return [42 + n * 0.4, 104 + n, 154 + n * 0.7, 255];
 };
 
 const createPlaneGroundTruth = ({ pose, camera, objectWidth, objectHeight, anchorUv, reference = null }) => {
@@ -525,7 +599,7 @@ const createLocalSurfaceGroundTruth = ({ pose, camera, anchorPoint, basisXPoint,
 
   return {
     anchor: { x: anchor.x, y: anchor.y },
-    normal: projectNormal(pose),
+    normal: projectNormal(pose, localSurfaceNormal({ anchorPoint, basisXPoint, basisYPoint })),
     rawScale,
     rawRoll,
     scale: rawScale / referenceScale,
@@ -742,6 +816,73 @@ const canPoseAt = (index, count) => {
   };
 };
 
+const cardPoseAt = (index, count) => {
+  const t = index / Math.max(1, count - 1);
+  return {
+    yaw: (Math.sin(t * Math.PI * 1.75) * 38 - 14) * Math.PI / 180,
+    pitch: (Math.sin(t * Math.PI * 1.45 + 0.3) * 21 - 3) * Math.PI / 180,
+    roll: Math.sin(t * Math.PI * 2.2) * 17 * Math.PI / 180,
+    tx: -18 + Math.sin(t * Math.PI * 2.1) * 36,
+    ty: Math.cos(t * Math.PI * 1.6) * 18,
+    distance: 690 - Math.sin(t * Math.PI * 1.1) * 115,
+  };
+};
+
+export const createLaminatedCardSequence = ({
+  frameCount = 30,
+  occlusionFrames = [9, 10, 20],
+  backgroundVariant = 'window',
+  backgroundSeed = 109,
+} = {}) => {
+  const objectWidth = 220;
+  const objectHeight = 138;
+  const anchorUv = { u: 0.55, v: 0.54 };
+  const referencePose = cardPoseAt(0, frameCount);
+  const reference = createPlaneGroundTruth({
+    pose: referencePose,
+    camera: DEFAULT_CAMERA,
+    objectWidth,
+    objectHeight,
+    anchorUv,
+  });
+  const occlusionSet = new Set(occlusionFrames);
+  const frames = Array.from({ length: frameCount }, (_, index) => drawPlaneFrame({
+    kind: 'laminated-card',
+    frameIndex: index,
+    pose: cardPoseAt(index, frameCount),
+    objectWidth,
+    objectHeight,
+    anchorUv,
+    reference,
+    occluded: occlusionSet.has(index),
+    texture: cardTexture,
+    backgroundSeed,
+    backgroundVariant,
+  }));
+
+  return {
+    kind: 'laminated-card',
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
+    tap: frames[0].groundTruth.anchor,
+    boundingBox: frames[0].boundingBox,
+    targetClass: 'card',
+    camera: DEFAULT_CAMERA,
+    frames,
+    metadata: {
+      hasBackground: true,
+      hasDarkRegions: true,
+      hasFineTexture: true,
+      hasLightingVariation: true,
+      hasOcclusion: occlusionFrames.length > 0,
+      hasMovingBackground: true,
+      backgroundVariant,
+      targetClass: 'card',
+      targetModel: 'planar-homography',
+    },
+  };
+};
+
 const bottlePoseAt = (index, count) => {
   const t = index / Math.max(1, count - 1);
   return {
@@ -854,7 +995,17 @@ export const createLabelBottleSequence = ({
   };
 };
 
-const drawCylinderFrame = ({ frameIndex, frameCount, occluded, reference, backgroundSeed, backgroundVariant }) => {
+const drawCylinderFrame = ({
+  frameIndex,
+  frameCount,
+  occluded,
+  reference,
+  backgroundSeed,
+  backgroundVariant,
+  anchorPoint,
+  basisXPoint,
+  basisYPoint,
+}) => {
   const width = DEFAULT_WIDTH;
   const height = DEFAULT_HEIGHT;
   const camera = DEFAULT_CAMERA;
@@ -863,9 +1014,6 @@ const drawCylinderFrame = ({ frameIndex, frameCount, occluded, reference, backgr
   const pose = canPoseAt(frameIndex, frameCount);
   const radius = 66;
   const objectHeight = 205;
-  const anchorPoint = { x: 0, y: 0, z: 0 };
-  const basisXPoint = { x: 42, y: 0, z: 0 };
-  const basisYPoint = { x: 0, y: 42, z: 0 };
   const strips = 44;
   const projected = [];
 
@@ -906,14 +1054,17 @@ export const createCylindricalCanSequence = ({
   occlusionFrames = [12, 13, 14],
   backgroundVariant = 'desk',
   backgroundSeed = 29,
+  anchorPoint = { x: 0, y: 0, z: 0 },
+  basisXPoint = { x: 42, y: 0, z: 0 },
+  basisYPoint = { x: 0, y: 42, z: 0 },
 } = {}) => {
   const occlusionSet = new Set(occlusionFrames);
   const reference = createLocalSurfaceGroundTruth({
     pose: canPoseAt(0, frameCount),
     camera: DEFAULT_CAMERA,
-    anchorPoint: { x: 0, y: 0, z: 0 },
-    basisXPoint: { x: 42, y: 0, z: 0 },
-    basisYPoint: { x: 0, y: 42, z: 0 },
+    anchorPoint,
+    basisXPoint,
+    basisYPoint,
   });
   const frames = Array.from({ length: frameCount }, (_, index) => drawCylinderFrame({
     frameIndex: index,
@@ -922,6 +1073,9 @@ export const createCylindricalCanSequence = ({
     reference,
     backgroundSeed,
     backgroundVariant,
+    anchorPoint,
+    basisXPoint,
+    basisYPoint,
   }));
 
   return {
@@ -1050,6 +1204,275 @@ export const createTexturedCupSequence = ({
       backgroundVariant,
       targetClass: 'cup',
       targetModel: 'tapered-curved-sparse-reconstruction',
+    },
+  };
+};
+
+const mugPoseAt = (index, count) => {
+  const t = index / Math.max(1, count - 1);
+  return {
+    yaw: (Math.sin(t * Math.PI * 1.7) * 42 + 8) * Math.PI / 180,
+    pitch: (Math.sin(t * Math.PI * 1.5 + 0.25) * 12 - 2) * Math.PI / 180,
+    roll: Math.sin(t * Math.PI * 1.95) * 10 * Math.PI / 180,
+    tx: 16 + Math.sin(t * Math.PI * 2.05) * 34,
+    ty: Math.cos(t * Math.PI * 1.35) * 20,
+    distance: 710 - Math.sin(t * Math.PI * 1.08) * 130,
+  };
+};
+
+const mugBodyPoint = (angle, y, objectHeight = 180) => {
+  const v = (y + objectHeight / 2) / objectHeight;
+  const radius = 54 + v * 18;
+  return {
+    x: Math.sin(angle) * radius,
+    y,
+    z: Math.cos(angle) * radius - radius,
+  };
+};
+
+const drawMugHandle = ({ imageData, pose, projected }) => {
+  const segments = 18;
+  const handlePoints = [];
+
+  for (let segment = 0; segment <= segments; segment++) {
+    const t = segment / segments;
+    const theta = -Math.PI * 0.72 + t * Math.PI * 1.44;
+    const center = {
+      x: 70 + Math.cos(theta) * 33,
+      y: Math.sin(theta) * 58,
+      z: -42,
+    };
+    const normal = {
+      x: Math.cos(theta) * 8,
+      y: Math.sin(theta) * 8,
+      z: 0,
+    };
+    handlePoints.push({
+      outer: { x: center.x + normal.x, y: center.y + normal.y, z: center.z },
+      inner: { x: center.x - normal.x, y: center.y - normal.y, z: center.z + 12 },
+      u: t,
+    });
+  }
+
+  for (let segment = 0; segment < segments; segment++) {
+    const current = handlePoints[segment];
+    const next = handlePoints[segment + 1];
+    const quad3 = [current.outer, next.outer, next.inner, current.inner];
+    const quad = quad3.map(point => project3(point, pose, DEFAULT_CAMERA));
+    projected.push(...quad);
+    const shade = clamp(0.5 + Math.sin((segment / segments) * Math.PI) * 0.26 + projectNormal(pose).z * 0.1, 0.38, 0.92);
+    drawQuad(imageData, quad, (u, v) => mugTexture(current.u + (next.u - current.u) * u, 0.22 + v * 0.56), shade);
+  }
+};
+
+const drawMugFrame = ({ frameIndex, frameCount, occluded, reference, backgroundSeed, backgroundVariant }) => {
+  const imageData = createImageData(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+  fillBackground(imageData, frameIndex, backgroundSeed, backgroundVariant);
+  const pose = mugPoseAt(frameIndex, frameCount);
+  const objectHeight = 180;
+  const strips = 48;
+  const projected = [];
+
+  for (let strip = 0; strip < strips; strip++) {
+    const a0 = -Math.PI * 0.55 + strip / strips * Math.PI * 1.1;
+    const a1 = -Math.PI * 0.55 + (strip + 1) / strips * Math.PI * 1.1;
+    const p0 = mugBodyPoint(a0, -objectHeight / 2, objectHeight);
+    const p1 = mugBodyPoint(a1, -objectHeight / 2, objectHeight);
+    const p2 = mugBodyPoint(a1, objectHeight / 2, objectHeight);
+    const p3 = mugBodyPoint(a0, objectHeight / 2, objectHeight);
+    const quad = [p0, p1, p2, p3].map(point => project3(point, pose, DEFAULT_CAMERA));
+    projected.push(...quad);
+    const shade = clamp(0.46 + Math.cos((a0 + a1) * 0.5) * 0.3 + projectNormal(pose).z * 0.16, 0.32, 1);
+    drawQuad(imageData, quad, (u, v) => mugTexture((strip + u) / strips, v), shade);
+  }
+
+  drawMugHandle({ imageData, pose, projected });
+
+  const boundingBox = bboxFor(projected);
+  if (occluded) drawOcclusion(imageData, boundingBox, frameIndex, 'handled-mug');
+  const groundTruth = createLocalSurfaceGroundTruth({
+    pose,
+    camera: DEFAULT_CAMERA,
+    anchorPoint: { x: 0, y: 0, z: 0 },
+    basisXPoint: { x: 42, y: 0, z: 0 },
+    basisYPoint: { x: 0, y: 42, z: 0 },
+    reference,
+  });
+
+  return {
+    imageData,
+    corners: projected.map(point => ({ x: point.x, y: point.y })),
+    boundingBox,
+    groundTruth,
+  };
+};
+
+export const createHandledMugSequence = ({
+  frameCount = 34,
+  occlusionFrames = [11, 12, 24],
+  backgroundVariant = 'kitchen',
+  backgroundSeed = 137,
+} = {}) => {
+  const occlusionSet = new Set(occlusionFrames);
+  const reference = createLocalSurfaceGroundTruth({
+    pose: mugPoseAt(0, frameCount),
+    camera: DEFAULT_CAMERA,
+    anchorPoint: { x: 0, y: 0, z: 0 },
+    basisXPoint: { x: 42, y: 0, z: 0 },
+    basisYPoint: { x: 0, y: 42, z: 0 },
+  });
+  const frames = Array.from({ length: frameCount }, (_, index) => drawMugFrame({
+    frameIndex: index,
+    frameCount,
+    occluded: occlusionSet.has(index),
+    reference,
+    backgroundSeed,
+    backgroundVariant,
+  }));
+
+  return {
+    kind: 'handled-mug',
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
+    tap: frames[0].groundTruth.anchor,
+    boundingBox: frames[0].boundingBox,
+    targetClass: 'mug',
+    camera: DEFAULT_CAMERA,
+    frames,
+    metadata: {
+      hasBackground: true,
+      hasDarkRegions: true,
+      hasFineTexture: true,
+      hasLightingVariation: true,
+      hasOcclusion: occlusionFrames.length > 0,
+      hasMovingBackground: true,
+      backgroundVariant,
+      targetClass: 'mug',
+      targetModel: 'handled-tapered-curved-sparse-reconstruction',
+    },
+  };
+};
+
+const ballPoseAt = (index, count) => {
+  const t = index / Math.max(1, count - 1);
+  return {
+    yaw: (Math.sin(t * Math.PI * 1.55) * 39 - 5) * Math.PI / 180,
+    pitch: (Math.sin(t * Math.PI * 1.3 + 0.35) * 18 + 2) * Math.PI / 180,
+    roll: Math.sin(t * Math.PI * 2.25) * 17 * Math.PI / 180,
+    tx: -8 + Math.sin(t * Math.PI * 1.85) * 36,
+    ty: Math.cos(t * Math.PI * 1.55) * 20,
+    distance: 720 - Math.sin(t * Math.PI * 1.12) * 105,
+  };
+};
+
+const ballSurfacePoint = ({ longitude, latitude, radiusX = 82, radiusY = 78, radiusZ = 78 }) => ({
+  x: Math.sin(longitude) * Math.cos(latitude) * radiusX,
+  y: Math.sin(latitude) * radiusY,
+  z: Math.cos(longitude) * Math.cos(latitude) * radiusZ - radiusZ,
+});
+
+const drawBallFrame = ({ frameIndex, frameCount, occluded, reference, backgroundSeed, backgroundVariant }) => {
+  const imageData = createImageData(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+  fillBackground(imageData, frameIndex, backgroundSeed, backgroundVariant);
+  const pose = ballPoseAt(frameIndex, frameCount);
+  const longitudeMin = -Math.PI * 0.55;
+  const longitudeMax = Math.PI * 0.55;
+  const latitudeMin = -Math.PI * 0.42;
+  const latitudeMax = Math.PI * 0.42;
+  const longitudeSegments = 34;
+  const latitudeSegments = 18;
+  const projected = [];
+
+  for (let latIndex = 0; latIndex < latitudeSegments; latIndex++) {
+    const lat0 = latitudeMin + latIndex / latitudeSegments * (latitudeMax - latitudeMin);
+    const lat1 = latitudeMin + (latIndex + 1) / latitudeSegments * (latitudeMax - latitudeMin);
+    for (let lonIndex = 0; lonIndex < longitudeSegments; lonIndex++) {
+      const lon0 = longitudeMin + lonIndex / longitudeSegments * (longitudeMax - longitudeMin);
+      const lon1 = longitudeMin + (lonIndex + 1) / longitudeSegments * (longitudeMax - longitudeMin);
+      const quad3 = [
+        ballSurfacePoint({ longitude: lon0, latitude: lat0 }),
+        ballSurfacePoint({ longitude: lon1, latitude: lat0 }),
+        ballSurfacePoint({ longitude: lon1, latitude: lat1 }),
+        ballSurfacePoint({ longitude: lon0, latitude: lat1 }),
+      ];
+      const quad = quad3.map(point => project3(point, pose, DEFAULT_CAMERA));
+      projected.push(...quad);
+      const lonMid = (lon0 + lon1) * 0.5;
+      const latMid = (lat0 + lat1) * 0.5;
+      const shade = clamp(0.42 + Math.cos(lonMid) * Math.cos(latMid) * 0.38 + projectNormal(pose).z * 0.12, 0.3, 1);
+      drawQuad(
+        imageData,
+        quad,
+        (u, v) => ballTexture(
+          (lonIndex + u) / longitudeSegments,
+          (latIndex + v) / latitudeSegments
+        ),
+        shade
+      );
+    }
+  }
+
+  const boundingBox = bboxFor(projected);
+  if (occluded) drawOcclusion(imageData, boundingBox, frameIndex, 'textured-ball');
+  const groundTruth = createLocalSurfaceGroundTruth({
+    pose,
+    camera: DEFAULT_CAMERA,
+    anchorPoint: ballSurfacePoint({ longitude: 0, latitude: 0 }),
+    basisXPoint: ballSurfacePoint({ longitude: 0.42, latitude: 0 }),
+    basisYPoint: ballSurfacePoint({ longitude: 0, latitude: 0.42 }),
+    reference,
+  });
+
+  return {
+    imageData,
+    corners: projected.map(point => ({ x: point.x, y: point.y })),
+    boundingBox,
+    groundTruth,
+  };
+};
+
+export const createTexturedBallSequence = ({
+  frameCount = 32,
+  occlusionFrames = [13, 14, 23],
+  backgroundVariant = 'busy',
+  backgroundSeed = 149,
+} = {}) => {
+  const occlusionSet = new Set(occlusionFrames);
+  const reference = createLocalSurfaceGroundTruth({
+    pose: ballPoseAt(0, frameCount),
+    camera: DEFAULT_CAMERA,
+    anchorPoint: ballSurfacePoint({ longitude: 0, latitude: 0 }),
+    basisXPoint: ballSurfacePoint({ longitude: 0.42, latitude: 0 }),
+    basisYPoint: ballSurfacePoint({ longitude: 0, latitude: 0.42 }),
+  });
+  const frames = Array.from({ length: frameCount }, (_, index) => drawBallFrame({
+    frameIndex: index,
+    frameCount,
+    occluded: occlusionSet.has(index),
+    reference,
+    backgroundSeed,
+    backgroundVariant,
+  }));
+
+  return {
+    kind: 'textured-ball',
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
+    tap: frames[0].groundTruth.anchor,
+    boundingBox: frames[0].boundingBox,
+    targetClass: 'ball',
+    camera: DEFAULT_CAMERA,
+    frames,
+    metadata: {
+      hasBackground: true,
+      hasDarkRegions: true,
+      hasFineTexture: true,
+      hasLightingVariation: true,
+      hasOcclusion: occlusionFrames.length > 0,
+      hasMovingBackground: true,
+      backgroundVariant,
+      targetClass: 'ball',
+      targetModel: 'ellipsoid-sparse-reconstruction',
     },
   };
 };
@@ -1245,4 +1668,7 @@ export const createSyntheticObjectSuite = () => [
   createGlossyPhoneSequence(),
   createLabelBottleSequence(),
   createSnackPouchSequence(),
+  createLaminatedCardSequence(),
+  createHandledMugSequence(),
+  createTexturedBallSequence(),
 ];

@@ -864,6 +864,203 @@ test('reconstruction tracking mode drives the overlay from the sparse 3D map whe
   assert.equal(state.metrics.reconstructionMatureLandmarks, 29);
 });
 
+test('strong curved reconstruction can replace a drifting tracker attachment', () => {
+  const service = new ImageAnchorService();
+  const reconstructionPose = {
+    success: true,
+    method: 'sparse-reconstruction',
+    position: { x: 236, y: 181, z: 0 },
+    normal: { x: 0.48, y: -0.08, z: 0.87 },
+    planarTransform: {
+      scale: 1.12,
+      rotation: 0.04,
+      confidence: 0.84,
+      inlierCount: 22,
+      method: 'sparse-reconstruction',
+    },
+    confidence: 0.84,
+    inlierCount: 22,
+    inlierRatio: 0.46,
+    averageResidual: 2.4,
+    depthQuality: 0.22,
+    preview: {
+      ready: true,
+      statistics: {
+        mapConfidence: 0.86,
+        averageSupport: 0.78,
+        averageReliability: 0.72,
+        matureLandmarks: 26,
+      },
+      current: {
+        anchor: { x: 236, y: 181 },
+      },
+      surface: { model: 'tapered-cylinder' },
+    },
+  };
+
+  service.setTrackingMode('sparse-reconstruction');
+  service.initialized = true;
+  service.anchored = true;
+  service.anchorState = 'tracking';
+  service.anchorTargetClass = 'cup';
+  service.currentPosition = { x: 210, y: 170, z: 0 };
+  service.currentNormal = { x: 0, y: 0, z: 1 };
+  service.cv = {};
+  service.reconstructor = {
+    addFrameFromTrackedPoints: () => ({
+      state: 'ready',
+      ready: true,
+      frameCount: 8,
+      landmarkCount: 30,
+      depthQuality: 0.22,
+      statistics: {
+        mapConfidence: 0.86,
+        averageSupport: 0.78,
+        averageReliability: 0.72,
+        matureLandmarks: 26,
+      },
+      preview: { surface: { model: 'tapered-cylinder' } },
+      lastFailureReason: null,
+    }),
+    getState: () => ({
+      state: 'ready',
+      ready: true,
+      frameCount: 8,
+      landmarkCount: 30,
+      depthQuality: 0.22,
+      statistics: {
+        mapConfidence: 0.86,
+        averageSupport: 0.78,
+        averageReliability: 0.72,
+        matureLandmarks: 26,
+      },
+      preview: { surface: { model: 'tapered-cylinder' } },
+      lastFailureReason: null,
+    }),
+    estimatePoseFromTrackedPoints: () => reconstructionPose,
+  };
+  service.keypointTracker = {
+    trackedPoints: Array.from({ length: 48 }, (_, index) => ({
+      id: index,
+      status: 'active',
+      original: { x: 70 + (index % 8) * 18, y: 70 + Math.floor(index / 8) * 16 },
+      current: { x: 84 + (index % 8) * 18, y: 82 + Math.floor(index / 8) * 16 },
+    })),
+    trackToFrame: () => ({
+      success: true,
+      successRate: 0.9,
+      activePointCount: 48,
+      averageError: 1.2,
+    }),
+    getObjectPose: () => ({
+      success: false,
+      method: 'object-pose-affine',
+      reason: 'affine unavailable',
+    }),
+    getCorrespondences: () => [],
+    getAnchorPosition: () => ({
+      x: 218,
+      y: 174,
+      method: 'reference_similarity_transform',
+      scale: 0.96,
+      rotation: -0.1,
+      confidence: 0.64,
+      inlierCount: 20,
+    }),
+  };
+  service._estimatePoseFromTracker = () => ({
+    options: { maxReferenceDistance: 120 },
+    correspondences: [],
+    poseResult: null,
+  });
+
+  const result = service._updateWithKeypoints({ cols: 640, rows: 480 }, 1000);
+
+  assert.equal(result.success, true);
+  assert.equal(result.method, 'sparse-reconstruction');
+  assert.equal(result.position.x, 236);
+  assert.equal(result.position.y, 181);
+  assert.equal(result.planarTransform.scale, 1.12);
+  assert.equal(result.poseSource, 'sparse-reconstruction');
+});
+
+test('curved reconstruction relaxes stale normals when pose drops out', () => {
+  const service = new ImageAnchorService();
+  const staleNormal = { x: 0.55, y: -0.2, z: 0.81 };
+
+  service.setTrackingMode('parametric-surface');
+  service.initialized = true;
+  service.anchored = true;
+  service.anchorState = 'tracking';
+  service.anchorTargetClass = 'cup';
+  service.currentPosition = { x: 210, y: 170, z: 0 };
+  service.currentNormal = staleNormal;
+  service.normalStabilizer.reset(staleNormal);
+  service.framesWithoutNormalPose = 3;
+  service.cv = {};
+  service.reconstructor = {
+    addFrameFromTrackedPoints: () => ({
+      state: 'ready',
+      ready: true,
+      frameCount: 14,
+      landmarkCount: 42,
+      depthQuality: 0.22,
+      statistics: { mapConfidence: 0.9 },
+      preview: { surface: { model: 'tapered-cylinder' } },
+      lastFailureReason: null,
+    }),
+    getState: () => ({
+      state: 'ready',
+      ready: true,
+      frameCount: 14,
+      landmarkCount: 42,
+      depthQuality: 0.22,
+      statistics: { mapConfidence: 0.9 },
+      preview: { surface: { model: 'tapered-cylinder' } },
+      lastFailureReason: null,
+    }),
+    estimatePoseFromTrackedPoints: () => ({
+      success: false,
+      method: 'parametric-surface',
+      reason: 'No robust similarity consensus',
+    }),
+  };
+  service.keypointTracker = {
+    trackedPoints: Array.from({ length: 40 }, () => ({ status: 'active' })),
+    trackToFrame: () => ({
+      success: true,
+      successRate: 0.82,
+      activePointCount: 40,
+      averageError: 1.4,
+    }),
+    getObjectPose: () => ({
+      success: false,
+      method: 'object-pose-affine',
+      reason: 'affine unavailable',
+    }),
+    getCorrespondences: () => [],
+    getAnchorPosition: () => ({
+      x: 214,
+      y: 172,
+      method: 'reference_similarity_transform',
+      scale: 1,
+      rotation: 0,
+      confidence: 0.64,
+      inlierCount: 18,
+    }),
+  };
+  service._estimatePoseFromTracker = () => ({
+    options: { maxReferenceDistance: 120 },
+    correspondences: [],
+    poseResult: null,
+  });
+
+  const result = service._updateWithKeypoints({ cols: 640, rows: 480 }, 1000);
+
+  assert.equal(result.success, true);
+  assert.ok(Math.hypot(result.normal.x, result.normal.y) < Math.hypot(staleNormal.x, staleNormal.y));
+});
+
 test('planar homography dominates sparse reconstruction for flat textured objects', () => {
   const service = new ImageAnchorService();
   const anchorReference = { x: 100, y: 100 };
@@ -1071,6 +1268,42 @@ test('selected surface reconstruction owns pose over planar homography when its 
     correspondences,
     reconstructionConsistentWithTracker: true,
   }).method, 'parametric-surface');
+});
+
+test('curved reconstruction targets reject planar homography normals during pose dropout', () => {
+  const service = new ImageAnchorService();
+  const correspondences = Array.from({ length: 28 }, (_, index) => ({
+    prev: { x: 70 + (index % 7) * 16, y: 80 + Math.floor(index / 7) * 15 },
+    curr: { x: 78 + (index % 7) * 14, y: 86 + Math.floor(index / 7) * 15 },
+  }));
+  const planarPose = {
+    success: true,
+    method: 'planar-homography',
+    position: { x: 300, y: 224, z: 0 },
+    normal: { x: 0.67, y: -0.17, z: 0.72 },
+    planarTransform: { scale: 1.02, rotation: 0.02, confidence: 0.9, inlierCount: 24 },
+    confidence: 0.9,
+    inlierCount: 24,
+    inlierRatio: 0.86,
+    averageResidual: 1.1,
+  };
+
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'can';
+  service.metrics.reconstructionPreview = { surface: { model: 'cylinder' } };
+
+  assert.equal(service._selectNormalPose({
+    reconstructionPose: {
+      success: false,
+      method: 'parametric-surface',
+      reason: 'No robust similarity consensus',
+    },
+    planarPose,
+    objectPose: { success: false, method: 'object-pose-affine', confidence: 0 },
+    poseResult: { ...planarPose, method: 'homography' },
+    correspondences,
+    reconstructionConsistentWithTracker: false,
+  }), null);
 });
 
 test('selected reconstruction modes accept robust surface residuals without relaxing object pose gates', () => {
@@ -1312,6 +1545,103 @@ test('unusable object pose does not replace stable tracker position and scale', 
   assert.equal(result.poseSource, null);
   assert.equal(service.getState().metrics.poseSource, null);
   assert.match(service.getState().metrics.poseRejectedReason, /Insufficient pose inliers|Low pose inlier ratio|Low pose confidence|Degenerate local pose spread/);
+});
+
+test('planar reconstruction targets hold tracker attachment instead of affine object pose during occlusion', () => {
+  const service = new ImageAnchorService();
+  const objectPose = createObjectPose({
+    x: 212,
+    y: 178,
+    scale: 1.22,
+    rotation: 0.31,
+    normal: { x: -0.34, y: -0.24, z: 0.91 },
+    confidence: 0.78,
+    inlierCount: 18,
+    inlierRatio: 0.62,
+    averageResidual: 1.6,
+  });
+
+  service.setTrackingMode('sparse-reconstruction');
+  service.initialized = true;
+  service.anchored = true;
+  service.anchorState = 'tracking';
+  service.anchorTargetClass = 'book';
+  service.planarDominanceScore = 8;
+  service.currentPosition = { x: 100, y: 120, z: 0 };
+  service.currentNormal = { x: 0.08, y: 0.12, z: 0.99 };
+  service.currentPlanarTransform = {
+    scale: 1,
+    rotation: 0,
+    confidence: 0.8,
+    inlierCount: 20,
+    method: 'previous',
+  };
+  service.cv = {};
+  service.reconstructor = {
+    addFrameFromTrackedPoints: () => ({
+      state: 'ready',
+      ready: true,
+      frameCount: 8,
+      landmarkCount: 22,
+      depthQuality: 0.01,
+      statistics: { mapConfidence: 0.7 },
+      lastFailureReason: null,
+    }),
+    getState: () => ({
+      state: 'ready',
+      ready: true,
+      frameCount: 8,
+      landmarkCount: 22,
+      depthQuality: 0.01,
+      statistics: { mapConfidence: 0.7 },
+      lastFailureReason: null,
+    }),
+    estimatePoseFromTrackedPoints: () => ({
+      success: false,
+      method: 'sparse-reconstruction',
+      reason: 'Insufficient reconstructed landmarks in view',
+    }),
+  };
+  service.keypointTracker = {
+    trackedPoints: Array.from({ length: 26 }, (_, index) => ({
+      id: index,
+      status: 'active',
+      original: { x: 70 + (index % 6) * 18, y: 80 + Math.floor(index / 6) * 16 },
+      current: { x: 82 + (index % 6) * 18, y: 90 + Math.floor(index / 6) * 16 },
+    })),
+    trackToFrame: () => ({
+      success: true,
+      successRate: 0.82,
+      activePointCount: 26,
+      averageError: 1.4,
+    }),
+    getObjectPose: () => objectPose,
+    getCorrespondences: () => [],
+    getAnchorPosition: () => ({
+      x: 146,
+      y: 164,
+      method: 'reference_similarity_transform',
+      rotation: 0.08,
+      scale: 1.06,
+      confidence: 0.72,
+      inlierCount: 18,
+    }),
+  };
+  service._estimatePoseFromTracker = () => ({
+    options: { maxReferenceDistance: 120 },
+    correspondences: [],
+    poseResult: null,
+  });
+
+  const result = service._updateWithKeypoints({ cols: 640, rows: 480 }, 1000);
+
+  assert.equal(result.success, true);
+  assert.equal(result.method, 'reference_similarity_transform');
+  assert.equal(result.position.x, 146);
+  assert.equal(result.position.y, 164);
+  assert.equal(result.planarTransform.scale, 1.06);
+  assert.equal(result.poseSource, 'object-pose-affine');
+  assert.ok(service.getState().normal.x < 0);
 });
 
 test('lost anchors stay recoverable instead of scheduling automatic reset', () => {

@@ -20,12 +20,15 @@ for (const scenario of reportReplayScenarios) {
       trackingMode: mode.id,
     });
     const lastFrame = replay.frames.at(-1);
+    const preview = lastFrame?.metrics?.reconstructionPreview;
     replaySummaries.push({
       name: scenario.name,
       kind: sequence.kind,
       mode: mode.id,
       targetClass: sequence.targetClass,
-      surfaceModel: lastFrame?.metrics?.reconstructionPreview?.surface?.model || null,
+      surfaceModel: preview?.surface?.model || null,
+      surfaceFaces: preview?.surface?.faces?.length || 0,
+      geometricConsistency: preview?.statistics?.geometricConsistency || 0,
       backgroundVariant: sequence.metadata.backgroundVariant,
       anchorCreated: replay.anchorCreated,
       createFailure: replay.createFailure || null,

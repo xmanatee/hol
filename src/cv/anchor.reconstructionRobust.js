@@ -1,4 +1,4 @@
-import { clamp, normalizeAngle } from './anchor.reconstruction.math.js';
+import { clamp, normalizeAngle, solveLeastSquares } from './anchor.reconstruction.math.js';
 
 export const toActiveObservations = trackedPoints => trackedPoints
   .filter(point => point.status === 'active')
@@ -89,9 +89,46 @@ const fitFromPair = (left, right) => {
   };
 };
 
+const triangleArea = (a, b, c) => Math.abs(
+  (b.reference.x - a.reference.x) * (c.reference.y - a.reference.y) -
+  (b.reference.y - a.reference.y) * (c.reference.x - a.reference.x)
+) * 0.5;
+
+const fitAffine = matches => {
+  const rows = matches.map(match => [match.reference.x, match.reference.y, 1]);
+  const rowX = solveLeastSquares(rows, matches.map(match => match.current.x));
+  const rowY = solveLeastSquares(rows, matches.map(match => match.current.y));
+  return rowX && rowY ? { rowX, rowY } : null;
+};
+
+const transformPointAffine = (point, transform) => ({
+  x: transform.rowX[0] * point.x + transform.rowX[1] * point.y + transform.rowX[2],
+  y: transform.rowY[0] * point.x + transform.rowY[1] * point.y + transform.rowY[2],
+});
+
 export const scoreTransform = (observations, transform, residualThreshold) => {
   const residuals = observations.map(observation => {
     const projected = transformPoint2(observation.reference, transform);
+    return {
+      observation,
+      residual: Math.hypot(projected.x - observation.current.x, projected.y - observation.current.y),
+    };
+  });
+  const inliers = residuals.filter(item => item.residual <= residualThreshold);
+  const averageResidual = inliers.length
+    ? inliers.reduce((sum, item) => sum + item.residual, 0) / inliers.length
+    : Infinity;
+
+  return {
+    inliers: inliers.map(item => item.observation),
+    averageResidual,
+    inlierRatio: inliers.length / observations.length,
+  };
+};
+
+const scoreAffineTransform = (observations, transform, residualThreshold) => {
+  const residuals = observations.map(observation => {
+    const projected = transformPointAffine(observation.reference, transform);
     return {
       observation,
       residual: Math.hypot(projected.x - observation.current.x, projected.y - observation.current.y),
@@ -153,6 +190,98 @@ export const fitRobustSimilarity = (observations, { minInliers = 8, threshold = 
     inlierRatio: refined.inlierRatio,
     averageResidual: refined.averageResidual,
     confidence: clamp(refined.inlierRatio * 0.65 + residualScore * 0.35, 0, 1),
+  };
+};
+
+export const fitRobustAffine2D = (observations, { minInliers = 8, threshold = 10 } = {}) => {
+  if (observations.length < minInliers) {
+    return { success: false, reason: 'Insufficient observations for robust affine fit' };
+  }
+
+  const sorted = [...observations].sort((left, right) => right.quality - left.quality);
+  const sample = sorted.slice(0, Math.min(sorted.length, 34));
+  let best = null;
+
+  for (let a = 0; a < sample.length - 2; a++) {
+    for (let b = a + 1; b < sample.length - 1; b++) {
+      for (let c = b + 1; c < sample.length; c++) {
+        if (triangleArea(sample[a], sample[b], sample[c]) < 48) {
+          continue;
+        }
+
+        const transform = fitAffine([sample[a], sample[b], sample[c]]);
+        if (!transform) {
+          continue;
+        }
+
+        const scored = scoreAffineTransform(observations, transform, threshold);
+        if (!best ||
+            scored.inliers.length > best.inliers.length ||
+            (scored.inliers.length === best.inliers.length && scored.averageResidual < best.averageResidual)) {
+          best = { transform, ...scored };
+        }
+      }
+    }
+  }
+
+  if (!best || best.inliers.length < minInliers) {
+    return { success: false, reason: 'No robust affine consensus' };
+  }
+
+  const refinedTransform = fitAffine(best.inliers);
+  if (!refinedTransform) {
+    return { success: false, reason: 'Refined affine fit failed' };
+  }
+
+  const refined = scoreAffineTransform(observations, refinedTransform, Math.max(5, best.averageResidual * 2.4));
+  if (refined.inliers.length < minInliers) {
+    return { success: false, reason: 'Refined affine consensus too small' };
+  }
+
+  const residualScore = clamp(1 - refined.averageResidual / 14, 0, 1);
+  return {
+    success: true,
+    transform: refinedTransform,
+    inliers: refined.inliers,
+    inlierCount: refined.inliers.length,
+    inlierRatio: refined.inlierRatio,
+    averageResidual: refined.averageResidual,
+    confidence: clamp(refined.inlierRatio * 0.62 + residualScore * 0.38, 0, 1),
+  };
+};
+
+export const selectCoherentObservations = (
+  observations,
+  { minInliers = 8, threshold = 10, minInlierRatio = 0.45, model = 'similarity' } = {}
+) => {
+  const fit = model === 'affine'
+    ? fitRobustAffine2D(observations, { minInliers, threshold })
+    : fitRobustSimilarity(observations, { minInliers, threshold });
+  if (!fit.success) {
+    return {
+      success: false,
+      reason: fit.reason,
+      observations: [],
+      consistency: 0,
+    };
+  }
+
+  const residualScore = clamp(1 - fit.averageResidual / Math.max(threshold, 1), 0, 1);
+  const consistency = clamp(fit.inlierRatio * 0.72 + residualScore * 0.28, 0, 1);
+  if (fit.inlierRatio < minInlierRatio) {
+    return {
+      success: false,
+      reason: 'Tracked points do not preserve coherent object geometry',
+      observations: fit.inliers,
+      consistency,
+    };
+  }
+
+  return {
+    success: true,
+    observations: fit.inliers,
+    consistency,
+    fit,
   };
 };
 

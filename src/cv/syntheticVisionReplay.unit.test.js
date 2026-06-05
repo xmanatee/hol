@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 
 import {
   createCylindricalCanSequence,
+  createHandledMugSequence,
   createRigidBoxSequence,
   createSyntheticObjectSuite,
   createPlanarBookSequence,
+  createTexturedBallSequence,
   createTexturedCupSequence,
 } from './synthetic/visionFixtures.js';
 import { loadOpenCvForNode } from './synthetic/opencvNodeLoader.js';
@@ -103,6 +105,9 @@ test('synthetic object suite contains realistic textured planar and curved targe
       'glossy-phone',
       'label-bottle',
       'snack-pouch',
+      'laminated-card',
+      'handled-mug',
+      'textured-ball',
     ]
   );
 
@@ -161,7 +166,7 @@ test('real OpenCV replay tracks a realistic multi-object background matrix', asy
   }
 });
 
-test('real OpenCV replay exercises every selectable reconstruction engine on book can and cup', async () => {
+test('real OpenCV replay exercises every selectable reconstruction engine on book can cup and mug', async () => {
   const cv = await loadOpenCvForNode();
   const scenarios = [
     {
@@ -188,6 +193,14 @@ test('real OpenCV replay exercises every selectable reconstruction engine on boo
         'direct-photometric': 'photometric-surfels',
       },
     },
+    {
+      name: 'mug',
+      sequence: createHandledMugSequence({ frameCount: 18, occlusionFrames: [] }),
+      surfaceByMode: {
+        'parametric-surface': 'tapered-cylinder',
+        'direct-photometric': 'photometric-surfels',
+      },
+    },
   ];
 
   for (const mode of RECONSTRUCTION_MODES) {
@@ -205,6 +218,9 @@ test('real OpenCV replay exercises every selectable reconstruction engine on boo
       assert.ok(summary.maxAnchorError <= 26, `${mode.id}/${scenario.name}: max anchor error ${summary.maxAnchorError.toFixed(2)}px`);
       assert.ok(summary.maxFrameJump <= 12, `${mode.id}/${scenario.name}: max jump ${summary.maxFrameJump.toFixed(2)}px`);
       assert.ok(summary.maxScaleError <= 0.24, `${mode.id}/${scenario.name}: max scale error ${summary.maxScaleError.toFixed(3)}`);
+      if (mode.id === 'parametric-surface' && scenario.name === 'cup') {
+        assert.ok(summary.maxScaleError <= 0.18, `${mode.id}/${scenario.name}: parametric cup scale error ${summary.maxScaleError.toFixed(3)}`);
+      }
 
       if (mode.id !== 'sparse-reconstruction') {
         const selectedPoseFrames = summary.poseSourceCounts[mode.id] || 0;
@@ -216,6 +232,42 @@ test('real OpenCV replay exercises every selectable reconstruction engine on boo
         );
       }
     }
+  }
+});
+
+test('real OpenCV replay selects ellipsoid and photometric surfaces on a textured ball', async () => {
+  const cv = await loadOpenCvForNode();
+  const sequence = createTexturedBallSequence({ frameCount: 18, occlusionFrames: [] });
+  const scenarios = [
+    {
+      mode: 'parametric-surface',
+      surface: 'ellipsoid',
+    },
+    {
+      mode: 'direct-photometric',
+      surface: 'photometric-surfels',
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const replay = await replayImageAnchorSequence({
+      cv,
+      sequence,
+      trackingMode: scenario.mode,
+    });
+    const summary = summarizeReplay(replay);
+    const headPose = scoreHeadPoseReplay({ replay, sequence }).summary;
+    const selectedPoseFrames = summary.poseSourceCounts[scenario.mode] || 0;
+    const lastFrame = replay.frames.at(-1);
+
+    assert.equal(replay.anchorCreated, true, `${scenario.mode}/ball: ${replay.createFailure || 'anchor failed'}`);
+    assert.equal(summary.failedFrames, 0, `${scenario.mode}/ball: ${summary.failureReasons.join(', ')}`);
+    assert.ok(selectedPoseFrames >= 10, `${scenario.mode}/ball: selected pose frames ${selectedPoseFrames}`);
+    assert.equal(lastFrame.metrics.reconstructionPreview.surface.model, scenario.surface);
+    assert.ok(summary.maxAnchorError <= 28, `${scenario.mode}/ball: max anchor error ${summary.maxAnchorError.toFixed(2)}px`);
+    assert.ok(summary.maxScaleError <= 0.14, `${scenario.mode}/ball: max scale error ${summary.maxScaleError.toFixed(3)}`);
+    assert.ok(headPose.maxScaleLogError <= 0.16, `${scenario.mode}/ball: head scale error ${headPose.maxScaleLogError.toFixed(3)}`);
+    assert.ok(headPose.maxRotationError <= 1.25, `${scenario.mode}/ball: head rotation error ${headPose.maxRotationError.toFixed(3)}rad`);
   }
 });
 
@@ -327,6 +379,41 @@ test('real OpenCV replay creates and keeps an anchor on a textured cylindrical c
   assert.ok(headPose.meanRotationError <= 0.9, `can mean head rotation error ${headPose.meanRotationError.toFixed(3)}rad`);
   assert.ok(headPose.maxHeadJumpExcess <= 0.08, `can head jump excess ${headPose.maxHeadJumpExcess.toFixed(3)}`);
   assert.ok(headPose.maxScaleLogError <= 0.28, `can head scale log error ${headPose.maxScaleLogError.toFixed(3)}`);
+});
+
+test('real OpenCV replay keeps an off-center can anchor attached through curved PnP projection', async () => {
+  const cv = await loadOpenCvForNode();
+  const sequence = createCylindricalCanSequence({
+    frameCount: 30,
+    occlusionFrames: [13, 14],
+    backgroundVariant: 'shelf',
+    backgroundSeed: 131,
+    anchorPoint: { x: 42, y: 0, z: -15 },
+    basisXPoint: { x: 54, y: 0, z: -28 },
+    basisYPoint: { x: 42, y: 42, z: -15 },
+  });
+
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence,
+    trackingMode: 'parametric-surface',
+  });
+  const summary = summarizeReplay(replay);
+  const headPose = scoreHeadPoseReplay({ replay, sequence }).summary;
+  const pnpFrames = replay.frames.filter(frame => (frame.metrics.reconstructionPnpInliers || 0) >= 12);
+  const maxPnpResidual = Math.max(...pnpFrames.map(frame => frame.metrics.reconstructionPnpAverageResidual), 0);
+
+  assert.equal(replay.anchorCreated, true, replay.createFailure || 'anchor was not created');
+  assert.equal(summary.failedFrames, 0, summary.failureReasons.join(', '));
+  assert.ok(summary.maxAnchorError <= 18, `off-center can max anchor error ${summary.maxAnchorError.toFixed(2)}px`);
+  assert.ok(summary.meanAnchorError <= 7, `off-center can mean anchor error ${summary.meanAnchorError.toFixed(2)}px`);
+  assert.ok(summary.maxScaleError <= 0.18, `off-center can scale error ${summary.maxScaleError.toFixed(3)}`);
+  assert.ok((summary.poseSourceCounts['parametric-surface'] || 0) >= 8, `parametric pose frames ${JSON.stringify(summary.poseSourceCounts)}`);
+  assert.ok(pnpFrames.length >= 12, `curved PnP frames ${pnpFrames.length}`);
+  assert.ok(maxPnpResidual <= 7, `curved PnP residual ${maxPnpResidual.toFixed(2)}`);
+  assert.equal(headPose.visibleMismatches, 0);
+  assert.ok(headPose.maxWorldPositionError <= 0.14, `off-center can head world error ${headPose.maxWorldPositionError.toFixed(3)}`);
+  assert.ok(headPose.maxRotationError <= 1.15, `off-center can head rotation error ${headPose.maxRotationError.toFixed(3)}rad`);
 });
 
 test('real OpenCV replay creates and keeps an anchor on a tapered textured cup', async () => {
