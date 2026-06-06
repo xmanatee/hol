@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        env:
+          VITE_ELEVENLABS_AGENT_ID: ${{ github.event_name != 'pull_request' && vars.VITE_ELEVENLABS_AGENT_ID || '' }}
+          VITE_OPENAI_API_KEY: ""
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          test -d dist
+          test -f nginx.conf
+          test -f dist/index.html
+          test -f dist/opencv.js
+          test -f dist/models/yolo11n_480.onnx
+          test -f dist/3d/untitled.gltf
+          if grep -R -E "sk-(proj|live|test)-" dist; then
+            echo "Refusing to upload a public artifact containing OpenAI key material."
+            exit 1
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hol-dist
+          path: |
+            dist/
+            nginx.conf
+          retention-days: 30
+
+  dispatch-deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger deploy on servers repo
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          repository: xmanatee/servers
+          event-type: deploy-hol
