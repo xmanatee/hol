@@ -1,9 +1,6 @@
 export const DETECTOR_WASM_PATHS = Object.freeze({
-  'ort-wasm.wasm': '/ort-wasm-simd-threaded.wasm',
-  'ort-wasm-threaded.wasm': '/ort-wasm-simd-threaded.wasm',
-  'ort-wasm-simd.wasm': '/ort-wasm-simd-threaded.wasm',
-  'ort-wasm-simd-threaded.wasm': '/ort-wasm-simd-threaded.wasm',
-  'ort-wasm-simd-threaded.jsep.wasm': '/ort-wasm-simd-threaded.jsep.wasm'
+  mjs: '/ort-wasm-simd-threaded.mjs',
+  wasm: '/ort-wasm-simd-threaded.wasm'
 });
 
 export const DETECTOR_EXECUTION_PROVIDERS = Object.freeze(['wasm']);

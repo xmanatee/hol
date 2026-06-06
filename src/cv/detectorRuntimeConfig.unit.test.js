@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { access } from 'node:fs/promises';
 import {
   DETECTOR_WASM_PATHS,
   configureDetectorRuntime,
@@ -23,6 +24,10 @@ test('detector runtime configures ONNX WASM paths and thread count', () => {
 
   assert.equal(env.wasm.simd, true);
   assert.equal(env.wasm.numThreads, 4);
+  assert.deepEqual(env.wasm.wasmPaths, {
+    mjs: '/ort-wasm-simd-threaded.mjs',
+    wasm: '/ort-wasm-simd-threaded.wasm'
+  });
   assert.equal(env.wasm.wasmPaths, DETECTOR_WASM_PATHS);
   assert.deepEqual(config, {
     executionProviders: ['wasm'],
@@ -36,4 +41,9 @@ test('detector runtime stays single threaded without cross-origin isolation', ()
     crossOriginIsolated: false,
     hardwareConcurrency: 16
   }), 1);
+});
+
+test('detector runtime files are available from the public root', async () => {
+  await access(new URL('../../public/ort-wasm-simd-threaded.mjs', import.meta.url));
+  await access(new URL('../../public/ort-wasm-simd-threaded.wasm', import.meta.url));
 });
