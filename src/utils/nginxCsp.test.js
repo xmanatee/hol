@@ -29,3 +29,10 @@ test('production CSP permits OpenCV embedded WASM loading', () => {
     'OpenCV loads its embedded WASM through fetch(data:...), so connect-src must allow data:'
   );
 });
+
+test('production nginx serves ONNX runtime modules as JavaScript', () => {
+  assert.match(
+    nginxConfig,
+    /location\s+~\*\s+\\\.mjs\$\s+\{[^}]*default_type\s+application\/javascript;/s
+  );
+});
