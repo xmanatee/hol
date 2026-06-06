@@ -1,5 +1,9 @@
 import * as ort from 'onnxruntime-web';
 import { COCO_CLASSES, TARGET_CLASS_IDS } from './cocoClasses.js';
+import {
+  configureDetectorRuntime,
+  createDetectorSessionOptions
+} from './detectorRuntimeConfig.js';
 
 const log = {
   info: (tag, ...args) => postMessage({ type: 'log', level: 'info', tag, args }),
@@ -24,41 +28,17 @@ async function initializeONNX() {
   }
   
   try {
-    // Configure ONNX Runtime Web environment
-    ort.env.wasm.simd = true;
-    ort.env.wasm.numThreads = self.crossOriginIsolated
-      ? Math.max(1, Math.min(4, Math.floor((navigator.hardwareConcurrency || 2) / 2)))
-      : 1;
-    
-    // Set WASM paths to public directory
-    ort.env.wasm.wasmPaths = {
-      'ort-wasm.wasm': '/ort-wasm-simd-threaded.wasm',
-      'ort-wasm-threaded.wasm': '/ort-wasm-simd-threaded.wasm',
-      'ort-wasm-simd.wasm': '/ort-wasm-simd-threaded.wasm',
-      'ort-wasm-simd-threaded.wasm': '/ort-wasm-simd-threaded.wasm',
-      'ort-wasm-simd-threaded.jsep.wasm': '/ort-wasm-simd-threaded.jsep.wasm'
-    };
+    const runtimeConfig = configureDetectorRuntime(ort.env, {
+      crossOriginIsolated: self.crossOriginIsolated,
+      hardwareConcurrency: navigator.hardwareConcurrency
+    });
     log.info('Worker', 'WASM paths configured');
-    
-    
-    // Try WebGPU first if available, but prefer WASM for stability
-    const executionProviders = ['wasm'];
-    
-    if ('gpu' in navigator) {
-      log.info('Worker', 'WebGPU available, configuring...');
-      ort.env.webgpu.powerPreference = 'high-performance';
-      executionProviders.unshift('webgpu');
-    } else {
-      log.info('Worker', 'WebGPU not available, using WASM only');
-    }
     
     isInitialized = true;
     log.info('Worker', 'ONNX initialization complete');
     postMessage({
       type: 'initialized',
-      executionProviders,
-      wasmThreads: ort.env.wasm.numThreads,
-      crossOriginIsolated: self.crossOriginIsolated
+      ...runtimeConfig
     });
   } catch (error) {
     log.error('Worker', 'ONNX initialization failed:', error);
@@ -69,19 +49,7 @@ async function initializeONNX() {
 async function loadModel(modelPath) {
   log.info('Worker', 'Loading model:', modelPath);
   try {
-    // Create session with explicit execution provider configuration
-    const sessionOptions = {
-      executionProviders: []
-    };
-    
-    // Try WebGPU first, fallback to WASM
-    if ('gpu' in navigator) {
-      sessionOptions.executionProviders.push('webgpu');
-    }
-    
-    // Always add WASM as fallback
-    sessionOptions.executionProviders.push('wasm');
-    
+    const sessionOptions = createDetectorSessionOptions();
     log.info('Worker', 'Creating inference session with providers:', sessionOptions.executionProviders);
     session = await ort.InferenceSession.create(modelPath, sessionOptions);
     log.info('Worker', 'Model loaded successfully. Inputs:', session.inputNames, 'Outputs:', session.outputNames);
