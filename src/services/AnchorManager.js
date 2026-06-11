@@ -1,11 +1,17 @@
 import { ImageAnchorService } from './ImageAnchorService.js';
+import { InteractiveSegmenterService } from './InteractiveSegmenterService.js';
 import { HomographyEstimator } from '../cv/anchor.homography.js';
 import { RECONSTRUCTION_POSE_MODEL } from '../cv/anchor.reconstructionModes.js';
+import { createDetectionBoxObjectSupportMask } from '../cv/objectSupportMask.js';
 import { logger } from '../utils/logger.js';
 
 export class AnchorManager {
-  constructor() {
-    this.imageAnchorService = new ImageAnchorService();
+  constructor({
+    imageAnchorService = new ImageAnchorService(),
+    interactiveSegmenterService = new InteractiveSegmenterService(),
+  } = {}) {
+    this.imageAnchorService = imageAnchorService;
+    this.interactiveSegmenterService = interactiveSegmenterService;
     this.trackingMode = RECONSTRUCTION_POSE_MODEL;
     this.imageAnchorService.setTrackingMode(this.trackingMode);
     
@@ -99,11 +105,35 @@ export class AnchorManager {
 
     // Find detection at tap position
     const selectedDetection = this.findDetectionAtPosition(tapPosition);
+    if (!selectedDetection) {
+      throw new Error('No detection selected at tap position');
+    }
     
+    let segmentedObjectSupportMask = null;
+    try {
+      segmentedObjectSupportMask = await this.interactiveSegmenterService.segmentTap({
+        imageData,
+        tapPosition,
+        createdAtFrame: 0,
+      });
+    } catch (error) {
+      logger.warn('AnchorManager', `Tap segmentation unavailable; using weak detection-box support: ${error.message}`);
+    }
+    const objectSupportMask = this._selectTapObjectSupportMask({
+      segmentedObjectSupportMask,
+      selectedDetection,
+      imageData,
+      tapPosition,
+    });
+    const supportedDetection = {
+      ...selectedDetection,
+      objectSupportMask,
+    };
+
     const result = await this.imageAnchorService.createAnchor(
       imageData, 
       tapPosition, 
-      selectedDetection
+      supportedDetection
     );
 
     if (result.success) {
@@ -116,7 +146,10 @@ export class AnchorManager {
         method: result.method,
         state: result.state,
         trackingMode: this.trackingMode,
-        sourceDetection: selectedDetection,
+        readiness: result.readiness,
+        evidence: result.evidence,
+        objectSupportMaskSource: result.objectSupportMaskSource,
+        sourceDetection: supportedDetection,
         createdAt: Date.now()
       };
       
@@ -125,6 +158,25 @@ export class AnchorManager {
     }
 
     return result;
+  }
+
+  _selectTapObjectSupportMask({
+    segmentedObjectSupportMask,
+    selectedDetection,
+    imageData,
+    tapPosition,
+  }) {
+    if (segmentedObjectSupportMask?.bbox?.width > 0 && segmentedObjectSupportMask?.bbox?.height > 0) {
+      return segmentedObjectSupportMask;
+    }
+
+    return createDetectionBoxObjectSupportMask({
+      width: imageData.width,
+      height: imageData.height,
+      detection: selectedDetection,
+      referencePoint: tapPosition,
+      createdAtFrame: 0,
+    });
   }
 
   /**
@@ -212,8 +264,24 @@ export class AnchorManager {
       this.activeAnchor.state = anchorServiceState.state;
       this.activeAnchor.keypoints = anchorServiceState.metrics?.keypointCount ?? this.activeAnchor.keypoints;
       this.activeAnchor.quality = anchorServiceState.metrics?.templateQuality ?? this.activeAnchor.quality;
+      this.activeAnchor.readiness = anchorServiceState.metrics?.readiness || this.activeAnchor.readiness || null;
+      this.activeAnchor.evidence = {
+        maskCoverage: anchorServiceState.metrics?.maskCoverage ?? this.activeAnchor.evidence?.maskCoverage ?? null,
+        maskConfidence: anchorServiceState.metrics?.maskConfidence ?? this.activeAnchor.evidence?.maskConfidence ?? null,
+        templateKeypoints: anchorServiceState.metrics?.templateKeypoints ?? this.activeAnchor.evidence?.templateKeypoints ?? 0,
+        activeLandmarks: anchorServiceState.metrics?.activeLandmarks ?? anchorServiceState.metrics?.activeLandmarkCount ?? 0,
+        objectOwnedLandmarks: anchorServiceState.metrics?.objectOwnedLandmarks ?? 0,
+        backgroundRejected: anchorServiceState.metrics?.backgroundRejected ?? 0,
+      };
       this.activeAnchor.diagnostics = {
+        readiness: anchorServiceState.metrics?.readiness || this.activeAnchor.readiness || null,
         qualityState: anchorServiceState.metrics?.qualityState || null,
+        maskCoverage: anchorServiceState.metrics?.maskCoverage ?? null,
+        maskConfidence: anchorServiceState.metrics?.maskConfidence ?? null,
+        keypointDensity: anchorServiceState.metrics?.keypointDensity ?? null,
+        backgroundRejected: anchorServiceState.metrics?.backgroundRejected ?? 0,
+        activeLandmarks: anchorServiceState.metrics?.activeLandmarks ?? anchorServiceState.metrics?.activeLandmarkCount ?? 0,
+        objectOwnedLandmarks: anchorServiceState.metrics?.objectOwnedLandmarks ?? 0,
         trackingSuccessRate: anchorServiceState.metrics?.trackingSuccessRate ?? null,
         homographyInliers: anchorServiceState.metrics?.homographyInliers ?? 0,
         affinePoseInliers: anchorServiceState.metrics?.affinePoseInliers ?? 0,

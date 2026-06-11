@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ImageAnchorService } from './ImageAnchorService.js';
+import { createObjectSupportMask } from '../cv/objectSupportMask.js';
 
 const createObjectPose = ({
   x = 140,
@@ -172,6 +173,407 @@ test('records usable weak-anchor diagnostics after creation', async () => {
   assert.deepEqual(state.metrics.templateRegion, service.templateRegion);
   assert.deepEqual(state.normal, { x: 0, y: 0, z: 1 });
   assert.deepEqual(service.normalStabilizer.getNormal(), { x: 0, y: 0, z: 1 });
+});
+
+test('anchor creation passes selected object support mask into keypoint extraction', async () => {
+  const service = new ImageAnchorService();
+  class FakeMat {
+    delete() {}
+  }
+  const receivedMasks = [];
+  const objectSupportMask = createObjectSupportMask({
+    width: 320,
+    height: 240,
+    data: new Uint8Array(320 * 240).fill(255),
+    source: 'interactive-segmenter',
+    confidence: 0.86,
+    referencePoint: { x: 110, y: 120 },
+    createdAtFrame: 12,
+    updatedAtFrame: 12,
+  });
+
+  service.initialized = true;
+  service.cv = {
+    Mat: FakeMat,
+    COLOR_RGBA2GRAY: 0,
+    matFromImageData: () => new FakeMat(),
+    cvtColor: () => {}
+  };
+  service.keypointDetector = {
+    extractKeypoints: (cv, image, region, mask) => {
+      receivedMasks.push(mask);
+      return {
+        keypoints: Array.from({ length: 24 }, (_, index) => ({ pt: { x: 20 + index, y: 30 + index } })),
+        descriptors: {},
+        method: 'fake-gftt',
+        maskSource: mask?.source || null,
+      };
+    },
+    assessTemplateQuality: () => ({ overall: 0.42 })
+  };
+  service.keypointTracker = {
+    trackedPoints: [],
+    initializeTracking: () => {}
+  };
+  service.persistenceSystem = {
+    storeTemplate: () => {}
+  };
+
+  await service.createAnchor(
+    { width: 320, height: 240 },
+    { x: 110, y: 120 },
+    { x1: 70, y1: 80, x2: 150, y2: 160, objectSupportMask }
+  );
+
+  const state = service.getState();
+  assert.equal(receivedMasks.length, 2);
+  assert.ok(receivedMasks.every(mask => mask === objectSupportMask));
+  assert.equal(state.metrics.objectSupportMaskSource, 'interactive-segmenter');
+  assert.deepEqual(state.metrics.objectSupportMaskBounds, objectSupportMask.bbox);
+});
+
+test('weak tap-time object evidence creates a candidate anchor instead of throwing', async () => {
+  const service = new ImageAnchorService();
+  class FakeMat {
+    delete() {}
+  }
+  let initializedTracking = false;
+  const objectSupportMask = createObjectSupportMask({
+    width: 320,
+    height: 240,
+    data: new Uint8Array(320 * 240).fill(255),
+    source: 'interactive-segmenter',
+    confidence: 0.74,
+    referencePoint: { x: 110, y: 120 },
+    createdAtFrame: 4,
+    updatedAtFrame: 4,
+  });
+
+  service.initialized = true;
+  service.cv = {
+    Mat: FakeMat,
+    COLOR_RGBA2GRAY: 0,
+    matFromImageData: () => new FakeMat(),
+    cvtColor: () => {}
+  };
+  service.keypointDetector = {
+    extractKeypoints: () => ({
+      keypoints: Array.from({ length: 5 }, (_, index) => ({ pt: { x: 84 + index * 10, y: 96 + index * 8 }, response: 1 })),
+      descriptors: null,
+      method: 'fake-gftt',
+      count: 5,
+    }),
+    assessTemplateQuality: () => ({ overall: 0.05, keypointCount: 5, spatialDistribution: 0.1 })
+  };
+  service.keypointTracker = {
+    trackedPoints: [],
+    initializeTracking: () => {
+      initializedTracking = true;
+    }
+  };
+  service.persistenceSystem = {
+    storeTemplate: () => true
+  };
+
+  const result = await service.createAnchor(
+    { width: 320, height: 240 },
+    { x: 110, y: 120 },
+    { x1: 70, y1: 80, x2: 150, y2: 160, class: 'cup', objectSupportMask }
+  );
+  const state = service.getState();
+
+  assert.equal(result.success, true);
+  assert.equal(result.state, 'candidate');
+  assert.equal(result.readiness.faceReady, false);
+  assert.match(result.readiness.reason, /more object landmarks/i);
+  assert.equal(result.evidence.templateKeypoints, 5);
+  assert.equal(result.evidence.objectOwnedLandmarks, 5);
+  assert.equal(state.anchored, true);
+  assert.equal(state.state, 'candidate');
+  assert.equal(state.metrics.templateKeypoints, 5);
+  assert.equal(state.metrics.objectOwnedLandmarks, 5);
+  assert.equal(state.metrics.maskConfidence, 0.74);
+  assert.equal(initializedTracking, true);
+});
+
+test('candidate anchor transitions to mapping after object-owned refresh landmarks are collected', () => {
+  const service = new ImageAnchorService();
+  class FakeMat {
+    clone() { return new FakeMat(); }
+    delete() {}
+  }
+  let initializedCount = 0;
+
+  service.initialized = true;
+  service.anchored = true;
+  service.anchorState = 'candidate';
+  service.templateRegion = { x: 60, y: 70, width: 90, height: 90 };
+  service.trackingRegion = { x: 50, y: 60, width: 120, height: 120 };
+  service.templateAnchorOffset = { x: 0, y: 0 };
+  service.currentPosition = { x: 110, y: 120, z: 0 };
+  service.currentNormal = { x: 0, y: 0, z: 1 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 0.4, inlierCount: 0, method: 'candidate' };
+  service.metrics = {
+    keypointCount: 5,
+    templateKeypoints: 5,
+    trackingSuccessRate: 0,
+    poseModel: 'sparse-reconstruction',
+    reconstructionReady: false,
+  };
+  service.cv = {
+    Mat: FakeMat,
+    COLOR_RGBA2GRAY: 0,
+    matFromImageData: () => new FakeMat(),
+    cvtColor: () => {}
+  };
+  service.keypointDetector = {
+    extractKeypoints: () => ({
+      keypoints: Array.from({ length: 9 }, (_, index) => ({ pt: { x: 82 + index * 5, y: 92 + index * 3 }, response: 1 })),
+      descriptors: null,
+      method: 'fake-adaptive-gftt',
+      count: 9,
+    }),
+    assessTemplateQuality: () => ({ overall: 0.16, keypointCount: 9, spatialDistribution: 0.4 })
+  };
+  service.keypointTracker = {
+    trackedPoints: [],
+    initializeTracking: (cv, keypoints) => {
+      initializedCount = keypoints.length;
+      service.keypointTracker.trackedPoints = keypoints.map((keypoint, index) => ({
+        id: index,
+        original: { ...keypoint.pt },
+        current: { ...keypoint.pt },
+        status: 'active',
+      }));
+    }
+  };
+  service.persistenceSystem = {
+    attemptRecovery: () => ({
+      success: true,
+      position: { x: 112, y: 121 },
+      confidence: 0.78,
+      scale: 1,
+      method: 'template_matching',
+    })
+  };
+
+  const result = service.updateAnchor({ width: 320, height: 240 });
+  const state = service.getState();
+
+  assert.equal(result.success, true);
+  assert.equal(result.state, 'mapping');
+  assert.equal(result.readiness.faceReady, false);
+  assert.equal(initializedCount, 9);
+  assert.equal(state.state, 'mapping');
+  assert.equal(state.metrics.activeLandmarks, 9);
+  assert.equal(state.metrics.objectOwnedLandmarks, 9);
+});
+
+test('candidate bootstrap tracks existing landmarks instead of resetting their history', () => {
+  const service = new ImageAnchorService();
+  class FakeMat {
+    clone() { return new FakeMat(); }
+    delete() {}
+  }
+  let initializeCalls = 0;
+  let trackCalls = 0;
+
+  service.initialized = true;
+  service.anchored = true;
+  service.anchorState = 'candidate';
+  service.templateRegion = { x: 60, y: 70, width: 90, height: 90 };
+  service.trackingRegion = { x: 50, y: 60, width: 120, height: 120 };
+  service.templateAnchorOffset = { x: 0, y: 0 };
+  service.currentPosition = { x: 110, y: 120, z: 0 };
+  service.currentNormal = { x: 0, y: 0, z: 1 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 0.4, inlierCount: 0, method: 'candidate' };
+  service.metrics = {
+    keypointCount: 8,
+    templateKeypoints: 8,
+    trackingSuccessRate: 0,
+    poseModel: 'sparse-reconstruction',
+    reconstructionReady: false,
+  };
+  service.cv = {
+    Mat: FakeMat,
+    COLOR_RGBA2GRAY: 0,
+    matFromImageData: () => new FakeMat(),
+    cvtColor: () => {}
+  };
+  service.keypointDetector = {
+    extractKeypoints: () => ({
+      keypoints: Array.from({ length: 8 }, (_, index) => ({ pt: { x: 82 + index * 5, y: 92 + index * 3 }, response: 1 })),
+      descriptors: null,
+      method: 'fake-adaptive-gftt',
+      count: 8,
+    }),
+    assessTemplateQuality: () => ({ overall: 0.16, keypointCount: 8, spatialDistribution: 0.4 })
+  };
+  service.keypointTracker = {
+    trackedPoints: Array.from({ length: 8 }, (_, index) => ({
+      id: index,
+      original: { x: 80 + index * 5, y: 90 + index * 3 },
+      current: { x: 80 + index * 5, y: 90 + index * 3 },
+      status: 'active',
+      age: 4,
+      totalSuccessfulFrames: 4,
+      observations: 4,
+    })),
+    initializeTracking: () => {
+      initializeCalls++;
+    },
+    trackToFrame: () => {
+      trackCalls++;
+      for (const point of service.keypointTracker.trackedPoints) {
+        point.age++;
+        point.totalSuccessfulFrames++;
+      }
+      return {
+        success: true,
+        activePointCount: 8,
+        successRate: 1,
+        averageError: 1,
+      };
+    },
+    refreshKeypoints: () => false,
+  };
+  service.persistenceSystem = {
+    attemptRecovery: () => ({
+      success: true,
+      position: { x: 112, y: 121 },
+      confidence: 0.78,
+      scale: 1,
+      method: 'template_matching',
+    })
+  };
+
+  const result = service.updateAnchor({ width: 320, height: 240 });
+
+  assert.equal(result.success, true);
+  assert.equal(result.state, 'mapping');
+  assert.equal(trackCalls, 1);
+  assert.equal(initializeCalls, 0);
+  assert.ok(service.keypointTracker.trackedPoints.every(point => point.age === 5));
+});
+
+test('candidate bootstrap reinitializes when too few landmarks exist for coherent refresh', () => {
+  const service = new ImageAnchorService();
+  class FakeMat {
+    clone() { return new FakeMat(); }
+    delete() {}
+  }
+  let initializedCount = 0;
+
+  service.initialized = true;
+  service.anchored = true;
+  service.anchorState = 'candidate';
+  service.templateRegion = { x: 60, y: 70, width: 90, height: 90 };
+  service.trackingRegion = { x: 50, y: 60, width: 120, height: 120 };
+  service.templateAnchorOffset = { x: 0, y: 0 };
+  service.currentPosition = { x: 110, y: 120, z: 0 };
+  service.currentNormal = { x: 0, y: 0, z: 1 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 0.4, inlierCount: 0, method: 'candidate' };
+  service.metrics = {
+    keypointCount: 2,
+    templateKeypoints: 2,
+    trackingSuccessRate: 0,
+    poseModel: 'sparse-reconstruction',
+    reconstructionReady: false,
+  };
+  service.cv = {
+    Mat: FakeMat,
+    COLOR_RGBA2GRAY: 0,
+    matFromImageData: () => new FakeMat(),
+    cvtColor: () => {}
+  };
+  service.keypointDetector = {
+    extractKeypoints: () => ({
+      keypoints: Array.from({ length: 8 }, (_, index) => ({ pt: { x: 82 + index * 5, y: 92 + index * 3 }, response: 1 })),
+      descriptors: null,
+      method: 'fake-adaptive-gftt',
+      count: 8,
+    }),
+    assessTemplateQuality: () => ({ overall: 0.16, keypointCount: 8, spatialDistribution: 0.4 })
+  };
+  service.keypointTracker = {
+    trackedPoints: Array.from({ length: 2 }, (_, index) => ({
+      id: index,
+      original: { x: 80 + index * 5, y: 90 + index * 3 },
+      current: { x: 80 + index * 5, y: 90 + index * 3 },
+      status: 'active',
+      age: 1,
+      totalSuccessfulFrames: 1,
+    })),
+    initializeTracking: (cv, keypoints) => {
+      initializedCount = keypoints.length;
+      service.keypointTracker.trackedPoints = keypoints.map((keypoint, index) => ({
+        id: index,
+        original: { ...keypoint.pt },
+        current: { ...keypoint.pt },
+        status: 'active',
+      }));
+    },
+    trackToFrame: () => ({
+      success: false,
+      activePointCount: 2,
+      successRate: 0,
+      averageError: 999,
+    }),
+    refreshKeypoints: () => false,
+  };
+  service.persistenceSystem = {
+    attemptRecovery: () => ({
+      success: false,
+    })
+  };
+
+  const result = service.updateAnchor({ width: 320, height: 240 });
+
+  assert.equal(result.success, true);
+  assert.equal(result.state, 'mapping');
+  assert.equal(initializedCount, 8);
+  assert.equal(service.keypointTracker.trackedPoints.length, 8);
+});
+
+test('landmark metrics report zero object ownership after all active points leave the mask', () => {
+  const service = new ImageAnchorService();
+  const data = new Uint8Array(100 * 80);
+  for (let y = 20; y <= 30; y++) {
+    for (let x = 20; x <= 30; x++) {
+      data[y * 100 + x] = 255;
+    }
+  }
+
+  service.objectSupportMask = createObjectSupportMask({
+    width: 100,
+    height: 80,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 25, y: 25 },
+    createdAtFrame: 0,
+    updatedAtFrame: 0,
+  });
+  service.currentObjectSupportMask = service.objectSupportMask;
+  service.metrics = {
+    keypointCount: 8,
+    landmarkCount: 8,
+    activeLandmarkCount: 8,
+    objectOwnedLandmarks: 8,
+  };
+  service.keypointTracker = {
+    trackedPoints: Array.from({ length: 8 }, (_, index) => ({
+      id: index,
+      current: { x: 60 + index, y: 60 },
+      status: 'active',
+    })),
+  };
+
+  service._recordLandmarkMetrics();
+
+  assert.equal(service.metrics.landmarkCount, 8);
+  assert.equal(service.metrics.activeLandmarkCount, 8);
+  assert.equal(service.metrics.objectOwnedLandmarks, 0);
 });
 
 test('records failed anchor creation diagnostics before returning to inactive', async () => {

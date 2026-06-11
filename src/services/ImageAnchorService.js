@@ -18,6 +18,7 @@ import {
 import { AnchorPersistenceSystem } from '../cv/anchor.persistence.js';
 import { OneEuroFilter } from '../cv/oneEuroFilter.js';
 import { checkCriticalFeatures } from '../cv/opencv.features.test.js';
+import { isPointInsideObjectSupport, warpObjectSupportMask } from '../cv/objectSupportMask.js';
 import { calculateTemplateRegion } from '../utils/templateRegion.js';
 import { SurfaceNormalStabilizer } from '../utils/normalStabilizer.js';
 import { logger } from '../utils/logger.js';
@@ -25,6 +26,9 @@ import { logger } from '../utils/logger.js';
 const POSE_MODEL = 'object-pose';
 const TRACKING_MODES = new Set([POSE_MODEL, ...RECONSTRUCTION_MODE_IDS]);
 const PLANAR_TARGET_CLASS_PATTERN = /book|laptop|keyboard|cell phone|tablet|tv|screen|sign|bag/i;
+const CANDIDATE_MIN_TRACKABLE_POINTS = 8;
+const CANDIDATE_REFRESH_INTERVAL = 3;
+const FACE_READINESS_REASON_RECONSTRUCTION = 'Build more object landmarks before showing the face';
 
 const createPositionFilter = () => new OneEuroFilter(60, 2.4, 0.075, 1.0);
 const createPlanarScaleFilter = () => new OneEuroFilter(60, 1.2, 0.08, 1.0);
@@ -85,6 +89,8 @@ export class ImageAnchorService {
     this.currentPosition = null;
     this.currentNormal = null;
     this.currentPlanarTransform = null;
+    this.objectSupportMask = null;
+    this.currentObjectSupportMask = null;
     this.anchorTargetClass = null;
     this.trackingMode = POSE_MODEL;
     this.planarDominanceScore = 0;
@@ -95,6 +101,7 @@ export class ImageAnchorService {
     this.relocalizationKeyframeInterval = 10;
     this.fullFrameRecoveryInterval = 6;
     this.framesSinceFullFrameRecovery = this.fullFrameRecoveryInterval;
+    this.frameIndex = 0;
     
     // Resilience counters
     this.keypointFailureCount = 0;
@@ -243,13 +250,31 @@ export class ImageAnchorService {
         imageData.width, 
         imageData.height
       );
+      const objectSupportMask = this._selectObjectSupportMask(boundingBox);
 
       logger.info('ImageAnchor', `Creating anchor at (${tapPosition.x}, ${tapPosition.y}) with region ${templateRegion.width}x${templateRegion.height}`);
 
       // Extract keypoints from template region
-      const keypointResult = this.keypointDetector.extractKeypoints(this.cv, gray, templateRegion);
-      
-      if (keypointResult.keypoints.length < this.minAnchorKeypoints) {
+      const keypointResult = this._extractObjectKeypoints(gray, templateRegion, objectSupportMask, {
+        minKeypoints: this.minAnchorKeypoints,
+      });
+
+      // Assess template quality
+      const qualityAssessment = this.keypointDetector.assessTemplateQuality(
+        keypointResult.keypoints,
+        keypointResult.descriptors,
+        templateRegion.width,
+        templateRegion.height,
+        templateRegion.x,
+        templateRegion.y
+      );
+      const hasProgressiveObjectEvidence = !!objectSupportMask;
+      const hasStrongInitialKeypoints = keypointResult.keypoints.length >= this.minAnchorKeypoints;
+      const hasUsableTemplateQuality = this._isUsableTemplateQuality(qualityAssessment.overall);
+      const shouldCreateCandidate = hasProgressiveObjectEvidence &&
+        (!hasStrongInitialKeypoints || !hasUsableTemplateQuality);
+
+      if (!hasStrongInitialKeypoints && !shouldCreateCandidate) {
         const message = `Insufficient keypoints: ${keypointResult.keypoints.length} (need at least ${this.minAnchorKeypoints})`;
         this._recordAnchorFailure('keypoints', message, {
           keypointCount: keypointResult.keypoints.length,
@@ -263,17 +288,7 @@ export class ImageAnchorService {
         throw new Error(message);
       }
 
-      // Assess template quality
-      const qualityAssessment = this.keypointDetector.assessTemplateQuality(
-        keypointResult.keypoints,
-        keypointResult.descriptors,
-        templateRegion.width,
-        templateRegion.height,
-        templateRegion.x,
-        templateRegion.y
-      );
-
-      if (!this._isUsableTemplateQuality(qualityAssessment.overall)) {
+      if (!hasUsableTemplateQuality && !shouldCreateCandidate) {
         const message = `Poor template quality: ${qualityAssessment.overall.toFixed(2)} (need at least ${this.minimumTemplateQuality.toFixed(2)})`;
         this._recordAnchorFailure('template-quality', message, {
           keypointCount: keypointResult.keypoints.length,
@@ -306,23 +321,29 @@ export class ImageAnchorService {
         templateRegion
       );
       const trackingKeypointResult = trackingRegion
-        ? this.keypointDetector.extractKeypoints(this.cv, gray, trackingRegion)
+        ? this._extractObjectKeypoints(gray, trackingRegion, objectSupportMask, {
+            minKeypoints: this.minAnchorKeypoints,
+          })
         : keypointResult;
       const trackingKeypoints = this._mergeTrackingKeypoints(
         keypointResult.keypoints,
         trackingKeypointResult.keypoints
       );
 
-      this.keypointTracker.initializeTracking(this.cv, trackingKeypoints, gray, tapPosition);
+      if (trackingKeypoints.length > 0) {
+        this.keypointTracker.initializeTracking(this.cv, trackingKeypoints, gray, tapPosition);
+      }
       this.reconstructor = this._createConfiguredReconstructor(
         isReconstructionMode(this.trackingMode) ? this.trackingMode : RECONSTRUCTION_POSE_MODEL
       );
       this.reconstructor.reset({ anchorReference: tapPosition, templateRegion, targetClass });
-      const keyframeResult = this.relocalizer.storeKeyframeFromTrackedPoints(
-        gray,
-        this.keypointTracker.trackedPoints,
-        startTime
-      );
+      const keyframeResult = trackingKeypoints.length > 0
+        ? this.relocalizer.storeKeyframeFromTrackedPoints(
+          gray,
+          this.keypointTracker.trackedPoints,
+          startTime
+        )
+        : { success: false, keyframeCount: 0, descriptorCount: 0, reason: 'No bootstrap landmarks available' };
       this.framesSinceRelocalizationKeyframe = 0;
 
       // Store template for persistence system
@@ -343,19 +364,39 @@ export class ImageAnchorService {
         method: 'created'
       };
       this.currentNormal = { x: 0, y: 0, z: 1 };
+      this.objectSupportMask = objectSupportMask;
+      this.currentObjectSupportMask = objectSupportMask;
       this.anchorTargetClass = targetClass;
       this.normalStabilizer.reset(this.currentNormal);
       this.framesWithoutNormalPose = 0;
       this.planarScaleFilter.filter(1, startTime);
       this.curvedScaleFilter.filter(1, startTime);
       this.planarRotationFilter.filter(0, startTime);
-      this.anchorState = this._getInitialAnchorState(qualityAssessment.overall);
+      const bootstrapState = shouldCreateCandidate
+        ? this._getProgressiveBootstrapState(trackingKeypoints.length, qualityAssessment.overall)
+        : this._getInitialAnchorState(qualityAssessment.overall);
+      const readiness = this._createReadiness({
+        state: bootstrapState,
+        poseSource: null,
+        reconstructionReady: false,
+      });
+      const evidence = this._calculateObjectEvidence({
+        objectSupportMask,
+        region: trackingRegion || templateRegion,
+        templateKeypoints: keypointResult.keypoints,
+        trackingKeypoints,
+      });
+
+      this.anchorState = bootstrapState;
       this.framesSinceRefresh = 0;
       this.framesSinceFullFrameRecovery = this.fullFrameRecoveryInterval;
       
       // Initialize metrics
       this.metrics = {
         keypointCount: trackingKeypoints.length,
+        activeLandmarks: trackingKeypoints.length,
+        objectOwnedLandmarks: evidence.objectOwnedLandmarks,
+        inactiveLandmarks: 0,
         templateKeypoints: keypointResult.keypoints.length,
         trackingKeypoints: trackingKeypoints.length,
         templateQuality: qualityAssessment.overall,
@@ -363,6 +404,15 @@ export class ImageAnchorService {
         templateRegion: { ...templateRegion },
         targetClass,
         trackingRegion: this.trackingRegion ? { ...this.trackingRegion } : null,
+        objectSupportMaskSource: objectSupportMask ? objectSupportMask.source : null,
+        objectSupportMaskConfidence: objectSupportMask ? objectSupportMask.confidence : null,
+        maskCoverage: evidence.maskCoverage,
+        maskConfidence: evidence.maskConfidence,
+        keypointDensity: evidence.keypointDensity,
+        backgroundRejected: evidence.backgroundRejected,
+        objectSupportMaskBounds: objectSupportMask ? { ...objectSupportMask.bbox } : null,
+        currentObjectSupportMaskSource: objectSupportMask ? objectSupportMask.source : null,
+        currentObjectSupportMaskBounds: objectSupportMask ? { ...objectSupportMask.bbox } : null,
         templateCenter: { ...templateCenter },
         templateAnchorOffset: { ...templateAnchorOffset },
         templateRegionArea: templateRegion.width * templateRegion.height,
@@ -375,6 +425,7 @@ export class ImageAnchorService {
         poseModel: isReconstructionMode(this.trackingMode) ? this.trackingMode : POSE_MODEL,
         trackingMode: this.trackingMode,
         poseSource: null,
+        readiness,
         reconstructionState: this.reconstructor.getState().state,
         reconstructionReady: false,
         reconstructionFrames: 0,
@@ -410,7 +461,10 @@ export class ImageAnchorService {
         keypoints: keypointResult.keypoints.length,
         quality: qualityAssessment.overall,
         method: keypointResult.method,
+        objectSupportMaskSource: objectSupportMask ? objectSupportMask.source : null,
         state: this.anchorState,
+        readiness,
+        evidence,
         trackingMode: this.trackingMode,
         reconstructionState: this.metrics.reconstructionState,
         reconstructionReady: this.metrics.reconstructionReady
@@ -446,6 +500,7 @@ export class ImageAnchorService {
 
     const startTime = this.now();
     const timestamp = startTime;
+    this.frameIndex++;
     
     logger.debug('ImageAnchor', 'Starting anchor update:', {
       anchorState: this.anchorState,
@@ -461,7 +516,10 @@ export class ImageAnchorService {
 
       let updateResult;
 
-      if (this.anchorState === 'tracking' || this.anchorState === 'stable') {
+      if (this.anchorState === 'candidate' ||
+          (this.anchorState === 'mapping' && this._activeTrackedPointCount() < CANDIDATE_MIN_TRACKABLE_POINTS)) {
+        updateResult = this._updateProgressiveBootstrap(gray, timestamp);
+      } else if (this.anchorState === 'mapping' || this.anchorState === 'tracking' || this.anchorState === 'stable') {
         // Primary tracking via keypoints
         logger.debug('ImageAnchor', 'Attempting keypoint tracking');
         updateResult = this._updateWithKeypoints(gray, timestamp);
@@ -665,6 +723,12 @@ export class ImageAnchorService {
             state: this.anchorState
           };
         }
+      }
+
+      const maskRejected = this._rejectTrackedPointsOutsideObjectSupport();
+      if (maskRejected > 0) {
+        trackingResult.activePointCount = this._activeTrackedPointCount();
+        this.metrics.backgroundRejected = (this.metrics.backgroundRejected || 0) + maskRejected;
       }
 
       // Update metrics  
@@ -1057,6 +1121,131 @@ export class ImageAnchorService {
     return recoveryResult;
   }
 
+  _updateProgressiveBootstrap(grayImage, timestamp) {
+    const recoveryResult = this.persistenceSystem.attemptRecovery(this.cv, grayImage, this.currentPosition);
+    if (recoveryResult.success) {
+      this.currentPosition = {
+        x: this.positionFilterX.filter(recoveryResult.position.x, timestamp),
+        y: this.positionFilterY.filter(recoveryResult.position.y, timestamp),
+        z: 0,
+      };
+      this.currentPlanarTransform = this._updatePlanarTransform({
+        scale: recoveryResult.scale,
+        rotation: this.currentPlanarTransform?.rotation || 0,
+        confidence: recoveryResult.confidence,
+        inlierCount: 0,
+        method: recoveryResult.method,
+      }, timestamp);
+    }
+
+    let trackingResult = null;
+    const hasTrackableBootstrap = this._activeTrackedPointCount() >= CANDIDATE_MIN_TRACKABLE_POINTS &&
+      typeof this.keypointTracker.trackToFrame === 'function';
+    if (hasTrackableBootstrap) {
+      trackingResult = this.keypointTracker.trackToFrame(this.cv, grayImage);
+      if (trackingResult.success) {
+        this._rejectTrackedPointsOutsideObjectSupport();
+        const anchorPosition = typeof this.keypointTracker.getAnchorPosition === 'function'
+          ? this.keypointTracker.getAnchorPosition()
+          : null;
+        if (anchorPosition) {
+          this.currentPosition = {
+            x: this.positionFilterX.filter(anchorPosition.x, timestamp),
+            y: this.positionFilterY.filter(anchorPosition.y, timestamp),
+            z: 0,
+          };
+          this.currentPlanarTransform = this._updatePlanarTransform({
+            scale: anchorPosition.scale ?? this.currentPlanarTransform?.scale ?? 1,
+            rotation: anchorPosition.rotation ?? this.currentPlanarTransform?.rotation ?? 0,
+            confidence: anchorPosition.confidence ?? trackingResult.successRate ?? 0.5,
+            inlierCount: anchorPosition.inlierCount ?? trackingResult.activePointCount ?? 0,
+            method: anchorPosition.method ?? 'candidate-tracking',
+          }, timestamp);
+        }
+      }
+    }
+
+    const region = this._getProgressiveBootstrapRegion(grayImage);
+    const objectSupportMask = this._getCurrentObjectSupportMask();
+    const keypointResult = this._extractObjectKeypoints(grayImage, region, objectSupportMask, {
+      minKeypoints: CANDIDATE_MIN_TRACKABLE_POINTS,
+    });
+    const qualityAssessment = this.keypointDetector.assessTemplateQuality(
+      keypointResult.keypoints,
+      keypointResult.descriptors,
+      region.width,
+      region.height,
+      region.x,
+      region.y
+    );
+
+    const activeBeforeRefresh = this._activeTrackedPointCount();
+    if (activeBeforeRefresh < 3 && keypointResult.keypoints.length > 0) {
+      this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, grayImage, this.currentPosition);
+    } else if (keypointResult.keypoints.length > 0 &&
+        typeof this.keypointTracker.refreshKeypoints === 'function') {
+      this.keypointTracker.refreshKeypoints(
+        this.cv,
+        grayImage,
+        this.keypointDetector,
+        region,
+        objectSupportMask,
+        {
+          minNewKeypoints: CANDIDATE_MIN_TRACKABLE_POINTS,
+          adaptive: true,
+        }
+      );
+    }
+
+    const activeLandmarks = this._activeTrackedPointCount();
+    this.anchorState = this._getProgressiveBootstrapState(activeLandmarks, qualityAssessment.overall);
+    const readiness = this._createReadiness({
+      state: this.anchorState,
+      poseSource: null,
+      reconstructionReady: false,
+    });
+    const evidence = this._calculateObjectEvidence({
+      objectSupportMask,
+      region,
+      templateKeypoints: keypointResult.keypoints,
+      trackingKeypoints: keypointResult.keypoints,
+      trackedPoints: this.keypointTracker.trackedPoints,
+    });
+
+    this.metrics = {
+      ...this.metrics,
+      keypointCount: activeLandmarks,
+      activeLandmarks,
+      activeLandmarkCount: activeLandmarks,
+      inactiveLandmarks: Math.max(0, (this.keypointTracker.trackedPoints?.length || 0) - activeLandmarks),
+      inactiveLandmarkCount: Math.max(0, (this.keypointTracker.trackedPoints?.length || 0) - activeLandmarks),
+      objectOwnedLandmarks: evidence.objectOwnedLandmarks,
+      templateQuality: qualityAssessment.overall,
+      qualityState: this._getTemplateQualityState(qualityAssessment.overall),
+      trackingSuccessRate: trackingResult?.successRate ?? (activeLandmarks >= CANDIDATE_MIN_TRACKABLE_POINTS ? 0.5 : 0),
+      maskCoverage: evidence.maskCoverage,
+      maskConfidence: evidence.maskConfidence,
+      keypointDensity: evidence.keypointDensity,
+      backgroundRejected: evidence.backgroundRejected,
+      readiness,
+      lastFailureReason: readiness.faceReady ? null : readiness.reason,
+      lastFailureStage: readiness.faceReady ? null : 'progressive-bootstrap',
+    };
+
+    return {
+      success: true,
+      position: this.currentPosition,
+      normal: this.currentNormal,
+      planarTransform: this.currentPlanarTransform,
+      confidence: trackingResult?.successRate ?? (activeLandmarks >= CANDIDATE_MIN_TRACKABLE_POINTS ? 0.5 : 0.25),
+      method: recoveryResult.success ? 'candidate_template_bootstrap' : 'candidate_landmark_bootstrap',
+      state: this.anchorState,
+      readiness,
+      evidence,
+      recoverable: true,
+    };
+  }
+
   _attemptKeyframeRelocalization(grayImage, timestamp, failureReason) {
     if (!this.relocalizer.hasKeyframes()) {
       return {
@@ -1065,7 +1254,12 @@ export class ImageAnchorService {
       };
     }
 
-    const keypointResult = this.keypointDetector.extractKeypoints(this.cv, grayImage, null);
+    const keypointResult = this.keypointDetector.extractKeypoints(
+      this.cv,
+      grayImage,
+      null,
+      this._getCurrentObjectSupportMask()
+    );
     const relocalizationResult = this.relocalizer.relocalize(grayImage, keypointResult.keypoints);
     this.metrics.relocalizationKeyframes = relocalizationResult.keyframeCount || this.metrics.relocalizationKeyframes || 0;
     this.metrics.relocalizationQueryKeypoints = keypointResult.keypoints.length;
@@ -1175,7 +1369,7 @@ export class ImageAnchorService {
       grayImage,
       this.keypointDetector,
       this._clampTemplateRegion(refreshRegion, grayImage.cols, grayImage.rows),
-      this.currentPosition
+      this._getCurrentObjectSupportMask()
     );
 
     if (refreshResult) {
@@ -1195,6 +1389,11 @@ export class ImageAnchorService {
   }
 
   _shouldRefreshKeypoints({ overallQuality, poseInliers }) {
+    if (this.anchorState === 'mapping') {
+      const activeCount = this.metrics.activeLandmarkCount || this.metrics.keypointCount || 0;
+      return this.framesSinceRefresh >= CANDIDATE_REFRESH_INTERVAL && activeCount < 32;
+    }
+
     const geometrySupportsMapGrowth = poseInliers >= 8;
     const needsOcclusionSupport = geometrySupportsMapGrowth &&
       this.metrics.trackingSuccessRate >= 0.6 &&
@@ -1209,7 +1408,7 @@ export class ImageAnchorService {
       return needsOcclusionSupport;
     }
 
-    if (!['tracking', 'stable', 'degraded'].includes(this.anchorState)) {
+    if (!['tracking', 'stable', 'degraded', 'mapping'].includes(this.anchorState)) {
       return false;
     }
 
@@ -1237,10 +1436,44 @@ export class ImageAnchorService {
   _recordLandmarkMetrics() {
     const points = this.keypointTracker?.trackedPoints || [];
     const activePoints = points.filter(point => point.status === 'active');
+    const objectSupportMask = this._getCurrentObjectSupportMask();
+    const objectOwnedLandmarks = objectSupportMask
+      ? activePoints.filter(point => isPointInsideObjectSupport(objectSupportMask, point.current)).length
+      : activePoints.length;
 
-    this.metrics.landmarkCount = points.length || this.metrics.keypointCount || 0;
-    this.metrics.activeLandmarkCount = activePoints.length || this.metrics.keypointCount || 0;
+    this.metrics.landmarkCount = points.length;
+    this.metrics.activeLandmarkCount = activePoints.length;
+    this.metrics.activeLandmarks = this.metrics.activeLandmarkCount;
     this.metrics.inactiveLandmarkCount = Math.max(0, this.metrics.landmarkCount - this.metrics.activeLandmarkCount);
+    this.metrics.inactiveLandmarks = this.metrics.inactiveLandmarkCount;
+    this.metrics.objectOwnedLandmarks = objectOwnedLandmarks;
+  }
+
+  _rejectTrackedPointsOutsideObjectSupport() {
+    const objectSupportMask = this._getCurrentObjectSupportMask();
+    if (!objectSupportMask) {
+      return 0;
+    }
+
+    let rejected = 0;
+    for (const point of this.keypointTracker.trackedPoints || []) {
+      if (point.status !== 'active') {
+        continue;
+      }
+
+      if (isPointInsideObjectSupport(objectSupportMask, point.current)) {
+        point.outsideObjectFrames = 0;
+        continue;
+      }
+
+      point.outsideObjectFrames = (point.outsideObjectFrames || 0) + 1;
+      if (point.outsideObjectFrames >= 2) {
+        point.status = 'outlier';
+        rejected++;
+      }
+    }
+
+    return rejected;
   }
 
   /**
@@ -1261,7 +1494,8 @@ export class ImageAnchorService {
       const keypointResult = this.keypointDetector.extractKeypoints(
         this.cv,
         grayImage,
-        this._clampTemplateRegion(region, grayImage.cols, grayImage.rows)
+        this._clampTemplateRegion(region, grayImage.cols, grayImage.rows),
+        this._getCurrentObjectSupportMask()
       );
       
       if (keypointResult.keypoints.length >= 15) {
@@ -1283,6 +1517,35 @@ export class ImageAnchorService {
 
   _extractTargetClass(detection) {
     return detection?.class || detection?.label || detection?.name || null;
+  }
+
+  _selectObjectSupportMask(detection) {
+    if (!detection) {
+      return null;
+    }
+
+    if (detection.objectSupportMask) {
+      return detection.objectSupportMask;
+    }
+
+    return null;
+  }
+
+  _getCurrentObjectSupportMask() {
+    if (!this.objectSupportMask || !this.currentPosition || !this.currentPlanarTransform) {
+      return this.objectSupportMask;
+    }
+
+    this.currentObjectSupportMask = warpObjectSupportMask(this.objectSupportMask, {
+      position: this.currentPosition,
+      scale: this.currentPlanarTransform.scale,
+      rotation: this.currentPlanarTransform.rotation,
+      updatedAtFrame: this.frameIndex,
+    });
+
+    this.metrics.currentObjectSupportMaskSource = this.currentObjectSupportMask.source;
+    this.metrics.currentObjectSupportMaskBounds = { ...this.currentObjectSupportMask.bbox };
+    return this.currentObjectSupportMask;
   }
 
   _calculateTrackingRegion(boundingBox, imageWidth, imageHeight, templateRegion) {
@@ -2072,6 +2335,107 @@ export class ImageAnchorService {
     return quality >= this.targetTemplateQuality ? 'tracking' : 'degraded';
   }
 
+  _getProgressiveBootstrapState(keypointCount, quality) {
+    return keypointCount >= CANDIDATE_MIN_TRACKABLE_POINTS && quality >= this.minimumTemplateQuality
+      ? 'mapping'
+      : 'candidate';
+  }
+
+  _activeTrackedPointCount() {
+    return (this.keypointTracker.trackedPoints || []).filter(point => point.status === 'active').length;
+  }
+
+  _getProgressiveBootstrapRegion(grayImage) {
+    const sourceRegion = this.trackingRegion || this.templateRegion;
+    const templateCenter = this._getTemplateCenterFromAnchorPosition();
+    return this._clampTemplateRegion({
+      x: templateCenter.x - sourceRegion.width / 2,
+      y: templateCenter.y - sourceRegion.height / 2,
+      width: sourceRegion.width,
+      height: sourceRegion.height,
+    }, grayImage.cols, grayImage.rows);
+  }
+
+  _extractObjectKeypoints(grayImage, region, objectSupportMask, { minKeypoints }) {
+    const primary = this.keypointDetector.extractKeypoints(this.cv, grayImage, region, objectSupportMask);
+    if (primary.keypoints.length >= minKeypoints || typeof this.keypointDetector.extractAdaptiveKeypoints !== 'function') {
+      return primary;
+    }
+
+    const adaptive = this.keypointDetector.extractAdaptiveKeypoints(this.cv, grayImage, region, objectSupportMask, {
+      minKeypoints,
+    });
+
+    return adaptive.keypoints.length > primary.keypoints.length ? adaptive : primary;
+  }
+
+  _createReadiness({ state, poseSource, reconstructionReady }) {
+    const reconstructionMode = isReconstructionMode(this.trackingMode);
+    const strongPlanarPose = poseSource === 'planar-homography';
+    const faceReady = state !== 'candidate' &&
+      state !== 'mapping' &&
+      (!reconstructionMode || reconstructionReady || strongPlanarPose);
+    const reason = faceReady
+      ? 'Face overlay is ready'
+      : FACE_READINESS_REASON_RECONSTRUCTION;
+
+    return { faceReady, reason };
+  }
+
+  _calculateObjectEvidence({
+    objectSupportMask,
+    region,
+    templateKeypoints = [],
+    trackingKeypoints = [],
+    trackedPoints = null,
+  }) {
+    const regionArea = Math.max(1, region.width * region.height);
+    const maskPixels = objectSupportMask
+      ? this._countMaskPixelsInRegion(objectSupportMask, region)
+      : regionArea;
+    const objectOwnedKeypoints = objectSupportMask
+      ? trackingKeypoints.filter(keypoint => isPointInsideObjectSupport(objectSupportMask, keypoint.pt || keypoint)).length
+      : trackingKeypoints.length;
+    const activeTrackedPoints = trackedPoints
+      ? trackedPoints.filter(point => point.status === 'active')
+      : [];
+    const objectOwnedTrackedPoints = objectSupportMask
+      ? activeTrackedPoints.filter(point => isPointInsideObjectSupport(objectSupportMask, point.current)).length
+      : activeTrackedPoints.length;
+    const objectOwnedLandmarks = trackedPoints ? objectOwnedTrackedPoints : objectOwnedKeypoints;
+
+    return {
+      maskCoverage: maskPixels / regionArea,
+      maskConfidence: objectSupportMask ? objectSupportMask.confidence : null,
+      templateKeypoints: templateKeypoints.length,
+      activeLandmarks: trackedPoints ? activeTrackedPoints.length : trackingKeypoints.length,
+      objectOwnedLandmarks,
+      keypointDensity: objectOwnedKeypoints / regionArea,
+      backgroundRejected: Math.max(0, trackingKeypoints.length - objectOwnedKeypoints),
+    };
+  }
+
+  _countMaskPixelsInRegion(objectSupportMask, region) {
+    let pixels = 0;
+    for (let y = 0; y < region.height; y++) {
+      const frameY = region.y + y;
+      if (frameY < 0 || frameY >= objectSupportMask.height) {
+        continue;
+      }
+
+      for (let x = 0; x < region.width; x++) {
+        const frameX = region.x + x;
+        if (frameX >= 0 &&
+            frameX < objectSupportMask.width &&
+            objectSupportMask.data[frameY * objectSupportMask.width + frameX] > 0) {
+          pixels++;
+        }
+      }
+    }
+
+    return pixels;
+  }
+
   _recordAnchorFailure(stage, reason, metrics = {}) {
     this.metrics = {
       ...this.metrics,
@@ -2090,6 +2454,11 @@ export class ImageAnchorService {
     this.metrics.lastUpdateMethod = result.method || null;
     this.metrics.lastUpdateConfidence = typeof result.confidence === 'number' ? result.confidence : null;
     this.metrics.keypointFailureCount = this.keypointFailureCount;
+    this.metrics.readiness = result.readiness || this._createReadiness({
+      state: this.anchorState,
+      poseSource: this.metrics.poseSource,
+      reconstructionReady: this.metrics.reconstructionReady,
+    });
 
     if (!result.success) {
       this.metrics.lastFailureReason = result.reason || this.metrics.lastFailureReason || 'Anchor update failed';
@@ -2141,6 +2510,8 @@ export class ImageAnchorService {
       this.currentPosition = null;
       this.currentNormal = null;
       this.currentPlanarTransform = null;
+      this.objectSupportMask = null;
+      this.currentObjectSupportMask = null;
       this.planarDominanceScore = 0;
       this.templateRegion = null;
       this.trackingRegion = null;
@@ -2151,6 +2522,7 @@ export class ImageAnchorService {
       this.framesSinceRelocalizationKeyframe = 0;
       this.framesSinceFullFrameRecovery = this.fullFrameRecoveryInterval;
       this.framesWithoutNormalPose = 0;
+      this.frameIndex = 0;
       
       // Reset resilience counters
       this.keypointFailureCount = 0;

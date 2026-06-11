@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 
 import {
   createCylindricalCanSequence,
+  createGlossyPhoneSequence,
   createHandledMugSequence,
+  createLabelBottleSequence,
   createRigidBoxSequence,
   createSyntheticObjectSuite,
   createPlanarBookSequence,
@@ -492,4 +494,66 @@ test('real OpenCV replay keeps a multi-plane rigid box attached through perspect
   assert.ok(headPose.maxRotationError <= 0.95, `box head rotation error ${headPose.maxRotationError.toFixed(3)}rad`);
   assert.ok(headPose.maxHeadJumpExcess <= 0.1, `box head jump excess ${headPose.maxHeadJumpExcess.toFixed(3)}`);
   assert.ok(headPose.maxScaleLogError <= 0.32, `box head scale log error ${headPose.maxScaleLogError.toFixed(3)}`);
+});
+
+test('real OpenCV replay covers label bottle and glossy phone object-building cases', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenarios = [
+    {
+      name: 'label-bottle',
+      sequence: createLabelBottleSequence({
+        frameCount: 28,
+        occlusionFrames: [8, 9, 20],
+        backgroundVariant: 'kitchen',
+        backgroundSeed: 79,
+      }),
+      limits: {
+        maxAnchorError: 22,
+        meanAnchorError: 13,
+        maxScaleError: 0.19,
+        maxFrameJump: 11,
+        maxWorldPositionError: 0.16,
+        maxScaleLogError: 0.19,
+        maxRotationError: 0.78,
+        maxHeadJumpExcess: 0.055,
+      },
+    },
+    {
+      name: 'glossy-phone',
+      sequence: createGlossyPhoneSequence({
+        frameCount: 28,
+        occlusionFrames: [9, 10, 21],
+        backgroundVariant: 'window',
+        backgroundSeed: 67,
+      }),
+      limits: {
+        maxAnchorError: 17,
+        meanAnchorError: 8,
+        maxScaleError: 0.15,
+        maxFrameJump: 11,
+        maxWorldPositionError: 0.13,
+        maxScaleLogError: 0.14,
+        maxRotationError: 0.9,
+        maxHeadJumpExcess: 0.055,
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const replay = await replayImageAnchorSequence({
+      cv,
+      sequence: scenario.sequence,
+      trackingMode: 'sparse-reconstruction',
+    });
+    const summary = summarizeReplay(replay);
+    const headPose = scoreHeadPoseReplay({ replay, sequence: scenario.sequence }).summary;
+
+    assertReplayWithinLimits({
+      name: scenario.name,
+      replay,
+      summary,
+      headPose,
+      limits: scenario.limits,
+    });
+  }
 });

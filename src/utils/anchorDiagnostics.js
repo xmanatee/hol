@@ -8,6 +8,12 @@ const collectAnchorDetails = (anchorState) => {
     landmarkCount: metrics.landmarkCount ?? metrics.keypointCount ?? 0,
     activeLandmarkCount: metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0,
     inactiveLandmarkCount: metrics.inactiveLandmarkCount ?? 0,
+    objectOwnedLandmarks: metrics.objectOwnedLandmarks ?? 0,
+    maskCoverage: metrics.maskCoverage ?? null,
+    maskConfidence: metrics.maskConfidence ?? null,
+    keypointDensity: metrics.keypointDensity ?? null,
+    backgroundRejected: metrics.backgroundRejected ?? 0,
+    readiness: metrics.readiness || null,
     landmarkRefreshAdded: metrics.landmarkRefreshAdded ?? 0,
     templateKeypoints: metrics.templateKeypoints ?? metrics.keypointCount ?? 0,
     templateQuality: metrics.templateQuality ?? null,
@@ -114,6 +120,26 @@ export const describeAnchorState = ({
       severity: 'good',
       message: 'Anchor is stable',
       recommendation: 'The face should stay attached while the object remains visible.',
+      details
+    };
+  }
+
+  if (serviceState?.state === 'candidate') {
+    return {
+      status: 'candidate',
+      severity: 'warn',
+      message: 'Object selected; building initial support',
+      recommendation: details.readiness?.reason || 'Hold the object in view while support landmarks are collected.',
+      details
+    };
+  }
+
+  if (serviceState?.state === 'mapping') {
+    return {
+      status: 'mapping',
+      severity: 'warn',
+      message: 'Building 3D object map',
+      recommendation: details.readiness?.reason || 'Slowly turn and tilt the object while keeping it visible.',
       details
     };
   }

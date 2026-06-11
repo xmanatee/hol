@@ -358,7 +358,9 @@ const CameraView = () => {
               position: result.position
             });
             const qualityLabel = result.state === 'degraded' ? 'weak' : 'solid';
-            if (isReconstructionMode(result.trackingMode)) {
+            if (result.state === 'candidate' || result.state === 'mapping') {
+              showAnchorFeedback(`Object selected. Building support from ${result.evidence?.objectOwnedLandmarks || result.keypoints} object landmarks.`, 'warn');
+            } else if (isReconstructionMode(result.trackingMode)) {
               showAnchorFeedback(`Anchor created with ${result.keypoints} keypoints. Slowly turn and tilt the object to build the 3D map.`, 'warn');
             } else {
               showAnchorFeedback(`Anchor created with ${result.keypoints} keypoints (${qualityLabel} lock).`, result.state === 'degraded' ? 'warn' : 'good');

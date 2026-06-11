@@ -4,6 +4,7 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { createRegionOpenCvMask } from './objectSupportMask.js';
 
 export class KeypointDetector {
   constructor() {
@@ -39,21 +40,26 @@ export class KeypointDetector {
    * @param {Object} region - {x, y, width, height} region of interest
    * @returns {Object} - {keypoints, descriptors, method}
    */
-  extractKeypoints(cv, image, region = null) {
+  extractKeypoints(cv, image, region = null, objectSupportMask = null) {
     if (!this.initialized) {
       throw new Error('KeypointDetector not initialized');
     }
 
+    const extractionRegion = region || (objectSupportMask
+      ? { x: 0, y: 0, width: image.cols, height: image.rows }
+      : null);
     let roi = image;
-    if (region) {
-      const rect = new cv.Rect(region.x, region.y, region.width, region.height);
+    if (extractionRegion) {
+      const rect = new cv.Rect(extractionRegion.x, extractionRegion.y, extractionRegion.width, extractionRegion.height);
       roi = image.roi(rect);
     }
 
     try {
       // Extract corners using goodFeaturesToTrack (Shi-Tomasi)
       const corners = new cv.Mat();
-      const mask = new cv.Mat(); // Empty mask - detect in entire ROI
+      const mask = objectSupportMask && extractionRegion
+        ? createRegionOpenCvMask(cv, objectSupportMask, extractionRegion)
+        : new cv.Mat();
       
       cv.goodFeaturesToTrack(
         roi,                      // Input image
@@ -74,8 +80,8 @@ export class KeypointDetector {
         const y = corners.data32F[i * 2 + 1];
         
         // Adjust coordinates if we used a ROI
-        const adjustedX = region ? x + region.x : x;
-        const adjustedY = region ? y + region.y : y;
+        const adjustedX = extractionRegion ? x + extractionRegion.x : x;
+        const adjustedY = extractionRegion ? y + extractionRegion.y : y;
         
         keypoints.push({
           pt: { x: adjustedX, y: adjustedY },
@@ -98,6 +104,7 @@ export class KeypointDetector {
         keypoints: keypoints,
         descriptors: null, // Shi-Tomasi doesn't provide descriptors
         method: 'GFTT', // Good Features To Track
+        maskSource: objectSupportMask ? objectSupportMask.source : null,
         count: keypoints.length
       };
       
@@ -106,6 +113,99 @@ export class KeypointDetector {
       if (roi !== image) roi.delete();
       return { keypoints: [], descriptors: null, method: 'FAILED', count: 0 };
     }
+  }
+
+  extractAdaptiveKeypoints(cv, image, region = null, objectSupportMask = null, { minKeypoints = 12 } = {}) {
+    const original = {
+      qualityLevel: this.qualityLevel,
+      minDistance: this.minDistance,
+      maxCorners: this.maxCorners,
+    };
+    const attempts = [
+      { qualityLevel: Math.min(this.qualityLevel, 0.02), minDistance: Math.min(this.minDistance, 10), maxCorners: Math.max(this.maxCorners, 220) },
+      { qualityLevel: 0.01, minDistance: 8, maxCorners: 300 },
+      { qualityLevel: 0.006, minDistance: 6, maxCorners: 360 },
+    ];
+    let best = { keypoints: [], descriptors: null, method: 'GFTT_ADAPTIVE', count: 0 };
+
+    for (const attempt of attempts) {
+      this.qualityLevel = attempt.qualityLevel;
+      this.minDistance = attempt.minDistance;
+      this.maxCorners = attempt.maxCorners;
+      const result = this.extractKeypoints(cv, image, region, objectSupportMask);
+      if (result.keypoints.length > best.keypoints.length) {
+        best = {
+          ...result,
+          method: 'GFTT_ADAPTIVE',
+        };
+      }
+      if (best.keypoints.length >= minKeypoints) {
+        break;
+      }
+    }
+
+    this.qualityLevel = original.qualityLevel;
+    this.minDistance = original.minDistance;
+    this.maxCorners = original.maxCorners;
+
+    if (best.keypoints.length >= minKeypoints || !objectSupportMask || !region) {
+      return best;
+    }
+
+    const bootstrapKeypoints = this._createMaskGridBootstrapKeypoints(
+      objectSupportMask,
+      region,
+      minKeypoints - best.keypoints.length
+    );
+
+    return {
+      ...best,
+      keypoints: [...best.keypoints, ...bootstrapKeypoints],
+      method: bootstrapKeypoints.length > 0 ? 'GFTT_ADAPTIVE_GRID_BOOTSTRAP' : best.method,
+      count: best.keypoints.length + bootstrapKeypoints.length,
+    };
+  }
+
+  _createMaskGridBootstrapKeypoints(objectSupportMask, region, missingCount) {
+    const keypoints = [];
+    const columns = 4;
+    const rows = 4;
+    const existingDistance = 8;
+
+    for (let row = 0; row < rows && keypoints.length < missingCount; row++) {
+      for (let column = 0; column < columns && keypoints.length < missingCount; column++) {
+        const x = Math.round(region.x + (column + 0.5) * region.width / columns);
+        const y = Math.round(region.y + (row + 0.5) * region.height / rows);
+        if (!this._pointInsideMask(objectSupportMask, x, y)) {
+          continue;
+        }
+
+        const overlaps = keypoints.some(point => Math.hypot(point.pt.x - x, point.pt.y - y) < existingDistance);
+        if (overlaps) {
+          continue;
+        }
+
+        keypoints.push({
+          pt: { x, y },
+          size: this.blockSize,
+          angle: 0,
+          response: 0.04,
+          octave: 0,
+          class_id: -1,
+          bootstrapOnly: true,
+        });
+      }
+    }
+
+    return keypoints;
+  }
+
+  _pointInsideMask(objectSupportMask, x, y) {
+    return x >= 0 &&
+      y >= 0 &&
+      x < objectSupportMask.width &&
+      y < objectSupportMask.height &&
+      objectSupportMask.data[y * objectSupportMask.width + x] > 0;
   }
 
   /**

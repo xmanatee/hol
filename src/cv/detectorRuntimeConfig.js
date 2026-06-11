@@ -13,7 +13,11 @@ export function getDetectorWasmThreadCount({ crossOriginIsolated, hardwareConcur
 export function configureDetectorRuntime(env, runtime) {
   env.wasm.simd = true;
   env.wasm.numThreads = getDetectorWasmThreadCount(runtime);
-  env.wasm.wasmPaths = DETECTOR_WASM_PATHS;
+  if (runtime.wasmPaths) {
+    env.wasm.wasmPaths = runtime.wasmPaths;
+  } else {
+    env.wasm.wasmPaths = DETECTOR_WASM_PATHS;
+  }
 
   return {
     executionProviders: [...DETECTOR_EXECUTION_PROVIDERS],

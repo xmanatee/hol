@@ -36,6 +36,22 @@ test('detector runtime configures ONNX WASM paths and thread count', () => {
   });
 });
 
+test('detector runtime accepts bundler-provided ONNX WASM paths', () => {
+  const env = { wasm: {} };
+  const wasmPaths = {
+    mjs: '/assets/ort-wasm-simd-threaded.generated.mjs',
+    wasm: '/assets/ort-wasm-simd-threaded.generated.wasm'
+  };
+
+  configureDetectorRuntime(env, {
+    crossOriginIsolated: false,
+    hardwareConcurrency: 8,
+    wasmPaths
+  });
+
+  assert.equal(env.wasm.wasmPaths, wasmPaths);
+});
+
 test('detector runtime stays single threaded without cross-origin isolation', () => {
   assert.equal(getDetectorWasmThreadCount({
     crossOriginIsolated: false,

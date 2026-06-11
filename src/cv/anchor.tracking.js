@@ -59,7 +59,8 @@ export class KeypointTracker {
       index,
       { x: kp.pt.x, y: kp.pt.y },
       { x: kp.pt.x, y: kp.pt.y },
-      kp.response
+      kp.response,
+      kp.bootstrapOnly === true
     ));
     this.nextPointId = this.trackedPoints.length;
 
@@ -745,6 +746,7 @@ export class KeypointTracker {
         original: this._invertReferenceTransformation(current, transformation),
         current,
         response: kp.response,
+        bootstrapOnly: kp.bootstrapOnly === true,
         status: 'active',
         errorHistory: [],
         age: 0,
@@ -803,7 +805,7 @@ export class KeypointTracker {
       }
 
       const id = this.nextPointId ?? (Math.max(-1, ...this.trackedPoints.map(point => point.id)) + 1);
-      this.trackedPoints.push(this._createTrackedPoint(id, original, current, kp.response));
+      this.trackedPoints.push(this._createTrackedPoint(id, original, current, kp.response, kp.bootstrapOnly === true));
       this.nextPointId = id + 1;
       added++;
     }
@@ -868,12 +870,13 @@ export class KeypointTracker {
     };
   }
 
-  _createTrackedPoint(id, original, current, response) {
+  _createTrackedPoint(id, original, current, response, bootstrapOnly = false) {
     return {
       id,
       original,
       current,
       response,
+      bootstrapOnly,
       status: 'active',
       errorHistory: [],
       age: 0,
@@ -991,7 +994,10 @@ export class KeypointTracker {
    * @returns {Array} Array of {prev: {x,y}, curr: {x,y}} point pairs
    */
   getCorrespondences(options = {}) {
-    const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
+    const activePoints = this.trackedPoints.filter(pt => (
+      pt.status === 'active' &&
+      (!pt.bootstrapOnly || pt.age >= 3 || pt.totalSuccessfulFrames >= 3)
+    ));
     const {
       maxReferenceDistance = Infinity,
       minCount = 8,
@@ -1041,7 +1047,10 @@ export class KeypointTracker {
     });
   }
 
-  refreshKeypoints(cv, currentGray, keypointDetector, region) {
+  refreshKeypoints(cv, currentGray, keypointDetector, region, objectSupportMask = null, {
+    minNewKeypoints = 15,
+    adaptive = false,
+  } = {}) {
     try {
       // Validate inputs
       if (!cv || !currentGray || !keypointDetector || !region) {
@@ -1065,9 +1074,13 @@ export class KeypointTracker {
 
       const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
       const referenceTransformation = this._selectRefreshReferenceTransformation(cv, activePoints);
-      const newKeypoints = keypointDetector.extractKeypoints(cv, currentGray, region);
+      const newKeypoints = adaptive && typeof keypointDetector.extractAdaptiveKeypoints === 'function'
+        ? keypointDetector.extractAdaptiveKeypoints(cv, currentGray, region, objectSupportMask, {
+            minKeypoints: minNewKeypoints,
+          })
+        : keypointDetector.extractKeypoints(cv, currentGray, region, objectSupportMask);
       
-      if (newKeypoints.keypoints.length >= 15) {
+      if (newKeypoints.keypoints.length >= minNewKeypoints) {
         if (referenceTransformation) {
           this._mergeTrackingPointsPreservingReference(newKeypoints.keypoints, currentGray, referenceTransformation);
         } else {

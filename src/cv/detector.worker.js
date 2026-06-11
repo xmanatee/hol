@@ -11,6 +11,9 @@ const log = {
   warn: (tag, ...args) => postMessage({ type: 'log', level: 'warn', tag, args })
 };
 
+const ortWasmMjsUrl = new URL('../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs', import.meta.url).href;
+const ortWasmUrl = new URL('../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm', import.meta.url).href;
+
 log.info('Worker', 'Starting detector worker...');
 
 log.info('Worker', 'ONNX Runtime imported successfully');
@@ -30,7 +33,11 @@ async function initializeONNX() {
   try {
     const runtimeConfig = configureDetectorRuntime(ort.env, {
       crossOriginIsolated: self.crossOriginIsolated,
-      hardwareConcurrency: navigator.hardwareConcurrency
+      hardwareConcurrency: navigator.hardwareConcurrency,
+      wasmPaths: {
+        mjs: ortWasmMjsUrl,
+        wasm: ortWasmUrl
+      }
     });
     log.info('Worker', 'WASM paths configured');
     

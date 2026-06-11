@@ -268,6 +268,9 @@ export const useCameraSystem = (config = {}) => {
             updateMetric('Keypoint count', metrics.keypointCount || 0);
             updateMetric('Landmark count', metrics.landmarkCount || metrics.keypointCount || 0);
             updateMetric('Active landmarks', metrics.activeLandmarkCount || metrics.keypointCount || 0);
+            updateMetric('Object-owned landmarks', metrics.objectOwnedLandmarks || 0);
+            updateMetric('Mask coverage', metrics.maskCoverage || 0);
+            updateMetric('Background rejected', metrics.backgroundRejected || 0);
             updateMetric('Landmark refresh added', metrics.landmarkRefreshAdded || 0);
             updateMetric('Tracking success rate', (metrics.trackingSuccessRate || 0) * 100);
             updateMetric('Homography inliers', metrics.homographyInliers || 0);

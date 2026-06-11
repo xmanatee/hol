@@ -100,6 +100,9 @@ const AnchorDiagnosticsSection = ({ diagnostics }) => {
       <DiagnosticRow label="Status" value={diagnostics.status} tone={diagnostics.severity} />
       <DiagnosticRow label="Keypoints" value={details.keypointCount ?? 0} tone={keypointTone} />
       <DiagnosticRow label="Landmarks" value={`${details.activeLandmarkCount ?? 0}/${details.landmarkCount ?? 0}`} tone={(details.landmarkCount ?? 0) >= 40 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Object landmarks" value={details.objectOwnedLandmarks ?? 0} tone={(details.objectOwnedLandmarks ?? 0) >= 8 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Mask coverage" value={formatPercent(details.maskCoverage)} tone={(details.maskCoverage ?? 0) > 0.03 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Background rejected" value={details.backgroundRejected ?? 0} tone={(details.backgroundRejected ?? 0) > 0 ? 'good' : 'neutral'} />
       <DiagnosticRow label="Hidden landmarks" value={details.inactiveLandmarkCount ?? 0} tone={(details.inactiveLandmarkCount ?? 0) > 0 ? 'warn' : 'good'} />
       <DiagnosticRow label="Last refresh" value={`+${details.landmarkRefreshAdded ?? 0}`} tone={(details.landmarkRefreshAdded ?? 0) > 0 ? 'good' : 'neutral'} />
       <DiagnosticRow label="Template quality" value={formatPercent(details.templateQuality)} tone={templateQualityTone} />

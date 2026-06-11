@@ -49,6 +49,10 @@ const renderAnchorMode = (ctx, { anchor, anchorState }) => {
   
   if (state === 'stable') {
     fillColor = '#ffd700'; // Gold for stable
+  } else if (state === 'mapping') {
+    fillColor = '#00d4ff';
+  } else if (state === 'candidate') {
+    fillColor = '#ff8800';
   } else if (state === 'initializing') {
     fillColor = '#ff8800'; // Orange for initializing
   } else if (state === 'lost') {
@@ -108,6 +112,7 @@ const drawAnchorInfo = (ctx, anchor, anchorState, centerX, centerY) => {
   const info = [
     `State: ${state}`,
     `Keypoints: ${metrics?.keypointCount || 0}`,
+    `Owned: ${metrics?.objectOwnedLandmarks || metrics?.keypointCount || 0}`,
     `Quality: ${((metrics?.templateQuality || 0) * 100).toFixed(0)}%`
   ];
   
