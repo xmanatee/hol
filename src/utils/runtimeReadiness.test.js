@@ -20,7 +20,7 @@ test('blocks camera readiness on insecure non-local origins', () => {
   assert.equal(readiness.checks.find(check => check.id === 'secureContext').ok, false);
 });
 
-test('accepts localhost camera development while flagging missing external services', () => {
+test('accepts localhost camera development while flagging missing optional external services', () => {
   const readiness = assessRuntimeReadiness({
     protocol: 'http:',
     hostname: '127.0.0.1',
@@ -34,12 +34,16 @@ test('accepts localhost camera development while flagging missing external servi
     elevenLabsAgentId: ''
   });
 
-  assert.equal(readiness.status, 'service-setup');
+  assert.equal(readiness.status, 'ready');
   assert.equal(readiness.cameraReady, true);
-  assert.equal(readiness.serviceReady, false);
+  assert.equal(readiness.serviceReady, true);
   assert.deepEqual(
     readiness.checks.filter(check => !check.ok).map(check => check.id),
     ['openAIKey', 'elevenLabsAgentId']
+  );
+  assert.deepEqual(
+    readiness.checks.filter(check => !check.ok).map(check => check.severity),
+    ['optional', 'optional']
   );
 });
 

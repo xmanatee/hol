@@ -54,19 +54,21 @@ export const assessRuntimeReadiness = ({
       ok: Boolean(hasAudioContext),
       severity: 'service',
       detail: hasAudioContext ? 'Audio playback can initialize' : 'AudioContext is unavailable'
-    },
+    }
+  ];
+  const optionalServiceChecks = [
     {
       id: 'openAIKey',
       label: 'OpenAI key',
       ok: normalizePresent(openAIKey),
-      severity: 'service',
+      severity: 'optional',
       detail: normalizePresent(openAIKey) ? 'Persona generation configured' : 'Persona generation needs VITE_OPENAI_API_KEY'
     },
     {
       id: 'elevenLabsAgentId',
       label: 'ElevenLabs agent',
       ok: normalizePresent(elevenLabsAgentId),
-      severity: 'service',
+      severity: 'optional',
       detail: normalizePresent(elevenLabsAgentId) ? 'Voice playback configured' : 'Voice playback needs VITE_ELEVENLABS_AGENT_ID'
     }
   ];
@@ -79,15 +81,17 @@ export const assessRuntimeReadiness = ({
       detail: crossOriginIsolated ? 'WASM threading can be enabled' : 'ONNX will stay single-threaded without COOP/COEP isolation'
     }
   ];
-  const checks = [...cameraChecks, ...serviceChecks, ...performanceChecks];
+  const checks = [...cameraChecks, ...serviceChecks, ...optionalServiceChecks, ...performanceChecks];
   const cameraReady = cameraChecks.every(check => check.ok);
   const serviceReady = serviceChecks.every(check => check.ok);
+  const optionalServicesReady = optionalServiceChecks.every(check => check.ok);
   const performanceReady = performanceChecks.every(check => check.ok);
 
   return {
     status: cameraReady ? (serviceReady ? (performanceReady ? 'ready' : 'performance-limited') : 'service-setup') : 'blocked',
     cameraReady,
     serviceReady,
+    optionalServicesReady,
     performanceReady,
     checks
   };
