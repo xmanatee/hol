@@ -98,7 +98,7 @@ export class KeypointDetector {
       mask.delete();
       if (roi !== image) roi.delete();
 
-      logger.info('KeypointDetector', `Extracted ${keypoints.length} Shi-Tomasi corners`);
+      logger.debug('KeypointDetector', `Extracted ${keypoints.length} Shi-Tomasi corners`);
       
       return {
         keypoints: keypoints,

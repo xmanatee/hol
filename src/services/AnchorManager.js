@@ -71,7 +71,16 @@ export class AnchorManager {
       id: `${detection.class}-${Math.round(detection.x1)}-${Math.round(detection.y1)}-${Math.round(detection.x2)}-${Math.round(detection.y2)}`
     }));
 
-    logger.info('AnchorManager', `Processed ${detections.length} detections in detection mode`);
+    const detectionSignature = this.detections
+      .map(detection => detection.class)
+      .sort()
+      .join('|');
+    logger.debugChanged(
+      'AnchorManager',
+      'detection-mode-summary',
+      `${this.detections.length}:${detectionSignature}`,
+      `Processed ${this.detections.length} detections in detection mode`
+    );
     this._notifyUpdate();
     return this.detections;
   }
@@ -243,7 +252,7 @@ export class AnchorManager {
    * @private
    */
   _onAnchorUpdate(anchorServiceState) {
-    logger.debug('AnchorManager', 'Received anchor service state update:', {
+    logger.debugEvery('AnchorManager', 'anchor-service-state-update', 1000, 'Received anchor service state update:', {
       anchored: anchorServiceState.anchored,
       state: anchorServiceState.state,
       position: anchorServiceState.position,
@@ -304,7 +313,7 @@ export class AnchorManager {
         lostFrameCount: anchorServiceState.metrics?.lostFrameCount ?? 0,
         lastFailureReason: anchorServiceState.metrics?.lastFailureReason || null
       };
-      logger.debug('AnchorManager', 'Updated activeAnchor position:', this.activeAnchor.position);
+      logger.debugEvery('AnchorManager', 'active-anchor-position', 1000, 'Updated activeAnchor position:', this.activeAnchor.position);
     }
     
     if (previousState !== anchorServiceState.state) {

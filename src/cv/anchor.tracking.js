@@ -106,7 +106,7 @@ export class KeypointTracker {
    * @returns {Object} - Tracking results with statistics
    */
   trackToFrame(cv, currentGray) {
-    logger.debug('KeypointTracker', 'trackToFrame called - checking initialization', {
+    logger.debugEvery('KeypointTracker', 'track-to-frame-start', 1000, 'trackToFrame called - checking initialization', {
       initialized: this.initialized,
       hasPreviousGray: !!this.previousGray,
       totalTrackedPoints: this.trackedPoints.length
@@ -125,7 +125,7 @@ export class KeypointTracker {
     }
 
     const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
-    logger.debug('KeypointTracker', 'Active points check:', {
+    logger.debugEvery('KeypointTracker', 'active-points-check', 1000, 'Active points check:', {
       totalPoints: this.trackedPoints.length,
       activePoints: activePoints.length,
       minRequired: 8
@@ -155,7 +155,7 @@ export class KeypointTracker {
       const status = new cv.Mat(activePoints.length, 1, cv.CV_8UC1);
       const error = new cv.Mat(activePoints.length, 1, cv.CV_32FC1);
       
-      logger.debug('KeypointTracker', 'Matrix initialization:', {
+      logger.debugEvery('KeypointTracker', 'matrix-initialization', 1000, 'Matrix initialization:', {
         prevPointsSize: `${prevPoints.rows}x${prevPoints.cols}`,
         nextPointsSize: `${nextPoints.rows}x${nextPoints.cols}`,
         statusSize: `${status.rows}x${status.cols}`,
@@ -188,7 +188,7 @@ export class KeypointTracker {
       let totalError = 0;
       const trackingResults = [];
       
-      logger.debug('KeypointTracker', 'Processing Lucas-Kanade results:', {
+      logger.debugEvery('KeypointTracker', 'lucas-kanade-processing', 1000, 'Processing Lucas-Kanade results:', {
         attempt: this.trackingAttempts,
         isInitialTracking,
         loseThreshold,
@@ -272,7 +272,7 @@ export class KeypointTracker {
       }
       
       // Log detailed results (sample of first 5 points to avoid spam)
-      logger.info('KeypointTracker', 'Lucas-Kanade tracking results:', {
+      logger.debugEvery('KeypointTracker', 'lucas-kanade-results', 1000, 'Lucas-Kanade tracking results:', {
         attempt: this.trackingAttempts,
         isInitialTracking,
         loseThreshold,
@@ -294,7 +294,7 @@ export class KeypointTracker {
       if (!isInitialTracking) {
         this._filterOutliers(cv);
       } else {
-        logger.debug('KeypointTracker', 'Skipping outlier filtering during initial tracking phase');
+        logger.debugEvery('KeypointTracker', 'outlier-filter-initial-skip', 1000, 'Skipping outlier filtering during initial tracking phase');
       }
 
       // Update previous frame
@@ -350,19 +350,19 @@ export class KeypointTracker {
   _filterOutliers() {
     const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
     
-    logger.debug('KeypointTracker', 'Outlier filtering - starting:', {
+    logger.debugEvery('KeypointTracker', 'outlier-filter-start', 1000, 'Outlier filtering - starting:', {
       activePoints: activePoints.length,
       minRequired: 15
     });
     
     if (activePoints.length < 15) {
-      logger.debug('KeypointTracker', 'Skipping outlier filtering - too few points');
+      logger.debugEvery('KeypointTracker', 'outlier-filter-too-few', 1000, 'Skipping outlier filtering - too few points');
       return;
     }
 
     const transformation = this._estimateReferenceTransformation(activePoints);
     if (!transformation) {
-      logger.debug('KeypointTracker', 'Skipping outlier filtering - no coherent transform');
+      logger.debugEvery('KeypointTracker', 'outlier-filter-no-transform', 1000, 'Skipping outlier filtering - no coherent transform');
       return;
     }
 
@@ -378,7 +378,7 @@ export class KeypointTracker {
     let outlierCount = 0;
     let protectedCount = 0;
     
-    logger.debug('KeypointTracker', 'Outlier filtering - motion analysis:', {
+    logger.debugEvery('KeypointTracker', 'outlier-filter-motion-analysis', 1000, 'Outlier filtering - motion analysis:', {
       rotation: `${(transformation.rotation * 180 / Math.PI).toFixed(1)}deg`,
       scale: transformation.scale.toFixed(3),
       medianResidual: medianResidual.toFixed(2),
@@ -405,14 +405,14 @@ export class KeypointTracker {
           outlierCount++;
         } else {
           // Highly stable points keep active status despite motion deviation
-          logger.debug('KeypointTracker', `Protected stable keypoint ${point.id} from outlier filtering`);
+          logger.debugEvery('KeypointTracker', 'outlier-filter-protected-stable', 1000, `Protected stable keypoint ${point.id} from outlier filtering`);
         }
       }
     }
     
     const remainingActive = activePoints.length - outlierCount;
     
-    logger.info('KeypointTracker', 'Outlier filtering results:', {
+    logger.debugEvery('KeypointTracker', 'outlier-filter-results', 1000, 'Outlier filtering results:', {
       originalActive: activePoints.length,
       outliers: outlierCount,
       remainingActive: remainingActive,
@@ -433,7 +433,7 @@ export class KeypointTracker {
       ? this._estimateReferenceTransformation(activePoints)
       : null;
     
-    logger.debug('KeypointTracker', 'Attempting to recover outlier points:', {
+    logger.debugEvery('KeypointTracker', 'recover-outlier-points', 1000, 'Attempting to recover outlier points:', {
       outlierCount: outlierPoints.length,
       activeCount: this.trackedPoints.filter(pt => pt.status === 'active').length
     });

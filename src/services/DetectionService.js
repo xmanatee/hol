@@ -225,14 +225,23 @@ export class DetectionService {
         this._notifyListeners('modelLoaded');
         break;
 
-      case 'detections':
-        logger.info('Detection', 'Received detections:', data.detections?.length || 0, 'objects');
+      case 'detections': {
+        const detectionCount = data.detections?.length || 0;
+        logger.debugChanged(
+          'Detection',
+          'detection-count',
+          detectionCount,
+          'Received detections:',
+          detectionCount,
+          'objects'
+        );
         this.lastProcessingTime = data.processingTime || 0;
         this._notifyListeners('detections', {
           detections: data.detections,
           processingTime: this.lastProcessingTime
         });
         break;
+      }
 
       case 'test_response':
         break;

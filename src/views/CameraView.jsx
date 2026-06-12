@@ -111,7 +111,7 @@ const CameraView = () => {
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   // Enhanced microphone controls
   const [microphoneGain, setMicrophoneGain] = useState(3.0);
-  const [microphoneDebugMode, setMicrophoneDebugMode] = useState(true);
+  const [microphoneDebugMode, setMicrophoneDebugMode] = useState(false);
   const [microphoneBaselineResetToken, setMicrophoneBaselineResetToken] = useState(0);
 
 
@@ -484,7 +484,7 @@ const CameraView = () => {
           
           // Log tracking updates every 30 frames (~1s at 30fps) to avoid spam
           if (frameCountRef.current % 30 === 0) {
-            logger.info('CameraView', 'Anchor tracking update:', {
+            logger.debug('CameraView', 'Anchor tracking update:', {
               success: updateResult?.success,
               reason: updateResult?.reason,
               method: updateResult?.method,
@@ -587,8 +587,7 @@ const CameraView = () => {
           });
         }
         
-        // Render tracked keypoints if anchor is active  
-        if (anchorSystemState?.anchorState?.anchored) {
+        if (showStats && anchorSystemState?.anchorState?.anchored) {
           renderKeypoints(ctx, services.anchor?.imageAnchorService);
         }
       });

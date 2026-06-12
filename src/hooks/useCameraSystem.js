@@ -246,7 +246,13 @@ export const useCameraSystem = (config = {}) => {
         setDetectionState(prev => ({ ...prev, isModelLoaded: true }));
       },
       onDetections: ({ detections, processingTime }) => {
-        logger.info('CameraSystem', 'Received detections:', detections.length);
+        logger.debugChanged(
+          'CameraSystem',
+          'detection-count',
+          detections.length,
+          'Received detections:',
+          detections.length
+        );
         setDetectionState(prev => ({ ...prev, processingTime, lastDetections: detections }));
         updateMetric('Detection amortized cost', processingTime);
       },
@@ -265,29 +271,29 @@ export const useCameraSystem = (config = {}) => {
         if (state.anchorState) {
           const { metrics } = state.anchorState;
           if (metrics) {
-            updateMetric('Keypoint count', metrics.keypointCount || 0);
-            updateMetric('Landmark count', metrics.landmarkCount || metrics.keypointCount || 0);
-            updateMetric('Active landmarks', metrics.activeLandmarkCount || metrics.keypointCount || 0);
-            updateMetric('Object-owned landmarks', metrics.objectOwnedLandmarks || 0);
-            updateMetric('Mask coverage', metrics.maskCoverage || 0);
-            updateMetric('Background rejected', metrics.backgroundRejected || 0);
-            updateMetric('Landmark refresh added', metrics.landmarkRefreshAdded || 0);
-            updateMetric('Tracking success rate', (metrics.trackingSuccessRate || 0) * 100);
-            updateMetric('Homography inliers', metrics.homographyInliers || 0);
-            updateMetric('Affine pose inliers', metrics.affinePoseInliers || 0);
-            updateMetric('Object pose inliers', metrics.objectPoseInliers || 0);
-            updateMetric('Reconstruction inliers', metrics.reconstructionPoseInliers || 0);
+            updateMetric('Keypoint count', metrics.keypointCount ?? 0);
+            updateMetric('Landmark count', metrics.landmarkCount ?? metrics.keypointCount ?? 0);
+            updateMetric('Active landmarks', metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0);
+            updateMetric('Object-owned landmarks', metrics.objectOwnedLandmarks ?? 0);
+            updateMetric('Mask coverage', metrics.maskCoverage ?? 0);
+            updateMetric('Background rejected', metrics.backgroundRejected ?? 0);
+            updateMetric('Landmark refresh added', metrics.landmarkRefreshAdded ?? 0);
+            updateMetric('Tracking success rate', (metrics.trackingSuccessRate ?? 0) * 100);
+            updateMetric('Homography inliers', metrics.homographyInliers ?? 0);
+            updateMetric('Affine pose inliers', metrics.affinePoseInliers ?? 0);
+            updateMetric('Object pose inliers', metrics.objectPoseInliers ?? 0);
+            updateMetric('Reconstruction inliers', metrics.reconstructionPoseInliers ?? 0);
             updateMetric('Pose model', metrics.poseModel || 'object-pose');
             updateMetric('Pose source', metrics.poseSource || 'None');
-            updateMetric('Pose residual', metrics.poseAverageResidual || 0);
-            updateMetric('Pose foreshortening', metrics.poseForeshortening || 1);
+            updateMetric('Pose residual', metrics.poseAverageResidual ?? 0);
+            updateMetric('Pose foreshortening', metrics.poseForeshortening ?? 1);
             updateMetric('Reconstruction state', metrics.reconstructionState || 'inactive');
-            updateMetric('Reconstruction frames', metrics.reconstructionFrames || 0);
-            updateMetric('Reconstruction landmarks', metrics.reconstructionLandmarks || 0);
-            updateMetric('Reconstruction depth', metrics.reconstructionDepthQuality || 0);
-            updateMetric('Anchor processing time', metrics.processingTime || 0);
-            updateMetric('Recovery attempts', metrics.recoveryAttempts || 0);
-            updateMetric('Lost frame count', metrics.lostFrameCount || 0);
+            updateMetric('Reconstruction frames', metrics.reconstructionFrames ?? 0);
+            updateMetric('Reconstruction landmarks', metrics.reconstructionLandmarks ?? 0);
+            updateMetric('Reconstruction depth', metrics.reconstructionDepthQuality ?? 0);
+            updateMetric('Anchor processing time', metrics.processingTime ?? 0);
+            updateMetric('Recovery attempts', metrics.recoveryAttempts ?? 0);
+            updateMetric('Lost frame count', metrics.lostFrameCount ?? 0);
             
             if (typeof metrics.templateQuality === 'number') {
               updateMetric('Template quality', metrics.templateQuality * 100);

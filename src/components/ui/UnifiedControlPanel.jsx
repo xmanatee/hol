@@ -1,9 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { PersonalityPanel } from './PersonalityPanel.jsx';
 import { ReconstructionPreviewSection } from './ReconstructionPreviewSection.jsx';
 import { DiagnosticRow } from './DiagnosticRow.jsx';
 import { formatNumber, formatPercent, formatRegion } from './diagnosticFormat.js';
-import { logger } from '../../utils/logger.js';
+import { LOG_TAG_PRESETS, logger } from '../../utils/logger.js';
+import {
+  createControlPanelContext,
+  createDefaultExpandedSections,
+  expandSectionsForWorkflow,
+} from '../../utils/controlPanelState.js';
 import { RECONSTRUCTION_MODES, isReconstructionMode } from '../../cv/anchor.reconstructionModes.js';
 
 const sectionIdForTitle = title => `control-panel-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
@@ -20,8 +25,8 @@ const CollapsibleSection = ({ title, isExpanded, onToggle, children }) => {
         className="min-h-11 w-full px-3 py-2 bg-gray-800 text-white border-0 text-sm cursor-pointer flex justify-between items-center hover:bg-gray-700"
       >
         <span>{title}</span>
-        <span className="text-xs text-gray-400">
-          {isExpanded ? '▲' : '▼'}
+        <span className="text-xs text-gray-400" aria-hidden="true">
+          {isExpanded ? '−' : '+'}
         </span>
       </button>
       {isExpanded && (
@@ -89,6 +94,7 @@ const AnchorDiagnosticsSection = ({ diagnostics }) => {
       : diagnostics.severity === 'good'
         ? 'border-green-700 bg-green-950 text-green-200'
         : 'border-gray-700 bg-gray-950 text-gray-300';
+  const isScanning = diagnostics.status === 'scanning' || diagnostics.status === 'pending';
 
   return (
     <div className="text-xs">
@@ -98,6 +104,16 @@ const AnchorDiagnosticsSection = ({ diagnostics }) => {
       </div>
 
       <DiagnosticRow label="Status" value={diagnostics.status} tone={diagnostics.severity} />
+      {isScanning && (
+        <>
+          <DiagnosticRow label="Processing" value={`${formatNumber(details.processingTime, 1)} ms`} tone={(details.processingTime ?? 0) <= 6 ? 'good' : 'warn'} />
+          <div className="mt-2 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-[10px] text-gray-400">
+            Object evidence appears after selection.
+          </div>
+        </>
+      )}
+      {!isScanning && (
+        <>
       <DiagnosticRow label="Keypoints" value={details.keypointCount ?? 0} tone={keypointTone} />
       <DiagnosticRow label="Landmarks" value={`${details.activeLandmarkCount ?? 0}/${details.landmarkCount ?? 0}`} tone={(details.landmarkCount ?? 0) >= 40 ? 'good' : 'warn'} />
       <DiagnosticRow label="Object landmarks" value={details.objectOwnedLandmarks ?? 0} tone={(details.objectOwnedLandmarks ?? 0) >= 8 ? 'good' : 'warn'} />
@@ -124,6 +140,8 @@ const AnchorDiagnosticsSection = ({ diagnostics }) => {
       <DiagnosticRow label="Lost frames" value={details.lostFrameCount ?? 0} tone={(details.lostFrameCount ?? 0) > 3 ? 'bad' : 'good'} />
       <DiagnosticRow label="Processing" value={`${formatNumber(details.processingTime, 1)} ms`} tone={(details.processingTime ?? 0) <= 6 ? 'good' : 'warn'} />
       <DiagnosticRow label="Template region" value={formatRegion(details.templateRegion)} />
+        </>
+      )}
       {details.lastFailureReason && (
         <div className="mt-2 rounded border border-red-800 bg-red-950/50 px-2 py-1 text-[10px] text-red-200">
           {details.lastFailureReason}
@@ -192,7 +210,7 @@ const ControlsSection = ({
   <div className="flex gap-2 flex-wrap">
     <button
       onClick={onToggleStats}
-      className="px-2 py-1 text-xs bg-gray-700 text-white border border-gray-600 rounded cursor-pointer hover:bg-gray-600"
+      className="min-h-11 px-3 py-2 text-xs bg-gray-700 text-white border border-gray-600 rounded cursor-pointer hover:bg-gray-600"
     >
       {showStats ? 'Hide Debug' : 'Show Debug'}
     </button>
@@ -200,15 +218,15 @@ const ControlsSection = ({
     {activeTrackId && (
       <button
         onClick={onUnlock}
-        className="px-2 py-1 text-xs bg-orange-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-orange-500"
+        className="min-h-11 px-3 py-2 text-xs bg-orange-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-orange-500"
       >
-        Unlock #{activeTrackId}
+        Clear Anchor
       </button>
     )}
     
     <button
       onClick={onStop}
-      className="px-2 py-1 text-xs bg-red-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-red-500"
+      className="min-h-11 px-3 py-2 text-xs bg-red-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-red-500"
     >
       Stop
     </button>
@@ -232,12 +250,12 @@ const StatusSection = ({
       </div>
       <div>
         Detection: <span className={detectionInitialized ? 'text-green-400' : 'text-yellow-400'}>
-          {detectionInitialized ? '✓' : '⏳'}
+          {detectionInitialized ? 'OK' : 'LOAD'}
         </span>
       </div>
       <div>
         Model: <span className={isModelLoaded ? 'text-green-400' : 'text-yellow-400'}>
-          {isModelLoaded ? '✓' : '⏳'}
+          {isModelLoaded ? 'OK' : 'LOAD'}
         </span>
       </div>
       <div>
@@ -255,13 +273,13 @@ const StatusSection = ({
     
     {activeTrackId && (
       <div className="p-1 bg-yellow-600/20 border border-yellow-400 rounded text-[10px] text-yellow-400">
-        Locked on track #{activeTrackId}
+        Anchor selected
       </div>
     )}
     
     {cameraState === 'active' && trackedObjects.length > 0 && !activeTrackId && (
       <div className="p-1 bg-blue-600/20 border border-blue-400 rounded text-[10px] text-blue-400">
-        💡 Tap on a bottle or cup to select it
+        Tap a detected object to start mapping.
       </div>
     )}
   </div>
@@ -288,25 +306,37 @@ const LogsSection = () => {
   };
 
   const handleEnableAll = () => {
-    discoveredTags.forEach(tag => logger.enableTag(tag));
+    logger.setEnabledTags(discoveredTags);
   };
 
   const handleDisableAll = () => {
-    discoveredTags.forEach(tag => logger.disableTag(tag));
+    logger.setEnabledTags([]);
   };
 
   return (
     <div className="text-xs">
+      <div className="mb-2 flex flex-wrap gap-1">
+        {Object.entries(LOG_TAG_PRESETS).map(([presetId, preset]) => (
+          <button
+            key={presetId}
+            onClick={() => logger.applyPreset(presetId)}
+            className="min-h-11 rounded border border-gray-600 bg-gray-800 px-2 py-1 text-[10px] text-gray-200 hover:bg-gray-700"
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex gap-2 mb-2">
         <button
           onClick={handleEnableAll}
-          className="px-2 py-1 text-[10px] bg-green-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-green-500"
+          className="min-h-11 px-2 py-1 text-[10px] bg-green-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-green-500"
         >
           Enable All
         </button>
         <button
           onClick={handleDisableAll}
-          className="px-2 py-1 text-[10px] bg-red-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-red-500"
+          className="min-h-11 px-2 py-1 text-[10px] bg-red-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-red-500"
         >
           Disable All
         </button>
@@ -320,7 +350,7 @@ const LogsSection = () => {
         ) : (
           <div className="grid grid-cols-1 gap-1">
             {discoveredTags.map(tag => (
-              <label key={tag} className="flex items-center text-gray-300 hover:text-white">
+              <label key={tag} className="flex min-h-11 items-center text-gray-300 hover:text-white">
                 <input
                   type="checkbox"
                   checked={enabledTags.includes(tag)}
@@ -329,7 +359,7 @@ const LogsSection = () => {
                 />
                 <span className="text-[10px] font-mono">{tag}</span>
                 {enabledTags.includes(tag) && (
-                  <span className="ml-auto text-green-400 text-[8px]">✓</span>
+                  <span className="ml-auto h-2 w-2 rounded-full bg-green-400" aria-hidden="true" />
                 )}
               </label>
             ))}
@@ -338,7 +368,7 @@ const LogsSection = () => {
       </div>
       
       <div className="mt-2 pt-2 border-t border-gray-700 text-[10px] text-gray-400">
-        Note: Error logs always show regardless of tag settings
+        Error logs always show. Presets keep console output focused while debugging.
       </div>
     </div>
   );
@@ -389,13 +419,13 @@ const MeshControlsSection = ({ discoveredMeshes = [], hiddenMeshes = new Set(), 
       <div className="flex gap-2 mb-2">
         <button
           onClick={handleShowAll}
-          className="px-2 py-1 text-[10px] bg-green-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-green-500"
+          className="min-h-11 px-2 py-1 text-[10px] bg-green-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-green-500"
         >
           Show All
         </button>
         <button
           onClick={handleHideAll}
-          className="px-2 py-1 text-[10px] bg-red-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-red-500"
+          className="min-h-11 px-2 py-1 text-[10px] bg-red-600 text-white border border-gray-600 rounded cursor-pointer hover:bg-red-500"
         >
           Hide All
         </button>
@@ -407,7 +437,7 @@ const MeshControlsSection = ({ discoveredMeshes = [], hiddenMeshes = new Set(), 
           <span className="text-gray-300 text-[10px] font-medium">Manual Rotation</span>
           <button
             onClick={resetRotation}
-            className="px-1.5 py-0.5 text-[9px] bg-gray-600 text-white border border-gray-500 rounded cursor-pointer hover:bg-gray-500"
+            className="min-h-11 px-2 py-1 text-[9px] bg-gray-600 text-white border border-gray-500 rounded cursor-pointer hover:bg-gray-500"
           >
             Reset
           </button>
@@ -433,7 +463,7 @@ const MeshControlsSection = ({ discoveredMeshes = [], hiddenMeshes = new Set(), 
       
       <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
         {discoveredMeshes.map(meshName => (
-          <label key={meshName} className="flex items-center text-gray-300">
+          <label key={meshName} className="flex min-h-11 items-center text-gray-300">
             <input
               type="checkbox"
               checked={!hiddenMeshes.has(meshName)}
@@ -442,7 +472,7 @@ const MeshControlsSection = ({ discoveredMeshes = [], hiddenMeshes = new Set(), 
             />
             <span className="font-mono text-[10px]">{meshName}</span>
             {!hiddenMeshes.has(meshName) && (
-              <span className="ml-auto text-green-400 text-[8px]">✓</span>
+              <span className="ml-auto h-2 w-2 rounded-full bg-green-400" aria-hidden="true" />
             )}
           </label>
         ))}
@@ -469,12 +499,12 @@ const MicrophoneSection = ({
   onToggleMicrophoneDebug,
   onResetMicrophoneBaseline,
   microphoneGain = 3.0,
-  microphoneDebugMode = true
+  microphoneDebugMode = false
 }) => {
   return (
     <div className="text-xs">
       <div className="flex flex-col gap-2">
-        <label className="flex items-center text-gray-300">
+        <label className="flex min-h-11 items-center text-gray-300">
           <input
             type="checkbox"
             checked={microphoneMode}
@@ -521,7 +551,7 @@ const MicrophoneSection = ({
             <div className="ml-4 flex gap-2">
               <button
                 onClick={() => onToggleMicrophoneDebug?.(!microphoneDebugMode)}
-                className={`px-2 py-1 text-[10px] rounded ${
+                className={`min-h-11 px-2 py-1 text-[10px] rounded ${
                   microphoneDebugMode 
                     ? 'bg-blue-600 text-white' 
                     : 'bg-gray-600 text-gray-300'
@@ -531,7 +561,7 @@ const MicrophoneSection = ({
               </button>
               <button
                 onClick={() => onResetMicrophoneBaseline?.()}
-                className="px-2 py-1 text-[10px] bg-yellow-600 text-white rounded hover:bg-yellow-700"
+                className="min-h-11 px-2 py-1 text-[10px] bg-yellow-600 text-white rounded hover:bg-yellow-700"
               >
                 Reset Baseline
               </button>
@@ -574,7 +604,7 @@ const MicrophoneSection = ({
             </div>
             
             <div className="ml-4 text-[10px] text-blue-400">
-              💡 Speak into your microphone to see the head react in real-time
+              Speak into your microphone to see the head react in real time.
             </div>
           </>
         )}
@@ -612,7 +642,7 @@ const ConfigSection = ({ onConfigChange, anchorTrackingMode }) => {
                 setTrackingMode(mode);
                 onConfigChange?.({ anchorTrackingMode: mode });
               }}
-              className={`rounded border px-2 py-1 text-[10px] ${
+              className={`min-h-11 rounded border px-2 py-1 text-[10px] ${
                 trackingMode === mode
                   ? 'border-green-600 bg-green-950 text-green-300'
                   : 'border-gray-700 bg-gray-900 text-gray-400 hover:bg-gray-800'
@@ -682,22 +712,31 @@ const UnifiedControlPanel = ({
   onToggleMicrophoneDebug,
   onResetMicrophoneBaseline,
   microphoneGain = 3.0,
-  microphoneDebugMode = true
+  microphoneDebugMode = false
 }) => {
   const [isVisible, setIsVisible] = useState(false); // Minimized by default
-  const [expandedSections, setExpandedSections] = useState({
-    status: false, // Collapsed by default
-    reconstruction: true,
-    diagnostics: true,
-    runtime: false,
-    controls: true,
-    microphone: false,
-    personality: false,
-    meshControls: false,
-    metrics: false,
-    logs: false,
-    config: false
-  });
+  const anchorStatus = anchorDiagnostics?.status || 'pending';
+  const runtimeStatus = runtimeReadiness?.status || 'unknown';
+  const previousControlPanelContextRef = useRef(createControlPanelContext({
+    anchorStatus,
+    runtimeStatus,
+    microphoneMode,
+  }));
+  const [expandedSections, setExpandedSections] = useState(() => createDefaultExpandedSections({
+    anchorStatus,
+    runtimeStatus,
+    microphoneMode,
+  }));
+
+  useEffect(() => {
+    const controlPanelContext = createControlPanelContext({
+      anchorStatus,
+      runtimeStatus,
+      microphoneMode,
+    });
+    setExpandedSections(prev => expandSectionsForWorkflow(prev, controlPanelContext, previousControlPanelContextRef.current));
+    previousControlPanelContextRef.current = controlPanelContext;
+  }, [anchorStatus, runtimeStatus, microphoneMode]);
 
   const toggleSection = (section) => {
     setExpandedSections(prev => ({
@@ -732,7 +771,7 @@ const UnifiedControlPanel = ({
   }
 
   return (
-    <div className="fixed top-4 right-4 w-72 max-h-full bg-black border border-gray-600 rounded p-3 text-sm z-50 overflow-y-auto pointer-events-auto">
+    <div className="fixed top-4 right-4 w-[min(20rem,calc(100vw-2rem))] max-h-[calc(100vh-2rem)] bg-black border border-gray-600 rounded p-3 text-sm z-50 overflow-y-auto pointer-events-auto">
       <div className="flex justify-between items-center mb-3 pb-2 border-b border-gray-600">
         <div>
           <h3 className="text-base font-medium text-white">

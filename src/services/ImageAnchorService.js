@@ -502,7 +502,7 @@ export class ImageAnchorService {
     const timestamp = startTime;
     this.frameIndex++;
     
-    logger.debug('ImageAnchor', 'Starting anchor update:', {
+    logger.debugEvery('ImageAnchor', 'anchor-update-start', 1000, 'Starting anchor update:', {
       anchorState: this.anchorState,
       position: this.currentPosition,
       imageSize: `${imageData.width}x${imageData.height}`
@@ -521,7 +521,7 @@ export class ImageAnchorService {
         updateResult = this._updateProgressiveBootstrap(gray, timestamp);
       } else if (this.anchorState === 'mapping' || this.anchorState === 'tracking' || this.anchorState === 'stable') {
         // Primary tracking via keypoints
-        logger.debug('ImageAnchor', 'Attempting keypoint tracking');
+        logger.debugEvery('ImageAnchor', 'attempting-keypoint-tracking', 1000, 'Attempting keypoint tracking');
         updateResult = this._updateWithKeypoints(gray, timestamp);
         
         if (!updateResult.success && this.anchorState !== 'lost') {
@@ -545,7 +545,7 @@ export class ImageAnchorService {
             this.anchorState = 'degraded';
             updateResult = this._updateWithTemplate(gray);
           } else {
-            logger.info('ImageAnchor', `Keypoint failure ${this.keypointFailureCount}/${this.maxKeypointFailures}, will retry next frame`);
+            logger.debug('ImageAnchor', `Keypoint failure ${this.keypointFailureCount}/${this.maxKeypointFailures}, will retry next frame`);
             updateResult = {
               success: true,
               reason: `Keypoint failure ${this.keypointFailureCount}/${this.maxKeypointFailures}: ${updateResult.reason}`,
@@ -568,7 +568,7 @@ export class ImageAnchorService {
       } else if (this.anchorState === 'degraded' || this.anchorState === 'lost') {
         // Try keypoint tracking recovery first if we have tracked points
         if (this.keypointTracker.trackedPoints?.length > 0) {
-          logger.debug('ImageAnchor', 'Attempting keypoint tracking recovery from degraded state');
+          logger.debugEvery('ImageAnchor', 'attempting-keypoint-recovery', 1000, 'Attempting keypoint tracking recovery from degraded state');
           const recoveryResult = this._updateWithKeypoints(gray, timestamp);
           
           if (recoveryResult.success) {
@@ -577,12 +577,12 @@ export class ImageAnchorService {
             this.keypointFailureCount = 0;
             updateResult = recoveryResult;
           } else {
-            logger.debug('ImageAnchor', 'Keypoint recovery failed, falling back to template matching');
+            logger.debugEvery('ImageAnchor', 'keypoint-recovery-fallback', 1000, 'Keypoint recovery failed, falling back to template matching');
             updateResult = this._updateWithTemplate(gray);
           }
         } else {
           // Recovery via template matching
-          logger.debug('ImageAnchor', 'Attempting template matching recovery');
+          logger.debugEvery('ImageAnchor', 'attempting-template-recovery', 1000, 'Attempting template matching recovery');
           updateResult = this._updateWithTemplate(gray);
           
           if (updateResult.success) {
@@ -637,7 +637,7 @@ export class ImageAnchorService {
             logger.warn('ImageAnchor', 'Full-frame recovery failed');
           }
         } else {
-          logger.debug('ImageAnchor', 'Object still lost; waiting for next full-frame recovery interval');
+          logger.debugEvery('ImageAnchor', 'lost-waiting-full-frame-recovery', 1000, 'Object still lost; waiting for next full-frame recovery interval');
           updateResult = {
             success: false,
             reason: updateResult.reason || 'Object outside camera view',
@@ -687,10 +687,10 @@ export class ImageAnchorService {
    */
   _updateWithKeypoints(grayImage, timestamp) {
     try {
-      logger.debug('ImageAnchor', 'Keypoint tracking - starting trackToFrame');
+      logger.debugEvery('ImageAnchor', 'track-to-frame-start', 1000, 'Keypoint tracking - starting trackToFrame');
       let trackingResult = this.keypointTracker.trackToFrame(this.cv, grayImage);
       
-      logger.info('ImageAnchor', 'Keypoint tracking result:', {
+      logger.debugEvery('ImageAnchor', 'keypoint-tracking-result', 1000, 'Keypoint tracking result:', {
         success: trackingResult.success,
         reason: trackingResult.reason || 'No reason provided',
         activePointCount: trackingResult.activePointCount,
@@ -819,7 +819,7 @@ export class ImageAnchorService {
       this._updatePlanarDominance(planarPose, correspondences);
       this.metrics.poseKeypointCount = correspondences.length;
       this.metrics.posePatchRadius = poseCorrespondenceOptions.maxReferenceDistance;
-      logger.debug('ImageAnchor', 'Pose correspondences check:', {
+      logger.debugEvery('ImageAnchor', 'pose-correspondences-check', 1000, 'Pose correspondences check:', {
         correspondences: correspondences.length,
         required: 8,
         radius: poseCorrespondenceOptions.maxReferenceDistance,
@@ -827,7 +827,7 @@ export class ImageAnchorService {
       });
       
       if (poseResult) {
-        logger.debug('ImageAnchor', 'Pose result:', {
+        logger.debugEvery('ImageAnchor', 'pose-result', 1000, 'Pose result:', {
           poseModel: POSE_MODEL,
           source: poseResult?.method || null,
           success: poseResult?.success,
@@ -839,7 +839,7 @@ export class ImageAnchorService {
       if (poseResult?.success) {
         this._recordPoseInlierMetrics(poseResult);
       } else if (correspondences.length < 8) {
-        logger.debug('ImageAnchor', 'Skipping pose estimation - insufficient correspondences:', {
+        logger.debugEvery('ImageAnchor', 'pose-insufficient-correspondences', 1000, 'Skipping pose estimation - insufficient correspondences:', {
           correspondences: correspondences.length,
           required: 8
         });
@@ -885,7 +885,7 @@ export class ImageAnchorService {
         positionMethod = planarPose.method;
         planarTransform = this._updatePlanarTransform(planarPose.planarTransform, timestamp);
         this._recordPlanarHomographyMetrics(planarPose);
-        logger.debug('ImageAnchor', `Using planar homography positioning: ${positionMethod}`);
+        logger.debugEvery('ImageAnchor', 'positioning-choice', 1000, `Using planar homography positioning: ${positionMethod}`);
       } else if (trackerAnchorPosition &&
           reconstructionPoseUsableForTransform &&
           !reconstructionConsistentWithTracker &&
@@ -901,7 +901,7 @@ export class ImageAnchorService {
           timestamp
         );
         this._recordReconstructionPoseMetrics(reconstructionPose, { active: false });
-        logger.debug('ImageAnchor', 'Using tracked anchor positioning with reconstruction orientation');
+        logger.debugEvery('ImageAnchor', 'positioning-choice', 1000, 'Using tracked anchor positioning with reconstruction orientation');
       } else if (reconstructionPoseUsableForTransform &&
           (!suppressReconstructionForPlanarTarget || useStrongCurvedReconstructionPosition)) {
         newPosition = this._filterPositionCandidate(reconstructionPose.position, timestamp, reconstructionPose.method);
@@ -917,7 +917,7 @@ export class ImageAnchorService {
           timestamp
         );
         this._recordReconstructionPoseMetrics(reconstructionPose);
-        logger.debug('ImageAnchor', `Using sparse reconstruction positioning: ${positionMethod}`);
+        logger.debugEvery('ImageAnchor', 'positioning-choice', 1000, `Using sparse reconstruction positioning: ${positionMethod}`);
       } else if (trackerAnchorPosition && holdPlanarTrackerAttachment) {
         newPosition = this._filterPositionCandidate(trackerAnchorPosition, timestamp, trackerAnchorPosition.method);
         positionMethod = trackerAnchorPosition.method;
@@ -931,13 +931,13 @@ export class ImageAnchorService {
         if (objectPose.success) {
           this._recordObjectPoseMetrics(objectPose, { active: false });
         }
-        logger.debug('ImageAnchor', 'Using planar tracker attachment through transient planar pose loss');
+        logger.debugEvery('ImageAnchor', 'positioning-choice', 1000, 'Using planar tracker attachment through transient planar pose loss');
       } else if (objectPoseUsableForTransform) {
         newPosition = this._filterPositionCandidate(objectPose.position, timestamp, objectPose.method);
         positionMethod = objectPose.method;
         planarTransform = this._updatePlanarTransform(objectPose.planarTransform, timestamp);
         this._recordObjectPoseMetrics(objectPose);
-        logger.debug('ImageAnchor', `Using object pose positioning: ${positionMethod}`);
+        logger.debugEvery('ImageAnchor', 'positioning-choice', 1000, `Using object pose positioning: ${positionMethod}`);
       } else if (trackerAnchorPosition) {
         newPosition = this._filterPositionCandidate(trackerAnchorPosition, timestamp, trackerAnchorPosition.method);
         positionMethod = trackerAnchorPosition.method;
@@ -952,7 +952,7 @@ export class ImageAnchorService {
           this.metrics.poseRejectedReason = this._getPoseRejectionReason(objectPose, objectPose.correspondences || correspondences);
           this._recordObjectPoseMetrics(objectPose, { active: false });
         }
-        logger.debug('ImageAnchor', `Using tracker anchor positioning: ${positionMethod}`);
+        logger.debugEvery('ImageAnchor', 'positioning-choice', 1000, `Using tracker anchor positioning: ${positionMethod}`);
       }
       
       if (!newPosition) {
@@ -992,7 +992,7 @@ export class ImageAnchorService {
         this.metrics.poseSource = normalPose.method;
         this.metrics.poseInliers = normalPose.inlierCount;
         this.metrics.poseRejectedReason = null;
-        logger.debug('ImageAnchor', `Updated stabilized surface normal from ${normalPose.method}`);
+        logger.debugEvery('ImageAnchor', 'surface-normal-update', 1000, `Updated stabilized surface normal from ${normalPose.method}`);
       } else if (poseResult?.success) {
         this.framesWithoutNormalPose++;
         this.metrics.rawPoseNormal = null;
@@ -1048,7 +1048,7 @@ export class ImageAnchorService {
       }
       this._storeRelocalizationKeyframe(grayImage, { overallQuality, poseInliers });
 
-      logger.debug('ImageAnchor', 'Keypoint tracking successful:', {
+      logger.debugEvery('ImageAnchor', 'keypoint-tracking-success', 1000, 'Keypoint tracking successful:', {
         method: positionMethod,
         position: `(${newPosition.x.toFixed(1)}, ${newPosition.y.toFixed(1)})`,
         quality: overallQuality.toFixed(2),

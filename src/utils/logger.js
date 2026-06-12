@@ -5,39 +5,98 @@ const LogLevel = {
   DEBUG: 3
 };
 
-class TaggedLogger {
-  constructor() {
+export const KNOWN_LOG_TAGS = Object.freeze([
+  'AnchorManager',
+  'AnchorPersistenceSystem',
+  'CameraSystem',
+  'CameraView',
+  'Detection',
+  'HeadAnchor',
+  'HomographyEstimator',
+  'ImageAnchor',
+  'KeypointDetector',
+  'KeypointTracker',
+  'MicrophoneService',
+  'MorphController',
+  'OpenCVFeatureTest',
+  'OverlayScene',
+  'TTSClient',
+]);
+
+export const LOG_TAG_PRESETS = Object.freeze({
+  quiet: {
+    label: 'Quiet',
+    tags: [],
+  },
+  core: {
+    label: 'Core',
+    tags: ['CameraSystem', 'CameraView', 'AnchorManager', 'ImageAnchor', 'Detection'],
+  },
+  vision: {
+    label: 'Vision',
+    tags: [
+      'AnchorManager',
+      'AnchorPersistenceSystem',
+      'Detection',
+      'HomographyEstimator',
+      'ImageAnchor',
+      'KeypointDetector',
+      'KeypointTracker',
+      'OpenCVFeatureTest',
+    ],
+  },
+  audio: {
+    label: 'Audio',
+    tags: ['HeadAnchor', 'MicrophoneService', 'MorphController', 'OverlayScene', 'TTSClient'],
+  },
+});
+
+const getBrowserStorage = () => (typeof localStorage === 'undefined' ? null : localStorage);
+
+export class TaggedLogger {
+  constructor({
+    storage = getBrowserStorage(),
+    consoleTarget = console,
+    knownTags = KNOWN_LOG_TAGS,
+    now = () => Date.now(),
+  } = {}) {
+    this.storage = storage;
+    this.consoleTarget = consoleTarget;
+    this.now = now;
     this.enabledTags = new Set();
-    this.discoveredTags = new Set();
+    this.discoveredTags = new Set(knownTags);
+    this.lastLogSignatures = new Map();
+    this.lastLogTimes = new Map();
     this.listeners = new Set();
     this.loadSettings();
   }
 
   loadSettings() {
-    if (typeof localStorage === 'undefined') {
+    if (!this.storage) {
       return;
     }
 
     try {
-      const saved = localStorage.getItem('logger-enabled-tags');
+      const saved = this.storage.getItem('logger-enabled-tags');
       if (saved) {
         const enabledArray = JSON.parse(saved);
         this.enabledTags = new Set(enabledArray);
+        enabledArray.forEach(tag => this.discoveredTags.add(tag));
       }
     } catch (error) {
-      console.warn('Failed to load logger settings:', error);
+      this.consoleTarget.warn('Failed to load logger settings:', error);
     }
   }
 
   saveSettings() {
-    if (typeof localStorage === 'undefined') {
+    if (!this.storage) {
       return;
     }
 
     try {
-      localStorage.setItem('logger-enabled-tags', JSON.stringify([...this.enabledTags]));
+      this.storage.setItem('logger-enabled-tags', JSON.stringify([...this.enabledTags]));
     } catch (error) {
-      console.warn('Failed to save logger settings:', error);
+      this.consoleTarget.warn('Failed to save logger settings:', error);
     }
   }
 
@@ -49,9 +108,9 @@ class TaggedLogger {
   notifyListeners() {
     this.listeners.forEach(callback => {
       try {
-        callback([...this.discoveredTags], [...this.enabledTags]);
+        callback(this.getAllTags(), this.getEnabledTags());
       } catch (error) {
-        console.warn('Logger listener error:', error);
+        this.consoleTarget.warn('Logger listener error:', error);
       }
     });
   }
@@ -87,6 +146,22 @@ class TaggedLogger {
     }
   }
 
+  setEnabledTags(tags) {
+    this.enabledTags = new Set(tags);
+    tags.forEach(tag => this.discoveredTags.add(tag));
+    this.saveSettings();
+    this.notifyListeners();
+  }
+
+  applyPreset(presetId) {
+    const preset = LOG_TAG_PRESETS[presetId];
+    if (!preset) {
+      throw new Error(`Unknown log preset: ${presetId}`);
+    }
+
+    this.setEnabledTags(preset.tags);
+  }
+
   getAllTags() {
     return [...this.discoveredTags].sort();
   }
@@ -104,7 +179,7 @@ class TaggedLogger {
                    level === LogLevel.WARN ? 'warn' :
                    'log';
       
-      console[method](prefix, ...args);
+      this.consoleTarget[method](prefix, ...args);
     }
   }
 
@@ -121,6 +196,36 @@ class TaggedLogger {
   }
 
   debug(tag, ...args) {
+    this.log(LogLevel.DEBUG, tag, ...args);
+  }
+
+  debugChanged(tag, key, signature, ...args) {
+    const logKey = `${tag}:${key}`;
+    const signatureText = String(signature);
+    if (this.lastLogSignatures.get(logKey) === signatureText) {
+      return;
+    }
+
+    this.debug(tag, ...args);
+    if (this.isTagEnabled(tag)) {
+      this.lastLogSignatures.set(logKey, signatureText);
+    }
+  }
+
+  debugEvery(tag, key, intervalMs, ...args) {
+    this.discoverTag(tag);
+    if (!this.isTagEnabled(tag)) {
+      return;
+    }
+
+    const logKey = `${tag}:${key}`;
+    const now = this.now();
+    const previous = this.lastLogTimes.get(logKey) ?? -Infinity;
+    if (now - previous < intervalMs) {
+      return;
+    }
+
+    this.lastLogTimes.set(logKey, now);
     this.log(LogLevel.DEBUG, tag, ...args);
   }
 }
