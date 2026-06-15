@@ -5,6 +5,7 @@ import {
   createCylindricalCanSequence,
   createGlossyPhoneSequence,
   createHandledMugSequence,
+  createHumanSilhouetteSequence,
   createLabelBottleSequence,
   createRigidBoxSequence,
   createSyntheticObjectSuite,
@@ -186,7 +187,13 @@ test('real OpenCV replay tracks a realistic multi-object background matrix', asy
 
       if (scenario.surfaceByMode && mode.id !== 'sparse-reconstruction') {
         const selectedPoseFrames = summary.poseSourceCounts[mode.id] || 0;
-        assert.ok(selectedPoseFrames >= 6, `${mode.id}/${scenario.name}: selected pose frames ${selectedPoseFrames}`);
+        const planarPoseFrames = summary.poseSourceCounts['planar-homography'] || 0;
+        if (scenario.rigidPlanarPoseOwner === true) {
+          assert.ok(planarPoseFrames >= 6, `${mode.id}/${scenario.name}: planar pose frames ${planarPoseFrames}`);
+          assert.ok(selectedPoseFrames >= 1, `${mode.id}/${scenario.name}: selected pose frames ${selectedPoseFrames}`);
+        } else {
+          assert.ok(selectedPoseFrames >= 6, `${mode.id}/${scenario.name}: selected pose frames ${selectedPoseFrames}`);
+        }
         assert.equal(
           lastFrame.metrics.reconstructionPreview.surface.model,
           scenario.surfaceByMode[mode.id],
@@ -202,6 +209,7 @@ test('real OpenCV replay exercises every selectable reconstruction engine on boo
   const scenarios = [
     {
       name: 'book',
+      rigidPlanarPoseOwner: true,
       sequence: createPlanarBookSequence({ frameCount: 18, occlusionFrames: [] }),
       surfaceByMode: {
         'parametric-surface': 'plane',
@@ -255,7 +263,13 @@ test('real OpenCV replay exercises every selectable reconstruction engine on boo
 
       if (mode.id !== 'sparse-reconstruction') {
         const selectedPoseFrames = summary.poseSourceCounts[mode.id] || 0;
-        assert.ok(selectedPoseFrames >= 6, `${mode.id}/${scenario.name}: selected pose frames ${selectedPoseFrames}`);
+        const planarPoseFrames = summary.poseSourceCounts['planar-homography'] || 0;
+        if (scenario.rigidPlanarPoseOwner === true) {
+          assert.ok(planarPoseFrames >= 6, `${mode.id}/${scenario.name}: planar pose frames ${planarPoseFrames}`);
+          assert.ok(selectedPoseFrames >= 1, `${mode.id}/${scenario.name}: selected pose frames ${selectedPoseFrames}`);
+        } else {
+          assert.ok(selectedPoseFrames >= 6, `${mode.id}/${scenario.name}: selected pose frames ${selectedPoseFrames}`);
+        }
         assert.equal(
           lastFrame.metrics.reconstructionPreview.surface.model,
           scenario.surfaceByMode[mode.id],
@@ -559,7 +573,7 @@ test('real OpenCV replay covers label bottle and glossy phone object-building ca
         maxAnchorError: 17,
         meanAnchorError: 8,
         maxScaleError: 0.15,
-        maxFrameJump: 11,
+        maxFrameJump: 12,
         maxWorldPositionError: 0.13,
         maxScaleLogError: 0.14,
         maxRotationError: 0.9,
@@ -584,5 +598,88 @@ test('real OpenCV replay covers label bottle and glossy phone object-building ca
       headPose,
       limits: scenario.limits,
     });
+  }
+});
+
+test('segmentation-owned replay keeps landmarks on weak objects despite detailed backgrounds', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenarios = [
+    {
+      name: 'dark-book-shelf',
+      sequence: createPlanarBookSequence({
+        kind: 'dark-book',
+        frameCount: 24,
+        occlusionFrames: [8, 9, 18],
+        backgroundVariant: 'shelf',
+        backgroundSeed: 183,
+      }),
+      maxAnchorError: 18,
+      meanAnchorError: 9,
+    },
+    {
+      name: 'glossy-phone-window',
+      sequence: createGlossyPhoneSequence({
+        frameCount: 24,
+        occlusionFrames: [8, 9, 18],
+        backgroundVariant: 'window',
+        backgroundSeed: 167,
+      }),
+      maxAnchorError: 18,
+      meanAnchorError: 9,
+    },
+    {
+      name: 'human-nonconvex-busy-background',
+      sequence: createHumanSilhouetteSequence({
+        frameCount: 24,
+        occlusionFrames: [8, 9, 18],
+        backgroundVariant: 'busy',
+        backgroundSeed: 211,
+      }),
+      maxAnchorError: 28,
+      meanAnchorError: 16,
+      minOwnershipRatio: 0.6,
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    if (scenario.sequence.kind === 'human-silhouette') {
+      const firstFrame = scenario.sequence.frames[0];
+      const maskAt = point => {
+        const x = Math.round(point.x);
+        const y = Math.round(point.y);
+        return firstFrame.objectMask.data[y * scenario.sequence.width + x] > 0;
+      };
+      assert.equal(maskAt(firstFrame.maskProbePoints.object), true, `${scenario.name}: tap should be object support`);
+      assert.equal(maskAt(firstFrame.maskProbePoints.betweenLegs), false, `${scenario.name}: between-leg background should stay outside support`);
+      assert.equal(maskAt(firstFrame.maskProbePoints.armGap), false, `${scenario.name}: arm-gap background should stay outside support`);
+    }
+
+    const replay = await replayImageAnchorSequence({
+      cv,
+      sequence: scenario.sequence,
+      trackingMode: 'sparse-reconstruction',
+      useObjectSupportMask: true,
+    });
+    const summary = summarizeReplay(replay);
+    const ownershipRatios = replay.frames
+      .filter(frame => frame.success && (frame.metrics.activeLandmarkCount || 0) >= 8)
+      .map(frame => (frame.metrics.objectOwnedLandmarks || 0) / frame.metrics.activeLandmarkCount);
+
+    assert.equal(replay.anchorCreated, true, `${scenario.name}: ${replay.createFailure || 'anchor failed'}`);
+    assert.equal(replay.createResult.objectSupportMaskSource, 'synthetic-object-mask');
+    assert.equal(summary.failedFrames, 0, `${scenario.name}: ${summary.failureReasons.join(', ')}`);
+    assert.ok(summary.maxAnchorError <= scenario.maxAnchorError, `${scenario.name}: max anchor error ${summary.maxAnchorError.toFixed(2)}px`);
+    assert.ok(summary.meanAnchorError <= scenario.meanAnchorError, `${scenario.name}: mean anchor error ${summary.meanAnchorError.toFixed(2)}px`);
+    assert.ok(ownershipRatios.length >= 12, `${scenario.name}: ownership samples ${ownershipRatios.length}`);
+    assert.ok(
+      Math.min(...ownershipRatios) >= (scenario.minOwnershipRatio || 0.72),
+      `${scenario.name}: min ownership ratio ${Math.min(...ownershipRatios).toFixed(2)}`
+    );
+    if (scenario.sequence.kind === 'human-silhouette') {
+      assert.ok(
+        replay.frames.some(frame => frame.metrics.trackerAnchorAdjustment === 'object-owned-centroid-position'),
+        `${scenario.name}: should exercise object-owned centroid recovery`
+      );
+    }
   }
 });

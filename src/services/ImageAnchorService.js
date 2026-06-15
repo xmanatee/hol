@@ -18,18 +18,32 @@ import {
 import { AnchorPersistenceSystem } from '../cv/anchor.persistence.js';
 import { OneEuroFilter } from '../cv/oneEuroFilter.js';
 import { checkCriticalFeatures } from '../cv/opencv.features.test.js';
-import { isPointInsideObjectSupport, warpObjectSupportMask } from '../cv/objectSupportMask.js';
+import {
+  createObjectSupportMaskPreview,
+  isPointInsideObjectSupport,
+  warpObjectSupportMask,
+} from '../cv/objectSupportMask.js';
 import { calculateTemplateRegion } from '../utils/templateRegion.js';
 import { SurfaceNormalStabilizer } from '../utils/normalStabilizer.js';
 import { logger } from '../utils/logger.js';
 
 const POSE_MODEL = 'object-pose';
 const TRACKING_MODES = new Set([POSE_MODEL, ...RECONSTRUCTION_MODE_IDS]);
-const PLANAR_TARGET_CLASS_PATTERN = /book|laptop|keyboard|cell phone|tablet|tv|screen|sign|bag/i;
+const PLANAR_TARGET_CLASS_PATTERN = /book|notebook|paper|document|poster|photo|picture|painting|card|ticket|label|badge|laptop|keyboard|cell phone|smartphone|phone|tablet|tv|screen|sign|whiteboard|bag/i;
+const RIGID_PLANAR_TARGET_CLASS_PATTERN = /book|notebook|paper|document|poster|photo|picture|painting|card|ticket|label|badge|laptop|keyboard|cell phone|smartphone|phone|tablet|tv|screen|sign|whiteboard/i;
 const CANDIDATE_MIN_TRACKABLE_POINTS = 8;
 const CANDIDATE_REFRESH_INTERVAL = 3;
 const FACE_READINESS_REASON_RECONSTRUCTION = 'Build more object landmarks before showing the face';
 const FACE_READINESS_REASON_POSE_RECOVERY = 'Recovering object pose before showing the face';
+const MIN_ATTACHMENT_POSE_INLIERS = 8;
+const MIN_PLANAR_ATTACHMENT_POSE_INLIERS = 20;
+const MIN_RECONSTRUCTION_ATTACHMENT_POSE_INLIERS = 12;
+const MIN_ATTACHMENT_POSE_CONFIDENCE = 0.24;
+const MIN_RECONSTRUCTION_ATTACHMENT_POSE_CONFIDENCE = 0.28;
+const MAX_PLANAR_ATTACHMENT_POSE_RESIDUAL = 5.5;
+const MAX_OBJECT_ATTACHMENT_POSE_RESIDUAL = 6;
+const MAX_RECONSTRUCTION_ATTACHMENT_POSE_RESIDUAL = 6;
+const MIN_RECONSTRUCTION_ATTACHMENT_FORESHORTENING = 0.22;
 
 const createPositionFilter = () => new OneEuroFilter(60, 2.4, 0.075, 1.0);
 const createPlanarScaleFilter = () => new OneEuroFilter(60, 1.2, 0.08, 1.0);
@@ -37,6 +51,17 @@ const createCurvedScaleFilter = () => new OneEuroFilter(60, 2.4, 0.18, 1.0);
 const createPlanarRotationFilter = () => new OneEuroFilter(60, 1.1, 0.08, 1.0);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const SCALE_STEP_LOG_LIMIT = 0.1;
+const RIGID_PLANAR_POSITION_STEP_RATIO = 0.1;
+const RIGID_PLANAR_BOOK_POSITION_STEP_RATIO = 0.083;
+const PLANAR_POSE_POSITION_BLEND = 0.85;
+const MIN_LOW_LAG_TRACKER_CONFIDENCE = 0.55;
+const MAX_LOW_LAG_TRACKER_RESIDUAL = 7;
+const PLANAR_POSE_POSITION_METHODS = new Set([
+  RECONSTRUCTION_POSE_MODEL,
+  'planar-homography',
+  'homography',
+  'object-pose-affine',
+]);
 
 const transformHomographyPoint = (matrix, point) => {
   const denominator = matrix[6] * point.x + matrix[7] * point.y + matrix[8];
@@ -78,6 +103,7 @@ export class ImageAnchorService {
     this.planarRotationFilter = createPlanarRotationFilter();
     this.normalStabilizer = new SurfaceNormalStabilizer();
     this.framesWithoutNormalPose = 0;
+    this.lastNormalPoseSource = null;
     
     // State
     this.anchored = false;
@@ -120,6 +146,7 @@ export class ImageAnchorService {
       poseModel: POSE_MODEL,
       trackingMode: this.trackingMode,
       poseSource: null,
+      poseSourceHoldReason: null,
       poseInliers: 0,
       affinePoseInliers: 0,
       reconstructionPreview: null,
@@ -370,6 +397,7 @@ export class ImageAnchorService {
       this.anchorTargetClass = targetClass;
       this.normalStabilizer.reset(this.currentNormal);
       this.framesWithoutNormalPose = 0;
+      this.lastNormalPoseSource = null;
       this.planarScaleFilter.filter(1, startTime);
       this.curvedScaleFilter.filter(1, startTime);
       this.planarRotationFilter.filter(0, startTime);
@@ -386,7 +414,11 @@ export class ImageAnchorService {
         region: trackingRegion || templateRegion,
         templateKeypoints: keypointResult.keypoints,
         trackingKeypoints,
+        backgroundRejected: (keypointResult.rejectedByMask || 0) + (trackingKeypointResult.rejectedByMask || 0),
       });
+      const objectSupportMaskPreview = objectSupportMask
+        ? createObjectSupportMaskPreview(objectSupportMask)
+        : null;
 
       this.anchorState = bootstrapState;
       this.framesSinceRefresh = 0;
@@ -412,8 +444,10 @@ export class ImageAnchorService {
         keypointDensity: evidence.keypointDensity,
         backgroundRejected: evidence.backgroundRejected,
         objectSupportMaskBounds: objectSupportMask ? { ...objectSupportMask.bbox } : null,
+        objectSupportMaskPreview,
         currentObjectSupportMaskSource: objectSupportMask ? objectSupportMask.source : null,
         currentObjectSupportMaskBounds: objectSupportMask ? { ...objectSupportMask.bbox } : null,
+        currentObjectSupportMaskPreview: objectSupportMaskPreview,
         templateCenter: { ...templateCenter },
         templateAnchorOffset: { ...templateAnchorOffset },
         templateRegionArea: templateRegion.width * templateRegion.height,
@@ -808,6 +842,7 @@ export class ImageAnchorService {
       this.metrics.reconstructionPnpAverageResidual = null;
       this.metrics.poseInliers = 0;
       this.metrics.poseSource = null;
+      this.metrics.poseSourceHoldReason = null;
       this.metrics.poseModel = isReconstructionMode(this.trackingMode) ? this.trackingMode : POSE_MODEL;
       const objectPose = this._estimateObjectPoseFromTracker();
       const reconstructionPose = this._updateReconstructionPoseFromTracker(timestamp, grayImage);
@@ -851,16 +886,28 @@ export class ImageAnchorService {
       let positionMethod = 'unknown';
       let planarTransform = this.currentPlanarTransform;
       
-      const trackerAnchorPosition = this.keypointTracker.getAnchorPosition();
+      const rawTrackerAnchorPosition = this.keypointTracker.getAnchorPosition(this.cv);
       const reconstructionPoseUsableForTransform = this._isUsablePoseResult(reconstructionPose, reconstructionPose?.correspondences || correspondences);
       const planarPoseUsableForTransform = this._isUsablePoseResult(planarPose, correspondences);
       const objectPoseUsableForTransform = this._isUsablePoseResult(objectPose, objectPose.correspondences || correspondences);
+      const trackerAnchorPosition = this._selectTrackerAnchorPosition({
+        trackerAnchorPosition: rawTrackerAnchorPosition,
+        reconstructionPose,
+      });
       const reconstructionConsistentWithTracker = this._isPosePositionConsistentWithTracker(
         reconstructionPose,
         trackerAnchorPosition
       );
       const useStrongCurvedReconstructionPosition = this._hasStrongCurvedReconstructionPosition(reconstructionPose);
       const useTolerantCurvedReconstructionRecovery = this._hasTolerantCurvedReconstructionRecovery(reconstructionPose);
+      const useModerateCurvedReconstructionRecovery = this._hasModerateCurvedReconstructionRecovery({
+        reconstructionPose,
+        trackerAnchorPosition,
+      });
+      const useTrackedCurvedAttachmentTransform = this._shouldUseTrackedCurvedAttachmentTransform({
+        reconstructionPose,
+        trackerAnchorPosition,
+      });
       const selectedReconstructionReady = this._hasSelectedReconstructionPose(reconstructionPose);
       const suppressReconstructionForPlanarTarget = this._hasPlanarDominance() &&
         !selectedReconstructionReady &&
@@ -890,7 +937,8 @@ export class ImageAnchorService {
       } else if (trackerAnchorPosition &&
           reconstructionPoseUsableForTransform &&
           !reconstructionConsistentWithTracker &&
-          !useStrongCurvedReconstructionPosition) {
+          !useStrongCurvedReconstructionPosition &&
+          !useModerateCurvedReconstructionRecovery) {
         newPosition = this._filterPositionCandidate(trackerAnchorPosition, timestamp, trackerAnchorPosition.method);
         positionMethod = trackerAnchorPosition.method;
         planarTransform = this._updatePlanarTransform(
@@ -904,11 +952,13 @@ export class ImageAnchorService {
         this._recordReconstructionPoseMetrics(reconstructionPose, { active: false });
         logger.debugEvery('ImageAnchor', 'positioning-choice', 1000, 'Using tracked anchor positioning with reconstruction orientation');
       } else if (reconstructionPoseUsableForTransform &&
-          (!suppressReconstructionForPlanarTarget || useStrongCurvedReconstructionPosition)) {
+          (!suppressReconstructionForPlanarTarget ||
+            useStrongCurvedReconstructionPosition ||
+            useModerateCurvedReconstructionRecovery)) {
         newPosition = this._filterPositionCandidate(reconstructionPose.position, timestamp, reconstructionPose.method);
         positionMethod = reconstructionPose.method;
         planarTransform = this._updatePlanarTransform(
-          useTolerantCurvedReconstructionRecovery && trackerAnchorPosition
+          (useTolerantCurvedReconstructionRecovery || useTrackedCurvedAttachmentTransform) && trackerAnchorPosition
             ? this._selectTrackedAttachmentTransform({
               trackerAnchorPosition,
               reconstructionPose,
@@ -985,20 +1035,22 @@ export class ImageAnchorService {
           inliers: normalPose.inlierCount,
           foreshortening: normalPose.foreshortening,
           reacquired: reacquiredPose,
-          trusted: isReconstructionMode(normalPose.method) &&
-            (this._hasStrongNonPlanarReconstruction(normalPose) || this._hasSelectedReconstructionPose(normalPose)),
+          trusted: this._shouldTrustNormalPose(normalPose),
         });
         this.framesWithoutNormalPose = 0;
+        this.lastNormalPoseSource = normalPose.method;
         this.metrics.poseConfidence = poseConfidence;
         this.metrics.poseSource = normalPose.method;
         this.metrics.poseInliers = normalPose.inlierCount;
+        this.metrics.poseSourceHoldReason = null;
         this.metrics.poseRejectedReason = null;
         logger.debugEvery('ImageAnchor', 'surface-normal-update', 1000, `Updated stabilized surface normal from ${normalPose.method}`);
       } else if (poseResult?.success) {
         this.framesWithoutNormalPose++;
         this.metrics.rawPoseNormal = null;
         this.metrics.poseSource = null;
-        this.metrics.poseRejectedReason = this._getPoseRejectionReason(poseResult, correspondences);
+        this.metrics.poseRejectedReason = this.metrics.poseSourceHoldReason ||
+          this._getPoseRejectionReason(poseResult, correspondences);
       } else if (poseResult) {
         this.framesWithoutNormalPose++;
         this.metrics.rawPoseNormal = null;
@@ -1043,7 +1095,11 @@ export class ImageAnchorService {
       // Periodic keypoint refresh grows the persistent landmark map while tracking is usable.
       this.framesSinceRefresh++;
       if (this._shouldRefreshKeypoints({ overallQuality, poseInliers })) {
-        this._refreshKeypoints(grayImage);
+        const adaptiveRefresh = ['object-support-recovery', 'mapping-growth'].includes(this.metrics.landmarkRefreshReason);
+        this._refreshKeypoints(grayImage, {
+          adaptive: adaptiveRefresh,
+          minNewKeypoints: adaptiveRefresh ? CANDIDATE_MIN_TRACKABLE_POINTS : 15,
+        });
         this.framesSinceRefresh = 0;
         logger.debug('ImageAnchor', 'Refreshed keypoints for landmark map growth');
       }
@@ -1147,7 +1203,7 @@ export class ImageAnchorService {
       if (trackingResult.success) {
         this._rejectTrackedPointsOutsideObjectSupport();
         const anchorPosition = typeof this.keypointTracker.getAnchorPosition === 'function'
-          ? this.keypointTracker.getAnchorPosition()
+          ? this.keypointTracker.getAnchorPosition(this.cv)
           : null;
         if (anchorPosition) {
           this.currentPosition = {
@@ -1211,6 +1267,7 @@ export class ImageAnchorService {
       templateKeypoints: keypointResult.keypoints,
       trackingKeypoints: keypointResult.keypoints,
       trackedPoints: this.keypointTracker.trackedPoints,
+      backgroundRejected: keypointResult.rejectedByMask || 0,
     });
 
     this.metrics = {
@@ -1354,7 +1411,7 @@ export class ImageAnchorService {
   /**
    * Refresh keypoints in current region
    */
-  _refreshKeypoints(grayImage) {
+  _refreshKeypoints(grayImage, { adaptive = false, minNewKeypoints = 15 } = {}) {
     if (!this.currentPosition) return;
 
     const templateCenter = this._getTemplateCenterFromAnchorPosition();
@@ -1370,7 +1427,11 @@ export class ImageAnchorService {
       grayImage,
       this.keypointDetector,
       this._clampTemplateRegion(refreshRegion, grayImage.cols, grayImage.rows),
-      this._getCurrentObjectSupportMask()
+      this._getCurrentObjectSupportMask(),
+      {
+        adaptive,
+        minNewKeypoints,
+      }
     );
 
     if (refreshResult) {
@@ -1379,6 +1440,7 @@ export class ImageAnchorService {
       if (refreshStats) {
         this.metrics.landmarkRefreshAdded = refreshStats.added;
         this.metrics.landmarkRefreshTotal = refreshStats.total;
+        this.metrics.landmarkRefreshRejectedByMask = refreshStats.rejectedByMask || 0;
       }
       this._storeRelocalizationKeyframe(grayImage, {
         force: true,
@@ -1390,9 +1452,15 @@ export class ImageAnchorService {
   }
 
   _shouldRefreshKeypoints({ overallQuality, poseInliers }) {
+    this.metrics.landmarkRefreshReason = null;
+
     if (this.anchorState === 'mapping') {
       const activeCount = this.metrics.activeLandmarkCount || this.metrics.keypointCount || 0;
-      return this.framesSinceRefresh >= CANDIDATE_REFRESH_INTERVAL && activeCount < 32;
+      const shouldRefresh = this.framesSinceRefresh >= CANDIDATE_REFRESH_INTERVAL && activeCount < 32;
+      if (shouldRefresh) {
+        this.metrics.landmarkRefreshReason = 'mapping-growth';
+      }
+      return shouldRefresh;
     }
 
     const geometrySupportsMapGrowth = poseInliers >= 8;
@@ -1406,6 +1474,9 @@ export class ImageAnchorService {
     }
 
     if (this.metrics.trackingSuccessRate < 0.55 || this.metrics.keypointCount < 12) {
+      if (needsOcclusionSupport) {
+        this.metrics.landmarkRefreshReason = 'occlusion-support';
+      }
       return needsOcclusionSupport;
     }
 
@@ -1418,8 +1489,12 @@ export class ImageAnchorService {
     const poseNeedsSupport = geometrySupportsMapGrowth && poseInliers < 24;
     const trackingIsUseful = overallQuality >= 0.5 || this.anchorState === 'stable';
 
-    return needsOcclusionSupport ||
+    const shouldRefresh = needsOcclusionSupport ||
       (geometrySupportsMapGrowth && trackingIsUseful && (mapNeedsExpansion || poseNeedsSupport || this.anchorState === 'stable'));
+    if (shouldRefresh) {
+      this.metrics.landmarkRefreshReason = needsOcclusionSupport ? 'occlusion-support' : 'map-growth';
+    }
+    return shouldRefresh;
   }
 
   _shouldAttemptGeometryRelocalization(anchorPosition) {
@@ -1464,13 +1539,18 @@ export class ImageAnchorService {
 
       if (isPointInsideObjectSupport(objectSupportMask, point.current)) {
         point.outsideObjectFrames = 0;
+        point.objectOwned = true;
         continue;
       }
 
       point.outsideObjectFrames = (point.outsideObjectFrames || 0) + 1;
+      if (point.objectOwned !== false) {
+        point.objectOwned = false;
+        rejected++;
+      }
+
       if (point.outsideObjectFrames >= 2) {
         point.status = 'outlier';
-        rejected++;
       }
     }
 
@@ -1546,6 +1626,7 @@ export class ImageAnchorService {
 
     this.metrics.currentObjectSupportMaskSource = this.currentObjectSupportMask.source;
     this.metrics.currentObjectSupportMaskBounds = { ...this.currentObjectSupportMask.bbox };
+    this.metrics.currentObjectSupportMaskPreview = createObjectSupportMaskPreview(this.currentObjectSupportMask);
     return this.currentObjectSupportMask;
   }
 
@@ -1810,34 +1891,71 @@ export class ImageAnchorService {
       return false;
     }
 
+    const reconstructionUsable = this._isUsablePoseResult(reconstructionPose, reconstructionPose?.correspondences || correspondences);
+    const reconstructionHasRealDepth = reconstructionUsable && this._hasStrongNonPlanarReconstruction(reconstructionPose);
+    const planarStrong = this._hasStrongPlanarAttachmentPose(planarPose, correspondences);
+    const planarAttachmentUsable = planarStrong ||
+      (this._hasPlanarTargetClass() && this._hasPlanarAttachmentPose(planarPose, correspondences));
+
+    if (this._hasRigidPlanarTargetClass()) {
+      return planarAttachmentUsable;
+    }
+
     if (this._hasSelectedReconstructionPose(reconstructionPose)) {
       return false;
     }
-
-    const reconstructionUsable = this._isUsablePoseResult(reconstructionPose, reconstructionPose?.correspondences || correspondences);
-    const reconstructionHasRealDepth = reconstructionUsable && this._hasStrongNonPlanarReconstruction(reconstructionPose);
 
     if (reconstructionHasRealDepth) {
       return false;
     }
 
     if (this._hasPlanarDominance() && !reconstructionHasRealDepth) {
-      return true;
+      return planarAttachmentUsable;
     }
 
     if (!reconstructionUsable) {
+      return planarAttachmentUsable;
+    }
+
+    if (planarAttachmentUsable && !reconstructionHasRealDepth) {
       return true;
     }
 
-    const planarStrong = planarPose.inlierCount >= 16 && planarPose.inlierRatio >= 0.58 && planarPose.confidence >= 0.48;
-
-    if (planarStrong && !reconstructionHasRealDepth) {
-      return true;
-    }
-
-    return planarStrong &&
+    return planarAttachmentUsable &&
       planarPose.inlierCount >= reconstructionPose.inlierCount + 6 &&
       planarPose.confidence >= reconstructionPose.confidence - 0.08;
+  }
+
+  _hasPlanarAttachmentPose(planarPose, correspondences) {
+    if (!planarPose?.success) {
+      return false;
+    }
+
+    const spread = planarPose.referenceSpread || this._measureReferenceSpread(correspondences);
+    const inlierRatio = planarPose.inlierRatio ?? planarPose.inlierCount / Math.max(1, correspondences.length);
+    const averageResidual = planarPose.averageResidual ?? Infinity;
+
+    return planarPose.inlierCount >= 10 &&
+      inlierRatio >= 0.46 &&
+      (planarPose.confidence ?? 0) >= 0.34 &&
+      averageResidual <= 3.25 &&
+      spread.minAxis >= 18;
+  }
+
+  _hasStrongPlanarAttachmentPose(planarPose, correspondences) {
+    if (!planarPose?.success) {
+      return false;
+    }
+
+    const spread = planarPose.referenceSpread || this._measureReferenceSpread(correspondences);
+    const inlierRatio = planarPose.inlierRatio ?? planarPose.inlierCount / Math.max(1, correspondences.length);
+    const averageResidual = planarPose.averageResidual ?? Infinity;
+
+    return planarPose.inlierCount >= MIN_PLANAR_ATTACHMENT_POSE_INLIERS &&
+      inlierRatio >= 0.5 &&
+      (planarPose.confidence ?? 0) >= 0.42 &&
+      averageResidual <= 2.2 &&
+      spread.minAxis >= 18;
   }
 
   _shouldUsePlanarPatchTransform({ planarPose, reconstructionPose, correspondences }) {
@@ -1863,7 +1981,7 @@ export class ImageAnchorService {
     const planarConfidence = planarPose.confidence ?? 0;
     const reconstructionConfidence = reconstructionPose.confidence ?? 0;
 
-    return planarPose.inlierCount >= 10 &&
+    return this._hasStrongPlanarAttachmentPose(planarPose, correspondences) &&
       planarResidual <= Math.max(4.5, reconstructionResidual + 1.5) &&
       planarConfidence >= reconstructionConfidence - 0.22;
   }
@@ -1873,7 +1991,10 @@ export class ImageAnchorService {
 
     if (!rejectPlanarNormalForCurvedTarget &&
         this._shouldPreferPlanarHomography({ planarPose, reconstructionPose, correspondences })) {
-      return { ...planarPose, correspondences };
+      return this._selectPlanarNormalCandidate({
+        candidatePose: { ...planarPose, correspondences },
+        reconstructionPose,
+      });
     }
 
     const reconstructionHighInlierNormal = this._hasStrongNonPlanarReconstruction(reconstructionPose) &&
@@ -1908,7 +2029,10 @@ export class ImageAnchorService {
     }
 
     if (correspondencePoseUsable && poseResult.method === 'homography' && poseResult.confidence > objectPose.confidence + 0.12) {
-      return { ...poseResult, correspondences };
+      return this._selectPlanarNormalCandidate({
+        candidatePose: { ...poseResult, correspondences },
+        reconstructionPose,
+      });
     }
 
     if (objectPoseUsable) {
@@ -1916,10 +2040,69 @@ export class ImageAnchorService {
     }
 
     if (correspondencePoseUsable) {
-      return { ...poseResult, correspondences };
+      return this._selectPlanarNormalCandidate({
+        candidatePose: { ...poseResult, correspondences },
+        reconstructionPose,
+      });
     }
 
     return null;
+  }
+
+  _selectPlanarNormalCandidate({ candidatePose, reconstructionPose }) {
+    if (this._shouldHoldPlanarNormalAfterReconstructionDropout({ candidatePose, reconstructionPose })) {
+      this.metrics.poseSourceHoldReason = 'transient-reconstruction-dropout';
+      return null;
+    }
+
+    return candidatePose;
+  }
+
+  _shouldTrustNormalPose(normalPose) {
+    if (!normalPose?.success || !isReconstructionMode(normalPose.method)) {
+      return false;
+    }
+
+    if (this._hasRigidPlanarTargetClass()) {
+      return false;
+    }
+
+    return this._hasStrongNonPlanarReconstruction(normalPose) ||
+      this._hasSelectedReconstructionPose(normalPose);
+  }
+
+  _shouldHoldPlanarNormalAfterReconstructionDropout({ candidatePose, reconstructionPose }) {
+    if (!isReconstructionMode(this.trackingMode) || this._hasPlanarTargetClass()) {
+      return false;
+    }
+
+    if (this.lastNormalPoseSource !== this.trackingMode || this.framesWithoutNormalPose > 1) {
+      return false;
+    }
+
+    if (!this._isPlanarNormalCandidate(candidatePose) || reconstructionPose?.success) {
+      return false;
+    }
+
+    const mapConfidence = this.metrics.reconstructionMapConfidence ?? 0;
+    const matureLandmarks = this.metrics.reconstructionMatureLandmarks ?? 0;
+    const matureReconstruction = this.metrics.reconstructionReady === true ||
+      (mapConfidence >= 0.58 && matureLandmarks >= 16);
+    if (!matureReconstruction) {
+      return false;
+    }
+
+    const overwhelmingPlanarEvidence = (candidatePose.inlierCount || 0) >= 30 &&
+      (candidatePose.inlierRatio ?? 0) >= 0.82 &&
+      (candidatePose.confidence ?? 0) >= 0.9 &&
+      (candidatePose.averageResidual ?? Infinity) <= 1.2;
+
+    return !overwhelmingPlanarEvidence;
+  }
+
+  _isPlanarNormalCandidate(pose) {
+    return pose?.success &&
+      (pose.method === 'homography' || pose.method === 'planar-homography');
   }
 
   _recordPoseInlierMetrics(poseResult) {
@@ -2005,6 +2188,119 @@ export class ImageAnchorService {
     return delta <= maxDelta;
   }
 
+  _selectTrackerAnchorPosition({ trackerAnchorPosition, reconstructionPose }) {
+    this.metrics.trackerAnchorAdjustment = null;
+    if (this._shouldUseObjectOwnedCentroidPosition({ trackerAnchorPosition, reconstructionPose })) {
+      const centroidPosition = typeof this.keypointTracker.getCentroidAnchorPosition === 'function'
+        ? this.keypointTracker.getCentroidAnchorPosition(this._objectOwnedActivePoints())
+        : null;
+
+      if (centroidPosition) {
+        this.metrics.trackerAnchorAdjustment = 'object-owned-centroid-position';
+        this.metrics.trackerAnchorRawResidual = trackerAnchorPosition.averageResidual ?? null;
+
+        return {
+          ...trackerAnchorPosition,
+          x: centroidPosition.x,
+          y: centroidPosition.y,
+          confidence: Math.min(
+            trackerAnchorPosition.confidence ?? centroidPosition.confidence ?? 0,
+            centroidPosition.confidence ?? trackerAnchorPosition.confidence ?? 0
+          ),
+          inlierCount: centroidPosition.inlierCount ?? trackerAnchorPosition.inlierCount,
+          method: 'object-owned-centroid-position',
+          transformMethod: trackerAnchorPosition.method,
+        };
+      }
+    }
+
+    if (!this._shouldUseCurvedDropoutCentroidPosition({ trackerAnchorPosition, reconstructionPose })) {
+      return trackerAnchorPosition;
+    }
+
+    const centroidPosition = typeof this.keypointTracker.getCentroidAnchorPosition === 'function'
+      ? this.keypointTracker.getCentroidAnchorPosition(this._objectOwnedActivePoints())
+      : null;
+
+    if (!centroidPosition) {
+      return trackerAnchorPosition;
+    }
+
+    this.metrics.trackerAnchorAdjustment = 'curved-dropout-centroid-position';
+    this.metrics.trackerAnchorRawResidual = trackerAnchorPosition.averageResidual ?? null;
+
+    return {
+      ...trackerAnchorPosition,
+      x: centroidPosition.x,
+      y: centroidPosition.y,
+      confidence: Math.min(
+        trackerAnchorPosition.confidence ?? centroidPosition.confidence ?? 0,
+        centroidPosition.confidence ?? trackerAnchorPosition.confidence ?? 0
+      ),
+      inlierCount: centroidPosition.inlierCount ?? trackerAnchorPosition.inlierCount,
+      method: 'curved-centroid-position',
+      transformMethod: trackerAnchorPosition.method,
+    };
+  }
+
+  _objectOwnedActivePoints() {
+    const activePoints = (this.keypointTracker.trackedPoints || [])
+      .filter(point => point.status === 'active');
+    if (!this.objectSupportMask) {
+      return activePoints;
+    }
+
+    return activePoints.filter(point => point.objectOwned !== false);
+  }
+
+  _shouldUseObjectOwnedCentroidPosition({ trackerAnchorPosition, reconstructionPose }) {
+    if (!trackerAnchorPosition ||
+        reconstructionPose?.success ||
+        !this.objectSupportMask ||
+        trackerAnchorPosition.method !== 'reference_similarity_transform') {
+      return false;
+    }
+
+    const activeLandmarks = this.metrics.activeLandmarkCount || this.metrics.keypointCount || 0;
+    const objectOwnedLandmarks = this.metrics.objectOwnedLandmarks || 0;
+    const residual = trackerAnchorPosition.averageResidual ?? 0;
+    const confidence = trackerAnchorPosition.confidence ?? 0;
+    const ownedRatio = objectOwnedLandmarks / Math.max(1, activeLandmarks);
+
+    return activeLandmarks >= 8 &&
+      activeLandmarks < 18 &&
+      objectOwnedLandmarks >= 7 &&
+      ownedRatio < 0.9 &&
+      confidence <= 0.12 &&
+      residual >= 28;
+  }
+
+  _shouldUseCurvedDropoutCentroidPosition({ trackerAnchorPosition, reconstructionPose }) {
+    if (!trackerAnchorPosition ||
+        reconstructionPose?.success ||
+        this.trackingMode !== RECONSTRUCTION_POSE_MODEL ||
+        !isReconstructionMode(this.trackingMode) ||
+        !this._hasCurvedReconstructionTarget(reconstructionPose)) {
+      return false;
+    }
+
+    const matureCurvedMap = this.metrics.reconstructionReady === true &&
+      (this.metrics.reconstructionMapConfidence ?? 0) >= 0.65 &&
+      (this.metrics.reconstructionMatureLandmarks ?? 0) >= 16;
+    if (!matureCurvedMap) {
+      return false;
+    }
+
+    const residual = trackerAnchorPosition.averageResidual ?? Infinity;
+    const confidence = trackerAnchorPosition.confidence ?? 0;
+    const activeLandmarks = this.metrics.activeLandmarks || this._activeTrackedPointCount();
+
+    return trackerAnchorPosition.method === 'reference_similarity_transform' &&
+      residual >= 18 &&
+      confidence <= 0.12 &&
+      activeLandmarks >= 32;
+  }
+
   _selectTrackedAttachmentTransform({ trackerAnchorPosition, reconstructionPose, useTrackedTransform = false }) {
     if (useTrackedTransform) {
       return {
@@ -2087,15 +2383,73 @@ export class ImageAnchorService {
       return false;
     }
 
+    if (this._hasPreciseCurvedReconstructionPosition(reconstructionPose)) {
+      return false;
+    }
+
     const templateSize = this.templateRegion
       ? Math.max(this.templateRegion.width, this.templateRegion.height)
       : 120;
     const trackerDelta = this.metrics.reconstructionTrackerDelta || 0;
+    const mapConfidence = reconstructionPose.preview?.statistics?.mapConfidence ??
+      this.metrics.reconstructionMapConfidence ??
+      reconstructionPose.confidence ??
+      0;
+    const inliers = reconstructionPose.inlierCount || 0;
+    const averageResidual = reconstructionPose.averageResidual ?? Infinity;
+    const moderateTrackerDivergence = trackerDelta >= clamp(templateSize * 0.1, 10, 18);
     const severeTrackerDivergence = trackerDelta >= clamp(templateSize * 0.28, 32, 48);
+    const matureCurvedRecovery = moderateTrackerDivergence &&
+      mapConfidence >= 0.72 &&
+      inliers >= 18 &&
+      averageResidual <= 10.5;
 
-    return severeTrackerDivergence &&
-      (reconstructionPose.inlierCount || 0) >= 16 &&
-      (reconstructionPose.averageResidual ?? Infinity) <= 10;
+    return matureCurvedRecovery ||
+      (severeTrackerDivergence &&
+        inliers >= 16 &&
+        averageResidual <= 10);
+  }
+
+  _hasModerateCurvedReconstructionRecovery({ reconstructionPose, trackerAnchorPosition }) {
+    if (!reconstructionPose?.success ||
+        this._hasPlanarTargetClass() ||
+        !this._hasCurvedReconstructionTarget(reconstructionPose) ||
+        reconstructionPose.method !== this.trackingMode ||
+        !trackerAnchorPosition) {
+      return false;
+    }
+
+    const templateSize = this.templateRegion
+      ? Math.max(this.templateRegion.width, this.templateRegion.height)
+      : 120;
+    const trackerDelta = this.metrics.reconstructionTrackerDelta || 0;
+    const trackerResidual = trackerAnchorPosition.averageResidual ?? 0;
+    const trackerConfidence = trackerAnchorPosition.confidence ?? 0;
+    const mapConfidence = reconstructionPose.preview?.statistics?.mapConfidence ??
+      this.metrics.reconstructionMapConfidence ??
+      reconstructionPose.confidence ??
+      0;
+    const matureLandmarks = this.metrics.reconstructionMatureLandmarks || 0;
+    const poseResidual = reconstructionPose.averageResidual ?? Infinity;
+    const poseInliers = reconstructionPose.inlierCount || 0;
+    const trackerIncoherent = trackerResidual >= 12 || trackerConfidence <= 0.18;
+    const trackerDiverged = trackerDelta >= clamp(templateSize * 0.08, 8, 16);
+
+    return this.metrics.reconstructionReady === true &&
+      mapConfidence >= 0.72 &&
+      matureLandmarks >= 16 &&
+      poseInliers >= 10 &&
+      poseResidual <= 3.6 &&
+      trackerIncoherent &&
+      trackerDiverged;
+  }
+
+  _shouldUseTrackedCurvedAttachmentTransform({ reconstructionPose, trackerAnchorPosition }) {
+    return !!trackerAnchorPosition &&
+      this._hasCurvedReconstructionTarget(reconstructionPose) &&
+      reconstructionPose?.success &&
+      reconstructionPose.method === this.trackingMode &&
+      reconstructionPose.planarTransform?.method === 'reference_similarity_transform';
   }
 
   _shouldRejectPlanarNormalForCurvedTarget(reconstructionPose) {
@@ -2133,6 +2487,10 @@ export class ImageAnchorService {
 
   _hasPlanarTargetClass() {
     return PLANAR_TARGET_CLASS_PATTERN.test(this.anchorTargetClass || '');
+  }
+
+  _hasRigidPlanarTargetClass() {
+    return RIGID_PLANAR_TARGET_CLASS_PATTERN.test(this.anchorTargetClass || '');
   }
 
   _hasSelectedReconstructionPose(reconstructionPose) {
@@ -2219,13 +2577,60 @@ export class ImageAnchorService {
   }
 
   _filterPositionCandidate(position, timestamp, method) {
+    if (this._shouldUseHighConfidenceTrackerStepPosition(position, method)) {
+      this.metrics.positionFilterAdjustment = 'high-confidence-tracker-step-position';
+      return this._limitPositionStep({
+        x: position.x,
+        y: position.y,
+        z: position.z ?? 0,
+      }, method);
+    }
+
     const filtered = {
       x: this.positionFilterX.filter(position.x, timestamp),
       y: this.positionFilterY.filter(position.y, timestamp),
       z: 0
     };
 
-    return this._limitPositionStep(filtered, method);
+    let adjustment = null;
+    let adjusted = filtered;
+
+    if (this._shouldUseStepOnlyBookPosition()) {
+      adjusted = {
+        x: position.x,
+        y: position.y,
+        z: 0,
+      };
+      adjustment = 'book-step-position';
+    } else if (this._shouldBlendPlanarPosePosition(method)) {
+      adjusted = {
+        x: filtered.x + (position.x - filtered.x) * PLANAR_POSE_POSITION_BLEND,
+        y: filtered.y + (position.y - filtered.y) * PLANAR_POSE_POSITION_BLEND,
+        z: 0,
+      };
+      adjustment = 'planar-pose-blend';
+    }
+
+    this.metrics.positionFilterAdjustment = adjustment;
+
+    return this._limitPositionStep(adjusted, method);
+  }
+
+  _shouldUseHighConfidenceTrackerStepPosition(position, method) {
+    return method === 'reference_similarity_transform' &&
+      this.trackingMode !== RECONSTRUCTION_POSE_MODEL &&
+      (position.confidence ?? 0) >= MIN_LOW_LAG_TRACKER_CONFIDENCE &&
+      (position.averageResidual ?? Infinity) <= MAX_LOW_LAG_TRACKER_RESIDUAL;
+  }
+
+  _shouldUseStepOnlyBookPosition() {
+    return /book/i.test(this.anchorTargetClass || '') && this._hasRigidPlanarTargetClass();
+  }
+
+  _shouldBlendPlanarPosePosition(method) {
+    return this._hasPlanarTargetClass() &&
+      this._hasPlanarDominance() &&
+      PLANAR_POSE_POSITION_METHODS.has(method);
   }
 
   _limitPositionStep(position, method = 'unknown') {
@@ -2239,9 +2644,14 @@ export class ImageAnchorService {
     const templateSize = this.templateRegion
       ? Math.max(this.templateRegion.width, this.templateRegion.height)
       : 120;
-    const ratio = isReconstructionMode(this.trackingMode)
+    let ratio = isReconstructionMode(this.trackingMode)
       ? 0.08
       : isReconstructionMode(method) ? 0.1 : 0.14;
+    if (this._hasRigidPlanarTargetClass()) {
+      ratio = /book/i.test(this.anchorTargetClass || '')
+        ? RIGID_PLANAR_BOOK_POSITION_STEP_RATIO
+        : RIGID_PLANAR_POSITION_STEP_RATIO;
+    }
     const maxStep = clamp(templateSize * ratio, 8, 24);
 
     if (distance <= maxStep || distance === 0) {
@@ -2358,36 +2768,154 @@ export class ImageAnchorService {
   }
 
   _extractObjectKeypoints(grayImage, region, objectSupportMask, { minKeypoints }) {
-    const primary = this.keypointDetector.extractKeypoints(this.cv, grayImage, region, objectSupportMask);
+    const primary = this._filterKeypointsToObjectSupport(
+      this.keypointDetector.extractKeypoints(this.cv, grayImage, region, objectSupportMask),
+      objectSupportMask
+    );
     if (primary.keypoints.length >= minKeypoints || typeof this.keypointDetector.extractAdaptiveKeypoints !== 'function') {
       return primary;
     }
 
-    const adaptive = this.keypointDetector.extractAdaptiveKeypoints(this.cv, grayImage, region, objectSupportMask, {
-      minKeypoints,
-    });
+    const adaptive = this._filterKeypointsToObjectSupport(
+      this.keypointDetector.extractAdaptiveKeypoints(this.cv, grayImage, region, objectSupportMask, {
+        minKeypoints,
+      }),
+      objectSupportMask
+    );
 
     return adaptive.keypoints.length > primary.keypoints.length ? adaptive : primary;
   }
 
-  _createReadiness({ state, poseSource, reconstructionReady }) {
+  _filterKeypointsToObjectSupport(keypointResult, objectSupportMask) {
+    if (!objectSupportMask) {
+      return keypointResult;
+    }
+
+    const keypoints = keypointResult.keypoints.filter(keypoint => (
+      isPointInsideObjectSupport(objectSupportMask, keypoint.pt || keypoint)
+    ));
+    const rejectedByMask = Math.max(0, keypointResult.keypoints.length - keypoints.length);
+
+    return {
+      ...keypointResult,
+      keypoints,
+      count: keypoints.length,
+      rejectedByMask: (keypointResult.rejectedByMask || 0) + rejectedByMask,
+    };
+  }
+
+  _createReadiness({
+    state,
+    poseSource,
+    positionSource = null,
+    reconstructionReady,
+    poseInliers = null,
+    poseConfidence = null,
+    poseAverageResidual = null,
+    poseForeshortening = null,
+  }) {
     const reconstructionMode = isReconstructionMode(this.trackingMode);
+    const selectionReady = state !== 'inactive' && state !== 'lost';
+    const trackingReady = state === 'tracking' || state === 'stable';
     const strongPlanarPose = poseSource === 'planar-homography';
     const strongReconstructionPose = reconstructionReady &&
       isReconstructionMode(poseSource) &&
       poseSource === this.trackingMode;
-    const faceReady = state !== 'candidate' &&
-      state !== 'mapping' &&
-      (!reconstructionMode || strongReconstructionPose || strongPlanarPose);
+    const posePathReady = reconstructionMode
+      ? strongReconstructionPose || strongPlanarPose
+      : poseSource !== null;
+    const poseQualityReady = this._isAttachmentPoseQualityReady({
+      poseSource,
+      poseInliers,
+      poseConfidence,
+      poseAverageResidual,
+      poseForeshortening,
+    });
+    const poseReady = trackingReady && posePathReady && poseQualityReady;
+    const surfaceReady = reconstructionMode
+      ? poseReady && (strongReconstructionPose || strongPlanarPose)
+      : poseReady;
+    const attachmentSourceReady = this._isAttachmentSourceReady({
+      poseSource,
+      positionSource,
+      reconstructionMode,
+      strongPlanarPose,
+      strongReconstructionPose,
+    });
+    const attachmentReady = trackingReady && poseReady && surfaceReady && attachmentSourceReady;
+    const faceReady = attachmentReady;
     const poseRecovery = reconstructionMode &&
       reconstructionReady &&
-      !strongReconstructionPose &&
-      !strongPlanarPose;
+      (!posePathReady || !poseQualityReady || !attachmentSourceReady);
     const reason = faceReady
       ? 'Face overlay is ready'
       : poseRecovery ? FACE_READINESS_REASON_POSE_RECOVERY : FACE_READINESS_REASON_RECONSTRUCTION;
 
-    return { faceReady, reason };
+    return {
+      faceReady,
+      selectionReady,
+      trackingReady,
+      poseReady,
+      poseQualityReady,
+      surfaceReady,
+      attachmentSourceReady,
+      attachmentReady,
+      reason,
+    };
+  }
+
+  _isAttachmentSourceReady({
+    poseSource,
+    positionSource,
+    reconstructionMode,
+    strongPlanarPose,
+    strongReconstructionPose,
+  }) {
+    if (!reconstructionMode || positionSource === null) {
+      return true;
+    }
+
+    if (strongPlanarPose) {
+      return positionSource === 'planar-homography';
+    }
+
+    return strongReconstructionPose && positionSource === poseSource;
+  }
+
+  _isAttachmentPoseQualityReady({
+    poseSource,
+    poseInliers = null,
+    poseConfidence = null,
+    poseAverageResidual = null,
+    poseForeshortening = null,
+  }) {
+    const qualityMeasured = Number.isFinite(poseInliers) ||
+      Number.isFinite(poseConfidence) ||
+      Number.isFinite(poseAverageResidual) ||
+      Number.isFinite(poseForeshortening);
+    if (!qualityMeasured) {
+      return true;
+    }
+
+    const reconstructionPose = isReconstructionMode(poseSource) && poseSource === this.trackingMode;
+    const planarPose = poseSource === 'planar-homography';
+    const minInliers = reconstructionPose
+      ? MIN_RECONSTRUCTION_ATTACHMENT_POSE_INLIERS
+      : planarPose ? MIN_PLANAR_ATTACHMENT_POSE_INLIERS
+      : MIN_ATTACHMENT_POSE_INLIERS;
+    const minConfidence = reconstructionPose
+      ? MIN_RECONSTRUCTION_ATTACHMENT_POSE_CONFIDENCE
+      : MIN_ATTACHMENT_POSE_CONFIDENCE;
+    const maxResidual = reconstructionPose
+      ? MAX_RECONSTRUCTION_ATTACHMENT_POSE_RESIDUAL
+      : planarPose ? MAX_PLANAR_ATTACHMENT_POSE_RESIDUAL : MAX_OBJECT_ATTACHMENT_POSE_RESIDUAL;
+
+    return (!Number.isFinite(poseInliers) || poseInliers >= minInliers) &&
+      (!Number.isFinite(poseConfidence) || poseConfidence >= minConfidence) &&
+      (!Number.isFinite(poseAverageResidual) || poseAverageResidual <= maxResidual) &&
+      (!reconstructionPose ||
+        !Number.isFinite(poseForeshortening) ||
+        poseForeshortening >= MIN_RECONSTRUCTION_ATTACHMENT_FORESHORTENING);
   }
 
   _calculateObjectEvidence({
@@ -2396,6 +2924,7 @@ export class ImageAnchorService {
     templateKeypoints = [],
     trackingKeypoints = [],
     trackedPoints = null,
+    backgroundRejected = 0,
   }) {
     const regionArea = Math.max(1, region.width * region.height);
     const maskPixels = objectSupportMask
@@ -2419,7 +2948,7 @@ export class ImageAnchorService {
       activeLandmarks: trackedPoints ? activeTrackedPoints.length : trackingKeypoints.length,
       objectOwnedLandmarks,
       keypointDensity: objectOwnedKeypoints / regionArea,
-      backgroundRejected: Math.max(0, trackingKeypoints.length - objectOwnedKeypoints),
+      backgroundRejected: backgroundRejected + Math.max(0, trackingKeypoints.length - objectOwnedKeypoints),
     };
   }
 
@@ -2465,7 +2994,12 @@ export class ImageAnchorService {
     this.metrics.readiness = result.readiness || this._createReadiness({
       state: this.anchorState,
       poseSource: this.metrics.poseSource,
+      positionSource: result.method || this.metrics.lastUpdateMethod,
       reconstructionReady: this.metrics.reconstructionReady,
+      poseInliers: this.metrics.poseInliers,
+      poseConfidence: this.metrics.poseConfidence,
+      poseAverageResidual: this.metrics.poseAverageResidual,
+      poseForeshortening: this.metrics.poseForeshortening,
     });
 
     if (!result.success) {
@@ -2530,6 +3064,7 @@ export class ImageAnchorService {
       this.framesSinceRelocalizationKeyframe = 0;
       this.framesSinceFullFrameRecovery = this.fullFrameRecoveryInterval;
       this.framesWithoutNormalPose = 0;
+      this.lastNormalPoseSource = null;
       this.frameIndex = 0;
       
       // Reset resilience counters

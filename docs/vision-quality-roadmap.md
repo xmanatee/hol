@@ -48,12 +48,14 @@ Current anchoring uses:
 - Mask-based landmark rejection.
 - Patch-descriptor keyframe relocalization.
 - Template recovery.
+- Reference homography attachment when the tracked point set supports a coherent perspective transform.
 
 This is a reasonable mobile-web baseline. The weak spots are predictable:
 
 - Low-texture and glossy objects do not produce enough stable corners.
 - Background corners inside the detection box can be stronger than object corners.
 - LK drifts under large viewpoint changes, fast motion, motion blur, specular highlights, and 90-degree turns.
+- Reference-similarity fallback is still the dominant measured tracking-error source when reconstruction pose is unavailable or not yet trusted.
 - The current mask is mostly propagated from geometry; there is no periodic learned object-mask correction.
 - Bootstrap/grid points help start tracking, but they are not enough to recover object identity after real appearance change.
 
@@ -72,6 +74,13 @@ This is best understood as object-local pose and surface-prior estimation, not f
 - How stable is depth or surface normal?
 - Is the pose residual bounded?
 - Is the map confidence calibrated against head-attachment drift?
+
+The current class priors cover the common mobile targets:
+
+- Flat targets: books, posters, phones, cards, labels, documents, screens.
+- Curved targets: cans, bottles, jars, cups, mugs, vases.
+- Ellipsoid targets: faces, heads, balls.
+- Shallow box targets: shelves, bookcases, cabinets, drawers, crates, boxes.
 
 The current synthetic tests allow errors that are visibly bad: many scenarios permit double-digit pixel anchor error, large frame jumps, and rotation errors near a radian. The tests verify robustness, but not polished attachment quality.
 
@@ -103,11 +112,64 @@ At 90-degree turns, the correct behavior is not to keep forcing a face to stay v
 - YOLO segmentation ONNX for known selectable classes. This can improve tap masks for bottles, cups, books, phones, people, and other COCO-covered objects.
 - XFeat ONNX for degraded/lost relocalization. It is designed for lightweight image matching and should be tested only on recovery cadence first, not every frame.
 - A free-tap segmentation path. If no detection box is selected, run tap segmentation and derive the object box from the mask.
+- LightGlue-style learned matching only belongs in the same low-cadence recovery bucket unless an in-browser benchmark proves it fits the mobile budget.
 
 ### Use As Benchmarks, Teachers, Or Offline References
 
+- TAPIR, TAPNext, CoTracker, and LocoTrack-style point trackers: use as tracking-quality references and dataset/evaluation guides, not as default mobile-browser frame-loop dependencies.
 - SAM 2, Cutie, XMem, and AOT-style video object segmentation: excellent references for object memory and reappearance, but too heavy and complex for the default iPhone browser frame loop.
 - VGGT, DUSt3R/MASt3R, and BundleSDF: important 3D references, but not immediate in-browser dependencies. Use them offline to score captured clips or generate pseudo-ground-truth.
+
+### Current Attachment Gate
+
+The face overlay is intentionally more conservative than tracking. `reconstructionReady` means the map has enough evidence to estimate pose; it does not by itself mean the head can be rendered. Runtime readiness now separates:
+
+- `poseReady`: there is a usable current pose source.
+- `poseQualityReady`: pose inliers, confidence, and residual are good enough for rendering.
+- `surfaceReady`: the selected reconstruction or planar pose can describe the attachment surface.
+- `attachmentSourceReady`: the current attachment position comes from the same object-local source, not a screen-space tracker fallback.
+- `attachmentReady`: all of the above pass, so the face may render.
+
+Tracking and rendering now have deliberately different contracts. A weak planar homography can keep an object tracked, but the face waits for stronger planar inlier support. A reconstruction pose can keep the map alive, but the face waits for a tighter render residual. A recent mature reconstruction source can also suppress a one-frame planar normal takeover so source churn does not produce a visible head snap.
+
+### Current Feedback Loop
+
+`npm run vision:quality` now emits compact failure buckets in addition to per-scenario records:
+
+- `failedByMode`
+- `failedByScenario`
+- `trackingSources`
+- `headPoseSources`
+- `trackingTransitions`
+- `headPoseTransitions`
+- `topFailingScenarios`
+- `topTrackingSources`
+- `topHeadPoseSources`
+- `topTrackingTransitions`
+- `topHeadPoseTransitions`
+
+This makes each pass measurable without manual camera testing. The current tracked baseline after the planar-ownership, face-readiness, sparse 3D-anchor, curved-dropout recovery, sparse-only centroid fallback, rigid-planar motion cap, book-specific planar cap, planar pose-filter, planar mirror-rejection, and low-lag tracker passes is:
+
+- 54 scenario/mode combinations.
+- 30 pass, 24 fail.
+- Failed stages: tracking 21, reconstruction 6.
+- No strict head-attachment failures remain in the replay matrix.
+- No remaining head-pose source transition exceeds the strict world-error or rotation-error transition limits.
+- Rigid planar selected-reconstruction normals are no longer trusted as external normal corrections, so book/card targets do not let a face-on reconstruction collapse a real planar turn.
+- High-confidence, low-residual reference-similarity tracker positions can bypass smoothing lag outside sparse reconstruction, while weak tracker and sparse-recovery paths still stay smoothed and step-limited.
+
+Measured deltas from the prior tracked baseline:
+
+- Aggregate: 13 pass / 41 fail -> 30 pass / 24 fail.
+- Head attachment failures: 19 -> 0.
+- Tracking failures: 34 -> 21.
+- Reconstruction failures: 6 -> 6.
+- Worst sparse-reconstruction head rotation source bucket: 2.28rad -> 0.64rad.
+- Worst planar-homography world-position source bucket: 0.40 -> 0.12 after low-inlier planar render gating.
+- Worst planar-homography anchor source bucket: 51.89px -> 22.95px after low-support planar homographies stopped owning the tapped attachment and planar pose updates became less laggy.
+- Worst reference-similarity anchor source bucket: 49.23px -> 36.13px after centroid dropout was limited to sparse reconstruction.
+
+Interpretation: overlay gating now avoids visibly bad face renders in the strict replay matrix. Book targets no longer let the one-euro position filter introduce vertical lag after occlusion; they use raw object-local candidates with the tighter book step cap. High-quality tracker measurements also avoid unnecessary lag before reconstruction takes over, but sparse reconstruction keeps smoothing during dropout-heavy recovery because that path is more vulnerable to reference-transform overshoot. The remaining product gap is tracking/relocalization: many high-error frames still report success through `reference_similarity_transform` after curved objects rotate or recover from occlusion, the high-support `curved-centroid-position` recovery bucket still has large anchor error on hard rotations, and several reconstruction failures are consensus dropouts rather than missing keypoints. The most useful next algorithmic target is low-cadence recovery that re-establishes object-owned correspondences before falling back to 2D reference similarity.
 
 ## Stage Scoring
 
@@ -141,6 +203,7 @@ Primary score:
 - TAP-style point tracking accuracy on object-owned points.
 - Object mask agreement over time.
 - Anchor drift in pixels.
+- Anchor jump by position-source transition.
 - Frame-to-frame head-root jump after readiness.
 - Lost/recovered count and relocalization latency.
 - Background landmark rejection rate.
@@ -194,6 +257,7 @@ Primary score:
 - Normal angular error.
 - Scale jitter.
 - Rotation jitter.
+- Head jump and rotation error by pose-source transition.
 - Bounded jump after occlusion/reappearance.
 - Correct hide/fade when the surface is back-facing or not reconstructed.
 
@@ -267,6 +331,8 @@ Use fetch/cache scripts, not vendored blobs, for:
 - CO3D: object-centric multi-view reconstruction checks.
 - App-captured clips: exact target UX with phones, cups, cans, books, posters, bottles, and faces.
 
+Real fixture manifests are now schema-validated before fetch or replay validation. A fixture may declare `tasks` such as `segmentation`, `pointTracking`, `pose3d`, `reconstruction`, or `detection`, plus annotation files such as masks, tracks, cameras, or pose metadata. The local validator rejects unsafe paths, unknown task labels, missing source URLs during fetch, and missing annotation files in the cache.
+
 Use SAM 2, Cutie, VGGT, DUSt3R/MASt3R, and BundleSDF as references to score what "good" looks like on clips, then copy the smallest viable runtime idea into the mobile architecture.
 
 ## Acceptance Gates
@@ -281,6 +347,8 @@ The next implementation milestone should not be considered good until:
 - A 90-degree left/right/up/down object turn hides or rotates correctly instead of sliding the head.
 - Reappearance after occlusion restores the same object-local attachment, not just any similar texture.
 - The quality report identifies the failing stage when live testing looks bad.
+- The quality report identifies the failing source transition when the head jumps or rotates during a source handoff.
+- Real-data cache validation confirms dataset/task/annotation coverage before any real replay score is trusted.
 
 ## Sources
 
@@ -292,6 +360,7 @@ The next implementation milestone should not be considered good until:
 - XFeat ONNX repository: https://github.com/DavideCatto/XFeat-ONNX
 - TAP-Vid benchmark: https://tapvid.github.io/
 - TAPVid-3D benchmark: https://tapvid3d.github.io/
+- BOP benchmark tasks and pose metrics: https://bop.felk.cvut.cz/tasks/
 - SAM 2: https://ai.meta.com/research/sam2/
 - SAM 2 repository: https://github.com/facebookresearch/sam2
 - Cutie repository: https://github.com/hkchengrex/Cutie

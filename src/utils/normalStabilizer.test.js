@@ -184,6 +184,28 @@ test('surface normal stabilizer rejects an abrupt mirrored homography turn after
   assert.ok(held.x < -0.32, `held x ${held.x.toFixed(3)}`);
 });
 
+test('surface normal stabilizer rejects high-inlier mirror flips when foreshortening is still moderate', () => {
+  const stabilizer = new SurfaceNormalStabilizer({
+    historySize: 7,
+    outlierRadians: 0.2,
+  });
+
+  for (let i = 0; i < 4; i++) {
+    stabilizer.update(
+      { x: 0.46, y: -0.16, z: 0.87 },
+      { confidence: 0.84, inliers: 18, foreshortening: 0.86 }
+    );
+  }
+
+  const held = stabilizer.update(
+    { x: -0.57, y: -0.04, z: 0.82 },
+    { confidence: 0.85, inliers: 23, foreshortening: 0.82 }
+  );
+
+  assert.ok(held.x > 0.34, `held x ${held.x.toFixed(3)}`);
+  assert.ok(held.z > 0.84, `held z ${held.z.toFixed(3)}`);
+});
+
 test('surface normal stabilizer holds through repeated ambiguous low-confidence mirror poses', () => {
   const stabilizer = new SurfaceNormalStabilizer({
     historySize: 7,

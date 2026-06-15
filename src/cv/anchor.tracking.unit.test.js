@@ -1,11 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { KeypointTracker } from './anchor.tracking.js';
+import { loadOpenCvForNode } from './synthetic/opencvNodeLoader.js';
 
 const transformPoint = (point, transform) => ({
   x: transform.tx + transform.scale * Math.cos(transform.rotation) * point.x - transform.scale * Math.sin(transform.rotation) * point.y,
   y: transform.ty + transform.scale * Math.sin(transform.rotation) * point.x + transform.scale * Math.cos(transform.rotation) * point.y,
 });
+
+const projectHomographyPoint = (point, matrix) => {
+  const denominator = matrix[6] * point.x + matrix[7] * point.y + matrix[8];
+  return {
+    x: (matrix[0] * point.x + matrix[1] * point.y + matrix[2]) / denominator,
+    y: (matrix[3] * point.x + matrix[4] * point.y + matrix[5]) / denominator,
+  };
+};
 
 const createTrackedPoint = (id, original, transform) => ({
   id,
@@ -54,6 +63,173 @@ test('reference transform preserves anchor tap offset through rotation and scale
   assert.ok(Math.abs(anchor.y - expected.y) < 0.5);
   assert.ok(Math.abs(anchor.rotation - transform.rotation) < 0.03);
   assert.ok(Math.abs(anchor.scale - transform.scale) < 0.03);
+});
+
+test('reference homography preserves tapped anchor through perspective tilt', async () => {
+  const cv = await loadOpenCvForNode();
+  const tracker = new KeypointTracker();
+  const homography = [
+    1.08, 0.18, 22,
+    -0.05, 0.92, 18,
+    0.0009, -0.0007, 1,
+  ];
+  const originals = Array.from({ length: 24 }, (_, index) => {
+    const column = index % 6;
+    const row = Math.floor(index / 6);
+    return {
+      x: 80 + column * 28,
+      y: 70 + row * 24,
+    };
+  });
+
+  tracker.trackedPoints = originals.map((point, index) => ({
+    id: index,
+    original: point,
+    current: projectHomographyPoint(point, homography),
+    response: 1,
+    status: 'active',
+    errorHistory: [1],
+    age: 10,
+    successfulTrackingStreak: 10,
+    totalSuccessfulFrames: 10,
+    stabilityScore: 0.7,
+    isStable: true,
+  }));
+  tracker.keypointCentroid = { x: 150, y: 106 };
+  tracker.tapOffset = { x: 21, y: -9 };
+  tracker.anchorOriginalPosition = {
+    x: tracker.keypointCentroid.x + tracker.tapOffset.x,
+    y: tracker.keypointCentroid.y + tracker.tapOffset.y,
+  };
+
+  const anchor = tracker.getAnchorPosition(cv);
+  const expected = projectHomographyPoint(tracker.anchorOriginalPosition, homography);
+
+  assert.equal(anchor.method, 'reference_homography');
+  assert.ok(Math.hypot(anchor.x - expected.x, anchor.y - expected.y) < 0.75);
+  assert.ok(anchor.inlierCount >= 16);
+  assert.ok(anchor.averageResidual < 0.75);
+});
+
+test('attachment positioning keeps similarity fallback when homography is unavailable', () => {
+  const tracker = new KeypointTracker();
+  tracker.trackedPoints = Array.from({ length: 6 }, (_, index) => ({
+    id: index,
+    original: { x: 80 + index * 12, y: 90 + (index % 2) * 18 },
+    current: { x: 90 + index * 12, y: 96 + (index % 2) * 18 },
+    response: 1,
+    status: 'active',
+    errorHistory: [8],
+    age: 8,
+    successfulTrackingStreak: 3,
+    totalSuccessfulFrames: 8,
+    stabilityScore: 0.35,
+    isStable: false,
+  }));
+  tracker.keypointCentroid = { x: 110, y: 99 };
+  tracker.tapOffset = { x: 6, y: -3 };
+  tracker.anchorOriginalPosition = { x: 116, y: 96 };
+  tracker._estimateReferenceTransformation = () => ({
+    tx: 10,
+    ty: 6,
+    scale: 1,
+    rotation: 0,
+    confidence: 0.12,
+    inlierCount: 4,
+    averageResidual: 13,
+  });
+
+  const anchor = tracker.getAnchorPosition({ findHomography: () => null });
+
+  assert.equal(anchor.method, 'reference_similarity_transform');
+  assert.equal(anchor.x, 126);
+  assert.equal(anchor.y, 102);
+});
+
+test('centroid anchor fallback reports weighted point motion without transform scale', () => {
+  const tracker = new KeypointTracker();
+  tracker.trackedPoints = [
+    {
+      id: 1,
+      original: { x: 90, y: 90 },
+      current: { x: 112, y: 98 },
+      response: 1,
+      status: 'active',
+      errorHistory: [1],
+      age: 10,
+    },
+    {
+      id: 2,
+      original: { x: 130, y: 90 },
+      current: { x: 150, y: 102 },
+      response: 1,
+      status: 'active',
+      errorHistory: [20],
+      age: 4,
+    },
+    {
+      id: 3,
+      original: { x: 110, y: 130 },
+      current: { x: 132, y: 136 },
+      response: 1,
+      status: 'inactive',
+      errorHistory: [1],
+      age: 10,
+    },
+  ];
+  tracker.tapOffset = { x: 7, y: -5 };
+
+  const anchor = tracker.getCentroidAnchorPosition();
+
+  assert.equal(anchor.method, 'weighted_centroid_with_offset');
+  assert.equal(anchor.inlierCount, 2);
+  assert.ok(anchor.x > 119);
+  assert.ok(anchor.x < 124);
+  assert.ok(anchor.y > 93);
+  assert.ok(anchor.y < 96);
+  assert.equal(anchor.scale, undefined);
+});
+
+test('attachment positioning prefers the local tapped patch over distant curved-object motion', () => {
+  const tracker = new KeypointTracker();
+  const anchor = { x: 120, y: 110 };
+  const localTransform = {
+    tx: 18,
+    ty: -8,
+    scale: 1.04,
+    rotation: 4 * Math.PI / 180,
+  };
+  const farTransform = {
+    tx: -34,
+    ty: 26,
+    scale: 0.82,
+    rotation: -18 * Math.PI / 180,
+  };
+  const localOriginals = Array.from({ length: 10 }, (_, index) => ({
+    x: 96 + (index % 5) * 12,
+    y: 96 + Math.floor(index / 5) * 16,
+  }));
+  const farOriginals = Array.from({ length: 32 }, (_, index) => ({
+    x: 215 + (index % 8) * 14,
+    y: 150 + Math.floor(index / 8) * 18,
+  }));
+
+  tracker.trackedPoints = [
+    ...localOriginals.map((point, index) => createTrackedPoint(index, point, localTransform)),
+    ...farOriginals.map((point, index) => createTrackedPoint(100 + index, point, farTransform)),
+  ];
+  tracker.keypointCentroid = { x: 195, y: 150 };
+  tracker.anchorOriginalPosition = anchor;
+  tracker.tapOffset = {
+    x: tracker.anchorOriginalPosition.x - tracker.keypointCentroid.x,
+    y: tracker.anchorOriginalPosition.y - tracker.keypointCentroid.y,
+  };
+
+  const predicted = tracker.getAnchorPosition();
+  const expected = transformPoint(anchor, localTransform);
+
+  assert.equal(predicted.method, 'reference_similarity_transform');
+  assert.ok(Math.hypot(predicted.x - expected.x, predicted.y - expected.y) < 1.5);
 });
 
 test('outlier filtering keeps coherent rotational motion instead of assuming pure translation', () => {
@@ -120,7 +296,7 @@ test('keypoint refresh preserves the original reference frame for homography pos
     y: 0,
     width: 220,
     height: 180,
-  }, transformPoint(tracker.anchorOriginalPosition, transform));
+  });
 
   assert.equal(refreshed, true);
   assert.deepEqual(tracker.anchorOriginalPosition, { x: 130, y: 102 });
@@ -173,7 +349,7 @@ test('keypoint refresh expands the landmark map instead of replacing tracked poi
     y: 0,
     width: 260,
     height: 180,
-  }, transformPoint(tracker.anchorOriginalPosition, transform));
+  });
 
   assert.equal(refreshed, true);
   assert.equal(tracker.trackedPoints.filter(point => point.id < originals.length).length, originals.length);
@@ -239,7 +415,7 @@ test('keypoint refresh rejects a weak homography when similarity keeps the refer
     y: 0,
     width: 300,
     height: 200,
-  }, transformPoint(tracker.anchorOriginalPosition, transform));
+  });
 
   const added = tracker.trackedPoints.filter(point => point.id >= originals.length);
 
@@ -339,6 +515,128 @@ test('pose correspondences prefer the local planar patch around the tapped ancho
   assert.equal(correspondences.length, 12);
   assert.ok(correspondences.every(correspondence => correspondence.prev.x < 140));
   assert.ok(correspondences.every(correspondence => correspondence.prev.y < 140));
+});
+
+test('pose correspondences exclude active landmarks already classified as background', () => {
+  const tracker = new KeypointTracker();
+  tracker.anchorOriginalPosition = { x: 100, y: 100 };
+  tracker.trackedPoints = [
+    ...Array.from({ length: 12 }, (_, index) => ({
+      id: index,
+      original: {
+        x: 82 + (index % 4) * 12,
+        y: 82 + Math.floor(index / 4) * 12,
+      },
+      current: {
+        x: 92 + (index % 4) * 12,
+        y: 88 + Math.floor(index / 4) * 12,
+      },
+      response: 1,
+      status: 'active',
+      age: 20,
+      errorHistory: [1],
+      stabilityScore: 0.8,
+      objectOwned: true,
+    })),
+    ...Array.from({ length: 18 }, (_, index) => ({
+      id: 100 + index,
+      original: {
+        x: 160 + (index % 6) * 18,
+        y: 150 + Math.floor(index / 6) * 18,
+      },
+      current: {
+        x: 168 + (index % 6) * 18,
+        y: 156 + Math.floor(index / 6) * 18,
+      },
+      response: 1,
+      status: 'active',
+      age: 20,
+      errorHistory: [1],
+      stabilityScore: 0.8,
+      objectOwned: false,
+    })),
+  ];
+
+  const correspondences = tracker.getCorrespondences({
+    maxReferenceDistance: Infinity,
+    minCount: 8,
+    maxCount: 30,
+  });
+
+  assert.equal(correspondences.length, 12);
+  assert.ok(correspondences.every(correspondence => correspondence.prev.x < 140));
+});
+
+test('keypoint refresh rejects textured background candidates outside the object mask', () => {
+  const tracker = new KeypointTracker();
+  tracker.initialized = true;
+  tracker.previousGray = { delete() {} };
+
+  const transform = {
+    tx: 10,
+    ty: 8,
+    scale: 1,
+    rotation: 0,
+  };
+  const originals = Array.from({ length: 12 }, (_, index) => ({
+    x: 84 + (index % 4) * 12,
+    y: 86 + Math.floor(index / 4) * 12,
+  }));
+  const objectCandidates = Array.from({ length: 10 }, (_, index) => ({
+    x: 90 + (index % 5) * 9,
+    y: 92 + Math.floor(index / 5) * 12,
+  }));
+  const backgroundCandidates = Array.from({ length: 24 }, (_, index) => ({
+    x: 190 + (index % 6) * 12,
+    y: 42 + Math.floor(index / 6) * 14,
+  }));
+  tracker.trackedPoints = originals.map((point, index) => createTrackedPoint(index, point, transform));
+  tracker.trackedPoints.forEach(point => {
+    point.objectOwned = true;
+  });
+  tracker.nextPointId = originals.length;
+  tracker.keypointCentroid = { x: 102, y: 98 };
+  tracker.anchorOriginalPosition = { x: 102, y: 98 };
+  tracker.tapOffset = { x: 0, y: 0 };
+
+  const maskData = new Uint8Array(320 * 240);
+  for (let y = 78; y <= 136; y++) {
+    for (let x = 78; x <= 156; x++) {
+      maskData[y * 320 + x] = 255;
+    }
+  }
+  const objectSupportMask = {
+    width: 320,
+    height: 240,
+    data: maskData,
+  };
+  const currentGray = {
+    cols: 320,
+    rows: 240,
+    empty: () => false,
+    clone: () => ({ delete() {} }),
+  };
+  const detector = {
+    extractKeypoints: () => ({
+      keypoints: [
+        ...backgroundCandidates.map(point => ({ pt: point, response: 1.0 })),
+        ...objectCandidates.map(point => ({ pt: transformPoint(point, transform), response: 0.8 })),
+      ],
+    }),
+  };
+
+  const refreshed = tracker.refreshKeypoints({}, currentGray, detector, {
+    x: 30,
+    y: 20,
+    width: 260,
+    height: 180,
+  }, objectSupportMask);
+
+  assert.equal(refreshed, true);
+  assert.ok(tracker.trackedPoints.length > originals.length);
+  assert.equal(tracker.lastRefreshStats.rejectedByMask, backgroundCandidates.length);
+  assert.ok(tracker.trackedPoints.every(point => point.objectOwned !== false));
+  assert.ok(tracker.trackedPoints.every(point => point.current.x < 170));
 });
 
 test('tracker restores lost landmarks from a descriptor relocalization transform', () => {

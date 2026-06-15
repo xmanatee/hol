@@ -11,6 +11,10 @@ export const shouldRenderAnchorOverlay = ({ activeAnchor, anchorState }) => {
   const readiness = metrics.readiness || activeAnchor.readiness || activeAnchor.diagnostics?.readiness || null;
   const state = anchorState?.state || activeAnchor.state || null;
 
+  if (readiness?.attachmentReady === false) {
+    return false;
+  }
+
   if (readiness?.faceReady === false) {
     return false;
   }

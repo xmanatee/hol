@@ -4,10 +4,17 @@ export const SURFACE_MODEL_PLANE = 'plane';
 export const SURFACE_MODEL_CYLINDER = 'cylinder';
 export const SURFACE_MODEL_TAPERED_CYLINDER = 'tapered-cylinder';
 export const SURFACE_MODEL_ELLIPSOID = 'ellipsoid';
+export const SURFACE_MODEL_BOX = 'box';
 
 export const modelFromRegion = (region = { width: 1, height: 1 }, targetClass = null) => {
   const label = String(targetClass || '').toLowerCase();
-  if (/book|laptop|keyboard|cell phone|tablet|tv|screen|sign|box/.test(label)) return SURFACE_MODEL_PLANE;
+  if (/shelf|shelves|bookcase|cabinet|drawer|rack|wardrobe|closet|box|package|crate/.test(label)) {
+    return SURFACE_MODEL_BOX;
+  }
+  if (/face|head|portrait|mask/.test(label)) return SURFACE_MODEL_ELLIPSOID;
+  if (/book|notebook|paper|document|poster|photo|picture|painting|card|ticket|label|badge|laptop|keyboard|cell phone|smartphone|phone|tablet|tv|screen|sign|whiteboard/.test(label)) {
+    return SURFACE_MODEL_PLANE;
+  }
   if (/cup|mug|vase/.test(label)) return SURFACE_MODEL_TAPERED_CYLINDER;
   if (/ball|sphere|round/.test(label)) return SURFACE_MODEL_ELLIPSOID;
   if (/can|bottle|jar|container/.test(label)) return SURFACE_MODEL_CYLINDER;
@@ -16,6 +23,42 @@ export const modelFromRegion = (region = { width: 1, height: 1 }, targetClass = 
   if (aspect <= 0.62) return SURFACE_MODEL_CYLINDER;
   if (aspect <= 0.78) return SURFACE_MODEL_TAPERED_CYLINDER;
   return SURFACE_MODEL_PLANE;
+};
+
+const boxCoordinates = (reference, bounds) => {
+  const width = Math.max(1, bounds.max.x - bounds.min.x);
+  const height = Math.max(1, bounds.max.y - bounds.min.y);
+  const centerX = (bounds.min.x + bounds.max.x) * 0.5;
+  const centerY = (bounds.min.y + bounds.max.y) * 0.5;
+  const u = clamp((reference.x - bounds.min.x) / width, 0, 1);
+  const v = clamp((reference.y - bounds.min.y) / height, 0, 1);
+  const depth = Math.min(width, height) * 0.24;
+  const bevel = 0.16;
+  const left = clamp((bevel - u) / bevel, 0, 1);
+  const right = clamp((u - (1 - bevel)) / bevel, 0, 1);
+  const top = clamp((bevel - v) / bevel, 0, 1);
+  const bottom = clamp((v - (1 - bevel)) / bevel, 0, 1);
+  const side = Math.max(left, right);
+  const cap = Math.max(top, bottom) * (1 - side * 0.35);
+
+  return {
+    x: (reference.x - centerX) * (1 - side * 0.22),
+    y: (reference.y - centerY) * (1 - cap * 0.16),
+    z: -depth * Math.max(side, cap * 0.72),
+    sideSign: right > left ? 1 : left > right ? -1 : 0,
+    capSign: bottom > top ? 1 : top > bottom ? -1 : 0,
+    side,
+    cap,
+  };
+};
+
+const boxPoint = (reference, bounds) => {
+  const coordinates = boxCoordinates(reference, bounds);
+  return {
+    x: coordinates.x,
+    y: coordinates.y,
+    z: coordinates.z,
+  };
 };
 
 const cylinderPoint = (reference, bounds, model) => {
@@ -84,6 +127,10 @@ export const pointForSurfaceModel = (reference, bounds, model) => {
     return ellipsoidPoint(reference, bounds);
   }
 
+  if (model === SURFACE_MODEL_BOX) {
+    return boxPoint(reference, bounds);
+  }
+
   return cylinderPoint(reference, bounds, model);
 };
 
@@ -107,6 +154,21 @@ export const normalForSurfaceModel = (reference, bounds, model) => {
     };
   }
 
+  if (model === SURFACE_MODEL_BOX) {
+    const { sideSign, capSign, side, cap } = boxCoordinates(reference, bounds);
+    const rawNormal = {
+      x: sideSign * side * 0.74,
+      y: capSign * cap * 0.48,
+      z: 1,
+    };
+    const length = Math.max(Math.hypot(rawNormal.x, rawNormal.y, rawNormal.z), 1e-9);
+    return {
+      x: rawNormal.x / length,
+      y: rawNormal.y / length,
+      z: rawNormal.z / length,
+    };
+  }
+
   const width = Math.max(1, bounds.max.x - bounds.min.x);
   const u = clamp((reference.x - bounds.min.x) / width, 0, 1);
   const angle = (u - 0.5) * Math.PI * 0.92;
@@ -121,13 +183,14 @@ export const normalForSurfaceModel = (reference, bounds, model) => {
 export const depthQualityForSurfaceModel = model => {
   if (model === SURFACE_MODEL_PLANE) return 0.02;
   if (model === SURFACE_MODEL_ELLIPSOID) return 0.32;
+  if (model === SURFACE_MODEL_BOX) return 0.14;
   if (model === SURFACE_MODEL_TAPERED_CYLINDER) return 0.22;
   return 0.18;
 };
 
 export const surfaceMeshForModel = (bounds, model) => {
   const columns = model === SURFACE_MODEL_PLANE ? 4 : model === SURFACE_MODEL_ELLIPSOID ? 11 : 9;
-  const rows = model === SURFACE_MODEL_ELLIPSOID ? 11 : 7;
+  const rows = model === SURFACE_MODEL_ELLIPSOID ? 11 : model === SURFACE_MODEL_BOX ? 9 : 7;
   const points = [];
   const edges = [];
   const faces = [];

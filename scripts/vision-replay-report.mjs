@@ -8,6 +8,7 @@ import {
 import { scoreHeadPoseReplay } from '../src/cv/synthetic/headPoseReplayHarness.js';
 import { RECONSTRUCTION_MODES } from '../src/cv/anchor.reconstructionModes.js';
 
+const SYNTHETIC_OBJECT_SUPPORT = 'synthetic-object-mask';
 const cv = await loadOpenCvForNode();
 const replaySummaries = [];
 
@@ -18,6 +19,7 @@ for (const scenario of reportReplayScenarios) {
       cv,
       sequence,
       trackingMode: mode.id,
+      useObjectSupportMask: true,
     });
     const lastFrame = replay.frames.at(-1);
     const preview = lastFrame?.metrics?.reconstructionPreview;
@@ -26,6 +28,7 @@ for (const scenario of reportReplayScenarios) {
       kind: sequence.kind,
       mode: mode.id,
       targetClass: sequence.targetClass,
+      objectSupportMask: SYNTHETIC_OBJECT_SUPPORT,
       surfaceModel: preview?.surface?.model || null,
       surfaceFaces: preview?.surface?.faces?.length || 0,
       geometricConsistency: preview?.statistics?.geometricConsistency || 0,

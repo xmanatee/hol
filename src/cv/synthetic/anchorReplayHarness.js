@@ -1,5 +1,6 @@
 import { ImageAnchorService } from '../../services/ImageAnchorService.js';
 import { HomographyEstimator } from '../anchor.homography.js';
+import { createObjectSupportMask } from '../objectSupportMask.js';
 
 const normalizeAngle = value => {
   let angle = value;
@@ -33,12 +34,117 @@ const setupOpenCvGlobals = cv => {
   globalThis.performance = globalThis.performance || performance;
 };
 
+const cross = (origin, left, right) => (
+  (left.x - origin.x) * (right.y - origin.y) -
+  (left.y - origin.y) * (right.x - origin.x)
+);
+
+const createConvexHull = points => {
+  const sorted = [...points]
+    .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y))
+    .sort((left, right) => left.x - right.x || left.y - right.y);
+  if (sorted.length < 3) return sorted;
+
+  const lower = [];
+  for (const point of sorted) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
+      lower.pop();
+    }
+    lower.push(point);
+  }
+
+  const upper = [];
+  for (let index = sorted.length - 1; index >= 0; index--) {
+    const point = sorted[index];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
+      upper.pop();
+    }
+    upper.push(point);
+  }
+
+  lower.pop();
+  upper.pop();
+  return [...lower, ...upper];
+};
+
+const pointInPolygon = (point, polygon) => {
+  let inside = false;
+  for (let left = 0, right = polygon.length - 1; left < polygon.length; right = left++) {
+    const leftPoint = polygon[left];
+    const rightPoint = polygon[right];
+    const intersects = (leftPoint.y > point.y) !== (rightPoint.y > point.y) &&
+      point.x < (rightPoint.x - leftPoint.x) * (point.y - leftPoint.y) / (rightPoint.y - leftPoint.y) + leftPoint.x;
+    if (intersects) inside = !inside;
+  }
+
+  return inside;
+};
+
+const createSyntheticObjectSupportMask = ({ sequence, frame }) => {
+  if (frame.objectMask) {
+    return createObjectSupportMask({
+      width: sequence.width,
+      height: sequence.height,
+      data: frame.objectMask.data,
+      source: 'synthetic-object-mask',
+      confidence: 0.96,
+      referencePoint: sequence.tap,
+      createdAtFrame: 0,
+      updatedAtFrame: 0,
+    });
+  }
+
+  const polygon = createConvexHull(frame.corners || []);
+  const data = new Uint8Array(sequence.width * sequence.height);
+  if (polygon.length < 3) {
+    return createObjectSupportMask({
+      width: sequence.width,
+      height: sequence.height,
+      data,
+      source: 'synthetic-object-mask',
+      confidence: 0.96,
+      referencePoint: sequence.tap,
+      createdAtFrame: 0,
+      updatedAtFrame: 0,
+    });
+  }
+
+  const minX = Math.max(0, Math.floor(Math.min(...polygon.map(point => point.x))));
+  const maxX = Math.min(sequence.width - 1, Math.ceil(Math.max(...polygon.map(point => point.x))));
+  const minY = Math.max(0, Math.floor(Math.min(...polygon.map(point => point.y))));
+  const maxY = Math.min(sequence.height - 1, Math.ceil(Math.max(...polygon.map(point => point.y))));
+
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      if (pointInPolygon({ x: x + 0.5, y: y + 0.5 }, polygon)) {
+        data[y * sequence.width + x] = 255;
+      }
+    }
+  }
+
+  return createObjectSupportMask({
+    width: sequence.width,
+    height: sequence.height,
+    data,
+    source: 'synthetic-object-mask',
+    confidence: 0.96,
+    referencePoint: sequence.tap,
+    createdAtFrame: 0,
+    updatedAtFrame: 0,
+  });
+};
+
 const settle = promise => promise.then(
   value => ({ ok: true, value }),
   error => ({ ok: false, error })
 );
 
-export const replayImageAnchorSequence = async ({ cv, sequence, trackingMode = 'sparse-reconstruction' }) => {
+export const replayImageAnchorSequence = async ({
+  cv,
+  sequence,
+  trackingMode = 'sparse-reconstruction',
+  useObjectSupportMask = false,
+}) => {
   setupOpenCvGlobals(cv);
 
   let replayTime = 1000;
@@ -47,6 +153,9 @@ export const replayImageAnchorSequence = async ({ cv, sequence, trackingMode = '
   await service.initialize(cv, getCameraParams(sequence));
 
   const firstFrame = sequence.frames[0];
+  const objectSupportMask = useObjectSupportMask
+    ? createSyntheticObjectSupportMask({ sequence, frame: firstFrame })
+    : null;
   const createAttempt = await settle(service.createAnchor(
     firstFrame.imageData,
     sequence.tap,
@@ -56,6 +165,7 @@ export const replayImageAnchorSequence = async ({ cv, sequence, trackingMode = '
       x2: sequence.boundingBox.x2,
       y2: sequence.boundingBox.y2,
       class: sequence.targetClass,
+      objectSupportMask,
     }
   ));
 

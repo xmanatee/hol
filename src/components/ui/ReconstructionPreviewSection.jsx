@@ -194,7 +194,7 @@ export const ReconstructionPreviewSection = ({ details }) => {
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-1 text-[10px]">
+      <div className="grid grid-cols-1 gap-1 text-[10px] sm:grid-cols-2">
         <PreviewSvg
           title="Map"
           points={previewPoints}

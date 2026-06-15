@@ -506,6 +506,96 @@ test('sparse curved target pose uses refreshed live tracks even when mapped ids 
   assert.ok(normalAngle(result.normal, expectedNormal) < 0.38);
 });
 
+test('sparse curved target pose keeps the 3D anchor when 2D references are stale', () => {
+  const { shape, reconstructor, anchorPoint } = buildCanReconstructor();
+  const targetPose = {
+    yaw: 0.68,
+    pitch: 0.07,
+    roll: 0.04,
+    scale: 1.24,
+    tx: 232,
+    ty: 170,
+  };
+  const staleReferenceTracks = trackedPointsForPose(shape, targetPose).map(point => ({
+    ...point,
+    original: {
+      x: point.original.x + 42,
+      y: point.original.y - 18,
+    },
+  }));
+  const expectedAnchor = projectPoint(anchorPoint, targetPose);
+
+  const result = reconstructor.estimatePoseFromTrackedPoints(staleReferenceTracks);
+
+  assert.equal(result.success, true);
+  assert.ok(Math.abs(result.position.x - expectedAnchor.x) < 8);
+  assert.ok(Math.abs(result.position.y - expectedAnchor.y) < 8);
+});
+
+test('sparse curved target pose falls back to tracked attachment when the 3D fit is loose', () => {
+  const { shape, reconstructor } = buildCanReconstructor();
+  const targetPose = {
+    yaw: 0.44,
+    pitch: 0.04,
+    roll: 0.02,
+    scale: 1.22,
+    tx: 220,
+    ty: 166,
+  };
+  const noisyTracks = trackedPointsForPose(shape, targetPose).map(point => ({
+    ...point,
+    current: {
+      x: point.current.x + Math.sin(point.id * 2.13) * 18,
+      y: point.current.y + Math.cos(point.id * 1.71) * 14,
+    },
+  }));
+  const expectedTrackedAnchor = projectPoint({ x: 0, y: 0, z: 0 }, targetPose);
+
+  const result = reconstructor.estimatePoseFromTrackedPoints(noisyTracks);
+
+  assert.equal(result.success, true);
+  assert.equal(result.planarTransform.method, 'reference_similarity_transform');
+  assert.ok(Math.hypot(result.position.x - expectedTrackedAnchor.x, result.position.y - expectedTrackedAnchor.y) < 18);
+});
+
+test('curved surface anchor replaces weak tracked fit when the map pose is coherent', () => {
+  const reconstructor = new SparseObjectReconstructor();
+  reconstructor.reset({
+    anchorReference: { x: 210, y: 160 },
+    templateRegion: { x: 140, y: 60, width: 140, height: 210 },
+    targetClass: 'bottle',
+  });
+  reconstructor.map = {
+    statistics: { mapConfidence: 0.79 },
+  };
+  const pose = {
+    inlierCount: 15,
+    averageResidual: 3.4,
+  };
+  const trackedFit = {
+    success: true,
+    inlierCount: 11,
+    averageResidual: 6.4,
+  };
+
+  assert.equal(reconstructor._shouldUseProjectedSurfaceAnchor({
+    pose,
+    trackedFit,
+    projectedAnchor: { x: 318, y: 230 },
+    trackedAnchor: { x: 303, y: 226 },
+  }), true);
+
+  assert.equal(reconstructor._shouldUseProjectedSurfaceAnchor({
+    pose,
+    trackedFit: {
+      ...trackedFit,
+      inlierCount: 18,
+    },
+    projectedAnchor: { x: 318, y: 230 },
+    trackedAnchor: { x: 303, y: 226 },
+  }), false);
+});
+
 test('sparse object reconstructor rejects cup-like sliding tracks that do not preserve object geometry', () => {
   const shape = createShape();
   const reconstructor = new SparseObjectReconstructor({

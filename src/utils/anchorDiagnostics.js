@@ -11,6 +11,8 @@ const collectAnchorDetails = (anchorState) => {
     objectOwnedLandmarks: metrics.objectOwnedLandmarks ?? 0,
     maskCoverage: metrics.maskCoverage ?? null,
     maskConfidence: metrics.maskConfidence ?? null,
+    objectSupportMaskSource: metrics.currentObjectSupportMaskSource || metrics.objectSupportMaskSource || null,
+    objectSupportMaskPreview: metrics.currentObjectSupportMaskPreview || metrics.objectSupportMaskPreview || null,
     keypointDensity: metrics.keypointDensity ?? null,
     backgroundRejected: metrics.backgroundRejected ?? 0,
     readiness: metrics.readiness || null,

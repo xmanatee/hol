@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ImageAnchorService } from './ImageAnchorService.js';
-import { createObjectSupportMask } from '../cv/objectSupportMask.js';
+import { createObjectSupportMask, isPointInsideObjectSupport } from '../cv/objectSupportMask.js';
 
 const createObjectPose = ({
   x = 140,
@@ -33,6 +33,32 @@ const createObjectPose = ({
   averageResidual,
   foreshortening,
   referenceSpread: { width: 120, height: 90, minAxis: 90 },
+});
+
+const createPlanarPose = ({
+  inlierCount = 22,
+  inlierRatio = 0.64,
+  confidence = 0.58,
+  averageResidual = 1.1,
+  referenceSpread = { width: 92, height: 58, minAxis: 58 },
+} = {}) => ({
+  success: true,
+  method: 'planar-homography',
+  position: { x: 160, y: 140, z: 0 },
+  normal: { x: 0.08, y: -0.06, z: 0.995 },
+  planarTransform: {
+    scale: 1.04,
+    rotation: 0.08,
+    confidence,
+    inlierCount,
+    method: 'planar-homography',
+  },
+  confidence,
+  inlierCount,
+  inlierRatio,
+  averageResidual,
+  foreshortening: 0.96,
+  referenceSpread,
 });
 
 test('template region follows the selected detection instead of a full-frame generic crop', () => {
@@ -91,6 +117,92 @@ test('object pose is the single anchor pose model', () => {
   assert.equal(Object.hasOwn(metrics, 'poseStrategy'), false);
 });
 
+test('flat paper-like targets use planar pose ownership', () => {
+  const service = new ImageAnchorService();
+
+  for (const targetClass of ['book', 'poster', 'phone', 'laminated card', 'shipping label']) {
+    service.anchorTargetClass = targetClass;
+    assert.equal(service._hasPlanarTargetClass(), true, targetClass);
+    assert.equal(service._hasRigidPlanarTargetClass(), true, targetClass);
+  }
+
+  service.anchorTargetClass = 'bag';
+  assert.equal(service._hasPlanarTargetClass(), true);
+  assert.equal(service._hasRigidPlanarTargetClass(), false);
+
+  for (const targetClass of ['can', 'face', 'shelves']) {
+    service.anchorTargetClass = targetClass;
+    assert.equal(service._hasPlanarTargetClass(), false, targetClass);
+    assert.equal(service._hasRigidPlanarTargetClass(), false, targetClass);
+  }
+});
+
+test('planar dominance does not let weak homography own the tapped attachment', () => {
+  const service = new ImageAnchorService();
+  service.anchorTargetClass = 'card';
+  service.planarDominanceScore = 7;
+
+  const correspondences = Array.from({ length: 28 }, (_, index) => ({
+    prev: { x: 90 + index * 3, y: 120 + (index % 4) * 2 },
+    curr: { x: 94 + index * 3.1, y: 122 + (index % 4) * 2.1 },
+  }));
+  const weakLocalPlanarPose = createPlanarPose({
+    inlierCount: 9,
+    inlierRatio: 0.36,
+    confidence: 0.3,
+    averageResidual: 1.0,
+    referenceSpread: { width: 36, height: 14, minAxis: 14 },
+  });
+  const strongPlanarPose = createPlanarPose();
+
+  assert.equal(service._shouldPreferPlanarHomography({
+    planarPose: weakLocalPlanarPose,
+    reconstructionPose: { success: false },
+    correspondences,
+  }), false);
+  assert.equal(service._shouldPreferPlanarHomography({
+    planarPose: strongPlanarPose,
+    reconstructionPose: { success: false },
+    correspondences,
+  }), true);
+});
+
+test('known flat targets can use moderate planar attachment without passing the face-ready gate', () => {
+  const service = new ImageAnchorService();
+  service.anchorTargetClass = 'book';
+  service.planarDominanceScore = 7;
+  const correspondences = Array.from({ length: 18 }, (_, index) => ({
+    prev: { x: 80 + index * 5, y: 95 + (index % 6) * 8 },
+    curr: { x: 84 + index * 5.2, y: 98 + (index % 6) * 8.1 },
+  }));
+  const moderatePlanarPose = createPlanarPose({
+    inlierCount: 12,
+    inlierRatio: 0.54,
+    confidence: 0.38,
+    averageResidual: 2.1,
+    referenceSpread: { width: 86, height: 44, minAxis: 44 },
+  });
+
+  assert.equal(service._shouldPreferPlanarHomography({
+    planarPose: moderatePlanarPose,
+    reconstructionPose: { success: false },
+    correspondences,
+  }), true);
+
+  const readiness = service._createReadiness({
+    state: 'stable',
+    poseSource: 'planar-homography',
+    positionSource: 'planar-homography',
+    reconstructionReady: true,
+    poseInliers: moderatePlanarPose.inlierCount,
+    poseConfidence: moderatePlanarPose.confidence,
+    poseAverageResidual: moderatePlanarPose.averageResidual,
+  });
+
+  assert.equal(readiness.poseQualityReady, false);
+  assert.equal(readiness.faceReady, false);
+});
+
 test('anchor position filters adapt quickly enough to follow real object motion', () => {
   const service = new ImageAnchorService();
 
@@ -100,6 +212,145 @@ test('anchor position filters adapt quickly enough to follow real object motion'
   assert.equal(first, 0);
   assert.ok(jumped > 55);
   assert.ok(jumped < 100);
+});
+
+test('planar pose-owned positions blend toward raw measurements while fallback stays filtered', () => {
+  const planarService = new ImageAnchorService();
+  planarService.anchorTargetClass = 'bag';
+  planarService.planarDominanceScore = 8;
+  planarService.positionFilterX.filter(0, 1000);
+  planarService.positionFilterY.filter(0, 1000);
+
+  const planar = planarService._filterPositionCandidate(
+    { x: 100, y: 0, z: 0 },
+    1016.67,
+    'planar-homography'
+  );
+
+  const fallbackService = new ImageAnchorService();
+  fallbackService.anchorTargetClass = 'bag';
+  fallbackService.planarDominanceScore = 8;
+  fallbackService.positionFilterX.filter(0, 1000);
+  fallbackService.positionFilterY.filter(0, 1000);
+  const fallback = fallbackService._filterPositionCandidate(
+    { x: 100, y: 0, z: 0 },
+    1016.67,
+    'reference_similarity_transform'
+  );
+
+  assert.ok(planar.x > fallback.x + 14);
+  assert.ok(planar.x > 97);
+  assert.ok(planar.x < 100);
+  assert.equal(planarService.metrics.positionFilterAdjustment, 'planar-pose-blend');
+  assert.equal(fallbackService.metrics.positionFilterAdjustment, null);
+});
+
+test('book target positions bypass smoothing while retaining step limits', () => {
+  const rawService = new ImageAnchorService();
+  rawService.anchorTargetClass = 'book';
+  rawService.positionFilterX.filter(0, 1000);
+  rawService.positionFilterY.filter(0, 1000);
+
+  const raw = rawService._filterPositionCandidate(
+    { x: 100, y: 0, z: 0 },
+    1016.67,
+    'planar-homography'
+  );
+
+  assert.equal(raw.x, 100);
+  assert.equal(raw.y, 0);
+  assert.equal(rawService.metrics.positionFilterAdjustment, 'book-step-position');
+
+  const cappedService = new ImageAnchorService();
+  cappedService.setTrackingMode('parametric-surface');
+  cappedService.anchorTargetClass = 'book';
+  cappedService.currentPosition = { x: 200, y: 160, z: 0 };
+  cappedService.templateRegion = { width: 120, height: 120 };
+  cappedService.metrics.lastUpdateResult = 'success';
+  cappedService.positionFilterX.filter(200, 1000);
+  cappedService.positionFilterY.filter(160, 1000);
+
+  const capped = cappedService._filterPositionCandidate(
+    { x: 240, y: 160, z: 0 },
+    1016.67,
+    'planar-homography'
+  );
+
+  assert.ok(capped.x <= 210);
+  assert.ok(capped.x > 209.8);
+  assert.equal(capped.y, 160);
+});
+
+test('high-confidence reference transforms bypass smoothing lag while weak transforms stay smoothed', () => {
+  const fastService = new ImageAnchorService();
+  fastService.currentPosition = { x: 200, y: 160, z: 0 };
+  fastService.templateRegion = { width: 120, height: 120 };
+  fastService.metrics.lastUpdateResult = 'success';
+  fastService.positionFilterX.filter(200, 1000);
+  fastService.positionFilterY.filter(160, 1000);
+
+  const fast = fastService._filterPositionCandidate(
+    {
+      x: 211,
+      y: 164,
+      z: 0,
+      confidence: 0.68,
+      averageResidual: 4.5,
+    },
+    1016.67,
+    'reference_similarity_transform'
+  );
+
+  assert.equal(fast.x, 211);
+  assert.equal(fast.y, 164);
+  assert.equal(fastService.metrics.positionFilterAdjustment, 'high-confidence-tracker-step-position');
+
+  const smoothedService = new ImageAnchorService();
+  smoothedService.currentPosition = { x: 200, y: 160, z: 0 };
+  smoothedService.templateRegion = { width: 120, height: 120 };
+  smoothedService.metrics.lastUpdateResult = 'success';
+  smoothedService.positionFilterX.filter(200, 1000);
+  smoothedService.positionFilterY.filter(160, 1000);
+
+  const smoothed = smoothedService._filterPositionCandidate(
+    {
+      x: 211,
+      y: 164,
+      z: 0,
+      confidence: 0.18,
+      averageResidual: 12,
+    },
+    1016.67,
+    'reference_similarity_transform'
+  );
+
+  assert.ok(smoothed.x < 211);
+  assert.ok(smoothed.y < 164);
+  assert.equal(smoothedService.metrics.positionFilterAdjustment, null);
+
+  const sparseService = new ImageAnchorService();
+  sparseService.setTrackingMode('sparse-reconstruction');
+  sparseService.currentPosition = { x: 200, y: 160, z: 0 };
+  sparseService.templateRegion = { width: 120, height: 120 };
+  sparseService.metrics.lastUpdateResult = 'success';
+  sparseService.positionFilterX.filter(200, 1000);
+  sparseService.positionFilterY.filter(160, 1000);
+
+  const sparse = sparseService._filterPositionCandidate(
+    {
+      x: 211,
+      y: 164,
+      z: 0,
+      confidence: 0.68,
+      averageResidual: 4.5,
+    },
+    1016.67,
+    'reference_similarity_transform'
+  );
+
+  assert.ok(sparse.x < 211);
+  assert.ok(sparse.y < 164);
+  assert.equal(sparseService.metrics.positionFilterAdjustment, null);
 });
 
 test('reconstruction position updates are step-limited to prevent head teleports', () => {
@@ -119,6 +370,59 @@ test('reconstruction position updates are step-limited to prevent head teleports
   assert.ok(step >= 9.1);
   assert.ok(limited.x > 209);
   assert.equal(limited.z, 0);
+});
+
+test('rigid planar targets get a larger bounded position step for fast camera motion', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'card';
+  service.currentPosition = { x: 200, y: 160, z: 0 };
+  service.templateRegion = { width: 120, height: 120 };
+  service.metrics.lastUpdateResult = 'success';
+
+  const limited = service._limitPositionStep(
+    { x: 240, y: 160, z: 0 },
+    'planar-homography'
+  );
+
+  assert.equal(limited.x, 212);
+  assert.equal(limited.y, 160);
+});
+
+test('book targets keep a tighter planar position step for shelf-like motion', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'book';
+  service.currentPosition = { x: 200, y: 160, z: 0 };
+  service.templateRegion = { width: 120, height: 120 };
+  service.metrics.lastUpdateResult = 'success';
+
+  const limited = service._limitPositionStep(
+    { x: 240, y: 160, z: 0 },
+    'planar-homography'
+  );
+
+  assert.ok(limited.x <= 210);
+  assert.ok(limited.x > 209.8);
+  assert.equal(limited.y, 160);
+});
+
+test('non-rigid reconstruction targets keep the conservative position step', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'bag';
+  service.currentPosition = { x: 200, y: 160, z: 0 };
+  service.templateRegion = { width: 120, height: 120 };
+  service.metrics.lastUpdateResult = 'success';
+
+  const limited = service._limitPositionStep(
+    { x: 240, y: 160, z: 0 },
+    'planar-homography'
+  );
+
+  assert.ok(limited.x > 209);
+  assert.ok(limited.x < 210);
+  assert.equal(limited.y, 160);
 });
 
 test('small position updates are not step-limited', () => {
@@ -233,6 +537,165 @@ test('anchor creation passes selected object support mask into keypoint extracti
   assert.ok(receivedMasks.every(mask => mask === objectSupportMask));
   assert.equal(state.metrics.objectSupportMaskSource, 'interactive-segmenter');
   assert.deepEqual(state.metrics.objectSupportMaskBounds, objectSupportMask.bbox);
+  assert.equal(state.metrics.objectSupportMaskPreview.source, 'interactive-segmenter');
+  assert.deepEqual(state.metrics.objectSupportMaskPreview.bbox, objectSupportMask.bbox);
+  assert.ok(state.metrics.objectSupportMaskPreview.points.length > 0);
+  assert.deepEqual(state.metrics.currentObjectSupportMaskPreview, state.metrics.objectSupportMaskPreview);
+});
+
+test('anchor creation filters detector keypoints to the selected object mask', async () => {
+  const service = new ImageAnchorService();
+  class FakeMat {
+    delete() {}
+  }
+  const data = new Uint8Array(320 * 240);
+  for (let y = 84; y <= 144; y++) {
+    for (let x = 72; x <= 152; x++) {
+      data[y * 320 + x] = 255;
+    }
+  }
+  const objectSupportMask = createObjectSupportMask({
+    width: 320,
+    height: 240,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.88,
+    referencePoint: { x: 110, y: 120 },
+    createdAtFrame: 12,
+    updatedAtFrame: 12,
+  });
+  let initializedKeypoints = [];
+
+  service.initialized = true;
+  service.cv = {
+    Mat: FakeMat,
+    COLOR_RGBA2GRAY: 0,
+    matFromImageData: () => new FakeMat(),
+    cvtColor: () => {}
+  };
+  service.keypointDetector = {
+    extractKeypoints: () => ({
+      keypoints: [
+        ...Array.from({ length: 30 }, (_, index) => ({ pt: { x: 190 + index, y: 42 + (index % 4) }, response: 2 })),
+        ...Array.from({ length: 18 }, (_, index) => ({
+          pt: {
+            x: 82 + (index % 6) * 12,
+            y: 96 + Math.floor(index / 6) * 18,
+          },
+          response: 1,
+        })),
+      ],
+      descriptors: {},
+      method: 'fake-gftt',
+    }),
+    assessTemplateQuality: keypoints => ({ overall: 0.42, keypointCount: keypoints.length })
+  };
+  service.keypointTracker = {
+    trackedPoints: [],
+    initializeTracking: (cv, keypoints) => {
+      initializedKeypoints = keypoints;
+    }
+  };
+  service.persistenceSystem = {
+    storeTemplate: () => {}
+  };
+
+  const result = await service.createAnchor(
+    { width: 320, height: 240 },
+    { x: 110, y: 120 },
+    { x1: 60, y1: 76, x2: 170, y2: 156, objectSupportMask }
+  );
+
+  assert.equal(result.success, true);
+  assert.ok(initializedKeypoints.length >= 12);
+  assert.ok(initializedKeypoints.every(keypoint => keypoint.pt.x <= 152));
+  assert.equal(result.evidence.objectOwnedLandmarks, initializedKeypoints.length);
+  assert.ok(result.evidence.backgroundRejected >= 30);
+});
+
+test('anchor creation respects non-convex human masks instead of filling the person box', async () => {
+  const service = new ImageAnchorService();
+  class FakeMat {
+    delete() {}
+  }
+  const data = new Uint8Array(240 * 260);
+  const fillRect = ({ x1, y1, x2, y2 }) => {
+    for (let y = y1; y <= y2; y++) {
+      for (let x = x1; x <= x2; x++) {
+        data[y * 240 + x] = 255;
+      }
+    }
+  };
+  fillRect({ x1: 106, y1: 28, x2: 134, y2: 58 });   // head
+  fillRect({ x1: 98, y1: 62, x2: 142, y2: 156 });    // torso
+  fillRect({ x1: 64, y1: 76, x2: 86, y2: 144 });     // left arm
+  fillRect({ x1: 154, y1: 76, x2: 176, y2: 144 });   // right arm
+  fillRect({ x1: 94, y1: 158, x2: 112, y2: 228 });   // left leg
+  fillRect({ x1: 128, y1: 158, x2: 146, y2: 228 });  // right leg
+  const objectSupportMask = createObjectSupportMask({
+    width: 240,
+    height: 260,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 120, y: 96 },
+    createdAtFrame: 0,
+    updatedAtFrame: 0,
+  });
+  let initializedKeypoints = [];
+
+  service.initialized = true;
+  service.cv = {
+    Mat: FakeMat,
+    COLOR_RGBA2GRAY: 0,
+    matFromImageData: () => new FakeMat(),
+    cvtColor: () => {}
+  };
+  service.keypointDetector = {
+    extractKeypoints: () => ({
+      keypoints: [
+        ...Array.from({ length: 24 }, (_, index) => ({
+          pt: {
+            x: 90 + (index % 6) * 12,
+            y: 82 + Math.floor(index / 6) * 24,
+          },
+          response: 1,
+        })),
+        ...Array.from({ length: 22 }, (_, index) => ({
+          pt: {
+            x: 88 + (index % 4) * 18,
+            y: 166 + Math.floor(index / 4) * 12,
+          },
+          response: 2,
+        })),
+      ],
+      descriptors: {},
+      method: 'fake-gftt',
+    }),
+    assessTemplateQuality: keypoints => ({ overall: 0.4, keypointCount: keypoints.length })
+  };
+  service.keypointTracker = {
+    trackedPoints: [],
+    initializeTracking: (cv, keypoints) => {
+      initializedKeypoints = keypoints;
+    }
+  };
+  service.persistenceSystem = {
+    storeTemplate: () => {}
+  };
+
+  const result = await service.createAnchor(
+    { width: 240, height: 260 },
+    { x: 120, y: 96 },
+    { x1: 58, y1: 24, x2: 184, y2: 232, class: 'person', objectSupportMask }
+  );
+
+  assert.equal(result.success, true);
+  assert.ok(initializedKeypoints.length >= 12);
+  assert.equal(initializedKeypoints.some(keypoint => keypoint.pt.x > 88 && keypoint.pt.x < 96 && keypoint.pt.y > 160), false);
+  assert.equal(initializedKeypoints.some(keypoint => keypoint.pt.x > 114 && keypoint.pt.x < 124 && keypoint.pt.y > 160), false);
+  assert.equal(initializedKeypoints.every(keypoint => isPointInsideObjectSupport(objectSupportMask, keypoint.pt)), true);
+  assert.ok(result.evidence.backgroundRejected >= 22);
 });
 
 test('weak tap-time object evidence creates a candidate anchor instead of throwing', async () => {
@@ -382,6 +845,13 @@ test('reconstruction face readiness requires a current usable pose source', () =
     reconstructionReady: true,
   }), {
     faceReady: false,
+    selectionReady: true,
+    trackingReady: true,
+    poseReady: false,
+    poseQualityReady: true,
+    surfaceReady: false,
+    attachmentSourceReady: true,
+    attachmentReady: false,
     reason: 'Recovering object pose before showing the face',
   });
 
@@ -396,6 +866,143 @@ test('reconstruction face readiness requires a current usable pose source', () =
     poseSource: 'planar-homography',
     reconstructionReady: false,
   }).faceReady, true);
+});
+
+test('reconstruction face readiness blocks weak measured attachment poses', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+
+  const weakPose = service._createReadiness({
+    state: 'stable',
+    poseSource: 'parametric-surface',
+    reconstructionReady: true,
+    poseInliers: 7,
+    poseConfidence: 0.6,
+    poseAverageResidual: 2.5,
+  });
+  assert.equal(weakPose.poseReady, false);
+  assert.equal(weakPose.surfaceReady, false);
+  assert.equal(weakPose.attachmentReady, false);
+  assert.equal(weakPose.faceReady, false);
+  assert.match(weakPose.reason, /recovering object pose/i);
+
+  const highResidualPose = service._createReadiness({
+    state: 'stable',
+    poseSource: 'parametric-surface',
+    reconstructionReady: true,
+    poseInliers: 18,
+    poseConfidence: 0.56,
+    poseAverageResidual: 9,
+  });
+  assert.equal(highResidualPose.poseQualityReady, false);
+  assert.equal(highResidualPose.faceReady, false);
+
+  const borderlineResidualPose = service._createReadiness({
+    state: 'stable',
+    poseSource: 'parametric-surface',
+    reconstructionReady: true,
+    poseInliers: 24,
+    poseConfidence: 0.76,
+    poseAverageResidual: 6.4,
+  });
+  assert.equal(borderlineResidualPose.poseQualityReady, false);
+  assert.equal(borderlineResidualPose.faceReady, false);
+
+  const strongPose = service._createReadiness({
+    state: 'stable',
+    poseSource: 'parametric-surface',
+    reconstructionReady: true,
+    poseInliers: 18,
+    poseConfidence: 0.56,
+    poseAverageResidual: 4.5,
+  });
+  assert.equal(strongPose.poseReady, true);
+  assert.equal(strongPose.surfaceReady, true);
+  assert.equal(strongPose.attachmentReady, true);
+  assert.equal(strongPose.faceReady, true);
+
+  const edgeOnReconstructionPose = service._createReadiness({
+    state: 'stable',
+    poseSource: 'parametric-surface',
+    positionSource: 'parametric-surface',
+    reconstructionReady: true,
+    poseInliers: 36,
+    poseConfidence: 0.92,
+    poseAverageResidual: 3.5,
+    poseForeshortening: 0.14,
+  });
+  assert.equal(edgeOnReconstructionPose.poseQualityReady, false);
+  assert.equal(edgeOnReconstructionPose.faceReady, false);
+
+  const weakPlanarPose = service._createReadiness({
+    state: 'stable',
+    poseSource: 'planar-homography',
+    positionSource: 'planar-homography',
+    reconstructionReady: true,
+    poseInliers: 14,
+    poseConfidence: 0.92,
+    poseAverageResidual: 0.8,
+  });
+  assert.equal(weakPlanarPose.poseQualityReady, false);
+  assert.equal(weakPlanarPose.faceReady, false);
+
+  const underSupportedPlanarPose = service._createReadiness({
+    state: 'stable',
+    poseSource: 'planar-homography',
+    positionSource: 'planar-homography',
+    reconstructionReady: true,
+    poseInliers: 18,
+    poseConfidence: 0.72,
+    poseAverageResidual: 1.2,
+  });
+  assert.equal(underSupportedPlanarPose.poseQualityReady, false);
+  assert.equal(underSupportedPlanarPose.faceReady, false);
+
+  const strongPlanarPose = service._createReadiness({
+    state: 'stable',
+    poseSource: 'planar-homography',
+    positionSource: 'planar-homography',
+    reconstructionReady: true,
+    poseInliers: 22,
+    poseConfidence: 0.72,
+    poseAverageResidual: 1.2,
+  });
+  assert.equal(strongPlanarPose.poseQualityReady, true);
+  assert.equal(strongPlanarPose.faceReady, true);
+});
+
+test('reconstruction face readiness requires an object-local attachment source', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+
+  const screenSpaceAttachment = service._createReadiness({
+    state: 'stable',
+    poseSource: 'parametric-surface',
+    positionSource: 'reference_similarity_transform',
+    reconstructionReady: true,
+    poseInliers: 18,
+    poseConfidence: 0.56,
+    poseAverageResidual: 4.5,
+  });
+
+  assert.equal(screenSpaceAttachment.poseReady, true);
+  assert.equal(screenSpaceAttachment.surfaceReady, true);
+  assert.equal(screenSpaceAttachment.attachmentSourceReady, false);
+  assert.equal(screenSpaceAttachment.attachmentReady, false);
+  assert.equal(screenSpaceAttachment.faceReady, false);
+
+  const objectLocalAttachment = service._createReadiness({
+    state: 'stable',
+    poseSource: 'parametric-surface',
+    positionSource: 'parametric-surface',
+    reconstructionReady: true,
+    poseInliers: 18,
+    poseConfidence: 0.56,
+    poseAverageResidual: 4.5,
+  });
+
+  assert.equal(objectLocalAttachment.attachmentSourceReady, true);
+  assert.equal(objectLocalAttachment.faceReady, true);
 });
 
 test('candidate bootstrap tracks existing landmarks instead of resetting their history', () => {
@@ -603,6 +1210,67 @@ test('landmark metrics report zero object ownership after all active points leav
   assert.equal(service.metrics.landmarkCount, 8);
   assert.equal(service.metrics.activeLandmarkCount, 8);
   assert.equal(service.metrics.objectOwnedLandmarks, 0);
+});
+
+test('mask rejection immediately removes background landmarks from pose ownership', () => {
+  const service = new ImageAnchorService();
+  const data = new Uint8Array(120 * 90);
+  for (let y = 30; y <= 58; y++) {
+    for (let x = 30; x <= 68; x++) {
+      data[y * 120 + x] = 255;
+    }
+  }
+
+  service.objectSupportMask = createObjectSupportMask({
+    width: 120,
+    height: 90,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.91,
+    referencePoint: { x: 49, y: 44 },
+    createdAtFrame: 0,
+    updatedAtFrame: 0,
+  });
+  service.currentPosition = { x: 49, y: 44, z: 0 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0 };
+  service.metrics = {};
+  service.keypointTracker = {
+    trackedPoints: [
+      ...Array.from({ length: 10 }, (_, index) => ({
+        id: index,
+        original: { x: 36 + index * 3, y: 42 },
+        current: { x: 36 + index * 3, y: 42 },
+        status: 'active',
+        objectOwned: true,
+        age: 8,
+      })),
+      ...Array.from({ length: 6 }, (_, index) => ({
+        id: 100 + index,
+        original: { x: 82 + index * 4, y: 64 },
+        current: { x: 82 + index * 4, y: 64 },
+        status: 'active',
+        objectOwned: true,
+        age: 8,
+      })),
+    ],
+    getCorrespondences(options = {}) {
+      return this.trackedPoints
+        .filter(point => point.status === 'active' && point.objectOwned !== false)
+        .slice(0, options.maxCount || Infinity)
+        .map(point => ({
+          prev: point.original,
+          curr: point.current,
+        }));
+    },
+  };
+
+  const rejected = service._rejectTrackedPointsOutsideObjectSupport();
+  const correspondences = service.keypointTracker.getCorrespondences({ maxCount: 30 });
+
+  assert.equal(rejected, 6);
+  assert.equal(service.keypointTracker.trackedPoints.filter(point => point.objectOwned === false).length, 6);
+  assert.equal(correspondences.length, 10);
+  assert.ok(correspondences.every(correspondence => correspondence.curr.x <= 68));
 });
 
 test('records failed anchor creation diagnostics before returning to inactive', async () => {
@@ -846,6 +1514,71 @@ test('keypoint updates propagate pose normals from homography correspondences', 
   assert.equal(service.currentNormal.z.toFixed(2), '0.92');
 });
 
+test('keypoint updates pass OpenCV context into attachment positioning', () => {
+  const service = new ImageAnchorService();
+  const cv = { findHomography: () => null };
+  const anchorPositionContexts = [];
+
+  service.initialized = true;
+  service.anchored = true;
+  service.anchorState = 'tracking';
+  service.currentPosition = { x: 100, y: 120, z: 0 };
+  service.cv = cv;
+  service.keypointTracker = {
+    trackToFrame: () => ({
+      success: true,
+      successRate: 0.9,
+      activePointCount: 18,
+      averageError: 1.2,
+    }),
+    getCorrespondences: () => Array.from({ length: 12 }, (_, index) => ({
+      prev: {
+        x: 30 + (index % 4) * 18,
+        y: 40 + Math.floor(index / 4) * 16,
+      },
+      curr: {
+        x: 36 + (index % 4) * 18,
+        y: 43 + Math.floor(index / 4) * 16,
+      },
+    })),
+    getObjectPose: () => createObjectPose({
+      x: 142,
+      y: 158,
+      scale: 1.04,
+      rotation: 0.08,
+      inlierCount: 18,
+    }),
+    getAnchorPosition: receivedCv => {
+      anchorPositionContexts.push(receivedCv || null);
+      return {
+        x: 142,
+        y: 158,
+        method: receivedCv ? 'reference_homography' : 'reference_similarity_transform',
+        confidence: 0.82,
+        inlierCount: 18,
+        averageResidual: 1.1,
+        scale: 1.04,
+        rotation: 0.08,
+      };
+    },
+  };
+  service.homographyEstimator = {
+    estimatePose: () => createObjectPose({
+      x: 142,
+      y: 158,
+      scale: 1.04,
+      rotation: 0.08,
+      inlierCount: 18,
+      method: 'homography',
+    }),
+  };
+
+  const result = service._updateWithKeypoints({ cols: 320, rows: 240 }, 1000);
+
+  assert.equal(result.success, true);
+  assert.ok(anchorPositionContexts.includes(cv));
+});
+
 test('affine parallax pose derives tilt from local point cloud deformation', () => {
   const service = new ImageAnchorService();
   const correspondences = Array.from({ length: 20 }, (_, index) => {
@@ -1009,6 +1742,199 @@ test('template recovery preserves partial reference tracking before full reiniti
   assert.equal(refreshed, 1);
   assert.equal(reinitialized, 0);
   assert.deepEqual(service.currentPosition, { x: 130, y: 150, z: 0 });
+});
+
+test('weak reference transforms fall back to object-owned centroid during segmented recovery', () => {
+  const service = new ImageAnchorService();
+  const maskData = new Uint8Array(80 * 80);
+  for (let y = 18; y <= 54; y++) {
+    for (let x = 22; x <= 58; x++) {
+      maskData[y * 80 + x] = 255;
+    }
+  }
+
+  service.objectSupportMask = createObjectSupportMask({
+    width: 80,
+    height: 80,
+    data: maskData,
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 40, y: 36 },
+    createdAtFrame: 0,
+  });
+  service.metrics = {
+    keypointCount: 10,
+    activeLandmarkCount: 10,
+    objectOwnedLandmarks: 7,
+  };
+  let centroidInput = null;
+  service.keypointTracker = {
+    trackedPoints: [
+      { status: 'active', objectOwned: true, current: { x: 30, y: 30 } },
+      { status: 'active', objectOwned: true, current: { x: 38, y: 34 } },
+      { status: 'active', objectOwned: true, current: { x: 36, y: 36 } },
+      { status: 'active', objectOwned: false, current: { x: 90, y: 12 } },
+      { status: 'outlier', objectOwned: true, current: { x: 34, y: 36 } },
+    ],
+    getCentroidAnchorPosition: points => {
+      centroidInput = points;
+      return {
+        x: 34,
+        y: 32,
+        confidence: 0.3,
+        inlierCount: points.length,
+        method: 'weighted_centroid_with_offset',
+      };
+    },
+  };
+
+  const selected = service._selectTrackerAnchorPosition({
+    trackerAnchorPosition: {
+      x: 80,
+      y: 15,
+      method: 'reference_similarity_transform',
+      confidence: 0,
+      averageResidual: 34,
+      inlierCount: 10,
+      scale: 1,
+      rotation: 0,
+    },
+    reconstructionPose: { success: false },
+  });
+
+  assert.equal(selected.method, 'object-owned-centroid-position');
+  assert.equal(selected.x, 34);
+  assert.equal(selected.y, 32);
+  assert.equal(selected.transformMethod, 'reference_similarity_transform');
+  assert.equal(service.metrics.trackerAnchorAdjustment, 'object-owned-centroid-position');
+  assert.equal(centroidInput.length, 3);
+  assert.equal(centroidInput.every(point => point.objectOwned === true), true);
+});
+
+test('reasonable reference transforms keep owning sparse segmented recovery', () => {
+  const service = new ImageAnchorService();
+  service.objectSupportMask = createObjectSupportMask({
+    width: 20,
+    height: 20,
+    data: new Uint8Array(20 * 20).fill(255),
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 10, y: 10 },
+    createdAtFrame: 0,
+  });
+  service.metrics = {
+    keypointCount: 11,
+    activeLandmarkCount: 11,
+    objectOwnedLandmarks: 9,
+  };
+  service.keypointTracker = {
+    trackedPoints: [],
+    getCentroidAnchorPosition: () => ({ x: 12, y: 14 }),
+  };
+  const trackerAnchorPosition = {
+    x: 18,
+    y: 21,
+    method: 'reference_similarity_transform',
+    confidence: 0.31,
+    averageResidual: 10,
+    inlierCount: 11,
+  };
+
+  assert.equal(service._selectTrackerAnchorPosition({
+    trackerAnchorPosition,
+    reconstructionPose: { success: false },
+  }), trackerAnchorPosition);
+});
+
+test('weak sparse segmented recovery keeps transform when every active landmark is still object-owned', () => {
+  const service = new ImageAnchorService();
+  service.objectSupportMask = createObjectSupportMask({
+    width: 20,
+    height: 20,
+    data: new Uint8Array(20 * 20).fill(255),
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 10, y: 10 },
+    createdAtFrame: 0,
+  });
+  service.metrics = {
+    keypointCount: 10,
+    activeLandmarkCount: 10,
+    objectOwnedLandmarks: 10,
+  };
+  service.keypointTracker = {
+    trackedPoints: [],
+    getCentroidAnchorPosition: () => {
+      throw new Error('centroid fallback should not run when ownership is clean');
+    },
+  };
+  const trackerAnchorPosition = {
+    x: 18,
+    y: 21,
+    method: 'reference_similarity_transform',
+    confidence: 0.08,
+    averageResidual: 34,
+    inlierCount: 10,
+  };
+
+  assert.equal(service._selectTrackerAnchorPosition({
+    trackerAnchorPosition,
+    reconstructionPose: { success: false },
+  }), trackerAnchorPosition);
+});
+
+test('masked recovery refresh forwards adaptive extraction options', () => {
+  const service = new ImageAnchorService();
+  const maskData = new Uint8Array(120 * 100).fill(255);
+  const objectSupportMask = createObjectSupportMask({
+    width: 120,
+    height: 100,
+    data: maskData,
+    source: 'interactive-segmenter',
+    confidence: 0.88,
+    referencePoint: { x: 60, y: 50 },
+    createdAtFrame: 0,
+  });
+  let refreshOptions = null;
+  let receivedMask = null;
+
+  service.cv = {};
+  service.keypointDetector = {};
+  service.currentPosition = { x: 60, y: 50, z: 0 };
+  service.templateRegion = { width: 80, height: 70 };
+  service.objectSupportMask = objectSupportMask;
+  service.currentObjectSupportMask = objectSupportMask;
+  service.metrics = {
+    trackingSuccessRate: 0.42,
+    poseInliers: 0,
+  };
+  service.keypointTracker = {
+    lastRefreshStats: null,
+    refreshKeypoints: (cv, grayImage, detector, region, mask, options) => {
+      receivedMask = mask;
+      refreshOptions = options;
+      service.keypointTracker.lastRefreshStats = {
+        added: 5,
+        total: 17,
+        rejectedByMask: 11,
+      };
+      return true;
+    },
+  };
+  service._storeRelocalizationKeyframe = () => {};
+
+  service._refreshKeypoints({ cols: 120, rows: 100 }, {
+    adaptive: true,
+    minNewKeypoints: 8,
+  });
+
+  assert.equal(receivedMask, objectSupportMask);
+  assert.deepEqual(refreshOptions, {
+    adaptive: true,
+    minNewKeypoints: 8,
+  });
+  assert.equal(service.metrics.landmarkRefreshAdded, 5);
+  assert.equal(service.metrics.landmarkRefreshRejectedByMask, 11);
 });
 
 test('keypoint updates expose tracked planar scale and roll for the overlay', () => {
@@ -1415,6 +2341,127 @@ test('strong curved reconstruction can replace a drifting tracker attachment', (
   assert.equal(result.poseSource, 'sparse-reconstruction');
 });
 
+test('mature curved reconstruction can replace a moderately drifting tracker attachment', () => {
+  const service = new ImageAnchorService();
+  const reconstructionPose = {
+    success: true,
+    method: 'direct-photometric',
+    position: { x: 236, y: 181, z: 0 },
+    normal: { x: 0.38, y: -0.24, z: 0.89 },
+    planarTransform: {
+      scale: 1.08,
+      rotation: 0.12,
+      confidence: 0.86,
+      inlierCount: 24,
+      method: 'direct-photometric',
+    },
+    confidence: 0.86,
+    inlierCount: 24,
+    inlierRatio: 0.52,
+    averageResidual: 8.7,
+    depthQuality: 0.12,
+    referenceSpread: { width: 84, height: 58, minAxis: 58 },
+    preview: {
+      ready: true,
+      statistics: {
+        mapConfidence: 0.84,
+        averageSupport: 0.76,
+        averageReliability: 0.7,
+        matureLandmarks: 28,
+      },
+      current: {
+        anchor: { x: 236, y: 181 },
+      },
+      surface: { model: 'ellipsoid' },
+    },
+  };
+
+  service.setTrackingMode('direct-photometric');
+  service.initialized = true;
+  service.anchored = true;
+  service.anchorState = 'tracking';
+  service.anchorTargetClass = 'ball';
+  service.templateRegion = { x: 160, y: 120, width: 140, height: 120 };
+  service.currentPosition = { x: 230, y: 178, z: 0 };
+  service.currentNormal = { x: 0, y: 0, z: 1 };
+  service.cv = {};
+  service.reconstructor = {
+    addFrameFromTrackedPoints: () => ({
+      state: 'ready',
+      ready: true,
+      frameCount: 10,
+      landmarkCount: 36,
+      depthQuality: 0.12,
+      statistics: {
+        mapConfidence: 0.84,
+        averageSupport: 0.76,
+        averageReliability: 0.7,
+        matureLandmarks: 28,
+      },
+      preview: { surface: { model: 'ellipsoid' } },
+      lastFailureReason: null,
+    }),
+    getState: () => ({
+      state: 'ready',
+      ready: true,
+      frameCount: 10,
+      landmarkCount: 36,
+      depthQuality: 0.12,
+      statistics: {
+        mapConfidence: 0.84,
+        averageSupport: 0.76,
+        averageReliability: 0.7,
+        matureLandmarks: 28,
+      },
+      preview: { surface: { model: 'ellipsoid' } },
+      lastFailureReason: null,
+    }),
+    estimatePoseFromTrackedPoints: () => reconstructionPose,
+  };
+  service.keypointTracker = {
+    trackedPoints: Array.from({ length: 36 }, (_, index) => ({
+      id: index,
+      status: 'active',
+      original: { x: 70 + (index % 6) * 18, y: 70 + Math.floor(index / 6) * 16 },
+      current: { x: 84 + (index % 6) * 18, y: 82 + Math.floor(index / 6) * 16 },
+    })),
+    trackToFrame: () => ({
+      success: true,
+      successRate: 0.88,
+      activePointCount: 36,
+      averageError: 1.5,
+    }),
+    getObjectPose: () => ({
+      success: false,
+      method: 'object-pose-affine',
+      reason: 'affine unavailable',
+    }),
+    getCorrespondences: () => [],
+    getAnchorPosition: () => ({
+      x: 220,
+      y: 174,
+      method: 'reference_similarity_transform',
+      scale: 0.98,
+      rotation: -0.04,
+      confidence: 0.62,
+      inlierCount: 18,
+    }),
+  };
+  service._estimatePoseFromTracker = () => ({
+    options: { maxReferenceDistance: 120 },
+    correspondences: [],
+    poseResult: null,
+  });
+
+  const result = service._updateWithKeypoints({ cols: 640, rows: 480 }, 1000);
+
+  assert.equal(result.success, true);
+  assert.equal(result.method, 'direct-photometric');
+  assert.equal(result.position.x, 236);
+  assert.equal(result.position.y, 181);
+  assert.equal(result.poseSource, 'direct-photometric');
+});
+
 test('curved reconstruction relaxes stale normals when pose drops out', () => {
   const service = new ImageAnchorService();
   const staleNormal = { x: 0.55, y: -0.2, z: 0.81 };
@@ -1701,6 +2748,98 @@ test('selected surface reconstruction owns pose over planar homography when its 
   }).method, 'parametric-surface');
 });
 
+test('rigid planar targets keep strong homography ownership over selected surface reconstruction', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'card';
+  service.planarDominanceScore = 8;
+  service.metrics = {
+    reconstructionMapConfidence: 0.76,
+  };
+  const correspondences = Array.from({ length: 30 }, (_, index) => ({
+    prev: { x: 42 + index * 3, y: 78 + (index % 5) * 8 },
+    curr: { x: 50 + index * 3.1, y: 86 + (index % 5) * 8.2 },
+  }));
+  const planarPose = {
+    success: true,
+    method: 'planar-homography',
+    position: { x: 140, y: 132, z: 0 },
+    normal: { x: 0.04, y: -0.02, z: 0.999 },
+    planarTransform: { scale: 1.04, rotation: 0.02, confidence: 0.92, inlierCount: 28 },
+    confidence: 0.92,
+    inlierCount: 28,
+    inlierRatio: 0.93,
+    averageResidual: 0.9,
+    referenceSpread: { width: 122, height: 86, minAxis: 86 },
+  };
+  const reconstructionPose = {
+    success: true,
+    method: 'parametric-surface',
+    position: { x: 156, y: 146, z: 0 },
+    normal: { x: 0.24, y: -0.12, z: 0.963 },
+    planarTransform: { scale: 1.12, rotation: 0.16, confidence: 0.78, inlierCount: 24 },
+    confidence: 0.78,
+    inlierCount: 24,
+    inlierRatio: 0.8,
+    averageResidual: 2.1,
+    depthQuality: 0.012,
+    preview: {
+      surface: { model: 'plane' },
+      statistics: {
+        mapConfidence: 0.76,
+      },
+    },
+  };
+
+  assert.equal(service._shouldPreferPlanarHomography({ planarPose, reconstructionPose, correspondences }), true);
+  assert.equal(service._selectNormalPose({
+    reconstructionPose,
+    planarPose,
+    objectPose: { success: false, confidence: 0 },
+    poseResult: null,
+    correspondences,
+    reconstructionConsistentWithTracker: true,
+  }).method, 'planar-homography');
+});
+
+test('rigid planar reconstruction normals are not trusted external corrections', () => {
+  const bookService = new ImageAnchorService();
+  bookService.setTrackingMode('parametric-surface');
+  bookService.anchorTargetClass = 'book';
+
+  assert.equal(
+    bookService._shouldTrustNormalPose({
+      success: true,
+      method: 'parametric-surface',
+      confidence: 0.95,
+      inlierCount: 24,
+      normal: { x: 0.02, y: 0, z: 1 },
+    }),
+    false
+  );
+
+  const cupService = new ImageAnchorService();
+  cupService.setTrackingMode('parametric-surface');
+  cupService.anchorTargetClass = 'cup';
+
+  assert.equal(
+    cupService._shouldTrustNormalPose({
+      success: true,
+      method: 'parametric-surface',
+      confidence: 0.95,
+      inlierCount: 24,
+      normal: { x: 0.42, y: 0, z: 0.91 },
+      depthQuality: 0.08,
+      preview: {
+        statistics: {
+          mapConfidence: 0.72,
+        },
+      },
+    }),
+    true
+  );
+});
+
 test('curved reconstruction targets reject planar homography normals during pose dropout', () => {
   const service = new ImageAnchorService();
   const correspondences = Array.from({ length: 28 }, (_, index) => ({
@@ -1735,6 +2874,48 @@ test('curved reconstruction targets reject planar homography normals during pose
     correspondences,
     reconstructionConsistentWithTracker: false,
   }), null);
+});
+
+test('recent mature reconstruction holds through one-frame planar normal dropout', () => {
+  const service = new ImageAnchorService();
+  const correspondences = Array.from({ length: 30 }, (_, index) => ({
+    prev: { x: 62 + (index % 6) * 18, y: 76 + Math.floor(index / 6) * 16 },
+    curr: { x: 70 + (index % 6) * 17, y: 84 + Math.floor(index / 6) * 16 },
+  }));
+  const planarPose = {
+    success: true,
+    method: 'planar-homography',
+    position: { x: 214, y: 172, z: 0 },
+    normal: { x: -0.62, y: 0.04, z: 0.78 },
+    planarTransform: { scale: 1.03, rotation: 0.02, confidence: 0.82, inlierCount: 22 },
+    confidence: 0.82,
+    inlierCount: 22,
+    inlierRatio: 0.73,
+    averageResidual: 1.7,
+  };
+
+  service.setTrackingMode('parametric-surface');
+  service.lastNormalPoseSource = 'parametric-surface';
+  service.framesWithoutNormalPose = 0;
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.71;
+  service.metrics.reconstructionMatureLandmarks = 26;
+
+  const selected = service._selectNormalPose({
+    reconstructionPose: {
+      success: false,
+      method: 'parametric-surface',
+      reason: 'Temporary PnP dropout',
+    },
+    planarPose,
+    objectPose: { success: false, method: 'object-pose-affine', confidence: 0 },
+    poseResult: { ...planarPose, method: 'homography' },
+    correspondences,
+    reconstructionConsistentWithTracker: false,
+  });
+
+  assert.equal(selected, null);
+  assert.equal(service.metrics.poseSourceHoldReason, 'transient-reconstruction-dropout');
 });
 
 test('selected reconstruction modes accept robust surface residuals without relaxing object pose gates', () => {
@@ -2317,4 +3498,257 @@ test('inconsistent reconstruction does not replace tracked attachment scale', ()
   assert.equal(transform.scale, trackerAnchorPosition.scale);
   assert.equal(transform.rotation, trackerAnchorPosition.rotation);
   assert.equal(transform.method, 'reference_similarity_transform');
+});
+
+test('curved sparse reconstruction uses tracker-local scale when its attachment is only reference similarity', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('sparse-reconstruction');
+  service.anchorTargetClass = 'bottle';
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'cylinder' },
+  };
+  const trackerAnchorPosition = {
+    scale: 0.86,
+    rotation: -0.12,
+    confidence: 0.54,
+    inlierCount: 14,
+    method: 'reference_similarity_transform',
+  };
+  const reconstructionPose = {
+    success: true,
+    method: 'sparse-reconstruction',
+    inlierCount: 15,
+    averageResidual: 3.2,
+    depthQuality: 0.18,
+    planarTransform: {
+      scale: 1.08,
+      rotation: 0.2,
+      confidence: 0.9,
+      inlierCount: 15,
+      method: 'reference_similarity_transform',
+    },
+    preview: {
+      surface: { model: 'cylinder' },
+      statistics: { mapConfidence: 0.72 },
+    },
+  };
+
+  assert.equal(service._shouldUseTrackedCurvedAttachmentTransform({
+    reconstructionPose,
+    trackerAnchorPosition,
+  }), true);
+
+  const transform = service._selectTrackedAttachmentTransform({
+    trackerAnchorPosition,
+    reconstructionPose,
+    useTrackedTransform: true,
+  });
+
+  assert.equal(transform.scale, trackerAnchorPosition.scale);
+  assert.equal(transform.rotation, trackerAnchorPosition.rotation);
+});
+
+test('mature curved pose dropout uses centroid position while preserving tracker transform', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('sparse-reconstruction');
+  service.anchorTargetClass = 'cup';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.82;
+  service.metrics.reconstructionMatureLandmarks = 24;
+  service.metrics.activeLandmarks = 39;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  service.keypointTracker = {
+    getCentroidAnchorPosition: () => ({
+      x: 274,
+      y: 221,
+      confidence: 0.8,
+      inlierCount: 39,
+      method: 'weighted_centroid_with_offset',
+    }),
+  };
+  const trackerAnchorPosition = {
+    x: 322,
+    y: 212,
+    scale: 0.91,
+    rotation: -0.16,
+    confidence: 0,
+    inlierCount: 37,
+    averageResidual: 39,
+    method: 'reference_similarity_transform',
+  };
+  const reconstructionPose = {
+    success: false,
+    method: 'sparse-reconstruction',
+    reason: 'Insufficient reconstruction pose inliers',
+    preview: {
+      surface: { model: 'tapered-cylinder' },
+    },
+  };
+
+  const selected = service._selectTrackerAnchorPosition({
+    trackerAnchorPosition,
+    reconstructionPose,
+  });
+
+  assert.equal(selected.x, 274);
+  assert.equal(selected.y, 221);
+  assert.equal(selected.scale, trackerAnchorPosition.scale);
+  assert.equal(selected.rotation, trackerAnchorPosition.rotation);
+  assert.equal(selected.method, 'curved-centroid-position');
+  assert.equal(selected.transformMethod, 'reference_similarity_transform');
+  assert.equal(service.metrics.trackerAnchorAdjustment, 'curved-dropout-centroid-position');
+});
+
+test('mature curved pose dropout centroid ignores active landmarks demoted from object ownership', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('sparse-reconstruction');
+  service.anchorTargetClass = 'cup';
+  service.objectSupportMask = createObjectSupportMask({
+    width: 160,
+    height: 120,
+    data: new Uint8Array(160 * 120).fill(255),
+    source: 'interactive-segmenter',
+    confidence: 0.88,
+    referencePoint: { x: 78, y: 58 },
+    createdAtFrame: 0,
+  });
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.82;
+  service.metrics.reconstructionMatureLandmarks = 24;
+  service.metrics.activeLandmarks = 39;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  let centroidInput = null;
+  service.keypointTracker = {
+    trackedPoints: [
+      { status: 'active', objectOwned: true, current: { x: 74, y: 58 } },
+      { status: 'active', objectOwned: false, current: { x: 144, y: 16 } },
+      { status: 'active', objectOwned: true, current: { x: 82, y: 62 } },
+      { status: 'lost', objectOwned: true, current: { x: 80, y: 64 } },
+    ],
+    getCentroidAnchorPosition: points => {
+      centroidInput = points;
+      return {
+        x: 78,
+        y: 60,
+        confidence: 0.8,
+        inlierCount: points.length,
+        method: 'weighted_centroid_with_offset',
+      };
+    },
+  };
+
+  const selected = service._selectTrackerAnchorPosition({
+    trackerAnchorPosition: {
+      x: 126,
+      y: 70,
+      scale: 0.94,
+      rotation: -0.12,
+      confidence: 0.02,
+      inlierCount: 37,
+      averageResidual: 28,
+      method: 'reference_similarity_transform',
+    },
+    reconstructionPose: {
+      success: false,
+      method: 'sparse-reconstruction',
+      preview: {
+        surface: { model: 'tapered-cylinder' },
+      },
+    },
+  });
+
+  assert.equal(selected.method, 'curved-centroid-position');
+  assert.equal(selected.x, 78);
+  assert.equal(selected.y, 60);
+  assert.equal(centroidInput.length, 2);
+  assert.equal(centroidInput.every(point => point.objectOwned === true), true);
+});
+
+test('selected curved reconstruction modes do not use sparse centroid dropout fallback', () => {
+  for (const mode of ['parametric-surface', 'direct-photometric']) {
+    const service = new ImageAnchorService();
+    service.setTrackingMode(mode);
+    service.anchorTargetClass = 'mug';
+    service.metrics.reconstructionReady = true;
+    service.metrics.reconstructionMapConfidence = 0.84;
+    service.metrics.reconstructionMatureLandmarks = 49;
+    service.metrics.activeLandmarks = 52;
+    service.metrics.reconstructionPreview = {
+      surface: { model: 'tapered-cylinder' },
+    };
+    service.keypointTracker = {
+      getCentroidAnchorPosition: () => ({
+        x: 274,
+        y: 221,
+        confidence: 0.8,
+        inlierCount: 52,
+        method: 'weighted_centroid_with_offset',
+      }),
+    };
+    const trackerAnchorPosition = {
+      x: 322,
+      y: 212,
+      scale: 0.91,
+      rotation: -0.16,
+      confidence: 0.02,
+      inlierCount: 52,
+      averageResidual: 115,
+      method: 'reference_similarity_transform',
+    };
+    const reconstructionPose = {
+      success: false,
+      method: mode,
+      reason: 'Insufficient reconstruction pose inliers',
+      preview: {
+        surface: { model: 'tapered-cylinder' },
+      },
+    };
+
+    const selected = service._selectTrackerAnchorPosition({
+      trackerAnchorPosition,
+      reconstructionPose,
+    });
+
+    assert.equal(selected, trackerAnchorPosition, mode);
+    assert.equal(service.metrics.trackerAnchorAdjustment, null, mode);
+  }
+});
+
+test('mature curved reconstruction owns position when tracker transform is incoherent', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('sparse-reconstruction');
+  service.anchorTargetClass = 'cup';
+  service.templateRegion = { width: 132, height: 118 };
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.86;
+  service.metrics.reconstructionMatureLandmarks = 22;
+  service.metrics.reconstructionTrackerDelta = 18;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  const reconstructionPose = {
+    success: true,
+    method: 'sparse-reconstruction',
+    inlierCount: 10,
+    averageResidual: 2.8,
+    confidence: 0.7,
+    preview: {
+      surface: { model: 'tapered-cylinder' },
+      statistics: { mapConfidence: 0.86 },
+    },
+  };
+  const trackerAnchorPosition = {
+    method: 'reference_similarity_transform',
+    confidence: 0.03,
+    averageResidual: 15.4,
+  };
+
+  assert.equal(service._hasModerateCurvedReconstructionRecovery({
+    reconstructionPose,
+    trackerAnchorPosition,
+  }), true);
 });

@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { scoreVisionPipelineQuality } from './stageQualityScoring.js';
+import {
+  scoreVisionPipelineQuality,
+  summarizeVisionQualityReports,
+} from './stageQualityScoring.js';
 
 const createGoodReplay = () => ({
   anchorCreated: true,
@@ -244,4 +247,295 @@ test('head attachment scoring reports policy-hidden frames', () => {
 
   assert.equal(report.stages.headAttachment.status, 'pass');
   assert.equal(report.stages.headAttachment.metrics.hiddenByPolicyFrames, 3);
+});
+
+test('quality report attributes tracking and head errors to pose sources', () => {
+  const replay = createGoodReplay();
+  replay.frames = [
+    {
+      success: true,
+      anchorError: 2,
+      predicted: { x: 10, y: 10 },
+      positionSource: 'planar-homography',
+      poseSource: 'planar-homography',
+      normalError: 0.1,
+      metrics: {
+        poseModel: 'parametric-surface',
+        poseSource: 'planar-homography',
+        reconstructionReady: true,
+        poseInliers: 12,
+        reconstructionMapConfidence: 0.66,
+      },
+    },
+    {
+      success: true,
+      anchorError: 11,
+      predicted: { x: 24, y: 18 },
+      positionSource: 'reference_similarity_transform',
+      poseSource: 'parametric-surface',
+      normalError: 0.2,
+      metrics: {
+        poseModel: 'parametric-surface',
+        poseSource: 'parametric-surface',
+        reconstructionReady: true,
+        poseInliers: 18,
+        reconstructionMapConfidence: 0.72,
+      },
+    },
+  ];
+
+  const report = scoreVisionPipelineQuality({
+    name: 'source fixture',
+    replay,
+    summary: {
+      ...goodSummary,
+      maxAnchorError: 11,
+      meanAnchorError: 6.5,
+    },
+    headPose: {
+      ...goodHeadPose,
+      summary: {
+        ...goodHeadPose,
+        hiddenByPolicyFrames: 0,
+        worstFrames: [],
+      },
+      frames: [
+        {
+          poseSource: 'planar-homography',
+          positionSource: 'planar-homography',
+          hiddenByPolicy: false,
+          worldPositionError: 0.04,
+          rotationError: 0.2,
+          scaleLogError: 0.01,
+          headJumpExcess: 0,
+        },
+        {
+          poseSource: 'parametric-surface',
+          positionSource: 'reference_similarity_transform',
+          hiddenByPolicy: false,
+          worldPositionError: 0.14,
+          rotationError: 0.7,
+          scaleLogError: 0.08,
+          headJumpExcess: 0.03,
+        },
+      ],
+    },
+  });
+
+  assert.equal(report.stages.tracking.metrics.byPositionSource['reference_similarity_transform'].maxAnchorError, 11);
+  assert.equal(report.stages.headAttachment.metrics.byPoseSource['parametric-surface'].maxRotationError, 0.7);
+});
+
+test('quality report attributes source-switch instability to transition pairs', () => {
+  const replay = createGoodReplay();
+  replay.frames = [
+    {
+      index: 1,
+      success: true,
+      anchorError: 2,
+      predicted: { x: 10, y: 10 },
+      positionSource: 'planar-homography',
+      poseSource: 'planar-homography',
+      normalError: 0.1,
+      metrics: {
+        poseModel: 'parametric-surface',
+        poseSource: 'planar-homography',
+        reconstructionReady: true,
+        poseInliers: 12,
+        reconstructionMapConfidence: 0.66,
+      },
+    },
+    {
+      index: 2,
+      success: true,
+      anchorError: 13,
+      predicted: { x: 28, y: 16 },
+      positionSource: 'reference_similarity_transform',
+      poseSource: 'parametric-surface',
+      normalError: 0.2,
+      metrics: {
+        poseModel: 'parametric-surface',
+        poseSource: 'parametric-surface',
+        reconstructionReady: true,
+        poseInliers: 18,
+        reconstructionMapConfidence: 0.72,
+      },
+    },
+    {
+      index: 3,
+      success: true,
+      anchorError: 5,
+      predicted: { x: 30, y: 17 },
+      positionSource: 'reference_similarity_transform',
+      poseSource: 'parametric-surface',
+      normalError: 0.15,
+      metrics: {
+        poseModel: 'parametric-surface',
+        poseSource: 'parametric-surface',
+        reconstructionReady: true,
+        poseInliers: 19,
+        reconstructionMapConfidence: 0.73,
+      },
+    },
+  ];
+
+  const report = scoreVisionPipelineQuality({
+    name: 'transition fixture',
+    replay,
+    summary: {
+      ...goodSummary,
+      maxAnchorError: 13,
+      meanAnchorError: 6.67,
+      maxFrameJump: 18.97,
+    },
+    headPose: {
+      ...goodHeadPose,
+      summary: {
+        ...goodHeadPose,
+        hiddenByPolicyFrames: 0,
+        worstFrames: [],
+      },
+      frames: [
+        {
+          index: 1,
+          poseSource: 'planar-homography',
+          positionSource: 'planar-homography',
+          hiddenByPolicy: false,
+          worldPositionError: 0.04,
+          rotationError: 0.2,
+          scaleLogError: 0.01,
+          headJumpExcess: 0,
+        },
+        {
+          index: 2,
+          poseSource: 'parametric-surface',
+          positionSource: 'reference_similarity_transform',
+          hiddenByPolicy: false,
+          worldPositionError: 0.15,
+          rotationError: 0.8,
+          scaleLogError: 0.07,
+          headJumpExcess: 0.05,
+        },
+      ],
+    },
+  });
+
+  const trackingTransitions = report.stages.tracking.metrics.positionSourceTransitions;
+  const headTransitions = report.stages.headAttachment.metrics.poseSourceTransitions;
+
+  assert.equal(trackingTransitions.transitionCount, 1);
+  assert.equal(trackingTransitions.byTransition['planar-homography->reference_similarity_transform'].frameCount, 1);
+  assert.equal(
+    Number(trackingTransitions.byTransition['planar-homography->reference_similarity_transform'].maxAnchorJump.toFixed(2)),
+    18.97
+  );
+  assert.equal(headTransitions.transitionCount, 1);
+  assert.equal(headTransitions.byTransition['planar-homography->parametric-surface'].maxHeadJumpExcess, 0.05);
+});
+
+test('vision quality summary exposes actionable failure buckets', () => {
+  const reports = [
+    {
+      name: 'busy background cup',
+      mode: 'parametric-surface',
+      overallStatus: 'fail',
+      failedStages: ['tracking', 'headAttachment'],
+      stages: {
+        tracking: {
+          metrics: {
+            byPositionSource: {
+              reference_similarity_transform: {
+                frameCount: 3,
+                meanAnchorError: 12,
+                maxAnchorError: 24,
+              },
+            },
+            positionSourceTransitions: {
+              transitionCount: 1,
+              maxAnchorJump: 18,
+              byTransition: {
+                'planar-homography->reference_similarity_transform': {
+                  frameCount: 1,
+                  maxAnchorJump: 18,
+                  maxAnchorError: 12,
+                },
+              },
+            },
+          },
+        },
+        headAttachment: {
+          metrics: {
+            byPoseSource: {
+              'parametric-surface': {
+                frameCount: 2,
+                maxWorldPositionError: 0.18,
+                maxRotationError: 0.72,
+                maxHeadJumpExcess: 0.02,
+              },
+            },
+            poseSourceTransitions: {
+              transitionCount: 1,
+              maxHeadJumpExcess: 0.03,
+              byTransition: {
+                'planar-homography->parametric-surface': {
+                  frameCount: 1,
+                  maxHeadJumpExcess: 0.03,
+                  maxWorldPositionError: 0.18,
+                  maxRotationError: 0.72,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      name: 'planar book',
+      mode: 'sparse-reconstruction',
+      overallStatus: 'pass',
+      failedStages: [],
+      stages: {
+        tracking: {
+          metrics: {
+            byPositionSource: {
+              'planar-homography': {
+                frameCount: 4,
+                meanAnchorError: 4,
+                maxAnchorError: 8,
+              },
+            },
+            positionSourceTransitions: {
+              transitionCount: 0,
+              maxAnchorJump: 0,
+              byTransition: {},
+            },
+          },
+        },
+        headAttachment: {
+          metrics: {
+            byPoseSource: {},
+            poseSourceTransitions: {
+              transitionCount: 0,
+              maxHeadJumpExcess: 0,
+              byTransition: {},
+            },
+          },
+        },
+      },
+    },
+  ];
+
+  const summary = summarizeVisionQualityReports(reports);
+
+  assert.equal(summary.aggregate.total, 2);
+  assert.equal(summary.aggregate.byStatus.fail, 1);
+  assert.equal(summary.failedByMode['parametric-surface'], 1);
+  assert.equal(summary.failedByScenario['busy background cup'], 1);
+  assert.equal(summary.trackingSources.reference_similarity_transform.frames, 3);
+  assert.equal(summary.trackingSources.reference_similarity_transform.meanAnchorError, 12);
+  assert.equal(summary.topTrackingSources[0].source, 'reference_similarity_transform');
+  assert.equal(summary.headPoseSources['parametric-surface'].maxWorldPositionError, 0.18);
+  assert.equal(summary.trackingTransitions['planar-homography->reference_similarity_transform'].maxAnchorJump, 18);
+  assert.equal(summary.headPoseTransitions['planar-homography->parametric-surface'].maxHeadJumpExcess, 0.03);
+  assert.equal(summary.topFailingScenarios[0].name, 'busy background cup');
 });

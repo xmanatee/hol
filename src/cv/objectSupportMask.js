@@ -1,6 +1,6 @@
 export const OBJECT_SUPPORT_MASK_SOURCES = Object.freeze({
   INTERACTIVE_SEGMENTER: 'interactive-segmenter',
-  DETECTION_BOX: 'detection-box',
+  TAP_LOCAL_DETECTION: 'tap-local-detection',
   WARPED_MASK: 'warped-mask',
 });
 
@@ -124,7 +124,55 @@ export const createObjectSupportMask = ({
   return mask;
 };
 
-export const createDetectionBoxObjectSupportMask = ({
+const hasMaskPixel = (objectSupportMask, x, y) => (
+  x >= 0 &&
+  y >= 0 &&
+  x < objectSupportMask.width &&
+  y < objectSupportMask.height &&
+  objectSupportMask.data[y * objectSupportMask.width + x] > 0
+);
+
+const isBoundaryPixel = (objectSupportMask, x, y) => (
+  hasMaskPixel(objectSupportMask, x, y) &&
+  (!hasMaskPixel(objectSupportMask, x - 1, y) ||
+    !hasMaskPixel(objectSupportMask, x + 1, y) ||
+    !hasMaskPixel(objectSupportMask, x, y - 1) ||
+    !hasMaskPixel(objectSupportMask, x, y + 1))
+);
+
+export const createObjectSupportMaskPreview = (objectSupportMask, { maxPoints = 180 } = {}) => {
+  const { bbox } = objectSupportMask;
+  if (bbox.width <= 0 || bbox.height <= 0) {
+    return {
+      source: objectSupportMask.source,
+      confidence: objectSupportMask.confidence,
+      bbox: { ...bbox },
+      sampleStride: 1,
+      points: [],
+    };
+  }
+
+  const sampleStride = Math.max(1, Math.floor(Math.sqrt((bbox.width * bbox.height) / maxPoints)));
+  const points = [];
+
+  for (let y = bbox.y; y < bbox.y + bbox.height; y += sampleStride) {
+    for (let x = bbox.x; x < bbox.x + bbox.width; x += sampleStride) {
+      if (isBoundaryPixel(objectSupportMask, x, y)) {
+        points.push({ x, y });
+      }
+    }
+  }
+
+  return {
+    source: objectSupportMask.source,
+    confidence: objectSupportMask.confidence,
+    bbox: { ...bbox },
+    sampleStride,
+    points: points.slice(0, maxPoints),
+  };
+};
+
+export const createTapLocalDetectionObjectSupportMask = ({
   width,
   height,
   detection,
@@ -136,11 +184,22 @@ export const createDetectionBoxObjectSupportMask = ({
   const minY = Math.max(0, Math.floor(detection.y1));
   const maxX = Math.min(width - 1, Math.ceil(detection.x2));
   const maxY = Math.min(height - 1, Math.ceil(detection.y2));
+  const detectionWidth = Math.max(1, maxX - minX + 1);
+  const detectionHeight = Math.max(1, maxY - minY + 1);
+  const centerX = Math.max(minX, Math.min(maxX, Math.round(referencePoint.x)));
+  const centerY = Math.max(minY, Math.min(maxY, Math.round(referencePoint.y)));
+  const radius = Math.round(Math.max(18, Math.min(40, Math.min(detectionWidth, detectionHeight) * 0.24)));
+  const radiusX = Math.min(radius, Math.ceil(detectionWidth / 2));
+  const radiusY = Math.min(radius, Math.ceil(detectionHeight / 2));
 
-  for (let y = minY; y <= maxY; y++) {
+  for (let y = Math.max(minY, centerY - radiusY); y <= Math.min(maxY, centerY + radiusY); y++) {
     const rowOffset = y * width;
-    for (let x = minX; x <= maxX; x++) {
-      data[rowOffset + x] = 255;
+    for (let x = Math.max(minX, centerX - radiusX); x <= Math.min(maxX, centerX + radiusX); x++) {
+      const normalizedX = (x - centerX) / Math.max(1, radiusX);
+      const normalizedY = (y - centerY) / Math.max(1, radiusY);
+      if (normalizedX * normalizedX + normalizedY * normalizedY <= 1) {
+        data[rowOffset + x] = 255;
+      }
     }
   }
 
@@ -148,8 +207,8 @@ export const createDetectionBoxObjectSupportMask = ({
     width,
     height,
     data,
-    source: OBJECT_SUPPORT_MASK_SOURCES.DETECTION_BOX,
-    confidence: 0.35,
+    source: OBJECT_SUPPORT_MASK_SOURCES.TAP_LOCAL_DETECTION,
+    confidence: 0.28,
     referencePoint,
     createdAtFrame,
     updatedAtFrame: createdAtFrame,

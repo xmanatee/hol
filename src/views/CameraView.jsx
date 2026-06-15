@@ -13,6 +13,10 @@ import { collectRuntimeReadiness } from '../utils/runtimeReadiness.js';
 import { RECONSTRUCTION_POSE_MODEL, isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
 import { shouldAutoStartObjectVoice } from '../audio/objectVoicePolicy.js';
 import { shouldRenderAnchorOverlay } from '../utils/overlayVisibility.js';
+import {
+  clampControlPanelWidth,
+  createDefaultControlPanelWidth,
+} from '../utils/controlPanelState.js';
 
 const OverlayScene = lazy(() => import('../scenes/OverlayScene.jsx'));
 
@@ -101,6 +105,8 @@ const CameraView = () => {
   const [hiddenMeshes, setHiddenMeshes] = useState(new Set());
   const [manualRotation, setManualRotation] = useState({ x: 0, y: 0, z: 0 });
   const [anchorFeedback, setAnchorFeedback] = useState(null);
+  const [controlPanelVisible, setControlPanelVisible] = useState(false);
+  const [controlPanelWidth, setControlPanelWidth] = useState(() => createDefaultControlPanelWidth(window.innerWidth));
   
   // Microphone state
   const [microphoneMode, setMicrophoneMode] = useState(false);
@@ -150,6 +156,24 @@ const CameraView = () => {
     cameraState,
     anchorSystemState
   }), [cameraState, anchorSystemState]);
+  const cameraViewportStyle = useMemo(() => (
+    controlPanelVisible && cameraState === 'active'
+      ? { width: `calc(100vw - ${controlPanelWidth}px)` }
+      : {}
+  ), [cameraState, controlPanelVisible, controlPanelWidth]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setControlPanelWidth(width => clampControlPanelWidth(width, window.innerWidth));
+    };
+
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
+  }, []);
 
   useEffect(() => () => {
     if (anchorFeedbackTimeoutRef.current) {
@@ -508,6 +532,7 @@ const CameraView = () => {
           renderDetectionOverlay(ctx, {
             anchor: anchorSystemState.activeAnchor,
             anchorState: anchorSystemState.anchorState,
+            trackedPoints: services.anchor?.imageAnchorService?.keypointTracker?.trackedPoints || [],
             mode: 'anchor'
           });
         }
@@ -610,6 +635,7 @@ const CameraView = () => {
         cameraState={cameraState}
         onTap={handleCanvasTap}
         onDraw={handleCanvasDraw}
+        style={cameraViewportStyle}
       />
       <AnchorFeedback feedback={anchorFeedback} />
 
@@ -633,6 +659,7 @@ const CameraView = () => {
             microphoneGain={microphoneGain}
             microphoneDebugMode={microphoneDebugMode}
             microphoneBaselineResetToken={microphoneBaselineResetToken}
+            style={cameraViewportStyle}
             activeAnchor={shouldRenderAnchorOverlay({
               activeAnchor: anchorSystemState.activeAnchor,
               anchorState: anchorSystemState.anchorState
@@ -690,6 +717,10 @@ const CameraView = () => {
           onResetMicrophoneBaseline={handleResetMicrophoneBaseline}
           microphoneGain={microphoneGain}
           microphoneDebugMode={microphoneDebugMode}
+          isVisible={controlPanelVisible}
+          panelWidth={controlPanelWidth}
+          onVisibilityChange={setControlPanelVisible}
+          onPanelWidthChange={setControlPanelWidth}
         />
       )}
     </div>

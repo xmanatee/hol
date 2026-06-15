@@ -5,6 +5,7 @@
 
 import { logger } from '../utils/logger.js';
 import { ObjectPoseEstimator } from './anchor.objectPose.js';
+import { isPointInsideObjectSupport } from './objectSupportMask.js';
 import { seedHomographyRansac } from './opencvRng.js';
 
 export class KeypointTracker {
@@ -484,12 +485,12 @@ export class KeypointTracker {
    * Get current anchor position using keypoint centroid + tap offset
    * This provides stable positioning that doesn't drift when keypoints are lost asymmetrically
    */
-  getAnchorPosition() {
+  getAnchorPosition(cv = null) {
     const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
     if (activePoints.length === 0) return null;
 
     // Try transformation-based approach first for more robust positioning
-    const transformation = this._estimateReferenceTransformation(activePoints);
+    const transformation = this._selectAttachmentReferenceTransformation(cv, activePoints);
     
     if (transformation) {
       const anchorOriginal = this.anchorOriginalPosition || {
@@ -497,20 +498,26 @@ export class KeypointTracker {
         y: this.keypointCentroid.y + this.tapOffset.y
       };
       const anchorPosition = this._applyReferenceTransformation(anchorOriginal, transformation);
+      const localTransform = this._referenceLocalTransform(anchorOriginal, transformation);
 
       return {
         x: anchorPosition.x,
         y: anchorPosition.y,
         confidence: transformation.confidence,
-        method: 'reference_similarity_transform',
-        rotation: transformation.rotation,
-        scale: transformation.scale,
+        method: transformation.type === 'homography' ? 'reference_homography' : 'reference_similarity_transform',
+        rotation: localTransform.rotation,
+        scale: localTransform.scale,
         inlierCount: transformation.inlierCount,
         averageResidual: transformation.averageResidual,
       };
     }
 
-    // Fallback: use robust weighted centroid of current keypoints
+    return this.getCentroidAnchorPosition(activePoints);
+  }
+
+  getCentroidAnchorPosition(activePoints = this.trackedPoints.filter(pt => pt.status === 'active')) {
+    if (activePoints.length === 0) return null;
+
     let weightedX = 0;
     let weightedY = 0;
     let totalWeight = 0;
@@ -537,7 +544,75 @@ export class KeypointTracker {
       x: currentCentroid.x + this.tapOffset.x,
       y: currentCentroid.y + this.tapOffset.y,
       confidence: activePoints.length / this.trackedPoints.length,
-      method: 'weighted_centroid_with_offset'
+      method: 'weighted_centroid_with_offset',
+      inlierCount: activePoints.length,
+    };
+  }
+
+  _selectAttachmentReferenceTransformation(cv, activePoints) {
+    const candidates = [
+      activePoints.length >= 8 ? this._estimateReferenceHomography(cv, activePoints) : null,
+      this._estimateLocalReferenceTransformation(activePoints),
+      this._estimateReferenceTransformation(activePoints),
+    ].filter(Boolean);
+
+    return candidates
+      .map(candidate => ({
+        transform: candidate,
+        score: this._attachmentTransformationScore(candidate, activePoints.length),
+      }))
+      .filter(candidate => candidate.score > 0)
+      .sort((left, right) => right.score - left.score)[0]?.transform || null;
+  }
+
+  _attachmentTransformationScore(transform, activeCount) {
+    const residual = transform.averageResidual ?? Infinity;
+    const confidence = transform.confidence ?? 0;
+    const supportCount = transform.supportCount || activeCount;
+    const inlierRatio = (transform.inlierCount || 0) / Math.max(supportCount, 1);
+
+    if (transform.scale <= 0.001) {
+      return 0;
+    }
+
+    if (transform.type === 'homography') {
+      if (!Number.isFinite(residual)) {
+        return 0;
+      }
+      if (confidence < 0.38 || residual > 4.5 || inlierRatio < 0.55) {
+        return 0;
+      }
+      return confidence * 2.4 + inlierRatio + Math.max(0, 1 - residual / 4.5) + 0.24;
+    }
+
+    const residualScore = Number.isFinite(residual) ? Math.max(0, 1 - residual / 12) : 0;
+    const localBoost = transform.localAnchorTransform ? 0.38 : 0;
+    return 0.01 + confidence * 2 + inlierRatio * 0.7 + residualScore + localBoost;
+  }
+
+  _referenceLocalTransform(anchorOriginal, transformation) {
+    if (transformation.type !== 'homography') {
+      return {
+        rotation: transformation.rotation,
+        scale: transformation.scale,
+      };
+    }
+
+    const center = this._applyReferenceTransformation(anchorOriginal, transformation);
+    const xAxis = this._applyReferenceTransformation({
+      x: anchorOriginal.x + 1,
+      y: anchorOriginal.y,
+    }, transformation);
+    const yAxis = this._applyReferenceTransformation({
+      x: anchorOriginal.x,
+      y: anchorOriginal.y + 1,
+    }, transformation);
+    const xScale = Math.hypot(xAxis.x - center.x, xAxis.y - center.y);
+    const yScale = Math.hypot(yAxis.x - center.x, yAxis.y - center.y);
+
+    return {
+      rotation: Math.atan2(xAxis.y - center.y, xAxis.x - center.x),
+      scale: (xScale + yScale) / 2,
     };
   }
 
@@ -575,6 +650,50 @@ export class KeypointTracker {
       inlierCount: inliers.length,
       averageResidual,
     };
+  }
+
+  _estimateLocalReferenceTransformation(activePoints) {
+    if (activePoints.length < 6) {
+      return null;
+    }
+
+    const anchorReference = this.anchorOriginalPosition || this.keypointCentroid;
+    if (!anchorReference) {
+      return null;
+    }
+
+    const scored = activePoints
+      .map(point => ({
+        point,
+        distance: Math.hypot(point.original.x - anchorReference.x, point.original.y - anchorReference.y),
+      }))
+      .sort((left, right) => left.distance - right.distance);
+    const withinPatch = scored
+      .filter(item => item.distance <= 72)
+      .map(item => item.point);
+    const selected = withinPatch.length >= 6
+      ? withinPatch.slice(0, 18)
+      : scored.slice(0, Math.min(18, scored.length)).map(item => item.point);
+
+    if (selected.length < 10) {
+      return null;
+    }
+
+    const transform = this._estimateReferenceTransformation(selected);
+    const minLocalInliers = Math.max(6, Math.ceil(selected.length * 0.58));
+    if (!transform ||
+        transform.inlierCount < minLocalInliers ||
+        (transform.averageResidual ?? Infinity) > 34) {
+      return null;
+    }
+
+    return transform
+      ? {
+        ...transform,
+        supportCount: selected.length,
+        localAnchorTransform: true,
+      }
+      : null;
   }
 
   _fitSimilarityTransform(points) {
@@ -777,13 +896,14 @@ export class KeypointTracker {
     this.nextPointId = this.trackedPoints.length;
   }
 
-  _mergeTrackingPointsPreservingReference(keypoints, currentGray, transformation) {
+  _mergeTrackingPointsPreservingReference(keypoints, currentGray, transformation, objectSupportMask = null) {
     const sortedKeypoints = [...keypoints]
       .sort((a, b) => b.response - a.response);
     const maxTrackedPoints = 96;
     const minCurrentDistance = 8;
     const minReferenceDistance = 8;
     let added = 0;
+    let rejectedByMask = 0;
 
     for (const kp of sortedKeypoints) {
       if (this.trackedPoints.length >= maxTrackedPoints) {
@@ -791,6 +911,11 @@ export class KeypointTracker {
       }
 
       const current = { x: kp.pt.x, y: kp.pt.y };
+      if (objectSupportMask && !isPointInsideObjectSupport(objectSupportMask, current)) {
+        rejectedByMask++;
+        continue;
+      }
+
       const original = this._invertReferenceTransformation(current, transformation);
       const overlapsExisting = this.trackedPoints.some(point => {
         const referenceDistance = Math.hypot(point.original.x - original.x, point.original.y - original.y);
@@ -805,7 +930,11 @@ export class KeypointTracker {
       }
 
       const id = this.nextPointId ?? (Math.max(-1, ...this.trackedPoints.map(point => point.id)) + 1);
-      this.trackedPoints.push(this._createTrackedPoint(id, original, current, kp.response, kp.bootstrapOnly === true));
+      const trackedPoint = this._createTrackedPoint(id, original, current, kp.response, kp.bootstrapOnly === true);
+      if (objectSupportMask) {
+        trackedPoint.objectOwned = true;
+      }
+      this.trackedPoints.push(trackedPoint);
       this.nextPointId = id + 1;
       added++;
     }
@@ -820,6 +949,7 @@ export class KeypointTracker {
     this.trackingAttempts = 0;
     this.lastRefreshStats = {
       added,
+      rejectedByMask,
       total: this.trackedPoints.length,
       active: this.trackedPoints.filter(point => point.status === 'active').length,
     };
@@ -996,6 +1126,7 @@ export class KeypointTracker {
   getCorrespondences(options = {}) {
     const activePoints = this.trackedPoints.filter(pt => (
       pt.status === 'active' &&
+      pt.objectOwned !== false &&
       (!pt.bootstrapOnly || pt.age >= 3 || pt.totalSuccessfulFrames >= 3)
     ));
     const {
@@ -1082,7 +1213,12 @@ export class KeypointTracker {
       
       if (newKeypoints.keypoints.length >= minNewKeypoints) {
         if (referenceTransformation) {
-          this._mergeTrackingPointsPreservingReference(newKeypoints.keypoints, currentGray, referenceTransformation);
+          this._mergeTrackingPointsPreservingReference(
+            newKeypoints.keypoints,
+            currentGray,
+            referenceTransformation,
+            objectSupportMask
+          );
         } else {
           this.lastRefreshStats = {
             added: 0,

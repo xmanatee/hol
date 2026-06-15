@@ -1,5 +1,5 @@
 import { Canvas } from '@react-three/fiber'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import HeadAnchor from '../components/organisms/HeadAnchor.jsx'
 import { logger } from '../utils/logger.js'
 import { computeAnchorOverlayTransform } from '../utils/anchorProjection.js'
@@ -12,27 +12,36 @@ const WEBGL_OPTIONS = {
   preserveDrawingBuffer: false,
 }
 
-const useRenderSize = () => {
+const useRenderSize = (containerRef) => {
   const [renderSize, setRenderSize] = useState(() => ({
     width: window.innerWidth,
     height: window.innerHeight,
   }))
 
   useEffect(() => {
-    const handleResize = () => {
+    const updateSize = () => {
+      const rect = containerRef.current?.getBoundingClientRect()
       setRenderSize({
-        width: window.innerWidth,
-        height: window.innerHeight,
+        width: rect?.width || window.innerWidth,
+        height: rect?.height || window.innerHeight,
       })
     }
 
-    window.addEventListener('resize', handleResize)
-    window.addEventListener('orientationchange', handleResize)
-    return () => {
-      window.removeEventListener('resize', handleResize)
-      window.removeEventListener('orientationchange', handleResize)
+    updateSize()
+
+    const observer = new ResizeObserver(updateSize)
+    if (containerRef.current) {
+      observer.observe(containerRef.current)
     }
-  }, [])
+
+    window.addEventListener('resize', updateSize)
+    window.addEventListener('orientationchange', updateSize)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', updateSize)
+      window.removeEventListener('orientationchange', updateSize)
+    }
+  }, [containerRef])
 
   return renderSize
 }
@@ -55,13 +64,15 @@ const OverlayScene = ({
   voiceActivityThreshold = 0.02,
   microphoneGain = 3.0,
   microphoneDebugMode = false,
-  microphoneBaselineResetToken = 0
+  microphoneBaselineResetToken = 0,
+  style = {}
 }) => {
   const [webglStatus, setWebglStatus] = useState('active')
+  const containerRef = useRef(null)
   const fov = 63
   const cameraDistance = 3
   const far = 100
-  const renderSize = useRenderSize()
+  const renderSize = useRenderSize(containerRef)
   const dpr = useMemo(() => [1, Math.min(window.devicePixelRatio || 1, MAX_DEVICE_PIXEL_RATIO)], [])
   const anchorTransform = useMemo(() => computeAnchorOverlayTransform({
     width,
@@ -92,6 +103,7 @@ const OverlayScene = ({
 
   return (
     <div 
+      ref={containerRef}
       className="overlay-scene"
       style={{
         position: 'fixed',
@@ -101,7 +113,8 @@ const OverlayScene = ({
         height: '100vh',
         pointerEvents: 'none',
         zIndex: 25,
-        boxSizing: 'border-box'
+        boxSizing: 'border-box',
+        ...style
       }}
     >
       

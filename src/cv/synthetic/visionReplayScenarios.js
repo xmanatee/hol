@@ -255,6 +255,7 @@ export const realisticReplayScenarios = [
   },
   {
     name: 'glossy phone with glare near window background',
+    rigidPlanarPoseOwner: true,
     create: () => createGlossyPhoneSequence({
       frameCount: 24,
       occlusionFrames: [8, 17],

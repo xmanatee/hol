@@ -83,7 +83,9 @@ export class SurfaceNormalStabilizer {
     const trustedExternalPose = options.trusted === true &&
       confidence >= 0.55 &&
       (options.inliers ?? 0) >= 12;
-    const highSupportMirrorTurn = confidence >= 0.82 && (options.inliers ?? 0) >= 14;
+    const highSupportMirrorTurn = confidence >= 0.82 &&
+      (options.inliers ?? 0) >= 14 &&
+      foreshortening < 0.72;
     if (this.current && mirrorFlipFromTurnedPose && !reacquiredPose && !trustedExternalPose && !highSupportMirrorTurn) {
       return this.getNormal();
     }

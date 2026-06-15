@@ -5,7 +5,12 @@ import {
   RECONSTRUCTION_MODES,
   createReconstructionEngine,
 } from './anchor.reconstructionModes.js';
-import { pointForSurfaceModel, surfaceMeshForModel } from './anchor.parametricGeometry.js';
+import {
+  modelFromRegion,
+  normalForSurfaceModel,
+  pointForSurfaceModel,
+  surfaceMeshForModel,
+} from './anchor.parametricGeometry.js';
 import { loadOpenCvForNode } from './synthetic/opencvNodeLoader.js';
 
 const referencePose = { scale: 1.2, rotation: 0, tx: 240, ty: 170 };
@@ -192,6 +197,29 @@ test('ellipsoid surface prior exposes curved 3D points and closed preview faces'
   assert.ok(topPoint.z < -18);
   assert.ok(mesh.points.some(point => point.z < -40));
   assert.ok(mesh.faces.length >= 96);
+});
+
+test('surface model priors cover common mobile reconstruction targets', () => {
+  assert.equal(modelFromRegion({ width: 180, height: 220 }, 'human face'), 'ellipsoid');
+  assert.equal(modelFromRegion({ width: 120, height: 150 }, 'head'), 'ellipsoid');
+  assert.equal(modelFromRegion({ width: 260, height: 160 }, 'poster'), 'plane');
+  assert.equal(modelFromRegion({ width: 120, height: 220 }, 'phone'), 'plane');
+  assert.equal(modelFromRegion({ width: 260, height: 150 }, 'laminated card'), 'plane');
+  assert.equal(modelFromRegion({ width: 240, height: 220 }, 'shelves'), 'box');
+  assert.equal(modelFromRegion({ width: 180, height: 240 }, 'bookcase'), 'box');
+
+  const bounds = {
+    min: { x: 100, y: 80, z: 0 },
+    max: { x: 300, y: 280, z: 0 },
+  };
+  const center = pointForSurfaceModel({ x: 200, y: 180 }, bounds, 'box');
+  const leftEdge = pointForSurfaceModel({ x: 104, y: 180 }, bounds, 'box');
+  const leftNormal = normalForSurfaceModel({ x: 104, y: 180 }, bounds, 'box');
+
+  assert.ok(Math.abs(center.z) < 1e-6);
+  assert.ok(leftEdge.z < -30);
+  assert.ok(leftNormal.x < -0.45);
+  assert.ok(leftNormal.z > 0.65);
 });
 
 test('parametric surface engine fits a stable cylinder despite sliding stripe outliers', () => {

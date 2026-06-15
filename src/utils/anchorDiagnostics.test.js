@@ -115,3 +115,32 @@ test('includes reconstruction preview and current inferred pose for control pane
   assert.equal(result.details.reconstructionAverageSupport, 0.81);
   assert.equal(result.details.reconstructionMatureLandmarks, 29);
 });
+
+test('includes object support mask source and preview diagnostics', () => {
+  const maskPreview = {
+    source: 'warped-mask',
+    bbox: { x: 20, y: 22, width: 80, height: 90 },
+    sampleStride: 6,
+    points: [{ x: 20, y: 22 }],
+  };
+  const result = describeAnchorState({
+    cameraState: 'active',
+    anchorSystemState: {
+      mode: 'anchor',
+      activeAnchor: { keypoints: 20, quality: 0.28 },
+      anchorState: {
+        anchored: true,
+        state: 'mapping',
+        metrics: {
+          keypointCount: 20,
+          templateQuality: 0.28,
+          currentObjectSupportMaskSource: 'warped-mask',
+          currentObjectSupportMaskPreview: maskPreview,
+        }
+      }
+    }
+  });
+
+  assert.equal(result.details.objectSupportMaskSource, 'warped-mask');
+  assert.deepEqual(result.details.objectSupportMaskPreview, maskPreview);
+});

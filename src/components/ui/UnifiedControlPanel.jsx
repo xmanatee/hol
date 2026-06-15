@@ -1,34 +1,77 @@
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { PersonalityPanel } from './PersonalityPanel.jsx';
 import { ReconstructionPreviewSection } from './ReconstructionPreviewSection.jsx';
 import { DiagnosticRow } from './DiagnosticRow.jsx';
 import { formatNumber, formatPercent, formatRegion } from './diagnosticFormat.js';
 import { LOG_TAG_PRESETS, logger } from '../../utils/logger.js';
 import {
+  CONTROL_PANEL_TABS,
+  clampControlPanelWidth,
   createControlPanelContext,
   createDefaultExpandedSections,
+  createDefaultSectionOrders,
   expandSectionsForWorkflow,
+  moveSectionInTabOrder,
+  selectControlPanelTabForWorkflow,
 } from '../../utils/controlPanelState.js';
 import { RECONSTRUCTION_MODES, isReconstructionMode } from '../../cv/anchor.reconstructionModes.js';
 
 const sectionIdForTitle = title => `control-panel-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 
-const CollapsibleSection = ({ title, isExpanded, onToggle, children }) => {
+const CollapsibleSection = ({
+  title,
+  isExpanded,
+  onToggle,
+  children,
+  onMoveUp,
+  onMoveDown,
+  canMoveUp = false,
+  canMoveDown = false,
+}) => {
   const sectionId = sectionIdForTitle(title);
 
   return (
-    <div className="mb-2 border border-gray-600 rounded">
-      <button
-        onClick={onToggle}
-        aria-expanded={isExpanded}
-        aria-controls={sectionId}
-        className="min-h-11 w-full px-3 py-2 bg-gray-800 text-white border-0 text-sm cursor-pointer flex justify-between items-center hover:bg-gray-700"
-      >
-        <span>{title}</span>
-        <span className="text-xs text-gray-400" aria-hidden="true">
-          {isExpanded ? '−' : '+'}
-        </span>
-      </button>
+    <div className="overflow-hidden border border-gray-600">
+      <div className="bg-gray-800 text-white">
+        <div className="flex min-h-11 items-stretch">
+        <button
+          onClick={onToggle}
+          aria-expanded={isExpanded}
+          aria-controls={sectionId}
+          className="min-h-11 flex-1 cursor-pointer border-0 bg-transparent px-3 py-2 text-left text-sm hover:bg-gray-700"
+        >
+          <span>{title}</span>
+        </button>
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${title}`}
+            className="min-h-11 w-11 cursor-pointer border-0 border-l border-gray-700 bg-transparent text-xs text-gray-400 hover:bg-gray-700"
+          >
+            {isExpanded ? '−' : '+'}
+          </button>
+        </div>
+        <div className="grid grid-cols-2 border-t border-gray-700 text-[10px] uppercase tracking-wide text-gray-400">
+          <button
+            type="button"
+            onClick={onMoveUp}
+            disabled={!canMoveUp}
+            aria-label={`Move ${title} up`}
+            className="min-h-9 cursor-pointer border-0 border-r border-gray-700 bg-transparent hover:bg-gray-700 disabled:cursor-default disabled:text-gray-700 disabled:hover:bg-transparent"
+          >
+            Move up
+          </button>
+          <button
+            type="button"
+            onClick={onMoveDown}
+            disabled={!canMoveDown}
+            aria-label={`Move ${title} down`}
+            className="min-h-9 cursor-pointer border-0 bg-transparent hover:bg-gray-700 disabled:cursor-default disabled:text-gray-700 disabled:hover:bg-transparent"
+          >
+            Move down
+          </button>
+        </div>
+      </div>
       {isExpanded && (
         <div id={sectionId} className="p-3 bg-gray-900">
           {children}
@@ -118,6 +161,8 @@ const AnchorDiagnosticsSection = ({ diagnostics }) => {
       <DiagnosticRow label="Landmarks" value={`${details.activeLandmarkCount ?? 0}/${details.landmarkCount ?? 0}`} tone={(details.landmarkCount ?? 0) >= 40 ? 'good' : 'warn'} />
       <DiagnosticRow label="Object landmarks" value={details.objectOwnedLandmarks ?? 0} tone={(details.objectOwnedLandmarks ?? 0) >= 8 ? 'good' : 'warn'} />
       <DiagnosticRow label="Mask coverage" value={formatPercent(details.maskCoverage)} tone={(details.maskCoverage ?? 0) > 0.03 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Mask source" value={details.objectSupportMaskSource || 'N/A'} tone={details.objectSupportMaskSource === 'interactive-segmenter' || details.objectSupportMaskSource === 'warped-mask' ? 'good' : 'warn'} />
+      <DiagnosticRow label="Mask preview" value={`${details.objectSupportMaskPreview?.points?.length ?? 0} pts`} tone={(details.objectSupportMaskPreview?.points?.length ?? 0) > 0 ? 'good' : 'warn'} />
       <DiagnosticRow label="Background rejected" value={details.backgroundRejected ?? 0} tone={(details.backgroundRejected ?? 0) > 0 ? 'good' : 'neutral'} />
       <DiagnosticRow label="Hidden landmarks" value={details.inactiveLandmarkCount ?? 0} tone={(details.inactiveLandmarkCount ?? 0) > 0 ? 'warn' : 'good'} />
       <DiagnosticRow label="Last refresh" value={`+${details.landmarkRefreshAdded ?? 0}`} tone={(details.landmarkRefreshAdded ?? 0) > 0 ? 'good' : 'neutral'} />
@@ -674,6 +719,27 @@ const ConfigSection = ({ onConfigChange, anchorTrackingMode }) => {
   );
 };
 
+const WorkflowTabBar = ({ activeTab, onActiveTabChange }) => (
+  <div className="mb-3 grid grid-cols-2 gap-1 sm:grid-cols-5" role="tablist" aria-label="Control panel workflows">
+    {CONTROL_PANEL_TABS.map(tab => (
+      <button
+        key={tab.id}
+        type="button"
+        role="tab"
+        aria-selected={activeTab === tab.id}
+        onClick={() => onActiveTabChange(tab.id)}
+        className={`min-h-11 border px-2 py-1 text-xs ${
+          activeTab === tab.id
+            ? 'border-blue-500 bg-blue-950 text-blue-100'
+            : 'border-gray-700 bg-gray-900 text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+        }`}
+      >
+        {tab.label}
+      </button>
+    ))}
+  </div>
+);
+
 const UnifiedControlPanel = ({
   cameraState,
   detectionInitialized,
@@ -712,11 +778,28 @@ const UnifiedControlPanel = ({
   onToggleMicrophoneDebug,
   onResetMicrophoneBaseline,
   microphoneGain = 3.0,
-  microphoneDebugMode = false
+  microphoneDebugMode = false,
+  isVisible,
+  panelWidth = 380,
+  onVisibilityChange,
+  onPanelWidthChange,
 }) => {
-  const [isVisible, setIsVisible] = useState(false); // Minimized by default
+  const [internalVisible, setInternalVisible] = useState(false);
+  const [internalPanelWidth, setInternalPanelWidth] = useState(panelWidth);
+  const [isResizing, setIsResizing] = useState(false);
+  const visible = isVisible ?? internalVisible;
+  const setVisible = onVisibilityChange ?? setInternalVisible;
+  const effectivePanelWidth = onPanelWidthChange ? panelWidth : internalPanelWidth;
   const anchorStatus = anchorDiagnostics?.status || 'pending';
   const runtimeStatus = runtimeReadiness?.status || 'unknown';
+  const recommendedTab = selectControlPanelTabForWorkflow({
+    anchorStatus,
+    runtimeStatus,
+    microphoneMode,
+  });
+  const previousRecommendedTabRef = useRef(recommendedTab);
+  const [activeTab, setActiveTab] = useState(recommendedTab);
+  const [sectionOrders, setSectionOrders] = useState(() => createDefaultSectionOrders());
   const previousControlPanelContextRef = useRef(createControlPanelContext({
     anchorStatus,
     runtimeStatus,
@@ -738,12 +821,62 @@ const UnifiedControlPanel = ({
     previousControlPanelContextRef.current = controlPanelContext;
   }, [anchorStatus, runtimeStatus, microphoneMode]);
 
+  useEffect(() => {
+    setActiveTab(currentTab => (
+      currentTab === previousRecommendedTabRef.current
+        ? recommendedTab
+        : currentTab
+    ));
+    previousRecommendedTabRef.current = recommendedTab;
+  }, [recommendedTab]);
+
   const toggleSection = (section) => {
     setExpandedSections(prev => ({
       ...prev,
       [section]: !prev[section]
     }));
   };
+
+  const moveSection = useCallback((sectionId, direction) => {
+    setSectionOrders(currentOrders => moveSectionInTabOrder(currentOrders, activeTab, sectionId, direction));
+  }, [activeTab]);
+
+  const updatePanelWidth = useCallback((width) => {
+    const clampedWidth = clampControlPanelWidth(width, window.innerWidth);
+    if (onPanelWidthChange) {
+      onPanelWidthChange(clampedWidth);
+    } else {
+      setInternalPanelWidth(clampedWidth);
+    }
+  }, [onPanelWidthChange]);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handlePointerMove = (event) => {
+      updatePanelWidth(window.innerWidth - event.clientX);
+    };
+    const handlePointerUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizing, updatePanelWidth]);
+
+  useEffect(() => {
+    updatePanelWidth(effectivePanelWidth);
+  }, [effectivePanelWidth, updatePanelWidth]);
 
   const reconstructionDetails = {
     ...(anchorDiagnostics?.details || {}),
@@ -758,39 +891,10 @@ const UnifiedControlPanel = ({
   const reconstructionTitle = reconstructionMode
     ? `3D Reconstruction (${reconstructionPhase})`
     : '3D Reconstruction (off)';
-
-  if (!isVisible) {
-    return (
-      <button
-        onClick={() => setIsVisible(true)}
-        className="fixed top-4 right-4 z-50 min-h-11 px-3 py-2 text-sm bg-gray-800 text-white border border-gray-600 rounded cursor-pointer hover:bg-gray-700 transition-all duration-200"
-      >
-        Controls
-      </button>
-    );
-  }
-
-  return (
-    <div className="fixed top-4 right-4 w-[min(20rem,calc(100vw-2rem))] max-h-[calc(100vh-2rem)] bg-black border border-gray-600 rounded p-3 text-sm z-50 overflow-y-auto pointer-events-auto">
-      <div className="flex justify-between items-center mb-3 pb-2 border-b border-gray-600">
-        <div>
-          <h3 className="text-base font-medium text-white">
-            Control Panel
-          </h3>
-        </div>
-        <button
-          onClick={() => setIsVisible(false)}
-          className="min-h-11 px-3 py-2 text-xs bg-gray-700 text-white border border-gray-600 rounded cursor-pointer hover:bg-gray-600"
-        >
-          Hide
-        </button>
-      </div>
-
-      <CollapsibleSection
-        title="Status"
-        isExpanded={expandedSections.status}
-        onToggle={() => toggleSection('status')}
-      >
+  const sectionDefinitions = {
+    status: {
+      title: 'Status',
+      content: (
         <StatusSection
           cameraState={cameraState}
           detectionInitialized={detectionInitialized}
@@ -799,37 +903,23 @@ const UnifiedControlPanel = ({
           trackedObjects={trackedObjects}
           activeTrackId={activeTrackId}
         />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title={reconstructionTitle}
-        isExpanded={expandedSections.reconstruction}
-        onToggle={() => toggleSection('reconstruction')}
-      >
-        <ReconstructionPreviewSection details={reconstructionDetails} />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title={`Anchor Diagnostics (${anchorDiagnostics?.status || 'pending'})`}
-        isExpanded={expandedSections.diagnostics}
-        onToggle={() => toggleSection('diagnostics')}
-      >
-        <AnchorDiagnosticsSection diagnostics={anchorDiagnostics} />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title={`Runtime (${runtimeReadiness?.status || 'unknown'})`}
-        isExpanded={expandedSections.runtime}
-        onToggle={() => toggleSection('runtime')}
-      >
-        <RuntimeReadinessSection readiness={runtimeReadiness} />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title="Controls"
-        isExpanded={expandedSections.controls}
-        onToggle={() => toggleSection('controls')}
-      >
+      ),
+    },
+    reconstruction: {
+      title: reconstructionTitle,
+      content: <ReconstructionPreviewSection details={reconstructionDetails} />,
+    },
+    diagnostics: {
+      title: `Anchor Diagnostics (${anchorDiagnostics?.status || 'pending'})`,
+      content: <AnchorDiagnosticsSection diagnostics={anchorDiagnostics} />,
+    },
+    runtime: {
+      title: `Runtime (${runtimeReadiness?.status || 'unknown'})`,
+      content: <RuntimeReadinessSection readiness={runtimeReadiness} />,
+    },
+    controls: {
+      title: 'Controls',
+      content: (
         <ControlsSection
           showStats={showStats}
           activeTrackId={activeTrackId}
@@ -837,13 +927,11 @@ const UnifiedControlPanel = ({
           onUnlock={onUnlock}
           onStop={onStop}
         />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title={`Microphone ${microphoneMode ? '(Active)' : ''}`}
-        isExpanded={expandedSections.microphone}
-        onToggle={() => toggleSection('microphone')}
-      >
+      ),
+    },
+    microphone: {
+      title: `Microphone ${microphoneMode ? '(Active)' : ''}`,
+      content: (
         <MicrophoneSection
           microphoneMode={microphoneMode}
           onToggleMicrophoneMode={onToggleMicrophoneMode}
@@ -859,13 +947,11 @@ const UnifiedControlPanel = ({
           microphoneGain={microphoneGain}
           microphoneDebugMode={microphoneDebugMode}
         />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title="Personality"
-        isExpanded={expandedSections.personality}
-        onToggle={() => toggleSection('personality')}
-      >
+      ),
+    },
+    personality: {
+      title: 'Personality',
+      content: (
         <PersonalityPanel
           personalityData={personalityData}
           ttsData={ttsData}
@@ -873,47 +959,102 @@ const UnifiedControlPanel = ({
           onSpeakGreeting={onSpeakGreeting}
           hasActiveTrack={!!activeTrackId}
         />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title="Mesh Controls"
-        isExpanded={expandedSections.meshControls}
-        onToggle={() => toggleSection('meshControls')}
-      >
+      ),
+    },
+    meshControls: {
+      title: 'Mesh Controls',
+      content: (
         <MeshControlsSection
           discoveredMeshes={discoveredMeshes}
           hiddenMeshes={hiddenMeshes}
           onMeshVisibilityChange={onMeshVisibilityChange}
           onRotationChange={onRotationChange}
         />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title={`Metrics (${Object.keys(metrics).length})`}
-        isExpanded={expandedSections.metrics}
-        onToggle={() => toggleSection('metrics')}
-      >
-        <MetricsSection metrics={metrics} />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title="Logs"
-        isExpanded={expandedSections.logs}
-        onToggle={() => toggleSection('logs')}
-      >
-        <LogsSection />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title="Configuration"
-        isExpanded={expandedSections.config}
-        onToggle={() => toggleSection('config')}
-      >
-        <ConfigSection 
+      ),
+    },
+    metrics: {
+      title: `Metrics (${Object.keys(metrics).length})`,
+      content: <MetricsSection metrics={metrics} />,
+    },
+    logs: {
+      title: 'Logs',
+      content: <LogsSection />,
+    },
+    config: {
+      title: 'Configuration',
+      content: (
+        <ConfigSection
           onConfigChange={onConfigChange}
           anchorTrackingMode={anchorTrackingMode}
         />
-      </CollapsibleSection>
+      ),
+    },
+  };
+  const activeSectionIds = sectionOrders[activeTab] || [];
+
+  if (!visible) {
+    return (
+      <button
+        onClick={() => setVisible(true)}
+        className="fixed top-4 right-4 z-50 min-h-11 px-3 py-2 text-sm bg-gray-800 text-white border border-gray-600 cursor-pointer hover:bg-gray-700 transition-all duration-200"
+      >
+        Controls
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className="fixed inset-y-0 right-0 z-50 overflow-y-auto border-l border-gray-600 bg-black p-3 pl-4 text-sm text-white shadow-2xl pointer-events-auto"
+      style={{ width: `${effectivePanelWidth}px` }}
+    >
+      <button
+        type="button"
+        aria-label="Resize control panel"
+        aria-orientation="vertical"
+        role="separator"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          setIsResizing(true);
+        }}
+        className={`absolute left-0 top-0 h-full w-3 cursor-col-resize border-r border-gray-700 bg-gray-950/60 hover:bg-blue-900/60 ${isResizing ? 'bg-blue-800/70' : ''}`}
+      />
+
+      <div className="sticky top-0 z-10 -mx-3 -mt-3 mb-3 flex items-center justify-between border-b border-gray-600 bg-black/95 px-3 py-2 pl-4 backdrop-blur">
+        <div>
+          <h3 className="text-base font-medium text-white">
+            Control Panel
+          </h3>
+        </div>
+        <button
+          onClick={() => setVisible(false)}
+          className="min-h-11 px-3 py-2 text-xs bg-gray-700 text-white border border-gray-600 cursor-pointer hover:bg-gray-600"
+        >
+          Hide
+        </button>
+      </div>
+
+      <WorkflowTabBar activeTab={activeTab} onActiveTabChange={setActiveTab} />
+
+      <div className="grid grid-cols-1 gap-2">
+        {activeSectionIds.map((sectionId, index) => {
+          const section = sectionDefinitions[sectionId];
+          return (
+            <CollapsibleSection
+              key={`${activeTab}:${sectionId}`}
+              title={section.title}
+              isExpanded={expandedSections[sectionId]}
+              onToggle={() => toggleSection(sectionId)}
+              onMoveUp={() => moveSection(sectionId, -1)}
+              onMoveDown={() => moveSection(sectionId, 1)}
+              canMoveUp={index > 0}
+              canMoveDown={index < activeSectionIds.length - 1}
+            >
+              {section.content}
+            </CollapsibleSection>
+          );
+        })}
+      </div>
     </div>
   );
 };

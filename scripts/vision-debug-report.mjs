@@ -145,6 +145,7 @@ for (const sequence of sequences) {
     cv,
     sequence,
     trackingMode: 'sparse-reconstruction',
+    useObjectSupportMask: true,
   });
   const rawSummary = summarizeReplay(replay);
   const headPose = scoreHeadPoseReplay({ replay, sequence });

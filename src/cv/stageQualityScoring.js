@@ -70,6 +70,123 @@ const createStage = ({ metrics, failures, checkCount }) => ({
 
 const evidenceFromReplay = replay => replay.createResult?.evidence || {};
 
+const sourceName = source => source || 'none';
+
+const sourceFrameStats = ({ frames, sourceForFrame, metricsForFrame }) => {
+  const groups = new Map();
+  for (const frame of frames) {
+    const source = sourceName(sourceForFrame(frame));
+    const group = groups.get(source) || { frameCount: 0 };
+    group.frameCount++;
+    for (const [name, value] of Object.entries(metricsForFrame(frame))) {
+      if (!Number.isFinite(value)) {
+        continue;
+      }
+      const valuesKey = `${name}Values`;
+      group[valuesKey] = group[valuesKey] || [];
+      group[valuesKey].push(value);
+    }
+    groups.set(source, group);
+  }
+
+  return Object.fromEntries([...groups.entries()].map(([source, group]) => {
+    const metrics = { frameCount: group.frameCount };
+    for (const [key, values] of Object.entries(group)) {
+      if (!key.endsWith('Values')) {
+        continue;
+      }
+      const name = key.slice(0, -'Values'.length);
+      const metricName = `${name[0].toUpperCase()}${name.slice(1)}`;
+      metrics[`mean${metricName}`] = meanValue(values);
+      metrics[`max${metricName}`] = maxValue(values);
+    }
+    return [source, metrics];
+  }));
+};
+
+const pointDistance = (left, right) => {
+  if (!left || !right) return 0;
+  if (!Number.isFinite(left.x) || !Number.isFinite(left.y) ||
+      !Number.isFinite(right.x) || !Number.isFinite(right.y)) {
+    return 0;
+  }
+  return Math.hypot(left.x - right.x, left.y - right.y);
+};
+
+const transitionFrameStats = ({ frames, sourceForFrame, metricsForTransition }) => {
+  const transitions = [];
+  let previous = null;
+  for (const frame of frames) {
+    const source = sourceName(sourceForFrame(frame));
+    if (previous && source !== previous.source) {
+      transitions.push({
+        index: frame.index,
+        from: previous.source,
+        to: source,
+        ...metricsForTransition(frame, previous.frame),
+      });
+    }
+    previous = { source, frame };
+  }
+
+  const byTransition = new Map();
+  for (const transition of transitions) {
+    const key = `${transition.from}->${transition.to}`;
+    const group = byTransition.get(key) || { frameCount: 0 };
+    group.frameCount++;
+    for (const [name, value] of Object.entries(transition)) {
+      if (name === 'index' || name === 'from' || name === 'to' || !Number.isFinite(value)) {
+        continue;
+      }
+      const valuesKey = `${name}Values`;
+      group[valuesKey] = group[valuesKey] || [];
+      group[valuesKey].push(value);
+    }
+    byTransition.set(key, group);
+  }
+
+  const transitionMetrics = Object.fromEntries([...byTransition.entries()].map(([key, group]) => {
+    const metrics = { frameCount: group.frameCount };
+    for (const [name, values] of Object.entries(group)) {
+      if (!name.endsWith('Values')) {
+        continue;
+      }
+      const metricName = name.slice(0, -'Values'.length);
+      const outputName = `${metricName[0].toUpperCase()}${metricName.slice(1)}`;
+      metrics[`max${outputName}`] = maxValue(values);
+      metrics[`mean${outputName}`] = meanValue(values);
+    }
+    return [key, metrics];
+  }));
+
+  return {
+    transitionCount: transitions.length,
+    maxAnchorJump: maxValue(transitions.map(transition => transition.anchorJump)),
+    maxAnchorError: maxValue(transitions.map(transition => transition.anchorError)),
+    maxHeadJumpExcess: maxValue(transitions.map(transition => transition.headJumpExcess)),
+    maxWorldPositionError: maxValue(transitions.map(transition => transition.worldPositionError)),
+    maxRotationError: maxValue(transitions.map(transition => transition.rotationError)),
+    byTransition: transitionMetrics,
+    worstTransitions: [...transitions]
+      .sort((left, right) => (
+        (right.anchorJump || right.headJumpExcess || right.worldPositionError || 0) -
+        (left.anchorJump || left.headJumpExcess || left.worldPositionError || 0)
+      ))
+      .slice(0, 6),
+  };
+};
+
+const worstTrackingFrames = frames => [...frames]
+  .filter(frame => Number.isFinite(frame.anchorError))
+  .sort((left, right) => right.anchorError - left.anchorError)
+  .slice(0, 6)
+  .map(frame => ({
+    index: frame.index,
+    positionSource: frame.positionSource || frame.method || null,
+    poseSource: frame.poseSource || frame.metrics?.poseSource || null,
+    anchorError: frame.anchorError,
+  }));
+
 const scoreSelection = ({ replay, thresholds }) => {
   const failures = [];
   const evidence = evidenceFromReplay(replay);
@@ -109,6 +226,7 @@ const scoreSelection = ({ replay, thresholds }) => {
 
 const scoreTracking = ({ replay, summary, thresholds }) => {
   const failedFrames = metricValue(summary.failedFrames);
+  const successfulFrames = replay.frames.filter(frame => frame.success);
   const metrics = {
     frameCount: replay.frames.length,
     failedFrames,
@@ -117,6 +235,25 @@ const scoreTracking = ({ replay, summary, thresholds }) => {
     maxFrameJump: metricValue(summary.maxFrameJump),
     trackingSuccessRate: meanValue(replay.frames.map(frame => frame.metrics?.trackingSuccessRate)),
     maxBackgroundRejected: maxValue(replay.frames.map(frame => frame.metrics?.backgroundRejected)),
+    byPositionSource: sourceFrameStats({
+      frames: successfulFrames,
+      sourceForFrame: frame => frame.positionSource || frame.method,
+      metricsForFrame: frame => ({
+        anchorError: frame.anchorError,
+        normalError: frame.normalError,
+        poseInliers: frame.metrics?.poseInliers,
+      }),
+    }),
+    positionSourceTransitions: transitionFrameStats({
+      frames: successfulFrames,
+      sourceForFrame: frame => frame.positionSource || frame.method,
+      metricsForTransition: (frame, previous) => ({
+        anchorJump: pointDistance(frame.predicted, previous.predicted),
+        anchorError: frame.anchorError,
+        normalError: frame.normalError,
+      }),
+    }),
+    worstFrames: worstTrackingFrames(successfulFrames),
   };
   const failures = [];
 
@@ -207,6 +344,7 @@ const scoreReconstruction = ({ replay, summary, thresholds }) => {
 
 const scoreHeadAttachment = ({ headPose, thresholds }) => {
   const summary = headPose.summary || headPose;
+  const frames = headPose.frames || [];
   const metrics = {
     visibleMismatches: metricValue(summary.visibleMismatches),
     maxWorldPositionError: metricValue(summary.maxWorldPositionError),
@@ -214,6 +352,27 @@ const scoreHeadAttachment = ({ headPose, thresholds }) => {
     maxScaleLogError: metricValue(summary.maxScaleLogError),
     maxHeadJumpExcess: metricValue(summary.maxHeadJumpExcess),
     hiddenByPolicyFrames: metricValue(summary.hiddenByPolicyFrames),
+    byPoseSource: sourceFrameStats({
+      frames,
+      sourceForFrame: frame => frame.poseSource,
+      metricsForFrame: frame => ({
+        worldPositionError: frame.worldPositionError,
+        rotationError: frame.rotationError,
+        scaleLogError: frame.scaleLogError,
+        headJumpExcess: frame.headJumpExcess,
+      }),
+    }),
+    poseSourceTransitions: transitionFrameStats({
+      frames,
+      sourceForFrame: frame => frame.poseSource,
+      metricsForTransition: frame => ({
+        headJumpExcess: frame.headJumpExcess,
+        worldPositionError: frame.worldPositionError,
+        rotationError: frame.rotationError,
+        scaleLogError: frame.scaleLogError,
+      }),
+    }),
+    worstFrames: summary.worstFrames || [],
   };
   const failures = [];
 
@@ -268,5 +427,158 @@ export const scoreVisionPipelineQuality = ({
     overallStatus: failedStages.length ? 'fail' : 'pass',
     failedStages,
     stages,
+  };
+};
+
+const incrementCount = (counts, key, amount = 1) => {
+  counts[key] = (counts[key] || 0) + amount;
+};
+
+const sortCountEntries = counts => Object.entries(counts)
+  .map(([name, count]) => ({ name, count }))
+  .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name));
+
+const addTrackingSourceMetrics = (trackingSources, source, metrics) => {
+  const bucket = trackingSources[source] || {
+    frames: 0,
+    maxAnchorError: 0,
+    weightedMeanAnchorErrorSum: 0,
+  };
+  const frames = metricValue(metrics.frameCount);
+  bucket.frames += frames;
+  bucket.maxAnchorError = Math.max(bucket.maxAnchorError, metricValue(metrics.maxAnchorError));
+  bucket.weightedMeanAnchorErrorSum += metricValue(metrics.meanAnchorError) * frames;
+  trackingSources[source] = bucket;
+};
+
+const addHeadPoseSourceMetrics = (headPoseSources, source, metrics) => {
+  const bucket = headPoseSources[source] || {
+    frames: 0,
+    maxWorldPositionError: 0,
+    maxRotationError: 0,
+    maxHeadJumpExcess: 0,
+  };
+  const frames = metricValue(metrics.frameCount);
+  bucket.frames += frames;
+  bucket.maxWorldPositionError = Math.max(bucket.maxWorldPositionError, metricValue(metrics.maxWorldPositionError));
+  bucket.maxRotationError = Math.max(bucket.maxRotationError, metricValue(metrics.maxRotationError));
+  bucket.maxHeadJumpExcess = Math.max(bucket.maxHeadJumpExcess, metricValue(metrics.maxHeadJumpExcess));
+  headPoseSources[source] = bucket;
+};
+
+const addTransitionMetrics = (transitions, transitionName, metrics) => {
+  const bucket = transitions[transitionName] || {
+    frameCount: 0,
+    maxAnchorJump: 0,
+    maxAnchorError: 0,
+    maxHeadJumpExcess: 0,
+    maxWorldPositionError: 0,
+    maxRotationError: 0,
+  };
+  bucket.frameCount += metricValue(metrics.frameCount);
+  bucket.maxAnchorJump = Math.max(bucket.maxAnchorJump, metricValue(metrics.maxAnchorJump));
+  bucket.maxAnchorError = Math.max(bucket.maxAnchorError, metricValue(metrics.maxAnchorError));
+  bucket.maxHeadJumpExcess = Math.max(bucket.maxHeadJumpExcess, metricValue(metrics.maxHeadJumpExcess));
+  bucket.maxWorldPositionError = Math.max(bucket.maxWorldPositionError, metricValue(metrics.maxWorldPositionError));
+  bucket.maxRotationError = Math.max(bucket.maxRotationError, metricValue(metrics.maxRotationError));
+  transitions[transitionName] = bucket;
+};
+
+const finalizeTrackingSources = trackingSources => {
+  for (const bucket of Object.values(trackingSources)) {
+    bucket.meanAnchorError = bucket.frames
+      ? bucket.weightedMeanAnchorErrorSum / bucket.frames
+      : 0;
+    delete bucket.weightedMeanAnchorErrorSum;
+  }
+};
+
+export const summarizeVisionQualityReports = reports => {
+  const aggregate = {
+    total: 0,
+    byStatus: {},
+    failedByStage: {},
+  };
+  const failedByMode = {};
+  const failedByScenario = {};
+  const trackingSources = {};
+  const headPoseSources = {};
+  const trackingTransitions = {};
+  const headPoseTransitions = {};
+
+  for (const report of reports) {
+    aggregate.total++;
+    incrementCount(aggregate.byStatus, report.overallStatus);
+    for (const stageName of report.failedStages || []) {
+      incrementCount(aggregate.failedByStage, stageName);
+    }
+
+    if (report.overallStatus === 'fail') {
+      incrementCount(failedByMode, report.mode);
+      incrementCount(failedByScenario, report.name);
+    }
+
+    for (const [source, metrics] of Object.entries(report.stages?.tracking?.metrics?.byPositionSource || {})) {
+      addTrackingSourceMetrics(trackingSources, source, metrics);
+    }
+
+    for (const [source, metrics] of Object.entries(report.stages?.headAttachment?.metrics?.byPoseSource || {})) {
+      addHeadPoseSourceMetrics(headPoseSources, source, metrics);
+    }
+
+    for (const [transition, metrics] of Object.entries(report.stages?.tracking?.metrics?.positionSourceTransitions?.byTransition || {})) {
+      addTransitionMetrics(trackingTransitions, transition, metrics);
+    }
+
+    for (const [transition, metrics] of Object.entries(report.stages?.headAttachment?.metrics?.poseSourceTransitions?.byTransition || {})) {
+      addTransitionMetrics(headPoseTransitions, transition, metrics);
+    }
+  }
+
+  finalizeTrackingSources(trackingSources);
+
+  const topTrackingSources = Object.entries(trackingSources)
+    .map(([source, metrics]) => ({ source, ...metrics }))
+    .sort((left, right) => (
+      right.meanAnchorError - left.meanAnchorError ||
+      right.maxAnchorError - left.maxAnchorError ||
+      left.source.localeCompare(right.source)
+    ));
+  const topHeadPoseSources = Object.entries(headPoseSources)
+    .map(([source, metrics]) => ({ source, ...metrics }))
+    .sort((left, right) => (
+      right.maxWorldPositionError - left.maxWorldPositionError ||
+      right.maxRotationError - left.maxRotationError ||
+      left.source.localeCompare(right.source)
+    ));
+  const topTrackingTransitions = Object.entries(trackingTransitions)
+    .map(([transition, metrics]) => ({ transition, ...metrics }))
+    .sort((left, right) => (
+      right.maxAnchorJump - left.maxAnchorJump ||
+      right.maxAnchorError - left.maxAnchorError ||
+      left.transition.localeCompare(right.transition)
+    ));
+  const topHeadPoseTransitions = Object.entries(headPoseTransitions)
+    .map(([transition, metrics]) => ({ transition, ...metrics }))
+    .sort((left, right) => (
+      right.maxHeadJumpExcess - left.maxHeadJumpExcess ||
+      right.maxWorldPositionError - left.maxWorldPositionError ||
+      right.maxRotationError - left.maxRotationError ||
+      left.transition.localeCompare(right.transition)
+    ));
+
+  return {
+    aggregate,
+    failedByMode,
+    failedByScenario,
+    trackingSources,
+    headPoseSources,
+    trackingTransitions,
+    headPoseTransitions,
+    topFailingScenarios: sortCountEntries(failedByScenario),
+    topTrackingSources,
+    topHeadPoseSources,
+    topTrackingTransitions,
+    topHeadPoseTransitions,
   };
 };

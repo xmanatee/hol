@@ -539,6 +539,190 @@ const ballTexture = (u, v) => {
   return [42 + n * 0.4, 104 + n, 154 + n * 0.7, 255];
 };
 
+const humanPoseAt = (index, count) => {
+  const t = index / Math.max(1, count - 1);
+  return {
+    centerX: DEFAULT_WIDTH * 0.52 + Math.sin(t * Math.PI * 2.2) * 34,
+    centerY: DEFAULT_HEIGHT * 0.53 + Math.cos(t * Math.PI * 1.5) * 18,
+    scale: 0.98 + Math.sin(t * Math.PI * 1.15) * 0.14,
+    roll: Math.sin(t * Math.PI * 1.7) * 8 * Math.PI / 180,
+  };
+};
+
+const transformHumanLocal = (pose, point) => {
+  const cos = Math.cos(pose.roll);
+  const sin = Math.sin(pose.roll);
+  return {
+    x: pose.centerX + pose.scale * (point.x * cos - point.y * sin),
+    y: pose.centerY + pose.scale * (point.x * sin + point.y * cos),
+  };
+};
+
+const localHumanPointAt = (pose, x, y) => {
+  const dx = (x - pose.centerX) / pose.scale;
+  const dy = (y - pose.centerY) / pose.scale;
+  const cos = Math.cos(pose.roll);
+  const sin = Math.sin(pose.roll);
+  return {
+    x: dx * cos + dy * sin,
+    y: -dx * sin + dy * cos,
+  };
+};
+
+const insideRotatedEllipse = (point, part) => {
+  const cos = Math.cos(part.rotation || 0);
+  const sin = Math.sin(part.rotation || 0);
+  const dx = point.x - part.x;
+  const dy = point.y - part.y;
+  const localX = dx * cos + dy * sin;
+  const localY = -dx * sin + dy * cos;
+  return (localX * localX) / (part.rx * part.rx) + (localY * localY) / (part.ry * part.ry) <= 1;
+};
+
+const humanMaskParts = [
+  { x: 0, y: -108, rx: 27, ry: 31, rotation: 0 },
+  { x: 0, y: -72, rx: 15, ry: 18, rotation: 0 },
+  { x: 0, y: -18, rx: 45, ry: 76, rotation: 0 },
+  { x: -62, y: -5, rx: 14, ry: 66, rotation: -0.32 },
+  { x: 62, y: -5, rx: 14, ry: 66, rotation: 0.32 },
+  { x: -20, y: 92, rx: 17, ry: 76, rotation: 0.08 },
+  { x: 20, y: 92, rx: 17, ry: 76, rotation: -0.08 },
+];
+
+const isInsideHumanSilhouette = point => humanMaskParts.some(part => insideRotatedEllipse(point, part));
+
+const humanTexture = point => {
+  const textureNoise = (noise(point.x * 0.09, point.y * 0.08, 151) - 0.5) * 28;
+  const localHead = insideRotatedEllipse(point, humanMaskParts[0]);
+  const stripe = point.y > -58 && point.y < 54 && Math.floor((point.y + 140) / 13) % 2 === 0;
+  const jacketEdge = Math.abs(point.x) > 32 && point.y > -54 && point.y < 52;
+  const legHighlight = point.y > 52 && Math.floor((point.x + 60) / 12) % 2 === 0;
+
+  if (localHead) return [186 + textureNoise * 0.4, 140 + textureNoise * 0.25, 108 + textureNoise * 0.18, 255];
+  if (jacketEdge) return [36 + textureNoise * 0.25, 58 + textureNoise * 0.4, 84 + textureNoise * 0.6, 255];
+  if (stripe) return [218 + textureNoise * 0.2, 224 + textureNoise * 0.2, 212 + textureNoise * 0.2, 255];
+  if (legHighlight) return [68 + textureNoise * 0.25, 82 + textureNoise * 0.35, 112 + textureNoise * 0.45, 255];
+  return [86 + textureNoise * 0.35, 118 + textureNoise * 0.45, 152 + textureNoise * 0.55, 255];
+};
+
+const drawHumanFrame = ({ frameIndex, frameCount, occluded, reference, backgroundSeed, backgroundVariant }) => {
+  const imageData = createImageData(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+  fillBackground(imageData, frameIndex, backgroundSeed, backgroundVariant);
+  const pose = humanPoseAt(frameIndex, frameCount);
+  const objectMask = new Uint8Array(DEFAULT_WIDTH * DEFAULT_HEIGHT);
+  const localBounds = [
+    transformHumanLocal(pose, { x: -96, y: -148 }),
+    transformHumanLocal(pose, { x: 96, y: -148 }),
+    transformHumanLocal(pose, { x: 96, y: 176 }),
+    transformHumanLocal(pose, { x: -96, y: 176 }),
+  ];
+  const minX = Math.max(0, Math.floor(Math.min(...localBounds.map(point => point.x)) - 8));
+  const maxX = Math.min(DEFAULT_WIDTH - 1, Math.ceil(Math.max(...localBounds.map(point => point.x)) + 8));
+  const minY = Math.max(0, Math.floor(Math.min(...localBounds.map(point => point.y)) - 8));
+  const maxY = Math.min(DEFAULT_HEIGHT - 1, Math.ceil(Math.max(...localBounds.map(point => point.y)) + 8));
+  const maskPoints = [];
+
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      const localPoint = localHumanPointAt(pose, x + 0.5, y + 0.5);
+      if (!isInsideHumanSilhouette(localPoint)) continue;
+
+      objectMask[y * DEFAULT_WIDTH + x] = 255;
+      maskPoints.push({ x, y });
+      setPixel(imageData, x, y, humanTexture(localPoint));
+    }
+  }
+
+  const boundingBox = bboxFor(maskPoints);
+  if (occluded) drawOcclusion(imageData, boundingBox, frameIndex, 'human-silhouette');
+  const anchor = transformHumanLocal(pose, { x: 0, y: -20 });
+  const basisX = transformHumanLocal(pose, { x: 42, y: -20 });
+  const rawScale = Math.hypot(basisX.x - anchor.x, basisX.y - anchor.y) / 42;
+  const rawRoll = Math.atan2(basisX.y - anchor.y, basisX.x - anchor.x);
+  const referenceScale = reference?.rawScale ?? rawScale;
+  const referenceRoll = reference?.rawRoll ?? rawRoll;
+  const groundTruth = {
+    anchor,
+    normal: { x: Math.sin(pose.roll) * 0.12, y: 0.04, z: 0.992 },
+    rawScale,
+    rawRoll,
+    scale: rawScale / referenceScale,
+    roll: normalizeAngle(rawRoll - referenceRoll),
+  };
+
+  return {
+    imageData,
+    objectMask: {
+      data: objectMask,
+    },
+    corners: [
+      { x: boundingBox.x1, y: boundingBox.y1 },
+      { x: boundingBox.x2, y: boundingBox.y1 },
+      { x: boundingBox.x2, y: boundingBox.y2 },
+      { x: boundingBox.x1, y: boundingBox.y2 },
+    ],
+    boundingBox,
+    groundTruth,
+    maskProbePoints: {
+      object: anchor,
+      betweenLegs: transformHumanLocal(pose, { x: 0, y: 135 }),
+      armGap: transformHumanLocal(pose, { x: 50, y: 66 }),
+    },
+  };
+};
+
+export const createHumanSilhouetteSequence = ({
+  frameCount = 28,
+  occlusionFrames = [9, 10, 20],
+  backgroundVariant = 'busy',
+  backgroundSeed = 173,
+} = {}) => {
+  const referenceFrame = drawHumanFrame({
+    frameIndex: 0,
+    frameCount,
+    occluded: false,
+    reference: null,
+    backgroundSeed,
+    backgroundVariant,
+  });
+  const reference = {
+    rawScale: referenceFrame.groundTruth.rawScale,
+    rawRoll: referenceFrame.groundTruth.rawRoll,
+  };
+  const occlusionSet = new Set(occlusionFrames);
+  const frames = Array.from({ length: frameCount }, (_, index) => drawHumanFrame({
+    frameIndex: index,
+    frameCount,
+    occluded: occlusionSet.has(index),
+    reference,
+    backgroundSeed,
+    backgroundVariant,
+  }));
+
+  return {
+    kind: 'human-silhouette',
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
+    tap: frames[0].groundTruth.anchor,
+    boundingBox: frames[0].boundingBox,
+    targetClass: 'person',
+    camera: DEFAULT_CAMERA,
+    frames,
+    metadata: {
+      hasBackground: true,
+      hasDarkRegions: true,
+      hasFineTexture: true,
+      hasLightingVariation: true,
+      hasOcclusion: occlusionFrames.length > 0,
+      hasMovingBackground: true,
+      hasNonConvexMask: true,
+      backgroundVariant,
+      targetClass: 'person',
+      targetModel: 'non-convex-segmentation-owned-tracking',
+    },
+  };
+};
+
 const createPlaneGroundTruth = ({ pose, camera, objectWidth, objectHeight, anchorUv, reference = null }) => {
   const modelPoint = uv => ({
     x: (uv.u - 0.5) * objectWidth,

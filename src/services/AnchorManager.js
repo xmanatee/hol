@@ -2,7 +2,7 @@ import { ImageAnchorService } from './ImageAnchorService.js';
 import { InteractiveSegmenterService } from './InteractiveSegmenterService.js';
 import { HomographyEstimator } from '../cv/anchor.homography.js';
 import { RECONSTRUCTION_POSE_MODEL } from '../cv/anchor.reconstructionModes.js';
-import { createDetectionBoxObjectSupportMask } from '../cv/objectSupportMask.js';
+import { createTapLocalDetectionObjectSupportMask } from '../cv/objectSupportMask.js';
 import { logger } from '../utils/logger.js';
 
 export class AnchorManager {
@@ -122,7 +122,7 @@ export class AnchorManager {
         createdAtFrame: 0,
       });
     } catch (error) {
-      logger.warn('AnchorManager', `Tap segmentation unavailable; using weak detection-box support: ${error.message}`);
+      logger.warn('AnchorManager', `Tap segmentation unavailable; using weak tap-local detection support: ${error.message}`);
     }
 
     if (!selectedDetection && !this._hasUsableObjectSupportMask(segmentedObjectSupportMask)) {
@@ -181,7 +181,7 @@ export class AnchorManager {
       return segmentedObjectSupportMask;
     }
 
-    return createDetectionBoxObjectSupportMask({
+    return createTapLocalDetectionObjectSupportMask({
       width: imageData.width,
       height: imageData.height,
       detection: selectedDetection,
@@ -300,6 +300,10 @@ export class AnchorManager {
         activeLandmarks: anchorServiceState.metrics?.activeLandmarks ?? anchorServiceState.metrics?.activeLandmarkCount ?? 0,
         objectOwnedLandmarks: anchorServiceState.metrics?.objectOwnedLandmarks ?? 0,
         backgroundRejected: anchorServiceState.metrics?.backgroundRejected ?? 0,
+        objectSupportMaskPreview: anchorServiceState.metrics?.currentObjectSupportMaskPreview ||
+          anchorServiceState.metrics?.objectSupportMaskPreview ||
+          this.activeAnchor.evidence?.objectSupportMaskPreview ||
+          null,
       };
       this.activeAnchor.diagnostics = {
         readiness: anchorServiceState.metrics?.readiness || this.activeAnchor.readiness || null,
@@ -308,6 +312,9 @@ export class AnchorManager {
         maskConfidence: anchorServiceState.metrics?.maskConfidence ?? null,
         keypointDensity: anchorServiceState.metrics?.keypointDensity ?? null,
         backgroundRejected: anchorServiceState.metrics?.backgroundRejected ?? 0,
+        objectSupportMaskPreview: anchorServiceState.metrics?.currentObjectSupportMaskPreview ||
+          anchorServiceState.metrics?.objectSupportMaskPreview ||
+          null,
         activeLandmarks: anchorServiceState.metrics?.activeLandmarks ?? anchorServiceState.metrics?.activeLandmarkCount ?? 0,
         objectOwnedLandmarks: anchorServiceState.metrics?.objectOwnedLandmarks ?? 0,
         trackingSuccessRate: anchorServiceState.metrics?.trackingSuccessRate ?? null,

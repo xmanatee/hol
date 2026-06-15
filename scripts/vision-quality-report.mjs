@@ -6,8 +6,12 @@ import {
 } from '../src/cv/synthetic/anchorReplayHarness.js';
 import { scoreHeadPoseReplay } from '../src/cv/synthetic/headPoseReplayHarness.js';
 import { RECONSTRUCTION_MODES } from '../src/cv/anchor.reconstructionModes.js';
-import { scoreVisionPipelineQuality } from '../src/cv/stageQualityScoring.js';
+import {
+  scoreVisionPipelineQuality,
+  summarizeVisionQualityReports,
+} from '../src/cv/stageQualityScoring.js';
 
+const SYNTHETIC_OBJECT_SUPPORT = 'synthetic-object-mask';
 const cv = await loadOpenCvForNode();
 const reports = [];
 
@@ -18,9 +22,10 @@ for (const scenario of reportReplayScenarios) {
       cv,
       sequence,
       trackingMode: mode.id,
+      useObjectSupportMask: true,
     });
     const summary = summarizeReplay(replay);
-    const headPose = scoreHeadPoseReplay({ replay, sequence }).summary;
+    const headPose = scoreHeadPoseReplay({ replay, sequence });
     const quality = scoreVisionPipelineQuality({
       name: `${mode.id}/${scenario.name}`,
       replay,
@@ -33,6 +38,7 @@ for (const scenario of reportReplayScenarios) {
       kind: sequence.kind,
       mode: mode.id,
       targetClass: sequence.targetClass,
+      objectSupportMask: SYNTHETIC_OBJECT_SUPPORT,
       overallStatus: quality.overallStatus,
       failedStages: quality.failedStages,
       stages: quality.stages,
@@ -40,24 +46,13 @@ for (const scenario of reportReplayScenarios) {
   }
 }
 
-const aggregate = reports.reduce((result, report) => {
-  result.total++;
-  result.byStatus[report.overallStatus] = (result.byStatus[report.overallStatus] || 0) + 1;
-  report.failedStages.forEach(stageName => {
-    result.failedByStage[stageName] = (result.failedByStage[stageName] || 0) + 1;
-  });
-  return result;
-}, {
-  total: 0,
-  byStatus: {},
-  failedByStage: {},
-});
+const summary = summarizeVisionQualityReports(reports);
 
 console.log(JSON.stringify({
-  aggregate,
+  ...summary,
   reports,
 }, null, 2));
 
-if (aggregate.byStatus.fail) {
+if (summary.aggregate.byStatus.fail) {
   process.exitCode = 1;
 }

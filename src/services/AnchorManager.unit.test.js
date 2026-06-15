@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AnchorManager } from './AnchorManager.js';
-import { createObjectSupportMask } from '../cv/objectSupportMask.js';
+import { createObjectSupportMask, isPointInsideObjectSupport } from '../cv/objectSupportMask.js';
 
 test('anchor manager attaches tap-time segmenter mask before creating image anchor', async () => {
   const objectSupportMask = createObjectSupportMask({
@@ -140,7 +140,7 @@ test('anchor manager rejects free taps when neither detection nor segmentation i
   assert.equal(manager.activeAnchor, null);
 });
 
-test('anchor manager falls back to weak detection-box support when tap segmentation fails', async () => {
+test('anchor manager falls back to weak tap-local detection support when tap segmentation fails', async () => {
   const manager = new AnchorManager({
     imageAnchorService: {
       setTrackingMode: () => {},
@@ -181,10 +181,10 @@ test('anchor manager falls back to weak detection-box support when tap segmentat
 
   assert.equal(result.success, true);
   assert.equal(manager.mode, 'anchor');
-  assert.equal(manager.activeAnchor.objectSupportMaskSource, 'detection-box');
+  assert.equal(manager.activeAnchor.objectSupportMaskSource, 'tap-local-detection');
 });
 
-test('anchor manager builds an explicit weak object support mask when tap segmentation is empty', async () => {
+test('anchor manager builds an explicit weak tap-local support mask when tap segmentation is empty', async () => {
   const imageAnchorService = {
     setTrackingMode: () => {},
     createAnchor: async (imageData, tapPosition, detection) => ({
@@ -223,7 +223,104 @@ test('anchor manager builds an explicit weak object support mask when tap segmen
   );
 
   assert.equal(result.success, true);
-  assert.equal(manager.activeAnchor.objectSupportMaskSource, 'detection-box');
-  assert.equal(manager.activeAnchor.sourceDetection.objectSupportMask.bbox.width, 61);
-  assert.equal(manager.activeAnchor.sourceDetection.objectSupportMask.bbox.height, 61);
+  assert.equal(manager.activeAnchor.objectSupportMaskSource, 'tap-local-detection');
+  assert.ok(manager.activeAnchor.sourceDetection.objectSupportMask.bbox.width <= 37);
+  assert.ok(manager.activeAnchor.sourceDetection.objectSupportMask.bbox.height <= 37);
+});
+
+test('anchor manager never treats a broad person detection box as segmentation', async () => {
+  let supportMask = null;
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      createAnchor: async (imageData, tapPosition, detection) => {
+        supportMask = detection.objectSupportMask;
+        return {
+          success: true,
+          position: tapPosition,
+          keypoints: 8,
+          quality: 0.12,
+          method: 'GFTT_ADAPTIVE_GRID_BOOTSTRAP',
+          state: 'candidate',
+          trackingMode: 'sparse-reconstruction',
+          readiness: { faceReady: false, reason: 'Build more object landmarks before showing the face' },
+          evidence: {
+            maskCoverage: 0.18,
+            maskConfidence: detection.objectSupportMask.confidence,
+            templateKeypoints: 8,
+            activeLandmarks: 8,
+            objectOwnedLandmarks: 8,
+            backgroundRejected: 0,
+          },
+          objectSupportMaskSource: detection.objectSupportMask.source,
+        };
+      },
+    },
+    interactiveSegmenterService: {
+      segmentTap: async () => null,
+    },
+  });
+  manager.initialized = true;
+  manager.mode = 'detection';
+  manager.detections = [{
+    x1: 110,
+    y1: 40,
+    x2: 310,
+    y2: 430,
+    class: 'person',
+    confidence: 0.96,
+  }];
+
+  const result = await manager.createAnchorFromTap(
+    { x: 205, y: 92 },
+    { width: 420, height: 480, data: new Uint8ClampedArray(420 * 480 * 4) }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(manager.activeAnchor.objectSupportMaskSource, 'tap-local-detection');
+  assert.equal(supportMask.source, 'tap-local-detection');
+  assert.ok(supportMask.bbox.width <= 82);
+  assert.ok(supportMask.bbox.height <= 82);
+  assert.equal(isPointInsideObjectSupport(supportMask, { x: 130, y: 250 }), false);
+  assert.equal(isPointInsideObjectSupport(supportMask, { x: 205, y: 92 }), true);
+});
+
+test('anchor manager propagates live object mask preview into active-anchor diagnostics', () => {
+  const preview = {
+    source: 'interactive-segmenter',
+    bbox: { x: 12, y: 14, width: 32, height: 34 },
+    sampleStride: 4,
+    points: [{ x: 12, y: 14 }],
+  };
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+    },
+    interactiveSegmenterService: {},
+  });
+
+  manager.mode = 'anchor';
+  manager.activeAnchor = {
+    position: { x: 20, y: 30, z: 0 },
+    evidence: {},
+  };
+
+  manager._onAnchorUpdate({
+    anchored: true,
+    state: 'mapping',
+    position: { x: 21, y: 31, z: 0 },
+    planarTransform: { scale: 1, rotation: 0 },
+    metrics: {
+      keypointCount: 8,
+      activeLandmarkCount: 8,
+      objectOwnedLandmarks: 7,
+      maskCoverage: 0.16,
+      maskConfidence: 0.9,
+      backgroundRejected: 4,
+      currentObjectSupportMaskPreview: preview,
+    },
+  });
+
+  assert.deepEqual(manager.activeAnchor.evidence.objectSupportMaskPreview, preview);
+  assert.deepEqual(manager.activeAnchor.diagnostics.objectSupportMaskPreview, preview);
 });

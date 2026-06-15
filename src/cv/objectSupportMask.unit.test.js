@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createDetectionBoxObjectSupportMask,
   createObjectSupportMask,
+  createObjectSupportMaskPreview,
   createRegionOpenCvMask,
+  createTapLocalDetectionObjectSupportMask,
   getObjectSupportBounds,
   isPointInsideObjectSupport,
   keepConnectedComponentContainingPoint,
@@ -158,25 +159,59 @@ test('object support mask keeps only the connected component containing the tap 
   assert.equal(filtered[5 * 12 + 9], 0);
 });
 
-test('detection-box support mask clamps to the selected detection and frame bounds', () => {
-  const mask = createDetectionBoxObjectSupportMask({
-    width: 10,
-    height: 8,
+test('tap-local detection support stays near the click instead of filling the whole box', () => {
+  const mask = createTapLocalDetectionObjectSupportMask({
+    width: 80,
+    height: 80,
     detection: {
-      x1: -2.4,
-      y1: 2.2,
-      x2: 5.1,
-      y2: 10.6,
+      x1: 5,
+      y1: 5,
+      x2: 70,
+      y2: 70,
     },
-    referencePoint: { x: 4, y: 5 },
+    referencePoint: { x: 38, y: 32 },
     createdAtFrame: 3,
   });
 
-  assert.equal(mask.source, 'detection-box');
-  assert.deepEqual(mask.bbox, { x: 0, y: 2, width: 7, height: 6 });
-  assert.equal(isPointInsideObjectSupport(mask, { x: 0, y: 2 }), true);
-  assert.equal(isPointInsideObjectSupport(mask, { x: 6, y: 7 }), true);
-  assert.equal(isPointInsideObjectSupport(mask, { x: 7, y: 7 }), false);
+  assert.equal(mask.source, 'tap-local-detection');
+  assert.ok(mask.bbox.width < 66);
+  assert.ok(mask.bbox.height < 66);
+  assert.equal(isPointInsideObjectSupport(mask, { x: 38, y: 32 }), true);
+  assert.equal(isPointInsideObjectSupport(mask, { x: 8, y: 8 }), false);
+  assert.equal(isPointInsideObjectSupport(mask, { x: 68, y: 68 }), false);
+});
+
+test('object support preview samples mask boundary instead of rectangular background', () => {
+  const data = new Uint8Array(24 * 24);
+  for (let y = 4; y <= 18; y++) {
+    for (let x = 4; x <= 18; x++) {
+      if (x >= 10 && x <= 14 && y >= 10 && y <= 18) {
+        continue;
+      }
+      data[y * 24 + x] = 255;
+    }
+  }
+
+  const mask = createObjectSupportMask({
+    width: 24,
+    height: 24,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.91,
+    referencePoint: { x: 8, y: 8 },
+    createdAtFrame: 5,
+    updatedAtFrame: 5,
+  });
+
+  const preview = createObjectSupportMaskPreview(mask, { maxPoints: 80 });
+
+  assert.equal(preview.source, 'interactive-segmenter');
+  assert.equal(preview.confidence, 0.91);
+  assert.deepEqual(preview.bbox, { x: 4, y: 4, width: 15, height: 15 });
+  assert.ok(preview.points.length > 0);
+  assert.ok(preview.points.length <= 80);
+  assert.equal(preview.points.some(point => point.x === 12 && point.y === 14), false);
+  assert.equal(preview.points.every(point => isPointInsideObjectSupport(mask, point)), true);
 });
 
 test('region OpenCV mask clamps frame-edge and narrow support lookups', () => {

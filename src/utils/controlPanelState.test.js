@@ -1,9 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CONTROL_PANEL_TABS,
+  clampControlPanelWidth,
   createControlPanelContext,
+  createDefaultSectionOrders,
+  createDefaultControlPanelWidth,
   createDefaultExpandedSections,
   expandSectionsForWorkflow,
+  moveSectionInTabOrder,
+  selectControlPanelTabForWorkflow,
 } from './controlPanelState.js';
 
 test('control panel defaults prioritize status controls diagnostics and pre-anchor configuration', () => {
@@ -116,4 +122,40 @@ test('control panel workflow expansion opens sections again when a new object wo
 
   assert.equal(sections.reconstruction, true);
   assert.equal(sections.diagnostics, true);
+});
+
+test('control panel split width clamps to keep camera and controls visible', () => {
+  assert.equal(clampControlPanelWidth(200, 1200), 280);
+  assert.equal(clampControlPanelWidth(900, 1200), 620);
+  assert.equal(clampControlPanelWidth(380, 390), 280);
+});
+
+test('control panel default width scales from desktop down to phone viewports', () => {
+  assert.equal(createDefaultControlPanelWidth(1200), 408);
+  assert.equal(createDefaultControlPanelWidth(390), 280);
+});
+
+test('control panel workflow tabs are ordered by the main user workflows', () => {
+  assert.deepEqual(
+    CONTROL_PANEL_TABS.map(tab => tab.id),
+    ['track', 'reconstruct', 'head', 'debug', 'system']
+  );
+  assert.deepEqual(CONTROL_PANEL_TABS[0].sections, ['status', 'controls', 'config', 'diagnostics']);
+  assert.deepEqual(CONTROL_PANEL_TABS[1].sections, ['reconstruction', 'diagnostics', 'config', 'controls']);
+});
+
+test('control panel recommends the useful workflow tab from app state', () => {
+  assert.equal(selectControlPanelTabForWorkflow({ anchorStatus: 'ready' }), 'track');
+  assert.equal(selectControlPanelTabForWorkflow({ anchorStatus: 'mapping' }), 'reconstruct');
+  assert.equal(selectControlPanelTabForWorkflow({ microphoneMode: true }), 'head');
+  assert.equal(selectControlPanelTabForWorkflow({ runtimeStatus: 'blocked', microphoneMode: true }), 'system');
+});
+
+test('control panel section order can be customized per workflow tab', () => {
+  const orders = createDefaultSectionOrders();
+  const moved = moveSectionInTabOrder(orders, 'track', 'config', -1);
+
+  assert.deepEqual(moved.track, ['status', 'config', 'controls', 'diagnostics']);
+  assert.deepEqual(moved.reconstruct, orders.reconstruct);
+  assert.equal(moveSectionInTabOrder(moved, 'track', 'status', -1), moved);
 });

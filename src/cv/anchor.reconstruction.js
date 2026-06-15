@@ -38,6 +38,18 @@ const normalizeObjectVector = vector => {
   return { x: normalized[0], y: normalized[1], z: normalized[2] };
 };
 
+const addObjectVectors = (left, right) => ({
+  x: left.x + right.x,
+  y: left.y + right.y,
+  z: left.z + right.z,
+});
+
+const scaleObjectVector = (vector, scale) => ({
+  x: vector.x * scale,
+  y: vector.y * scale,
+  z: vector.z * scale,
+});
+
 const symmetricVectorToMatrix = vector => ([
   [vector[0], vector[1], vector[2]],
   [vector[1], vector[3], vector[4]],
@@ -347,15 +359,35 @@ export class SparseObjectReconstructor {
     const normal = surfaceNormal || { x: viewNormal[0], y: viewNormal[1], z: viewNormal[2] };
     const currentScale = rowScale(pose.rowX, pose.rowY);
     const projectedAnchor = projectWithRows(this.map.anchorPoint, pose.rowX, pose.rowY);
-    const attachmentAnchor = trackedFit.success
-      ? transformPoint2(this.anchorReference, trackedFit.transform)
-      : projectedAnchor;
-    const attachmentScale = trackedFit.success
-      ? trackedFit.transform.scale
+    const surfaceTransform = this._usesTargetSurfacePrior()
+      ? this._projectLocalSurfaceTransform({
+        rowX: pose.rowX,
+        rowY: pose.rowY,
+        anchorPoint: this.map.anchorPoint,
+        surface,
+      })
+      : null;
+    const poseScale = surfaceTransform && this.map.referenceSurfaceScale
+      ? surfaceTransform.scale / this.map.referenceSurfaceScale
       : currentScale / this.map.referenceScale;
-    const attachmentRotation = trackedFit.success
-      ? trackedFit.transform.rotation
+    const poseRotation = surfaceTransform && Number.isFinite(this.map.referenceSurfaceRotation)
+      ? normalizeAngle(surfaceTransform.rotation - this.map.referenceSurfaceRotation)
       : normalizeAngle(rowRotation(pose.rowX, pose.rowY) - this.map.referenceRotation);
+    const trackedAnchor = trackedFit.success
+      ? transformPoint2(this.anchorReference, trackedFit.transform)
+      : null;
+    const useProjectedSurfaceAnchor = this._shouldUseProjectedSurfaceAnchor({
+      pose,
+      trackedFit,
+      projectedAnchor,
+      trackedAnchor,
+    });
+    const attachmentAnchor = useProjectedSurfaceAnchor || !trackedAnchor ? projectedAnchor : trackedAnchor;
+    const attachmentScale = useProjectedSurfaceAnchor || !trackedFit.success ? poseScale : trackedFit.transform.scale;
+    const attachmentRotation = useProjectedSurfaceAnchor || !trackedFit.success ? poseRotation : trackedFit.transform.rotation;
+    const attachmentMethod = useProjectedSurfaceAnchor || !trackedFit.success
+      ? RECONSTRUCTION_POSE_MODEL
+      : 'reference_similarity_transform';
     const residualScore = clamp(1 - pose.averageResidual / 12, 0, 1);
     const coverageScore = clamp(pose.inlierCount / Math.max(this.map.landmarks.size * 0.62, this.minPoseLandmarks), 0, 1);
     const confidence = clamp(pose.inlierRatio * 0.5 + residualScore * 0.3 + coverageScore * 0.2, 0, 1);
@@ -370,7 +402,7 @@ export class SparseObjectReconstructor {
         rotation: attachmentRotation,
         confidence,
         inlierCount: pose.inlierCount,
-        method: RECONSTRUCTION_POSE_MODEL,
+        method: attachmentMethod,
       },
       confidence,
       inlierCount: pose.inlierCount,
@@ -405,6 +437,42 @@ export class SparseObjectReconstructor {
       }));
   }
 
+  _shouldUseProjectedSurfaceAnchor({ pose, trackedFit, projectedAnchor, trackedAnchor }) {
+    if (!this._usesTargetSurfacePrior()) {
+      return false;
+    }
+
+    const averageResidual = pose.averageResidual ?? Infinity;
+    const inlierCount = pose.inlierCount || 0;
+    const mapConfidence = this.map?.statistics?.mapConfidence ?? 0;
+    const highPrecisionSurfaceFit = inlierCount >= 30 &&
+      averageResidual <= 3.4 &&
+      mapConfidence >= 0.62;
+
+    if (!trackedFit.success || !trackedAnchor) {
+      return highPrecisionSurfaceFit ||
+        (inlierCount >= 20 && averageResidual <= 5.5 && mapConfidence >= 0.58);
+    }
+
+    const anchorDisagreement = Math.hypot(
+      projectedAnchor.x - trackedAnchor.x,
+      projectedAnchor.y - trackedAnchor.y
+    );
+    const staleReferenceTransform = anchorDisagreement >= 24 &&
+      inlierCount >= 18 &&
+      averageResidual <= 6.5 &&
+      mapConfidence >= 0.55 &&
+      trackedFit.averageResidual <= 4.5;
+    const weakTrackedSurfaceCorrection = anchorDisagreement >= 12 &&
+      inlierCount >= 14 &&
+      averageResidual <= 4.8 &&
+      mapConfidence >= 0.72 &&
+      (trackedFit.inlierCount || 0) <= 12 &&
+      trackedFit.averageResidual <= 7.2;
+
+    return highPrecisionSurfaceFit || staleReferenceTransform || weakTrackedSurfaceCorrection;
+  }
+
   _poseObservationsFromTrackedPoints(trackedPoints) {
     if (this._usesTargetSurfacePrior() && this.map.referenceBounds) {
       const coherent = selectCoherentObservations(
@@ -420,7 +488,7 @@ export class SparseObjectReconstructor {
       if (coherent.success) {
         return coherent.observations.map(observation => ({
           id: observation.id,
-          point: pointForSurfaceModel(
+          point: this.map.landmarks.get(observation.id)?.point || pointForSurfaceModel(
             observation.reference,
             this.map.referenceBounds,
             this.map.targetSurfaceModel
@@ -521,6 +589,14 @@ export class SparseObjectReconstructor {
     const surface = this._usesTargetSurfacePrior()
       ? this._createTargetSurface(referenceBounds)
       : this._estimateLocalSurface([...landmarks.values()], anchorPoint);
+    const referenceSurfaceTransform = surface
+      ? this._projectLocalSurfaceTransform({
+        rowX: referencePose.rowX,
+        rowY: referencePose.rowY,
+        anchorPoint,
+        surface,
+      })
+      : null;
 
     this.map = {
       landmarks,
@@ -532,6 +608,8 @@ export class SparseObjectReconstructor {
       referenceBounds,
       referenceScale: rowScale(referencePose.rowX, referencePose.rowY),
       referenceRotation: rowRotation(referencePose.rowX, referencePose.rowY),
+      referenceSurfaceScale: referenceSurfaceTransform?.scale || null,
+      referenceSurfaceRotation: referenceSurfaceTransform?.rotation ?? null,
       depthQuality: this._usesTargetSurfacePrior()
         ? depthQualityForSurfaceModel(this.targetSurfaceModel)
         : calculateDepthQuality(landmarks),
@@ -584,8 +662,11 @@ export class SparseObjectReconstructor {
       referenceBounds,
       this.targetSurfaceModel
     )));
-    const tangentX = { x: 1, y: 0, z: 0 };
-    const tangentY = { x: 0, y: 1, z: 0 };
+    const tangentX = normalizeObjectVector([normal.z, 0, -normal.x]);
+    const tangentY = normalizeObjectVector(cross(
+      [normal.x, normal.y, normal.z],
+      [tangentX.x, tangentX.y, tangentX.z]
+    ));
     const centroid = pointForSurfaceModel(this.anchorReference, referenceBounds, this.targetSurfaceModel);
 
     return {
@@ -595,6 +676,38 @@ export class SparseObjectReconstructor {
       centroid,
       support: this.minLandmarks,
       planarity: 0.3,
+    };
+  }
+
+  _projectLocalSurfaceTransform({ rowX, rowY, anchorPoint, surface }) {
+    if (!surface?.tangentX || !surface?.tangentY) {
+      return null;
+    }
+
+    const basis = 42;
+    const projectedAnchor = projectWithRows(anchorPoint, rowX, rowY);
+    const projectedX = projectWithRows(
+      addObjectVectors(anchorPoint, scaleObjectVector(surface.tangentX, basis)),
+      rowX,
+      rowY
+    );
+    const projectedY = projectWithRows(
+      addObjectVectors(anchorPoint, scaleObjectVector(surface.tangentY, basis)),
+      rowX,
+      rowY
+    );
+    const vectorX = {
+      x: projectedX.x - projectedAnchor.x,
+      y: projectedX.y - projectedAnchor.y,
+    };
+    const vectorY = {
+      x: projectedY.x - projectedAnchor.x,
+      y: projectedY.y - projectedAnchor.y,
+    };
+
+    return {
+      scale: Math.sqrt(Math.max(1e-9, Math.hypot(vectorX.x, vectorX.y) * Math.hypot(vectorY.x, vectorY.y))) / basis,
+      rotation: Math.atan2(vectorX.y, vectorX.x),
     };
   }
 

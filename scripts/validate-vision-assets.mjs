@@ -31,12 +31,20 @@ const requireFile = async (directory, fileName, label, minBytes) => {
 };
 
 const requireMatchingFile = async (directory, files, pattern, label, minBytes) => {
-  const fileName = files.find(file => pattern.test(file));
-  if (!fileName) {
+  const matches = await Promise.all(
+    files
+      .filter(file => pattern.test(file))
+      .map(async fileName => ({
+        fileName,
+        size: (await stat(join(directory, fileName))).size,
+      }))
+  );
+  if (matches.length === 0) {
     throw new Error(`${label} missing from ${directory}`);
   }
 
-  return requireFile(directory, fileName, label, minBytes);
+  matches.sort((left, right) => right.size - left.size);
+  return requireFile(directory, matches[0].fileName, label, minBytes);
 };
 
 const main = async () => {
