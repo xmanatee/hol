@@ -74,6 +74,20 @@ test('renders any reconstruction overlay once the selected map is ready', () => 
   }
 });
 
+test('hides reconstruction overlay when the map is ready but current pose is unavailable', () => {
+  assert.equal(shouldRenderAnchorOverlay({
+    activeAnchor: { id: 'anchor' },
+    anchorState: {
+      state: 'tracking',
+      metrics: {
+        poseModel: 'parametric-surface',
+        reconstructionReady: true,
+        poseSource: null,
+      }
+    }
+  }), false);
+});
+
 test('hides any reconstruction overlay while selected map has no stable pose source', () => {
   for (const poseModel of ['parametric-surface', 'direct-photometric']) {
     assert.equal(shouldRenderAnchorOverlay({

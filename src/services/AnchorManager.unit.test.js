@@ -47,8 +47,72 @@ test('anchor manager attaches tap-time segmenter mask before creating image anch
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'interactive-segmenter');
 });
 
-test('anchor manager rejects taps outside detections before running segmentation', async () => {
-  let segmentCalls = 0;
+test('anchor manager creates a free-tap anchor when segmentation succeeds outside detections', async () => {
+  const objectSupportMask = createObjectSupportMask({
+    width: 100,
+    height: 80,
+    data: new Uint8Array(100 * 80).fill(0),
+    source: 'interactive-segmenter',
+    confidence: 0.81,
+    referencePoint: { x: 10, y: 40 },
+    createdAtFrame: 0,
+    updatedAtFrame: 0,
+  });
+  for (let y = 24; y <= 56; y++) {
+    for (let x = 4; x <= 36; x++) {
+      objectSupportMask.data[y * objectSupportMask.width + x] = 255;
+    }
+  }
+  objectSupportMask.bbox = { x: 4, y: 24, width: 33, height: 33 };
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      createAnchor: async (imageData, tapPosition, detection) => ({
+        success: true,
+        position: tapPosition,
+        keypoints: 9,
+        quality: 0.18,
+        method: 'GFTT_ADAPTIVE',
+        state: 'mapping',
+        trackingMode: 'sparse-reconstruction',
+        readiness: { faceReady: false, reason: 'Build more object landmarks before showing the face' },
+        evidence: {
+          maskCoverage: 1,
+          maskConfidence: detection.objectSupportMask.confidence,
+          templateKeypoints: 9,
+          activeLandmarks: 9,
+          objectOwnedLandmarks: 9,
+          backgroundRejected: 0,
+        },
+        objectSupportMaskSource: detection.objectSupportMask.source,
+      }),
+    },
+    interactiveSegmenterService: {
+      segmentTap: async () => {
+        return objectSupportMask;
+      },
+    },
+  });
+  manager.initialized = true;
+  manager.mode = 'detection';
+  manager.detections = [{ x1: 20, y1: 10, x2: 80, y2: 70, class: 'cup', confidence: 0.93 }];
+
+  const result = await manager.createAnchorFromTap(
+    { x: 10, y: 40 },
+    { width: 100, height: 80, data: new Uint8ClampedArray(100 * 80 * 4) }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(manager.mode, 'anchor');
+  assert.equal(manager.activeAnchor.objectSupportMaskSource, 'interactive-segmenter');
+  assert.equal(manager.activeAnchor.sourceDetection.class, 'segmented-object');
+  assert.equal(manager.activeAnchor.sourceDetection.x1, 4);
+  assert.equal(manager.activeAnchor.sourceDetection.y1, 24);
+  assert.equal(manager.activeAnchor.sourceDetection.x2, 37);
+  assert.equal(manager.activeAnchor.sourceDetection.y2, 57);
+});
+
+test('anchor manager rejects free taps when neither detection nor segmentation is available', async () => {
   const manager = new AnchorManager({
     imageAnchorService: {
       setTrackingMode: () => {},
@@ -57,9 +121,7 @@ test('anchor manager rejects taps outside detections before running segmentation
       },
     },
     interactiveSegmenterService: {
-      segmentTap: async () => {
-        segmentCalls++;
-      },
+      segmentTap: async () => null,
     },
   });
   manager.initialized = true;
@@ -74,7 +136,6 @@ test('anchor manager rejects taps outside detections before running segmentation
     /No detection selected/
   );
 
-  assert.equal(segmentCalls, 0);
   assert.equal(manager.mode, 'detection');
   assert.equal(manager.activeAnchor, null);
 });

@@ -15,7 +15,8 @@ test('describes detection mode with selectable objects as ready to tap', () => {
 
   assert.equal(result.status, 'ready');
   assert.equal(result.severity, 'good');
-  assert.match(result.message, /Tap/);
+  assert.match(result.message, /Tap an object/);
+  assert.match(result.recommendation, /detected outline/);
 });
 
 test('describes moderate-quality anchors as weak but usable', () => {

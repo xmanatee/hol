@@ -28,5 +28,8 @@ export const shouldRenderAnchorOverlay = ({ activeAnchor, anchorState }) => {
     return true;
   }
 
-  return readiness?.faceReady === true || metrics.reconstructionReady || metrics.poseSource === 'planar-homography';
+  const selectedReconstructionPose = metrics.reconstructionReady && metrics.poseSource === poseModel;
+  return readiness?.faceReady === true ||
+    selectedReconstructionPose ||
+    metrics.poseSource === 'planar-homography';
 };

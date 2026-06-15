@@ -89,8 +89,8 @@ export const describeAnchorState = ({
       return {
         status: 'ready',
         severity: 'good',
-        message: 'Tap a detected object to create an anchor',
-        recommendation: 'Choose an object with visible texture, edges, or label text.',
+        message: 'Tap an object to create an anchor',
+        recommendation: 'Use a detected outline when available, or tap the object surface directly.',
         details
       };
     }
@@ -99,7 +99,7 @@ export const describeAnchorState = ({
       status: 'scanning',
       severity: 'idle',
       message: 'Scanning for selectable objects',
-      recommendation: 'Keep the bottle or can fully visible and well lit.',
+      recommendation: 'Point at the object, then tap its visible surface if no outline appears.',
       details
     };
   }

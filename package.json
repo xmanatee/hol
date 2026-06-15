@@ -14,6 +14,7 @@
     "validate:vision-assets": "node scripts/validate-vision-assets.mjs",
     "validate": "npm run lint && npm run build && npm run validate:vision-assets && npm test && npm run test:vision",
     "vision:report": "node scripts/vision-replay-report.mjs",
+    "vision:quality": "node scripts/vision-quality-report.mjs",
     "vision:debug": "node scripts/vision-debug-report.mjs",
     "preview": "vite preview"
   },

@@ -81,4 +81,24 @@ export const COCO_CLASSES = [
   'toothbrush',
 ];
 
-export const TARGET_CLASS_IDS = new Set([0, 39, 41, 73]);
+export const TARGET_CLASS_NAMES = [
+  'person',
+  'sports ball',
+  'bottle',
+  'wine glass',
+  'cup',
+  'bowl',
+  'tv',
+  'laptop',
+  'mouse',
+  'remote',
+  'keyboard',
+  'cell phone',
+  'book',
+  'clock',
+  'vase',
+];
+
+export const TARGET_CLASS_IDS = new Set(
+  TARGET_CLASS_NAMES.map(className => COCO_CLASSES.indexOf(className))
+);

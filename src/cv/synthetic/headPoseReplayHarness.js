@@ -1,4 +1,5 @@
 import { computeAnchorOverlayTransform } from '../../utils/anchorProjection.js';
+import { shouldRenderAnchorOverlay } from '../../utils/overlayVisibility.js';
 
 const normalizeAngle = value => {
   let angle = value;
@@ -60,27 +61,35 @@ const rotationDelta = (predicted, expected) => [
 ];
 
 const scoreFrame = ({ frame, sequence, renderWidth, renderHeight, previous }) => {
-  const predicted = transformForState({
+  const activeAnchor = activeAnchorForSequence(sequence);
+  const anchorState = overlayStateFromFrame(frame);
+  const renderedByPolicy = shouldRenderAnchorOverlay({ activeAnchor, anchorState });
+  const rawPredicted = transformForState({
     sequence,
-    anchorState: overlayStateFromFrame(frame),
+    anchorState,
     renderWidth,
     renderHeight,
   });
+  const predicted = renderedByPolicy
+    ? rawPredicted
+    : { ...rawPredicted, visible: false };
   const expected = transformForState({
     sequence,
     anchorState: overlayStateFromGroundTruth(frame),
     renderWidth,
     renderHeight,
   });
-  const rotation = predicted.visible && expected.visible
+  const hiddenByPolicy = !renderedByPolicy;
+  const evaluatedVisible = predicted.visible && expected.visible;
+  const rotation = evaluatedVisible
     ? rotationDelta(predicted.rotation, expected.rotation)
-    : [Infinity, Infinity, Infinity];
-  const worldPositionError = predicted.visible && expected.visible
+    : hiddenByPolicy ? [0, 0, 0] : [Infinity, Infinity, Infinity];
+  const worldPositionError = evaluatedVisible
     ? vectorDistance(predicted.position, expected.position)
-    : Infinity;
-  const scaleLogError = predicted.visible && expected.visible
+    : hiddenByPolicy ? 0 : Infinity;
+  const scaleLogError = evaluatedVisible
     ? Math.abs(Math.log(predicted.scale / expected.scale))
-    : Infinity;
+    : hiddenByPolicy ? 0 : Infinity;
   const rotationError = Math.hypot(...rotation);
   const headJump = predicted.visible && previous?.predicted?.visible
     ? vectorDistance(predicted.position, previous.predicted.position)
@@ -105,7 +114,8 @@ const scoreFrame = ({ frame, sequence, renderWidth, renderHeight, previous }) =>
     headJump,
     expectedHeadJump,
     headJumpExcess: Math.max(0, headJump - expectedHeadJump),
-    visibleMismatch: predicted.visible !== expected.visible,
+    hiddenByPolicy,
+    visibleMismatch: renderedByPolicy && predicted.visible !== expected.visible,
   };
 };
 
@@ -163,6 +173,7 @@ export const scoreHeadPoseReplay = ({
       maxExpectedHeadJump: maxValue(frames.map(frame => frame.expectedHeadJump)),
       maxHeadJumpExcess: maxValue(frames.map(frame => frame.headJumpExcess)),
       meanHeadJumpExcess: meanValue(frames.map(frame => frame.headJumpExcess)),
+      hiddenByPolicyFrames: frames.filter(frame => frame.hiddenByPolicy).length,
       worstFrames: worstFrames(frames),
     },
   };

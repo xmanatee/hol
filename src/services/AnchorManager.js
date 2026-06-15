@@ -112,12 +112,8 @@ export class AnchorManager {
       throw new Error('Can only create anchor in detection mode');
     }
 
-    // Find detection at tap position
     const selectedDetection = this.findDetectionAtPosition(tapPosition);
-    if (!selectedDetection) {
-      throw new Error('No detection selected at tap position');
-    }
-    
+
     let segmentedObjectSupportMask = null;
     try {
       segmentedObjectSupportMask = await this.interactiveSegmenterService.segmentTap({
@@ -128,14 +124,20 @@ export class AnchorManager {
     } catch (error) {
       logger.warn('AnchorManager', `Tap segmentation unavailable; using weak detection-box support: ${error.message}`);
     }
+
+    if (!selectedDetection && !this._hasUsableObjectSupportMask(segmentedObjectSupportMask)) {
+      throw new Error('No detection selected at tap position and tap segmentation did not identify an object');
+    }
+
     const objectSupportMask = this._selectTapObjectSupportMask({
       segmentedObjectSupportMask,
       selectedDetection,
       imageData,
       tapPosition,
     });
+    const selectedObject = selectedDetection || this._createFreeTapDetection(objectSupportMask);
     const supportedDetection = {
-      ...selectedDetection,
+      ...selectedObject,
       objectSupportMask,
     };
 
@@ -175,7 +177,7 @@ export class AnchorManager {
     imageData,
     tapPosition,
   }) {
-    if (segmentedObjectSupportMask?.bbox?.width > 0 && segmentedObjectSupportMask?.bbox?.height > 0) {
+    if (this._hasUsableObjectSupportMask(segmentedObjectSupportMask)) {
       return segmentedObjectSupportMask;
     }
 
@@ -186,6 +188,23 @@ export class AnchorManager {
       referencePoint: tapPosition,
       createdAtFrame: 0,
     });
+  }
+
+  _hasUsableObjectSupportMask(objectSupportMask) {
+    return objectSupportMask?.bbox?.width > 0 && objectSupportMask?.bbox?.height > 0;
+  }
+
+  _createFreeTapDetection(objectSupportMask) {
+    const { bbox } = objectSupportMask;
+    return {
+      x1: bbox.x,
+      y1: bbox.y,
+      x2: bbox.x + bbox.width,
+      y2: bbox.y + bbox.height,
+      class: 'segmented-object',
+      className: 'segmented object',
+      confidence: objectSupportMask.confidence,
+    };
   }
 
   /**

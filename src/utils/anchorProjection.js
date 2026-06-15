@@ -4,6 +4,7 @@ const MIN_SCALE = 0.28;
 const MAX_SCALE = 1.35;
 const NORMAL_TILT_LIMIT = 0.95;
 const NORMAL_TILT_GAIN = 1.12;
+const MIN_VISIBLE_NORMAL_Z = 0.12;
 const TRACKED_SCALE_MIN = 0.45;
 const TRACKED_SCALE_MAX = 2.2;
 
@@ -59,6 +60,16 @@ export const computeAnchorOverlayTransform = ({
   const trackedScale = clamp(planarTransform.scale ?? 1, TRACKED_SCALE_MIN, TRACKED_SCALE_MAX);
   const scale = clamp(worldPixelSize * 0.7 * trackedScale, MIN_SCALE, MAX_SCALE);
   const normal = anchorState.normal || { x: 0, y: 0, z: 1 };
+
+  if (normal.z < MIN_VISIBLE_NORMAL_Z) {
+    return {
+      visible: false,
+      position: [worldX, worldY, 0],
+      rotation: [0, 0, 0],
+      scale,
+    };
+  }
+
   const pitch = Math.atan2(normal.y, Math.max(0.001, normal.z)) * NORMAL_TILT_GAIN;
   const yaw = -Math.atan2(normal.x, Math.max(0.001, normal.z)) * NORMAL_TILT_GAIN;
   const roll = -(planarTransform.rotation ?? 0);

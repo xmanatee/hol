@@ -29,6 +29,7 @@ const PLANAR_TARGET_CLASS_PATTERN = /book|laptop|keyboard|cell phone|tablet|tv|s
 const CANDIDATE_MIN_TRACKABLE_POINTS = 8;
 const CANDIDATE_REFRESH_INTERVAL = 3;
 const FACE_READINESS_REASON_RECONSTRUCTION = 'Build more object landmarks before showing the face';
+const FACE_READINESS_REASON_POSE_RECOVERY = 'Recovering object pose before showing the face';
 
 const createPositionFilter = () => new OneEuroFilter(60, 2.4, 0.075, 1.0);
 const createPlanarScaleFilter = () => new OneEuroFilter(60, 1.2, 0.08, 1.0);
@@ -2372,12 +2373,19 @@ export class ImageAnchorService {
   _createReadiness({ state, poseSource, reconstructionReady }) {
     const reconstructionMode = isReconstructionMode(this.trackingMode);
     const strongPlanarPose = poseSource === 'planar-homography';
+    const strongReconstructionPose = reconstructionReady &&
+      isReconstructionMode(poseSource) &&
+      poseSource === this.trackingMode;
     const faceReady = state !== 'candidate' &&
       state !== 'mapping' &&
-      (!reconstructionMode || reconstructionReady || strongPlanarPose);
+      (!reconstructionMode || strongReconstructionPose || strongPlanarPose);
+    const poseRecovery = reconstructionMode &&
+      reconstructionReady &&
+      !strongReconstructionPose &&
+      !strongPlanarPose;
     const reason = faceReady
       ? 'Face overlay is ready'
-      : FACE_READINESS_REASON_RECONSTRUCTION;
+      : poseRecovery ? FACE_READINESS_REASON_POSE_RECOVERY : FACE_READINESS_REASON_RECONSTRUCTION;
 
     return { faceReady, reason };
   }

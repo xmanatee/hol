@@ -279,7 +279,7 @@ const StatusSection = ({
     
     {cameraState === 'active' && trackedObjects.length > 0 && !activeTrackId && (
       <div className="p-1 bg-blue-600/20 border border-blue-400 rounded text-[10px] text-blue-400">
-        Tap a detected object to start mapping.
+        Tap an object to start mapping.
       </div>
     )}
   </div>

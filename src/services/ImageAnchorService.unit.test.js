@@ -104,6 +104,7 @@ test('anchor position filters adapt quickly enough to follow real object motion'
 
 test('reconstruction position updates are step-limited to prevent head teleports', () => {
   const service = new ImageAnchorService();
+  service.setTrackingMode('sparse-reconstruction');
   service.currentPosition = { x: 200, y: 160, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
   service.metrics.lastUpdateResult = 'success';
@@ -113,8 +114,10 @@ test('reconstruction position updates are step-limited to prevent head teleports
     'sparse-reconstruction'
   );
 
-  assert.ok(Math.hypot(limited.x - 200, limited.y - 160) <= 12.1);
-  assert.ok(limited.x > 211);
+  const step = Math.hypot(limited.x - 200, limited.y - 160);
+  assert.ok(step <= 9.7);
+  assert.ok(step >= 9.1);
+  assert.ok(limited.x > 209);
   assert.equal(limited.z, 0);
 });
 
@@ -367,6 +370,32 @@ test('candidate anchor transitions to mapping after object-owned refresh landmar
   assert.equal(state.state, 'mapping');
   assert.equal(state.metrics.activeLandmarks, 9);
   assert.equal(state.metrics.objectOwnedLandmarks, 9);
+});
+
+test('reconstruction face readiness requires a current usable pose source', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+
+  assert.deepEqual(service._createReadiness({
+    state: 'stable',
+    poseSource: null,
+    reconstructionReady: true,
+  }), {
+    faceReady: false,
+    reason: 'Recovering object pose before showing the face',
+  });
+
+  assert.equal(service._createReadiness({
+    state: 'stable',
+    poseSource: 'parametric-surface',
+    reconstructionReady: true,
+  }).faceReady, true);
+
+  assert.equal(service._createReadiness({
+    state: 'stable',
+    poseSource: 'planar-homography',
+    reconstructionReady: false,
+  }).faceReady, true);
 });
 
 test('candidate bootstrap tracks existing landmarks instead of resetting their history', () => {

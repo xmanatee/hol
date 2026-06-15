@@ -18,6 +18,9 @@ import { scoreHeadPoseReplay } from './synthetic/headPoseReplayHarness.js';
 import { realisticReplayScenarios } from './synthetic/visionReplayScenarios.js';
 import { RECONSTRUCTION_MODES } from './anchor.reconstructionModes.js';
 
+const LIMIT_EPSILON = 1e-6;
+const withinLimit = (value, limit) => value - limit <= LIMIT_EPSILON;
+
 const createPerfectHeadPoseReplay = () => {
   const templateRegion = { x: 270, y: 178, width: 112, height: 126 };
   const sequence = {
@@ -59,6 +62,7 @@ const createPerfectHeadPoseReplay = () => {
         groundTruth,
         metrics: {
           templateRegion,
+          poseModel: 'object-pose',
         },
       })),
     },
@@ -70,7 +74,7 @@ const assertReplayWithinLimits = ({ name, replay, summary, headPose, limits }) =
   assert.equal(summary.failedFrames, 0, `${name}: ${summary.failureReasons.join(', ')}`);
   assert.ok(summary.maxAnchorError <= limits.maxAnchorError, `${name}: max anchor error ${summary.maxAnchorError.toFixed(2)}px`);
   assert.ok(summary.meanAnchorError <= limits.meanAnchorError, `${name}: mean anchor error ${summary.meanAnchorError.toFixed(2)}px`);
-  assert.ok(summary.maxFrameJump <= limits.maxFrameJump, `${name}: max frame jump ${summary.maxFrameJump.toFixed(2)}px`);
+  assert.ok(withinLimit(summary.maxFrameJump, limits.maxFrameJump), `${name}: max frame jump ${summary.maxFrameJump.toFixed(2)}px`);
   if (limits.maxScaleError != null) {
     assert.ok(summary.maxScaleError <= limits.maxScaleError, `${name}: max scale error ${summary.maxScaleError.toFixed(3)}`);
   }
@@ -90,6 +94,31 @@ test('head-pose replay scorer measures the exact app overlay transform', () => {
   assert.equal(result.summary.maxScaleLogError, 0);
   assert.equal(result.summary.maxRotationError, 0);
   assert.equal(result.summary.maxHeadJumpExcess, 0);
+});
+
+test('head-pose replay scorer follows the overlay readiness gate', () => {
+  const { replay, sequence } = createPerfectHeadPoseReplay();
+  replay.frames[0] = {
+    ...replay.frames[0],
+    predicted: { x: 20, y: 20 },
+    metrics: {
+      ...replay.frames[0].metrics,
+      poseModel: 'parametric-surface',
+      reconstructionReady: true,
+      poseSource: null,
+      readiness: {
+        faceReady: false,
+        reason: 'Recovering object pose before showing the face',
+      },
+    },
+  };
+
+  const result = scoreHeadPoseReplay({ replay, sequence });
+
+  assert.equal(result.frames[0].hiddenByPolicy, true);
+  assert.equal(result.frames[0].visibleMismatch, false);
+  assert.equal(result.summary.hiddenByPolicyFrames, 1);
+  assert.equal(result.summary.maxWorldPositionError, 0);
 });
 
 test('synthetic object suite contains realistic textured planar and curved targets', () => {
@@ -218,7 +247,7 @@ test('real OpenCV replay exercises every selectable reconstruction engine on boo
       assert.equal(replay.anchorCreated, true, `${mode.id}/${scenario.name}: ${replay.createFailure || 'anchor failed'}`);
       assert.equal(summary.failedFrames, 0, `${mode.id}/${scenario.name}: ${summary.failureReasons.join(', ')}`);
       assert.ok(summary.maxAnchorError <= 26, `${mode.id}/${scenario.name}: max anchor error ${summary.maxAnchorError.toFixed(2)}px`);
-      assert.ok(summary.maxFrameJump <= 12, `${mode.id}/${scenario.name}: max jump ${summary.maxFrameJump.toFixed(2)}px`);
+      assert.ok(withinLimit(summary.maxFrameJump, 12), `${mode.id}/${scenario.name}: max jump ${summary.maxFrameJump.toFixed(2)}px`);
       assert.ok(summary.maxScaleError <= 0.24, `${mode.id}/${scenario.name}: max scale error ${summary.maxScaleError.toFixed(3)}`);
       if (mode.id === 'parametric-surface' && scenario.name === 'cup') {
         assert.ok(summary.maxScaleError <= 0.18, `${mode.id}/${scenario.name}: parametric cup scale error ${summary.maxScaleError.toFixed(3)}`);

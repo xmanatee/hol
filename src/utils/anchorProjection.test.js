@@ -105,6 +105,40 @@ test('uses angular surface rotation for strong object turns', () => {
   assert.ok(transform.rotation[1] > -0.95);
 });
 
+test('hides the overlay when the attachment surface is nearly edge-on', () => {
+  const transform = computeAnchorOverlayTransform({
+    width: 1280,
+    height: 720,
+    activeAnchor: {
+      position: { x: 640, y: 360 },
+    },
+    anchorState: {
+      anchored: true,
+      state: 'stable',
+      normal: { x: 0.99, y: 0, z: 0.05 },
+    },
+  });
+
+  assert.equal(transform.visible, false);
+});
+
+test('hides the overlay when the attachment surface is back-facing', () => {
+  const transform = computeAnchorOverlayTransform({
+    width: 1280,
+    height: 720,
+    activeAnchor: {
+      position: { x: 640, y: 360 },
+    },
+    anchorState: {
+      anchored: true,
+      state: 'stable',
+      normal: { x: 0.2, y: 0, z: -0.98 },
+    },
+  });
+
+  assert.equal(transform.visible, false);
+});
+
 test('uses tracked planar scale and in-plane rotation from the anchor transform', () => {
   const base = computeAnchorOverlayTransform({
     width: 1280,
