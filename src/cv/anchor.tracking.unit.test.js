@@ -232,6 +232,48 @@ test('attachment positioning prefers the local tapped patch over distant curved-
   assert.ok(Math.hypot(predicted.x - expected.x, predicted.y - expected.y) < 1.5);
 });
 
+test('attachment positioning accepts sparse local tap support over broad object drift', () => {
+  const tracker = new KeypointTracker();
+  const anchor = { x: 120, y: 110 };
+  const localTransform = {
+    tx: 16,
+    ty: -7,
+    scale: 1.03,
+    rotation: 3 * Math.PI / 180,
+  };
+  const farTransform = {
+    tx: -28,
+    ty: 31,
+    scale: 0.86,
+    rotation: -16 * Math.PI / 180,
+  };
+  const localOriginals = Array.from({ length: 9 }, (_, index) => ({
+    x: 101 + (index % 4) * 12,
+    y: 98 + Math.floor(index / 4) * 15,
+  }));
+  const farOriginals = Array.from({ length: 36 }, (_, index) => ({
+    x: 212 + (index % 9) * 13,
+    y: 142 + Math.floor(index / 9) * 17,
+  }));
+
+  tracker.trackedPoints = [
+    ...localOriginals.map((point, index) => createTrackedPoint(index, point, localTransform)),
+    ...farOriginals.map((point, index) => createTrackedPoint(100 + index, point, farTransform)),
+  ];
+  tracker.keypointCentroid = { x: 203, y: 148 };
+  tracker.anchorOriginalPosition = anchor;
+  tracker.tapOffset = {
+    x: tracker.anchorOriginalPosition.x - tracker.keypointCentroid.x,
+    y: tracker.anchorOriginalPosition.y - tracker.keypointCentroid.y,
+  };
+
+  const predicted = tracker.getAnchorPosition();
+  const expected = transformPoint(anchor, localTransform);
+
+  assert.equal(predicted.method, 'reference_similarity_transform');
+  assert.ok(Math.hypot(predicted.x - expected.x, predicted.y - expected.y) < 2);
+});
+
 test('outlier filtering keeps coherent rotational motion instead of assuming pure translation', () => {
   const tracker = new KeypointTracker();
   const transform = {

@@ -675,12 +675,12 @@ export class KeypointTracker {
       ? withinPatch.slice(0, 18)
       : scored.slice(0, Math.min(18, scored.length)).map(item => item.point);
 
-    if (selected.length < 10) {
+    if (selected.length < 9) {
       return null;
     }
 
     const transform = this._estimateReferenceTransformation(selected);
-    const minLocalInliers = Math.max(6, Math.ceil(selected.length * 0.58));
+    const minLocalInliers = Math.max(5, Math.ceil(selected.length * 0.58));
     if (!transform ||
         transform.inlierCount < minLocalInliers ||
         (transform.averageResidual ?? Infinity) > 34) {
