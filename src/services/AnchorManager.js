@@ -51,14 +51,14 @@ export class AnchorManager {
     this.interactiveSegmenterService = interactiveSegmenterService;
     this.trackingMode = RECONSTRUCTION_POSE_MODEL;
     this.imageAnchorService.setTrackingMode(this.trackingMode);
-    
+
     this.mode = 'detection';
     this.detections = [];
     this.activeAnchor = null;
     this.anchorState = null;
     this.listeners = new Set();
     this.initialized = false;
-    
+
     // Camera parameters for homography estimation
     this.cameraParams = null;
     this.segmentationRefreshInFlight = false;
@@ -78,8 +78,11 @@ export class AnchorManager {
   }
 
   addListener(listener) {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    const callback = typeof listener === 'function'
+      ? listener
+      : listener.onAnchorUpdate.bind(listener);
+    this.listeners.add(callback);
+    return () => this.listeners.delete(callback);
   }
 
   /**
@@ -123,7 +126,7 @@ export class AnchorManager {
     }
 
     const result = this.imageAnchorService.updateAnchor(imageData);
-    
+
     // The anchor service will notify via _onAnchorUpdate callback
     return result;
   }
@@ -158,8 +161,8 @@ export class AnchorManager {
     };
 
     const result = await this.imageAnchorService.createAnchor(
-      imageData, 
-      tapPosition, 
+      imageData,
+      tapPosition,
       supportedDetection
     );
 
@@ -179,7 +182,7 @@ export class AnchorManager {
         sourceDetection: supportedDetection,
         createdAt: Date.now()
       };
-      
+
       logger.info('AnchorManager', `Created anchor with ${result.keypoints} keypoints (quality: ${result.quality.toFixed(2)})`);
       this._notifyUpdate();
     }
@@ -382,15 +385,15 @@ export class AnchorManager {
 
     for (const detection of this.detections) {
       const { x1, y1, x2, y2 } = detection;
-      const isInside = position.x >= x1 && position.x <= x2 && 
+      const isInside = position.x >= x1 && position.x <= x2 &&
                       position.y >= y1 && position.y <= y2;
-      
+
       if (isInside && detection.confidence > bestScore) {
         bestDetection = detection;
         bestScore = detection.confidence;
       }
     }
-    
+
     return bestDetection;
   }
 
@@ -403,7 +406,7 @@ export class AnchorManager {
       this.mode = 'detection';
       this.activeAnchor = null;
       this.anchorState = null;
-      
+
       logger.info('AnchorManager', 'Cleared anchor, returned to detection mode');
       this._notifyUpdate();
     }
@@ -441,10 +444,10 @@ export class AnchorManager {
       position: anchorServiceState.position,
       hasMetrics: !!anchorServiceState.metrics
     });
-    
+
     const previousState = this.anchorState?.state;
     this.anchorState = anchorServiceState;
-    
+
     if (this.activeAnchor && anchorServiceState.position) {
       const metrics = anchorServiceState.metrics || {};
       this.activeAnchor.position = {
@@ -460,11 +463,11 @@ export class AnchorManager {
       this.activeAnchor.diagnostics = createActiveAnchorDiagnostics(metrics, this.activeAnchor.readiness);
       logger.debugEvery('AnchorManager', 'active-anchor-position', 1000, 'Updated activeAnchor position:', this.activeAnchor.position);
     }
-    
+
     if (previousState !== anchorServiceState.state) {
       logger.info('AnchorManager', `Anchor state changed: ${previousState} -> ${anchorServiceState.state}`);
     }
-    
+
     // Handle anchor state transitions to detection mode
     if (this.mode === 'anchor' && !anchorServiceState.anchored) {
       logger.info('AnchorManager', 'Anchor cleared - transitioning to detection mode');
@@ -474,7 +477,7 @@ export class AnchorManager {
       this._notifyUpdate();
       return;
     }
-    
+
     this._notifyUpdate();
   }
 
@@ -484,31 +487,21 @@ export class AnchorManager {
    */
   _notifyUpdate() {
     const state = this.getState();
-    
-    this.listeners.forEach(listener => {
-      try {
-        if (typeof listener === 'function') {
-          listener(state);
-        } else if (listener.onAnchorUpdate) {
-          listener.onAnchorUpdate(state);
-        }
-      } catch (error) {
-        logger.error('AnchorManager', 'Listener error:', error);
-      }
-    });
+
+    this.listeners.forEach(listener => listener(state));
   }
 
   dispose() {
     if (this.imageAnchorService) {
       this.imageAnchorService.dispose();
     }
-    
+
     this.listeners.clear();
     this.detections = [];
     this.activeAnchor = null;
     this.anchorState = null;
     this.initialized = false;
-    
+
     logger.info('AnchorManager', 'Disposed');
   }
 }
