@@ -86,6 +86,52 @@ const assertReplayWithinLimits = ({ name, replay, summary, headPose, limits }) =
   assert.ok(headPose.maxHeadJumpExcess <= limits.maxHeadJumpExcess, `${name}: head jump excess ${headPose.maxHeadJumpExcess.toFixed(3)}`);
 };
 
+test('replay summary counts each position source once per successful frame', () => {
+  const summary = summarizeReplay({
+    frames: [
+      {
+        success: true,
+        positionSource: 'planar-homography',
+        poseSource: 'planar-homography',
+        method: 'planar-homography',
+        predicted: { x: 10, y: 10 },
+        groundTruth: { anchor: { x: 10, y: 10 } },
+        planarTransform: { scale: 1, rotation: 0 },
+        normal: { x: 0, y: 0, z: 1 },
+        metrics: { poseInliers: 12 },
+        anchorError: 0,
+        scaleError: 0,
+        rollError: 0,
+        normalError: 0,
+      },
+      {
+        success: true,
+        positionSource: 'reference_similarity_transform',
+        poseSource: null,
+        method: 'reference_similarity_transform',
+        predicted: { x: 14, y: 10 },
+        groundTruth: { anchor: { x: 14, y: 10 } },
+        planarTransform: { scale: 1, rotation: 0 },
+        normal: { x: 0, y: 0, z: 1 },
+        metrics: { poseInliers: 0 },
+        anchorError: 0,
+        scaleError: 0,
+        rollError: 0,
+        normalError: 0,
+      },
+    ],
+  });
+
+  assert.deepEqual(summary.positionSourceCounts, {
+    'planar-homography': 1,
+    reference_similarity_transform: 1,
+  });
+  assert.deepEqual(summary.poseSourceCounts, {
+    'planar-homography': 1,
+    reference_similarity_transform: 1,
+  });
+});
+
 test('head-pose replay scorer measures the exact app overlay transform', () => {
   const { replay, sequence } = createPerfectHeadPoseReplay();
   const result = scoreHeadPoseReplay({ replay, sequence });
