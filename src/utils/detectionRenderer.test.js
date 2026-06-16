@@ -77,6 +77,7 @@ test('anchor overlay draws object bounds live reconstruction and landmarks', () 
     mode: 'anchor',
     anchor,
     anchorState,
+    showObjectSupport: true,
     trackedPoints: [
       { id: 1, status: 'active', current: { x: 130, y: 120 }, stabilityScore: 0.9, objectOwned: true },
       { id: 2, status: 'active', current: { x: 214, y: 134 }, stabilityScore: 0.8, objectOwned: true },
@@ -109,6 +110,7 @@ test('candidate anchor still visualizes sparse bootstrap landmarks without recon
         readiness: { faceReady: false },
       },
     },
+    showObjectSupport: true,
     trackedPoints: [
       { id: 1, status: 'active', current: { x: 50, y: 60 }, stabilityScore: 0.4 },
       { id: 2, status: 'active', current: { x: 78, y: 98 }, stabilityScore: 0.5 },
@@ -149,6 +151,7 @@ test('anchor overlay draws object mask preview points instead of filling the who
         readiness: { faceReady: false },
       },
     },
+    showObjectSupport: true,
     trackedPoints: [],
   });
 
@@ -165,6 +168,29 @@ test('anchor overlay draws object mask preview points instead of filling the who
     ctx.calls.some(call => call.method === 'fillRect' && call.args[0] === 101 && call.args[1] === 89 && call.args[2] === 6 && call.args[3] === 6),
     'draws sampled mask support pixels'
   );
+});
+
+test('normal anchor overlay hides object support bounds outside canvas debug mode', () => {
+  const ctx = createContext();
+
+  renderDetectionOverlay(ctx, {
+    mode: 'anchor',
+    anchor: {
+      position: { x: 170, y: 155 },
+      sourceDetection: { x1: 90, y1: 80, x2: 280, y2: 260 },
+    },
+    anchorState: {
+      state: 'mapping',
+      metrics: {
+        currentObjectSupportMaskBounds: { x: 104, y: 92, width: 138, height: 140 },
+        readiness: { faceReady: false },
+      },
+    },
+    trackedPoints: [],
+  });
+
+  assert.equal(ctx.calls.some(call => call.method === 'strokeRect'), false);
+  assert.ok(ctx.calls.some(call => call.method === 'arc'), 'still draws the anchor marker');
 });
 
 test('active landmarks demoted from object ownership are not drawn as object anchors', () => {

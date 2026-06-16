@@ -496,6 +496,7 @@ const CameraView = () => {
             anchor: anchorSystemState.activeAnchor,
             anchorState: anchorSystemState.anchorState,
             trackedPoints: services.anchor?.imageAnchorService?.keypointTracker?.trackedPoints || [],
+            showObjectSupport: showStats,
             mode: 'anchor'
           });
         }

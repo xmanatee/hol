@@ -51,7 +51,7 @@ const renderDetectionMode = (ctx, { detections }) => {
   }
 };
 
-const renderAnchorMode = (ctx, { anchor, anchorState, trackedPoints = [] }) => {
+const renderAnchorMode = (ctx, { anchor, anchorState, trackedPoints = [], showObjectSupport = false }) => {
   if (!anchor || !anchorState) return;
   
   const { position } = anchor;
@@ -63,7 +63,9 @@ const renderAnchorMode = (ctx, { anchor, anchorState, trackedPoints = [] }) => {
   const centerX = position.x;
   const centerY = position.y;
 
-  drawSelectedObjectRegion(ctx, anchor, metrics);
+  if (showObjectSupport) {
+    drawSelectedObjectRegion(ctx, anchor, metrics);
+  }
   drawLiveReconstruction(ctx, reconstructionPreview);
   drawTrackedLandmarks(ctx, trackedPoints, reconstructionPreview);
   drawSurfaceNormal(ctx, anchorState, centerX, centerY);

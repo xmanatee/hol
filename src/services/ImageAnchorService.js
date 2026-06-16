@@ -61,6 +61,8 @@ const RIGID_PLANAR_BOOK_POSITION_STEP_RATIO = 0.083;
 const PLANAR_POSE_POSITION_BLEND = 0.85;
 const MIN_LOW_LAG_TRACKER_CONFIDENCE = 0.55;
 const MAX_LOW_LAG_TRACKER_RESIDUAL = 7;
+const CURVED_DROPOUT_MAX_PREDICTION_MS = 220;
+const CURVED_DROPOUT_MAX_STEP = 18;
 const PLANAR_POSE_POSITION_METHODS = new Set([
   RECONSTRUCTION_POSE_MODEL,
   'planar-homography',
@@ -121,6 +123,7 @@ export class ImageAnchorService {
     this.currentPosition = null;
     this.currentNormal = null;
     this.currentPlanarTransform = null;
+    this.curvedMotionSample = null;
     this.objectSupportMask = null;
     this.currentObjectSupportMask = null;
     this.expandedObjectSupportRegion = false;
@@ -2952,6 +2955,18 @@ export class ImageAnchorService {
   }
 
   _filterPositionCandidate(position, timestamp, method) {
+    if (this._shouldUseCurvedMotionPrediction(position, method)) {
+      const predicted = this._predictCurvedMotionPosition(timestamp);
+      if (predicted) {
+        this.metrics.positionFilterAdjustment = 'curved-motion-hold';
+        return this._limitPositionStep({
+          ...predicted,
+          confidence: Math.min(position.confidence ?? 0, predicted.confidence),
+          averageResidual: position.averageResidual,
+        }, method);
+      }
+    }
+
     if (this._shouldUseHighConfidenceTrackerStepPosition(position, method)) {
       this.metrics.positionFilterAdjustment = 'high-confidence-tracker-step-position';
       return this._limitPositionStep({
@@ -3014,6 +3029,65 @@ export class ImageAnchorService {
       this.trackingMode !== RECONSTRUCTION_POSE_MODEL &&
       (position.confidence ?? 0) >= MIN_LOW_LAG_TRACKER_CONFIDENCE &&
       (position.averageResidual ?? Infinity) <= MAX_LOW_LAG_TRACKER_RESIDUAL;
+  }
+
+  _shouldUseCurvedMotionPrediction(position, method) {
+    if (method !== 'reference_similarity_transform' ||
+        !this.curvedMotionSample ||
+        !this._hasCurvedReconstructionTarget() ||
+        this.trackingMode === RECONSTRUCTION_POSE_MODEL ||
+        this.metrics.reconstructionReady !== true) {
+      return false;
+    }
+
+    const activeLandmarks = this.metrics.activeLandmarkCount || this.metrics.keypointCount || 0;
+    const matureLandmarks = this.metrics.reconstructionMatureLandmarks || 0;
+    const mapConfidence = this.metrics.reconstructionMapConfidence ?? 0;
+    const confidence = position.confidence ?? 0;
+    const residual = position.averageResidual ?? Infinity;
+
+    return activeLandmarks <= 20 &&
+      matureLandmarks >= 16 &&
+      mapConfidence >= 0.6 &&
+      (confidence <= 0.32 || residual >= 9);
+  }
+
+  _predictCurvedMotionPosition(timestamp) {
+    const sample = this.curvedMotionSample;
+    const elapsed = clamp(timestamp - sample.timestamp, 0, CURVED_DROPOUT_MAX_PREDICTION_MS);
+    if (elapsed <= 0) {
+      return {
+        x: sample.position.x,
+        y: sample.position.y,
+        z: 0,
+        confidence: sample.confidence,
+      };
+    }
+
+    const predicted = {
+      x: sample.position.x + sample.velocity.x * elapsed,
+      y: sample.position.y + sample.velocity.y * elapsed,
+      z: 0,
+      confidence: sample.confidence * clamp(1 - elapsed / CURVED_DROPOUT_MAX_PREDICTION_MS, 0.35, 1),
+    };
+
+    if (!this.currentPosition) {
+      return predicted;
+    }
+
+    const dx = predicted.x - this.currentPosition.x;
+    const dy = predicted.y - this.currentPosition.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance <= CURVED_DROPOUT_MAX_STEP || distance === 0) {
+      return predicted;
+    }
+
+    const scale = CURVED_DROPOUT_MAX_STEP / distance;
+    return {
+      ...predicted,
+      x: this.currentPosition.x + dx * scale,
+      y: this.currentPosition.y + dy * scale,
+    };
   }
 
   _shouldUseStepOnlyBookPosition() {
@@ -3440,6 +3514,7 @@ export class ImageAnchorService {
   }
 
   _recordAnchorUpdateResult(result, processingTime) {
+    this._recordCurvedMotionSample(result);
     this.metrics.processingTime = processingTime;
     this.metrics.lastUpdateResult = result.success ? 'success' : 'failed';
     this.metrics.lastUpdateMethod = result.method || null;
@@ -3460,6 +3535,43 @@ export class ImageAnchorService {
       this.metrics.lastFailureReason = result.reason || this.metrics.lastFailureReason || 'Anchor update failed';
       this.metrics.lastFailureStage = this.metrics.lastFailureStage || 'tracking';
     }
+  }
+
+  _recordCurvedMotionSample(result) {
+    if (!result.success ||
+        !result.position ||
+        result.method !== this.trackingMode ||
+        !isReconstructionMode(result.method) ||
+        !this._hasCurvedReconstructionTarget()) {
+      return;
+    }
+
+    const timestamp = this.now();
+    const position = {
+      x: result.position.x,
+      y: result.position.y,
+    };
+    const previous = this.curvedMotionSample;
+    const elapsed = previous ? Math.max(1, timestamp - previous.timestamp) : 0;
+    const measuredVelocity = previous
+      ? {
+          x: (position.x - previous.position.x) / elapsed,
+          y: (position.y - previous.position.y) / elapsed,
+        }
+      : { x: 0, y: 0 };
+    const velocity = previous
+      ? {
+          x: previous.velocity.x * 0.45 + measuredVelocity.x * 0.55,
+          y: previous.velocity.y * 0.45 + measuredVelocity.y * 0.55,
+        }
+      : measuredVelocity;
+
+    this.curvedMotionSample = {
+      position,
+      velocity,
+      timestamp,
+      confidence: result.confidence ?? this.metrics.poseConfidence ?? 0.5,
+    };
   }
 
   /**
@@ -3506,13 +3618,14 @@ export class ImageAnchorService {
       this.currentPosition = null;
       this.currentNormal = null;
       this.currentPlanarTransform = null;
+      this.curvedMotionSample = null;
       this.objectSupportMask = null;
       this.currentObjectSupportMask = null;
       this.expandedObjectSupportRegion = false;
       this.planarDominanceScore = 0;
       this.templateRegion = null;
       this.trackingRegion = null;
-      this.templateCenter = null; // Clear template center reference
+      this.templateCenter = null;
       this.templateAnchorOffset = null;
       this.anchorTargetClass = null;
       this.framesSinceRefresh = 0;
@@ -3529,6 +3642,7 @@ export class ImageAnchorService {
       this.positionFilterX = createPositionFilter();
       this.positionFilterY = createPositionFilter();
       this.planarScaleFilter = createPlanarScaleFilter();
+      this.curvedScaleFilter = createCurvedScaleFilter();
       this.planarRotationFilter = createPlanarRotationFilter();
       this.normalStabilizer.reset();
       this.reconstructor.reset({ anchorReference: { x: 0, y: 0 } });

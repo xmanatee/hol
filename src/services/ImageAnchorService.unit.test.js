@@ -362,6 +362,81 @@ test('high-confidence reference transforms bypass smoothing lag while weak trans
   assert.equal(sparseService.metrics.positionFilterAdjustment, null);
 });
 
+test('selected curved surface modes use bounded motion hold for weak dropout transforms', () => {
+  let now = 1000;
+  const service = new ImageAnchorService({ now: () => now });
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'can';
+  service.currentPosition = { x: 200, y: 160, z: 0 };
+  service.templateRegion = { width: 120, height: 120 };
+  service.metrics.lastUpdateResult = 'success';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.74;
+  service.metrics.reconstructionMatureLandmarks = 22;
+  service.metrics.activeLandmarkCount = 10;
+  service.positionFilterX.filter(200, now);
+  service.positionFilterY.filter(160, now);
+
+  service._recordCurvedMotionSample({
+    success: true,
+    method: 'parametric-surface',
+    position: { x: 200, y: 160, z: 0 },
+    confidence: 0.82,
+  });
+  now = 1033.33;
+  service._recordCurvedMotionSample({
+    success: true,
+    method: 'parametric-surface',
+    position: { x: 194, y: 154, z: 0 },
+    confidence: 0.82,
+  });
+
+  const held = service._filterPositionCandidate(
+    {
+      x: 188,
+      y: 184,
+      z: 0,
+      confidence: 0.04,
+      averageResidual: 15,
+    },
+    1066.66,
+    'reference_similarity_transform'
+  );
+
+  assert.equal(service.metrics.positionFilterAdjustment, 'curved-motion-hold');
+  assert.ok(held.x < 194);
+  assert.ok(held.y < 154);
+  assert.ok(held.y < 170);
+
+  const sparseService = new ImageAnchorService({ now: () => now });
+  sparseService.setTrackingMode('sparse-reconstruction');
+  sparseService.anchorTargetClass = 'can';
+  sparseService.currentPosition = { x: 200, y: 160, z: 0 };
+  sparseService.templateRegion = { width: 120, height: 120 };
+  sparseService.metrics.lastUpdateResult = 'success';
+  sparseService.metrics.reconstructionReady = true;
+  sparseService.metrics.reconstructionMapConfidence = 0.74;
+  sparseService.metrics.reconstructionMatureLandmarks = 22;
+  sparseService.metrics.activeLandmarkCount = 10;
+  sparseService.positionFilterX.filter(200, now);
+  sparseService.positionFilterY.filter(160, now);
+  sparseService.curvedMotionSample = { ...service.curvedMotionSample };
+
+  sparseService._filterPositionCandidate(
+    {
+      x: 188,
+      y: 184,
+      z: 0,
+      confidence: 0.04,
+      averageResidual: 15,
+    },
+    1066.66,
+    'reference_similarity_transform'
+  );
+
+  assert.equal(sparseService.metrics.positionFilterAdjustment, null);
+});
+
 test('reconstruction position updates are step-limited to prevent head teleports', () => {
   const service = new ImageAnchorService();
   service.setTrackingMode('sparse-reconstruction');

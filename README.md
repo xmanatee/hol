@@ -10,7 +10,7 @@ Mobile-first camera app that lets a user tap an object in the camera feed, segme
 4. `ImageAnchorService` tracks object-owned Shi-Tomasi landmarks with Lucas-Kanade optical flow, rejects landmarks outside the warped/refreshed mask, and grows the landmark map from the current anchor position.
 5. Reconstruction can use sparse landmark structure, semantic parametric surface fitting, or direct photometric surfel tracking. Auto mode keeps these controls behind the debug UI for normal use.
 6. `OverlayScene` loads `/3d/untitled.gltf` and drives morph targets through idle morphing, microphone lip sync, and ElevenLabs agent speech state.
-7. `UnifiedControlPanel` presents a compact field UI by default, with diagnostics, reconstruction preview, mesh visibility, and logging controls in the debug drawer.
+7. `FieldControls` presents a compact field UI by default, with diagnostics, reconstruction preview, mesh visibility, and logging controls in the debug drawer.
 
 ## Commands
 
