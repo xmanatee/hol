@@ -447,7 +447,7 @@ const SystemControls = ({
   );
 };
 
-const UnifiedControlPanel = ({
+const FieldControls = ({
   cameraState,
   detectionEnabled = false,
   activeTrackId,
@@ -637,4 +637,4 @@ const UnifiedControlPanel = ({
   );
 };
 
-export default UnifiedControlPanel;
+export default FieldControls;

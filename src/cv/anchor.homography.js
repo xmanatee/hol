@@ -76,7 +76,6 @@ export class HomographyEstimator {
         0.99  // Confidence
       );
 
-      // Count inliers
       const inlierMask = [];
       let inlierCount = 0;
       for (let i = 0; i < mask.rows; i++) {
@@ -87,7 +86,6 @@ export class HomographyEstimator {
         }
       }
 
-      // Cleanup temporary matrices
       srcMat.delete();
       dstMat.delete();
       mask.delete();

@@ -71,7 +71,7 @@ test('includes lost-anchor recovery context from service metrics', () => {
   assert.equal(result.details.lostFrameCount, 9);
 });
 
-test('includes reconstruction preview and current inferred pose for control panel visualization', () => {
+test('includes reconstruction preview and current inferred pose for field controls visualization', () => {
   const preview = {
     ready: true,
     points: [{ id: 1, x: 0, y: 0, z: 0 }],

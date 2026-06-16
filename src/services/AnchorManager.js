@@ -9,6 +9,39 @@ import {
 } from '../cv/objectSupportMask.js';
 import { logger } from '../utils/logger.js';
 
+const createActiveAnchorDiagnostics = (metrics, readiness) => ({
+  readiness,
+  qualityState: metrics.qualityState ?? null,
+  maskCoverage: metrics.maskCoverage ?? null,
+  maskConfidence: metrics.maskConfidence ?? null,
+  keypointDensity: metrics.keypointDensity ?? null,
+  backgroundRejected: metrics.backgroundRejected ?? 0,
+  objectSupportMaskPreview: metrics.currentObjectSupportMaskPreview ?? metrics.objectSupportMaskPreview ?? null,
+  activeLandmarks: metrics.activeLandmarks ?? metrics.activeLandmarkCount ?? 0,
+  objectOwnedLandmarks: metrics.objectOwnedLandmarks ?? 0,
+  trackingSuccessRate: metrics.trackingSuccessRate ?? null,
+  homographyInliers: metrics.homographyInliers ?? 0,
+  affinePoseInliers: metrics.affinePoseInliers ?? 0,
+  objectPoseInliers: metrics.objectPoseInliers ?? 0,
+  reconstructionPoseInliers: metrics.reconstructionPoseInliers ?? 0,
+  poseInliers: metrics.poseInliers ?? 0,
+  poseModel: metrics.poseModel ?? null,
+  poseSource: metrics.poseSource ?? null,
+  targetClass: metrics.targetClass ?? null,
+  poseAverageResidual: metrics.poseAverageResidual ?? null,
+  poseForeshortening: metrics.poseForeshortening ?? null,
+  reconstructionState: metrics.reconstructionState ?? null,
+  reconstructionReady: metrics.reconstructionReady ?? false,
+  reconstructionFrames: metrics.reconstructionFrames ?? 0,
+  reconstructionLandmarks: metrics.reconstructionLandmarks ?? 0,
+  reconstructionDepthQuality: metrics.reconstructionDepthQuality ?? 0,
+  reconstructionPreview: metrics.reconstructionPreview ?? null,
+  reconstructionFailureReason: metrics.reconstructionFailureReason ?? null,
+  recoveryAttempts: metrics.recoveryAttempts ?? 0,
+  lostFrameCount: metrics.lostFrameCount ?? 0,
+  lastFailureReason: metrics.lastFailureReason ?? null,
+});
+
 export class AnchorManager {
   constructor({
     imageAnchorService = new ImageAnchorService(),
@@ -413,62 +446,18 @@ export class AnchorManager {
     this.anchorState = anchorServiceState;
     
     if (this.activeAnchor && anchorServiceState.position) {
+      const metrics = anchorServiceState.metrics || {};
       this.activeAnchor.position = {
         x: anchorServiceState.position.x,
         y: anchorServiceState.position.y,
-        z: anchorServiceState.position.z || 0
+        z: anchorServiceState.position.z ?? 0
       };
-      this.activeAnchor.planarTransform = anchorServiceState.planarTransform || this.activeAnchor.planarTransform || null;
+      this.activeAnchor.planarTransform = anchorServiceState.planarTransform ?? this.activeAnchor.planarTransform ?? null;
       this.activeAnchor.state = anchorServiceState.state;
-      this.activeAnchor.keypoints = anchorServiceState.metrics?.keypointCount ?? this.activeAnchor.keypoints;
-      this.activeAnchor.quality = anchorServiceState.metrics?.templateQuality ?? this.activeAnchor.quality;
-      this.activeAnchor.readiness = anchorServiceState.metrics?.readiness || this.activeAnchor.readiness || null;
-      this.activeAnchor.evidence = {
-        maskCoverage: anchorServiceState.metrics?.maskCoverage ?? this.activeAnchor.evidence?.maskCoverage ?? null,
-        maskConfidence: anchorServiceState.metrics?.maskConfidence ?? this.activeAnchor.evidence?.maskConfidence ?? null,
-        templateKeypoints: anchorServiceState.metrics?.templateKeypoints ?? this.activeAnchor.evidence?.templateKeypoints ?? 0,
-        activeLandmarks: anchorServiceState.metrics?.activeLandmarks ?? anchorServiceState.metrics?.activeLandmarkCount ?? 0,
-        objectOwnedLandmarks: anchorServiceState.metrics?.objectOwnedLandmarks ?? 0,
-        backgroundRejected: anchorServiceState.metrics?.backgroundRejected ?? 0,
-        objectSupportMaskPreview: anchorServiceState.metrics?.currentObjectSupportMaskPreview ||
-          anchorServiceState.metrics?.objectSupportMaskPreview ||
-          this.activeAnchor.evidence?.objectSupportMaskPreview ||
-          null,
-      };
-      this.activeAnchor.diagnostics = {
-        readiness: anchorServiceState.metrics?.readiness || this.activeAnchor.readiness || null,
-        qualityState: anchorServiceState.metrics?.qualityState || null,
-        maskCoverage: anchorServiceState.metrics?.maskCoverage ?? null,
-        maskConfidence: anchorServiceState.metrics?.maskConfidence ?? null,
-        keypointDensity: anchorServiceState.metrics?.keypointDensity ?? null,
-        backgroundRejected: anchorServiceState.metrics?.backgroundRejected ?? 0,
-        objectSupportMaskPreview: anchorServiceState.metrics?.currentObjectSupportMaskPreview ||
-          anchorServiceState.metrics?.objectSupportMaskPreview ||
-          null,
-        activeLandmarks: anchorServiceState.metrics?.activeLandmarks ?? anchorServiceState.metrics?.activeLandmarkCount ?? 0,
-        objectOwnedLandmarks: anchorServiceState.metrics?.objectOwnedLandmarks ?? 0,
-        trackingSuccessRate: anchorServiceState.metrics?.trackingSuccessRate ?? null,
-        homographyInliers: anchorServiceState.metrics?.homographyInliers ?? 0,
-        affinePoseInliers: anchorServiceState.metrics?.affinePoseInliers ?? 0,
-        objectPoseInliers: anchorServiceState.metrics?.objectPoseInliers ?? 0,
-        reconstructionPoseInliers: anchorServiceState.metrics?.reconstructionPoseInliers ?? 0,
-        poseInliers: anchorServiceState.metrics?.poseInliers ?? 0,
-        poseModel: anchorServiceState.metrics?.poseModel || null,
-        poseSource: anchorServiceState.metrics?.poseSource || null,
-        targetClass: anchorServiceState.metrics?.targetClass || null,
-        poseAverageResidual: anchorServiceState.metrics?.poseAverageResidual ?? null,
-        poseForeshortening: anchorServiceState.metrics?.poseForeshortening ?? null,
-        reconstructionState: anchorServiceState.metrics?.reconstructionState || null,
-        reconstructionReady: anchorServiceState.metrics?.reconstructionReady ?? false,
-        reconstructionFrames: anchorServiceState.metrics?.reconstructionFrames ?? 0,
-        reconstructionLandmarks: anchorServiceState.metrics?.reconstructionLandmarks ?? 0,
-        reconstructionDepthQuality: anchorServiceState.metrics?.reconstructionDepthQuality ?? 0,
-        reconstructionPreview: anchorServiceState.metrics?.reconstructionPreview || null,
-        reconstructionFailureReason: anchorServiceState.metrics?.reconstructionFailureReason || null,
-        recoveryAttempts: anchorServiceState.metrics?.recoveryAttempts ?? 0,
-        lostFrameCount: anchorServiceState.metrics?.lostFrameCount ?? 0,
-        lastFailureReason: anchorServiceState.metrics?.lastFailureReason || null
-      };
+      this.activeAnchor.keypoints = metrics.keypointCount ?? this.activeAnchor.keypoints;
+      this.activeAnchor.quality = metrics.templateQuality ?? this.activeAnchor.quality;
+      this.activeAnchor.readiness = metrics.readiness ?? this.activeAnchor.readiness ?? null;
+      this.activeAnchor.diagnostics = createActiveAnchorDiagnostics(metrics, this.activeAnchor.readiness);
       logger.debugEvery('AnchorManager', 'active-anchor-position', 1000, 'Updated activeAnchor position:', this.activeAnchor.position);
     }
     

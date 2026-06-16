@@ -66,7 +66,7 @@ const PreviewSvg = ({ title, points, anchor, surface, normal, projector, embedde
   if (!points.length && !(surface.mesh || []).length) {
     return (
       <div className={embedded
-        ? 'rounded-md border border-white/10 bg-black/35 px-2 py-3 text-center text-[10px] text-gray-500'
+        ? 'px-1 py-3 text-center text-[10px] text-gray-500'
         : 'rounded border border-gray-800 bg-gray-950 px-2 py-3 text-center text-[10px] text-gray-500'}
       >
         {title}: no points
@@ -101,9 +101,12 @@ const PreviewSvg = ({ title, points, anchor, surface, normal, projector, embedde
   } : null;
 
   return (
-    <div className={embedded ? 'rounded-md border border-white/10 bg-black/35 px-2 py-2' : 'rounded border border-gray-800 bg-gray-950 px-2 py-2'}>
+    <div className={embedded ? 'px-0 py-1' : 'rounded border border-gray-800 bg-gray-950 px-2 py-2'}>
       <div className="mb-1 text-[10px] uppercase tracking-wide text-gray-500">{title}</div>
-      <svg viewBox={`0 0 ${PREVIEW_WIDTH} ${PREVIEW_HEIGHT}`} className="h-24 w-full rounded bg-black">
+      <svg
+        viewBox={`0 0 ${PREVIEW_WIDTH} ${PREVIEW_HEIGHT}`}
+        className={embedded ? 'h-24 w-full bg-black/30' : 'h-24 w-full rounded bg-black'}
+      >
         <rect x="0" y="0" width={PREVIEW_WIDTH} height={PREVIEW_HEIGHT} fill="#020617" />
         {facePolygons(faces, byId).map(({ face, points: polygonPoints }, index) => (
           <polygon

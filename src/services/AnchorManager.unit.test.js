@@ -349,7 +349,7 @@ test('anchor manager propagates live object mask preview into active-anchor diag
     },
   });
 
-  assert.deepEqual(manager.activeAnchor.evidence.objectSupportMaskPreview, preview);
+  assert.equal(manager.activeAnchor.evidence.objectSupportMaskPreview, undefined);
   assert.deepEqual(manager.activeAnchor.diagnostics.objectSupportMaskPreview, preview);
 });
 

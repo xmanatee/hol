@@ -530,9 +530,9 @@ test('records usable weak-anchor diagnostics after creation', async () => {
     }),
     assessTemplateQuality: () => ({ overall: 0.17 })
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     initializeTracking: () => {}
-  };
+  });
   service.persistenceSystem = {
     storeTemplate: () => {}
   };
@@ -590,10 +590,10 @@ test('anchor creation passes selected object support mask into keypoint extracti
     },
     assessTemplateQuality: () => ({ overall: 0.42 })
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: [],
     initializeTracking: () => {}
-  };
+  });
   service.persistenceSystem = {
     storeTemplate: () => {}
   };
@@ -665,12 +665,12 @@ test('anchor creation filters detector keypoints to the selected object mask', a
     }),
     assessTemplateQuality: keypoints => ({ overall: 0.42, keypointCount: keypoints.length })
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: [],
     initializeTracking: (cv, keypoints) => {
       initializedKeypoints = keypoints;
     }
-  };
+  });
   service.persistenceSystem = {
     storeTemplate: () => {}
   };
@@ -749,12 +749,12 @@ test('anchor creation respects non-convex human masks instead of filling the per
     }),
     assessTemplateQuality: keypoints => ({ overall: 0.4, keypointCount: keypoints.length })
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: [],
     initializeTracking: (cv, keypoints) => {
       initializedKeypoints = keypoints;
     }
-  };
+  });
   service.persistenceSystem = {
     storeTemplate: () => {}
   };
@@ -806,12 +806,12 @@ test('weak tap-time object evidence creates a candidate anchor instead of throwi
     }),
     assessTemplateQuality: () => ({ overall: 0.05, keypointCount: 5, spatialDistribution: 0.1 })
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: [],
     initializeTracking: () => {
       initializedTracking = true;
     }
-  };
+  });
   service.persistenceSystem = {
     storeTemplate: () => true
   };
@@ -876,7 +876,7 @@ test('candidate anchor transitions to mapping after object-owned refresh landmar
     }),
     assessTemplateQuality: () => ({ overall: 0.16, keypointCount: 9, spatialDistribution: 0.4 })
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: [],
     initializeTracking: (cv, keypoints) => {
       initializedCount = keypoints.length;
@@ -887,7 +887,7 @@ test('candidate anchor transitions to mapping after object-owned refresh landmar
         status: 'active',
       }));
     }
-  };
+  });
   service.persistenceSystem = {
     attemptRecovery: () => ({
       success: true,
@@ -1171,7 +1171,7 @@ test('candidate bootstrap tracks existing landmarks instead of resetting their h
     }),
     assessTemplateQuality: () => ({ overall: 0.16, keypointCount: 8, spatialDistribution: 0.4 })
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: Array.from({ length: 8 }, (_, index) => ({
       id: index,
       original: { x: 80 + index * 5, y: 90 + index * 3 },
@@ -1197,8 +1197,17 @@ test('candidate bootstrap tracks existing landmarks instead of resetting their h
         averageError: 1,
       };
     },
+    getAnchorPosition: () => ({
+      x: 112,
+      y: 121,
+      scale: 1,
+      rotation: 0,
+      confidence: 0.78,
+      inlierCount: 8,
+      method: 'reference_similarity_transform',
+    }),
     refreshKeypoints: () => false,
-  };
+  });
   service.persistenceSystem = {
     attemptRecovery: () => ({
       success: true,
@@ -1257,7 +1266,7 @@ test('candidate bootstrap reinitializes when too few landmarks exist for coheren
     }),
     assessTemplateQuality: () => ({ overall: 0.16, keypointCount: 8, spatialDistribution: 0.4 })
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: Array.from({ length: 2 }, (_, index) => ({
       id: index,
       original: { x: 80 + index * 5, y: 90 + index * 3 },
@@ -1282,7 +1291,7 @@ test('candidate bootstrap reinitializes when too few landmarks exist for coheren
       averageError: 999,
     }),
     refreshKeypoints: () => false,
-  };
+  });
   service.persistenceSystem = {
     attemptRecovery: () => ({
       success: false,
@@ -1323,13 +1332,13 @@ test('landmark metrics report zero object ownership after all active points leav
     activeLandmarkCount: 8,
     objectOwnedLandmarks: 8,
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: Array.from({ length: 8 }, (_, index) => ({
       id: index,
       current: { x: 60 + index, y: 60 },
       status: 'active',
     })),
-  };
+  });
 
   service._recordLandmarkMetrics();
 
@@ -1341,7 +1350,7 @@ test('landmark metrics report zero object ownership after all active points leav
 test('landmark metrics expose tracker quality buckets', () => {
   const service = new ImageAnchorService();
   service.metrics = {};
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: [
       { id: 1, current: { x: 10, y: 12 }, status: 'active' },
       { id: 2, current: { x: 24, y: 18 }, status: 'active' },
@@ -1352,7 +1361,7 @@ test('landmark metrics expose tracker quality buckets', () => {
       highQuality: 1,
       poseEligible: 2,
     }),
-  };
+  });
 
   service._recordLandmarkMetrics();
 
@@ -1383,7 +1392,7 @@ test('mask rejection immediately removes background landmarks from pose ownershi
   service.currentPosition = { x: 49, y: 44, z: 0 };
   service.currentPlanarTransform = { scale: 1, rotation: 0 };
   service.metrics = {};
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: [
       ...Array.from({ length: 10 }, (_, index) => ({
         id: index,
@@ -1411,7 +1420,7 @@ test('mask rejection immediately removes background landmarks from pose ownershi
           curr: point.current,
         }));
     },
-  };
+  });
 
   const rejected = service._rejectTrackedPointsOutsideObjectSupport();
   const correspondences = service.keypointTracker.getCorrespondences({ maxCount: 30 });
@@ -1525,9 +1534,9 @@ test('max keypoint failures hold degraded pose when template recovery misses', (
     confidence: 0.62,
     method: 'parametric-surface',
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: Array.from({ length: 6 }, () => ({ status: 'active' })),
-  };
+  });
   service.cv = {
     Mat: FakeMat,
     COLOR_RGBA2GRAY: 0,
@@ -1601,7 +1610,7 @@ test('keypoint failure recovers through descriptor keyframe relocalization befor
       keyframeCount: 3,
     }),
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints,
     trackToFrame: () => ({ success: false, reason: 'LK lost all points' }),
     restoreFromReferenceTransform: () => {
@@ -1628,7 +1637,7 @@ test('keypoint failure recovers through descriptor keyframe relocalization befor
       method: 'reference_similarity_transform',
     }),
     refreshKeypoints: () => false,
-  };
+  });
   service.homographyEstimator = {
     estimatePose: () => createObjectPose({
       x: 144,
@@ -1658,7 +1667,7 @@ test('keypoint updates propagate pose normals from homography correspondences', 
   service.anchorState = 'tracking';
   service.currentPosition = { x: 100, y: 120, z: 0 };
   service.cv = {};
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackToFrame: () => ({
       success: true,
       successRate: 0.92,
@@ -1689,7 +1698,7 @@ test('keypoint updates propagate pose normals from homography correspondences', 
       y: 160,
       method: 'reference_transform_with_offset'
     })
-  };
+  });
   service.homographyEstimator = {
     estimatePose: () => ({
       success: true,
@@ -1719,7 +1728,7 @@ test('keypoint updates pass OpenCV context into attachment positioning', () => {
   service.anchorState = 'tracking';
   service.currentPosition = { x: 100, y: 120, z: 0 };
   service.cv = cv;
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackToFrame: () => ({
       success: true,
       successRate: 0.9,
@@ -1756,7 +1765,7 @@ test('keypoint updates pass OpenCV context into attachment positioning', () => {
         rotation: 0.08,
       };
     },
-  };
+  });
   service.homographyEstimator = {
     estimatePose: () => createObjectPose({
       x: 142,
@@ -1806,7 +1815,7 @@ test('affine parallax pose derives tilt from local point cloud deformation', () 
       reason: 'homography unavailable in unit test'
     })
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackToFrame: () => ({
       success: true,
       successRate: 0.92,
@@ -1832,7 +1841,7 @@ test('affine parallax pose derives tilt from local point cloud deformation', () 
       confidence: 0.9,
       inlierCount: 20
     })
-  };
+  });
   service.homographyEstimator = {
     estimatePose: () => ({
       success: false,
@@ -1921,9 +1930,9 @@ test('template recovery preserves partial reference tracking before full reiniti
       method: 'template_matching'
     })
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: Array.from({ length: 6 }, () => ({ status: 'active' }))
-  };
+  });
   service._refreshKeypoints = () => {
     refreshed++;
   };
@@ -1946,9 +1955,9 @@ test('degraded recovery holds the last object pose while landmarks remain', () =
   service.currentNormal = { x: 0, y: 0, z: 1 };
   service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 0.4 };
   service.metrics = { trackingSuccessRate: 0.34 };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: Array.from({ length: 5 }, () => ({ status: 'active' })),
-  };
+  });
 
   const result = service._createDegradedHoldResult('Template match below threshold');
 
@@ -1982,7 +1991,7 @@ test('weak reference transforms fall back to object-owned centroid during segmen
     objectOwnedLandmarks: 7,
   };
   let centroidInput = null;
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: [
       { status: 'active', objectOwned: true, current: { x: 30, y: 30 } },
       { status: 'active', objectOwned: true, current: { x: 38, y: 34 } },
@@ -2000,7 +2009,7 @@ test('weak reference transforms fall back to object-owned centroid during segmen
         method: 'weighted_centroid_with_offset',
       };
     },
-  };
+  });
 
   const selected = service._selectTrackerAnchorPosition({
     trackerAnchorPosition: {
@@ -2041,10 +2050,10 @@ test('reasonable reference transforms keep owning sparse segmented recovery', ()
     activeLandmarkCount: 11,
     objectOwnedLandmarks: 9,
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: [],
     getCentroidAnchorPosition: () => ({ x: 12, y: 14 }),
-  };
+  });
   const trackerAnchorPosition = {
     x: 18,
     y: 21,
@@ -2076,12 +2085,12 @@ test('weak sparse segmented recovery keeps transform when every active landmark 
     activeLandmarkCount: 10,
     objectOwnedLandmarks: 10,
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: [],
     getCentroidAnchorPosition: () => {
       throw new Error('centroid fallback should not run when ownership is clean');
     },
-  };
+  });
   const trackerAnchorPosition = {
     x: 18,
     y: 21,
@@ -2110,7 +2119,7 @@ test('mature reconstruction dropout uses object-owned centroid instead of raw si
     activeLandmarkCount: 16,
     objectOwnedLandmarks: 15,
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: [
       { status: 'active', objectOwned: true, current: { x: 94, y: 82 } },
       { status: 'active', objectOwned: true, current: { x: 102, y: 86 } },
@@ -2122,7 +2131,7 @@ test('mature reconstruction dropout uses object-owned centroid instead of raw si
       confidence: 0.22,
       inlierCount: points.length,
     }),
-  };
+  });
 
   const selected = service._selectTrackerAnchorPosition({
     reconstructionPose: {
@@ -2235,7 +2244,7 @@ test('masked recovery refresh forwards adaptive extraction options', () => {
     trackingSuccessRate: 0.42,
     poseInliers: 0,
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     lastRefreshStats: null,
     refreshKeypoints: (cv, grayImage, detector, region, mask, options) => {
       receivedMask = mask;
@@ -2247,7 +2256,7 @@ test('masked recovery refresh forwards adaptive extraction options', () => {
       };
       return true;
     },
-  };
+  });
   service._storeRelocalizationKeyframe = () => {};
 
   service._refreshKeypoints({ cols: 120, rows: 100 }, {
@@ -2298,14 +2307,14 @@ test('segmentation refresh expands tracking region used by landmark refresh', ()
       reconstructorRegion = region;
     },
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: [],
     lastRefreshStats: null,
     refreshKeypoints: (cv, grayImage, detector, region) => {
       refreshRegion = region;
       return false;
     },
-  };
+  });
 
   assert.equal(service.updateObjectSupportMask(objectSupportMask), true);
   assert.ok(service.trackingRegion.width > 120);
@@ -2327,7 +2336,7 @@ test('keypoint updates expose tracked planar scale and roll for the overlay', ()
   service.anchorState = 'tracking';
   service.currentPosition = { x: 100, y: 120, z: 0 };
   service.cv = {};
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackToFrame: () => ({
       success: true,
       successRate: 0.9,
@@ -2352,7 +2361,7 @@ test('keypoint updates expose tracked planar scale and roll for the overlay', ()
       confidence: 0.88,
       inlierCount: 18
     })
-  };
+  });
 
   const result = service._updateWithKeypoints({ cols: 320, rows: 240 }, 1000);
   const state = service.getState();
@@ -2437,7 +2446,7 @@ test('keypoint updates drive the overlay from the object pose model', () => {
   service.anchorState = 'tracking';
   service.currentPosition = { x: 100, y: 120, z: 0 };
   service.cv = {};
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackToFrame: () => ({
       success: true,
       successRate: 0.9,
@@ -2455,7 +2464,7 @@ test('keypoint updates drive the overlay from the object pose model', () => {
       confidence: 0.5,
       inlierCount: 12
     })
-  };
+  });
 
   const result = service._updateWithKeypoints({ cols: 320, rows: 240 }, 1000);
 
@@ -2546,7 +2555,7 @@ test('reconstruction tracking mode drives the overlay from the sparse 3D map whe
     }),
     estimatePoseFromTrackedPoints: () => reconstructionPose,
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: Array.from({ length: 34 }, (_, index) => ({
       id: index,
       status: 'active',
@@ -2583,7 +2592,7 @@ test('reconstruction tracking mode drives the overlay from the sparse 3D map whe
       confidence: 0.7,
       inlierCount: 18
     })
-  };
+  });
 
   const result = service._updateWithKeypoints({ cols: 320, rows: 240 }, 1000);
   const state = service.getState();
@@ -2678,7 +2687,7 @@ test('strong curved reconstruction can replace a drifting tracker attachment', (
     }),
     estimatePoseFromTrackedPoints: () => reconstructionPose,
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: Array.from({ length: 48 }, (_, index) => ({
       id: index,
       status: 'active',
@@ -2706,7 +2715,7 @@ test('strong curved reconstruction can replace a drifting tracker attachment', (
       confidence: 0.64,
       inlierCount: 20,
     }),
-  };
+  });
   service._estimatePoseFromTracker = () => ({
     options: { maxReferenceDistance: 120 },
     correspondences: [],
@@ -2800,7 +2809,7 @@ test('mature curved reconstruction can replace a moderately drifting tracker att
     }),
     estimatePoseFromTrackedPoints: () => reconstructionPose,
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: Array.from({ length: 36 }, (_, index) => ({
       id: index,
       status: 'active',
@@ -2828,7 +2837,7 @@ test('mature curved reconstruction can replace a moderately drifting tracker att
       confidence: 0.62,
       inlierCount: 18,
     }),
-  };
+  });
   service._estimatePoseFromTracker = () => ({
     options: { maxReferenceDistance: 120 },
     correspondences: [],
@@ -2885,7 +2894,7 @@ test('curved reconstruction relaxes stale normals when pose drops out', () => {
       reason: 'No robust similarity consensus',
     }),
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: Array.from({ length: 40 }, () => ({ status: 'active' })),
     trackToFrame: () => ({
       success: true,
@@ -2908,7 +2917,7 @@ test('curved reconstruction relaxes stale normals when pose drops out', () => {
       confidence: 0.64,
       inlierCount: 18,
     }),
-  };
+  });
   service._estimatePoseFromTracker = () => ({
     options: { maxReferenceDistance: 120 },
     correspondences: [],
@@ -3002,7 +3011,7 @@ test('planar homography dominates sparse reconstruction for flat textured object
     }),
     estimatePoseFromTrackedPoints: () => wrongReconstructionPose,
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     anchorOriginalPosition: anchorReference,
     trackedPoints: Array.from({ length: 38 }, (_, index) => ({
       id: index,
@@ -3051,7 +3060,7 @@ test('planar homography dominates sparse reconstruction for flat textured object
       confidence: 0.72,
       inlierCount: 24
     })
-  };
+  });
   service._estimatePoseFromTracker = () => ({
     options: { maxReferenceDistance: 120 },
     correspondences: service.keypointTracker.getCorrespondences(),
@@ -3404,7 +3413,7 @@ test('real-depth sparse reconstruction owns orientation while local planar patch
     }),
     estimatePoseFromTrackedPoints: () => reconstructionPose,
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     anchorOriginalPosition: anchorReference,
     trackedPoints: Array.from({ length: 36 }, (_, index) => ({
       id: index,
@@ -3452,7 +3461,7 @@ test('real-depth sparse reconstruction owns orientation while local planar patch
       confidence: 0.72,
       inlierCount: 18
     })
-  };
+  });
   service._estimatePoseFromTracker = () => ({
     options: { maxReferenceDistance: 120 },
     correspondences: service.keypointTracker.getCorrespondences(),
@@ -3496,7 +3505,7 @@ test('unusable object pose does not replace stable tracker position and scale', 
     method: 'previous',
   };
   service.cv = {};
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackToFrame: () => ({
       success: true,
       successRate: 0.86,
@@ -3526,7 +3535,7 @@ test('unusable object pose does not replace stable tracker position and scale', 
       confidence: 0.82,
       inlierCount: 22
     })
-  };
+  });
 
   const result = service._updateWithKeypoints({ cols: 1280, rows: 720 }, 1000);
 
@@ -3596,7 +3605,7 @@ test('planar reconstruction targets hold tracker attachment instead of affine ob
       reason: 'Insufficient reconstructed landmarks in view',
     }),
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: Array.from({ length: 26 }, (_, index) => ({
       id: index,
       status: 'active',
@@ -3620,7 +3629,7 @@ test('planar reconstruction targets hold tracker attachment instead of affine ob
       confidence: 0.72,
       inlierCount: 18,
     }),
-  };
+  });
   service._estimatePoseFromTracker = () => ({
     options: { maxReferenceDistance: 120 },
     correspondences: [],
@@ -3685,7 +3694,7 @@ test('normal tracking refreshes keypoints to grow the landmark map before stable
   service.currentPosition = { x: 100, y: 120, z: 0 };
   service.framesSinceRefresh = service.refreshInterval - 1;
   service.cv = {};
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackToFrame: () => ({
       success: true,
       successRate: 0.68,
@@ -3714,7 +3723,7 @@ test('normal tracking refreshes keypoints to grow the landmark map before stable
       confidence: 0.7,
       inlierCount: 14
     })
-  };
+  });
   service._estimatePoseFromCorrespondences = () => ({
     success: true,
     method: 'affine-parallax',
@@ -3754,7 +3763,7 @@ test('pose estimation retries with wider landmark support when the tapped patch 
       reason: 'homography unavailable in unit test'
     })
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: Array.from({ length: 64 }, () => ({ status: 'active' })),
     trackToFrame: () => ({
       success: true,
@@ -3786,7 +3795,7 @@ test('pose estimation retries with wider landmark support when the tapped patch 
       confidence: 0.85,
       inlierCount: 24
     })
-  };
+  });
 
   const result = service._updateWithKeypoints({ cols: 320, rows: 240 }, 1000);
 
@@ -3810,12 +3819,12 @@ test('pose estimation compares local and wide candidates when both are usable', 
 
   service.templateRegion = { width: 180, height: 160 };
   service.cv = {};
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     anchorOriginalPosition: { x: 120, y: 130 },
     getCorrespondences: options => (
       options.maxReferenceDistance < 100 ? localCorrespondences : wideCorrespondences
     ),
-  };
+  });
   service.homographyEstimator = {
     estimatePose: (_cv, correspondences) => {
       const wide = correspondences.length > 12;
@@ -3990,7 +3999,7 @@ test('mature curved pose dropout uses centroid position while preserving tracker
   service.metrics.reconstructionPreview = {
     surface: { model: 'tapered-cylinder' },
   };
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     getCentroidAnchorPosition: () => ({
       x: 274,
       y: 221,
@@ -3998,7 +4007,7 @@ test('mature curved pose dropout uses centroid position while preserving tracker
       inlierCount: 39,
       method: 'weighted_centroid_with_offset',
     }),
-  };
+  });
   const trackerAnchorPosition = {
     x: 322,
     y: 212,
@@ -4053,7 +4062,7 @@ test('mature curved pose dropout centroid ignores active landmarks demoted from 
     surface: { model: 'tapered-cylinder' },
   };
   let centroidInput = null;
-  service.keypointTracker = {
+  Object.assign(service.keypointTracker, {
     trackedPoints: [
       { status: 'active', objectOwned: true, current: { x: 74, y: 58 } },
       { status: 'active', objectOwned: false, current: { x: 144, y: 16 } },
@@ -4070,7 +4079,7 @@ test('mature curved pose dropout centroid ignores active landmarks demoted from 
         method: 'weighted_centroid_with_offset',
       };
     },
-  };
+  });
 
   const selected = service._selectTrackerAnchorPosition({
     trackerAnchorPosition: {
@@ -4111,7 +4120,7 @@ test('selected curved reconstruction modes do not use sparse centroid dropout fa
     service.metrics.reconstructionPreview = {
       surface: { model: 'tapered-cylinder' },
     };
-    service.keypointTracker = {
+    Object.assign(service.keypointTracker, {
       getCentroidAnchorPosition: () => ({
         x: 274,
         y: 221,
@@ -4119,7 +4128,7 @@ test('selected curved reconstruction modes do not use sparse centroid dropout fa
         inlierCount: 52,
         method: 'weighted_centroid_with_offset',
       }),
-    };
+    });
     const trackerAnchorPosition = {
       x: 322,
       y: 212,

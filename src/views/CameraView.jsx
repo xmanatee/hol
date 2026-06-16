@@ -5,7 +5,7 @@ import { useHudMetrics } from '../hooks/useHudMetrics.js';
 
 import CameraVideo from '../components/CameraVideo.jsx';
 import DetectionCanvas from '../components/DetectionCanvas.jsx';
-import UnifiedControlPanel from '../components/ui/UnifiedControlPanel.jsx';
+import FieldControls from '../components/ui/FieldControls.jsx';
 import { renderDetectionOverlay, renderDebugStats, renderKeypoints } from '../utils/detectionRenderer.js';
 import { logger } from '../utils/logger.js';
 import { describeAnchorState } from '../utils/anchorDiagnostics.js';
@@ -16,7 +16,6 @@ import { shouldRenderAnchorOverlay } from '../utils/overlayVisibility.js';
 
 const OverlayScene = lazy(() => import('../scenes/OverlayScene.jsx'));
 
-// Start Screen Component - separate from control panel
 const getStartButtonLabel = (cameraState) => {
   if (cameraState === 'requesting') return 'Starting Camera...';
   if (cameraState === 'blocked') return 'Resume Camera';
@@ -101,7 +100,7 @@ const CameraView = () => {
   const [hiddenMeshes, setHiddenMeshes] = useState(new Set());
   const [manualRotation, setManualRotation] = useState({ x: 0, y: 0, z: 0 });
   const [anchorFeedback, setAnchorFeedback] = useState(null);
-  const [controlPanelVisible, setControlPanelVisible] = useState(false);
+  const [fieldControlsVisible, setFieldControlsVisible] = useState(false);
   
   // Microphone state
   const [microphoneMode, setMicrophoneMode] = useState(false);
@@ -454,7 +453,6 @@ const CameraView = () => {
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
         if (anchorSystemState.mode === 'detection') {
-          // Optional detection overlay for debug mode.
           frameCountRef.current++;
           const shouldDetect = frameCountRef.current % 4 === 0 && detectionState.isModelLoaded && detectionState.detectionEnabled;
 
@@ -467,20 +465,24 @@ const CameraView = () => {
             setLastProcessedDetections(detectionState.lastDetections);
           }
         } else if (anchorSystemState.mode === 'anchor') {
-          // Anchor mode: update image-based anchor tracking
-          const updateResult = updateAnchor(imageData);
-          refreshAnchorSegmentation(imageData);
-          
-          if (frameCountRef.current % 30 === 0) {
-            logger.debug('CameraView', 'Anchor tracking update:', {
-              success: updateResult?.success,
-              reason: updateResult?.reason,
-              method: updateResult?.method,
-              confidence: updateResult?.confidence?.toFixed(3),
-              position: updateResult?.position,
-              anchorState: anchorSystemState.anchorState?.state,
-              activeAnchor: !!anchorSystemState.activeAnchor
-            });
+          try {
+            const updateResult = updateAnchor(imageData);
+            refreshAnchorSegmentation(imageData);
+
+            if (frameCountRef.current % 30 === 0) {
+              logger.debug('CameraView', 'Anchor tracking update:', {
+                success: updateResult?.success,
+                reason: updateResult?.reason,
+                method: updateResult?.method,
+                confidence: updateResult?.confidence?.toFixed(3),
+                position: updateResult?.position,
+                anchorState: anchorSystemState.anchorState?.state,
+                activeAnchor: !!anchorSystemState.activeAnchor
+              });
+            }
+          } catch (error) {
+            logger.error('CameraView', 'Anchor update failed:', error);
+            updateMetric('Anchor update', error.message);
           }
         }
 
@@ -633,9 +635,8 @@ const CameraView = () => {
         onStartCamera={handleStartClick} 
       />
 
-      {/* Control Panel - only when camera is active, minimized by default */}
       {cameraState === 'active' && (
-        <UnifiedControlPanel
+        <FieldControls
           cameraState={cameraState}
           detectionEnabled={detectionState.detectionEnabled}
           activeTrackId={anchorSystemState?.activeAnchor ? 'anchor' : null}
@@ -671,8 +672,8 @@ const CameraView = () => {
           onResetMicrophoneBaseline={handleResetMicrophoneBaseline}
           microphoneGain={microphoneGain}
           microphoneDebugMode={microphoneDebugMode}
-          isVisible={controlPanelVisible}
-          onVisibilityChange={setControlPanelVisible}
+          isVisible={fieldControlsVisible}
+          onVisibilityChange={setFieldControlsVisible}
         />
       )}
     </div>

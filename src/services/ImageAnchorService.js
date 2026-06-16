@@ -575,11 +575,13 @@ export class ImageAnchorService {
       position: this.currentPosition,
       imageSize: `${imageData.width}x${imageData.height}`
     });
+
+    let src = null;
+    let gray = null;
     
     try {
-      // Convert to OpenCV Mat
-      const src = this.cv.matFromImageData(imageData);
-      const gray = new this.cv.Mat();
+      src = this.cv.matFromImageData(imageData);
+      gray = new this.cv.Mat();
       this.cv.cvtColor(src, gray, this.cv.COLOR_RGBA2GRAY);
 
       let updateResult;
@@ -746,16 +748,34 @@ export class ImageAnchorService {
       // Update metrics
       this._recordAnchorUpdateResult(updateResult, this.now() - startTime);
       
-      // Cleanup
-      src.delete();
-      gray.delete();
-
       this._notifyStateChange();
       return updateResult;
 
     } catch (error) {
-      logger.error('ImageAnchor', 'Update error:', error);
-      return { success: false, reason: 'Update exception: ' + error.message };
+      const reason = `Update exception: ${error.message}`;
+      this.metrics.lastFailureReason = reason;
+      this.metrics.lastFailureStage = 'update-exception';
+      this._recordAnchorUpdateResult({
+        success: false,
+        reason,
+        position: this.currentPosition,
+        normal: this.currentNormal,
+        planarTransform: this.currentPlanarTransform,
+        confidence: 0,
+        method: 'update-exception',
+        recoverable: false,
+        state: this.anchorState,
+      }, this.now() - startTime);
+      this._notifyStateChange();
+      logger.error('ImageAnchor', 'Update exception:', error);
+      throw error;
+    } finally {
+      if (gray) {
+        gray.delete();
+      }
+      if (src) {
+        src.delete();
+      }
     }
   }
 
@@ -1285,15 +1305,12 @@ export class ImageAnchorService {
     }
 
     let trackingResult = null;
-    const hasTrackableBootstrap = this._activeTrackedPointCount() >= CANDIDATE_MIN_TRACKABLE_POINTS &&
-      typeof this.keypointTracker.trackToFrame === 'function';
+    const hasTrackableBootstrap = this._activeTrackedPointCount() >= CANDIDATE_MIN_TRACKABLE_POINTS;
     if (hasTrackableBootstrap) {
       trackingResult = this.keypointTracker.trackToFrame(this.cv, grayImage);
       if (trackingResult.success) {
         this._rejectTrackedPointsOutsideObjectSupport();
-        const anchorPosition = typeof this.keypointTracker.getAnchorPosition === 'function'
-          ? this.keypointTracker.getAnchorPosition(this.cv)
-          : null;
+        const anchorPosition = this.keypointTracker.getAnchorPosition(this.cv);
         if (anchorPosition) {
           this.currentPosition = {
             x: this.positionFilterX.filter(anchorPosition.x, timestamp),
@@ -1328,8 +1345,7 @@ export class ImageAnchorService {
     const activeBeforeRefresh = this._activeTrackedPointCount();
     if (activeBeforeRefresh < 3 && keypointResult.keypoints.length > 0) {
       this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, grayImage, this.currentPosition);
-    } else if (keypointResult.keypoints.length > 0 &&
-        typeof this.keypointTracker.refreshKeypoints === 'function') {
+    } else if (keypointResult.keypoints.length > 0) {
       this.keypointTracker.refreshKeypoints(
         this.cv,
         grayImage,
@@ -1620,9 +1636,7 @@ export class ImageAnchorService {
     const objectOwnedLandmarks = objectSupportMask
       ? activePoints.filter(point => isPointInsideObjectSupport(objectSupportMask, point.current)).length
       : activePoints.length;
-    const qualityStats = typeof this.keypointTracker.getLandmarkQualityStats === 'function'
-      ? this.keypointTracker.getLandmarkQualityStats()
-      : null;
+    const qualityStats = this.keypointTracker.getLandmarkQualityStats();
 
     this.metrics.landmarkCount = points.length;
     this.metrics.activeLandmarkCount = activePoints.length;
@@ -1650,24 +1664,18 @@ export class ImageAnchorService {
       if (isPointInsideObjectSupport(objectSupportMask, point.current)) {
         point.outsideObjectFrames = 0;
         point.objectOwned = true;
-        if (typeof this.keypointTracker.updateLandmarkQuality === 'function') {
-          this.keypointTracker.updateLandmarkQuality(point);
-        }
+        this.keypointTracker.updateLandmarkQuality(point);
         continue;
       }
 
       point.outsideObjectFrames = (point.outsideObjectFrames || 0) + 1;
       if (point.objectOwned !== false) {
         point.objectOwned = false;
-        if (typeof this.keypointTracker.updateLandmarkQuality === 'function') {
-          this.keypointTracker.updateLandmarkQuality(point);
-        }
+        this.keypointTracker.updateLandmarkQuality(point);
         rejected++;
       }
 
-      const landmarkQuality = typeof this.keypointTracker.getLandmarkQuality === 'function'
-        ? this.keypointTracker.getLandmarkQuality(point)
-        : 0;
+      const landmarkQuality = this.keypointTracker.getLandmarkQuality(point);
       if (point.outsideObjectFrames >= 2 || landmarkQuality < 0.52) {
         point.status = 'outlier';
       }
@@ -1696,7 +1704,10 @@ export class ImageAnchorService {
         logger.info('ImageAnchor', 'Keypoint tracking reinitialized after recovery');
       }
     } catch (error) {
-      logger.warn('ImageAnchor', 'Failed to reinitialize keypoints:', error);
+      this.metrics.lastFailureReason = `Keypoint reinitialization failed: ${error.message}`;
+      this.metrics.lastFailureStage = 'keypoint-reinitialization';
+      logger.error('ImageAnchor', 'Keypoint reinitialization failed:', error);
+      throw error;
     }
   }
 
@@ -2426,9 +2437,7 @@ export class ImageAnchorService {
   _selectTrackerAnchorPosition({ trackerAnchorPosition, reconstructionPose }) {
     this.metrics.trackerAnchorAdjustment = null;
     if (this._shouldUseObjectOwnedCentroidPosition({ trackerAnchorPosition, reconstructionPose })) {
-      const centroidPosition = typeof this.keypointTracker.getCentroidAnchorPosition === 'function'
-        ? this.keypointTracker.getCentroidAnchorPosition(this._objectOwnedActivePoints())
-        : null;
+      const centroidPosition = this.keypointTracker.getCentroidAnchorPosition(this._objectOwnedActivePoints());
 
       if (centroidPosition) {
         this.metrics.trackerAnchorAdjustment = 'object-owned-centroid-position';
@@ -2451,9 +2460,7 @@ export class ImageAnchorService {
 
     if (!this._shouldUseCurvedDropoutCentroidPosition({ trackerAnchorPosition, reconstructionPose })) {
       if (this._shouldUseMatureReconstructionDropoutCentroid({ trackerAnchorPosition, reconstructionPose })) {
-        const centroidPosition = typeof this.keypointTracker.getCentroidAnchorPosition === 'function'
-          ? this.keypointTracker.getCentroidAnchorPosition(this._objectOwnedActivePoints())
-          : null;
+        const centroidPosition = this.keypointTracker.getCentroidAnchorPosition(this._objectOwnedActivePoints());
 
         if (centroidPosition) {
           this.metrics.trackerAnchorAdjustment = 'mature-reconstruction-dropout-centroid';
@@ -2476,9 +2483,7 @@ export class ImageAnchorService {
       return trackerAnchorPosition;
     }
 
-    const centroidPosition = typeof this.keypointTracker.getCentroidAnchorPosition === 'function'
-      ? this.keypointTracker.getCentroidAnchorPosition(this._objectOwnedActivePoints())
-      : null;
+    const centroidPosition = this.keypointTracker.getCentroidAnchorPosition(this._objectOwnedActivePoints());
 
     if (!centroidPosition) {
       return trackerAnchorPosition;

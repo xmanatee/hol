@@ -7,40 +7,12 @@ import { createInteractiveObjectSupportMask } from './interactiveSegmentationMas
 
 const MODEL_PATH = '/models/ptm_512_hdt_ptm_woid.tflite';
 const MASK_THRESHOLD = 0.5;
-const FILTERED_MEDIAPIPE_LOGS = [
-  'No activation type is found in model metadata',
-  'OpenGL error checking is disabled',
-  'Created TensorFlow Lite XNNPACK delegate for CPU',
-];
 const WASM_FILESET = {
   wasmLoaderPath: visionWasmLoaderPath,
   wasmBinaryPath: visionWasmBinaryPath,
 };
 
 let segmenterPromise = null;
-
-const installMediaPipeLogFilter = () => {
-  const originalWarn = console.warn.bind(console);
-  const originalError = console.error.bind(console);
-  console.warn = (...args) => {
-    const message = args.join(' ');
-    if (FILTERED_MEDIAPIPE_LOGS.some(entry => message.includes(entry))) {
-      return;
-    }
-
-    originalWarn(...args);
-  };
-  console.error = (...args) => {
-    const message = args.join(' ');
-    if (FILTERED_MEDIAPIPE_LOGS.some(entry => message.includes(entry))) {
-      return;
-    }
-
-    originalError(...args);
-  };
-};
-
-installMediaPipeLogFilter();
 
 const getSegmenter = async () => {
   if (!segmenterPromise) {
