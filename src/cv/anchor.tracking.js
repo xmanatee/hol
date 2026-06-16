@@ -8,6 +8,8 @@ import { ObjectPoseEstimator } from './anchor.objectPose.js';
 import { isPointInsideObjectSupport } from './objectSupportMask.js';
 import { seedHomographyRansac } from './opencvRng.js';
 
+const clamp01 = value => Math.max(0, Math.min(1, value));
+
 export class KeypointTracker {
   constructor() {
     this.initialized = false;
@@ -222,10 +224,12 @@ export class KeypointTracker {
           // Successful tracking with valid coordinates
           point.current.x = nextPoints.data32F[i * 2];
           point.current.y = nextPoints.data32F[i * 2 + 1];
+          point.lastFlowResidual = trackingError;
           point.errorHistory.push(trackingError);
           point.age++;
           point.status = 'active';
           point.inactiveAge = 0;
+          point.recentDropout = false;
           point.lastSeenAttempt = this.trackingAttempts;
           point.observations = (point.observations || 0) + 1;
           
@@ -241,6 +245,7 @@ export class KeypointTracker {
           
           // Mark as stable if high stability score and long tracking history
           point.isStable = point.stabilityScore > 0.7 && point.totalSuccessfulFrames > 20;
+          this.updateLandmarkQuality(point);
           
           successCount++;
           totalError += trackingError;
@@ -249,11 +254,13 @@ export class KeypointTracker {
           // Tracking failed or invalid coordinates
           point.status = 'lost';
           point.errorHistory.push(999); // High error for failed tracking
+          point.recentDropout = true;
           
           // Reset tracking streak but preserve total successful frames
           point.successfulTrackingStreak = 0;
           point.stabilityScore = Math.max(0, point.stabilityScore - 0.1); // Gradual decay
           point.isStable = false; // Lose stable status on tracking failure
+          this.updateLandmarkQuality(point);
           
           if (trackingStatus === 0) {
             result.outcome = 'TRACKING_FAILED';
@@ -462,7 +469,8 @@ export class KeypointTracker {
       .sort((a, b) => {
         const avgErrorA = a.errorHistory.reduce((sum, err) => sum + err, 0) / a.errorHistory.length;
         const avgErrorB = b.errorHistory.reduce((sum, err) => sum + err, 0) / b.errorHistory.length;
-        return avgErrorA - avgErrorB; // Lower error is better
+        const qualityDelta = this.getLandmarkQuality(b) - this.getLandmarkQuality(a);
+        return Math.abs(qualityDelta) > 1e-6 ? qualityDelta : avgErrorA - avgErrorB;
       })
       .slice(0, 5);
     
@@ -472,6 +480,9 @@ export class KeypointTracker {
       const avgError = point.errorHistory.reduce((sum, err) => sum + err, 0) / point.errorHistory.length;
       if (avgError < 60) { // More lenient than normal threshold
         point.status = 'active';
+        point.recoveryCount = (point.recoveryCount || 0) + 1;
+        point.recentDropout = false;
+        this.updateLandmarkQuality(point);
         recoveredCount++;
       }
     }
@@ -976,6 +987,10 @@ export class KeypointTracker {
       point.totalSuccessfulFrames = (point.totalSuccessfulFrames || 0) + 1;
       point.stabilityScore = Math.max(point.stabilityScore || 0, transformation.confidence || 0.5);
       point.errorHistory = [...(point.errorHistory || []), transformation.averageResidual || 0].slice(-10);
+      point.lastFlowResidual = transformation.averageResidual || 0;
+      point.recoveryCount = (point.recoveryCount || 0) + 1;
+      point.recentDropout = false;
+      this.updateLandmarkQuality(point);
       restored++;
     });
 
@@ -1018,6 +1033,10 @@ export class KeypointTracker {
       observations: 0,
       createdAtAttempt: this.trackingAttempts,
       lastSeenAttempt: this.trackingAttempts,
+      outsideObjectFrames: 0,
+      recoveryCount: 0,
+      recentDropout: false,
+      landmarkQuality: 0,
     };
   }
 
@@ -1028,12 +1047,11 @@ export class KeypointTracker {
 
     this.trackedPoints = [...this.trackedPoints]
       .sort((a, b) => {
+        const qualityDelta = this.getLandmarkQuality(b) - this.getLandmarkQuality(a);
         const activeDelta = (b.status === 'active') - (a.status === 'active');
+        if (Math.abs(qualityDelta) <= 0.12 && activeDelta !== 0) return activeDelta;
+        if (Math.abs(qualityDelta) > 1e-6) return qualityDelta;
         if (activeDelta !== 0) return activeDelta;
-        const stableDelta = (b.isStable === true) - (a.isStable === true);
-        if (stableDelta !== 0) return stableDelta;
-        const scoreDelta = (b.stabilityScore || 0) - (a.stabilityScore || 0);
-        if (Math.abs(scoreDelta) > 1e-6) return scoreDelta;
         return (b.totalSuccessfulFrames || 0) - (a.totalSuccessfulFrames || 0);
       })
       .slice(0, maxTrackedPoints);
@@ -1070,6 +1088,63 @@ export class KeypointTracker {
   _transformationResidual(point, transformation) {
     const projected = this._applyReferenceTransformation(point.original, transformation);
     return Math.hypot(projected.x - point.current.x, projected.y - point.current.y);
+  }
+
+  getLandmarkQuality(point) {
+    if (!point) return 0;
+
+    const errors = point.errorHistory || [];
+    const usableErrors = errors.filter(error => Number.isFinite(error) && error < 900);
+    const avgError = usableErrors.length > 0
+      ? usableErrors.reduce((sum, error) => sum + error, 0) / usableErrors.length
+      : 12;
+    const ownershipScore = point.objectOwned === true
+      ? 1
+      : point.objectOwned === false ? 0 : 0.35;
+    const ageScore = clamp01((point.age || 0) / 45);
+    const observationScore = clamp01((point.totalSuccessfulFrames || point.observations || 0) / 60);
+    const residualScore = clamp01(1 - avgError / 22);
+    const descriptorScore = clamp01(point.stabilityScore || 0);
+    const responseScore = clamp01(point.response || 0);
+    const activeScore = point.status === 'active' ? 1 : point.isStable ? 0.72 : 0.25;
+    const dropoutPenalty = clamp01(((point.outsideObjectFrames || 0) * 0.18) +
+      (point.recentDropout ? 0.16 : 0));
+
+    return clamp01(
+      ownershipScore * 0.24 +
+      ageScore * 0.16 +
+      observationScore * 0.2 +
+      residualScore * 0.18 +
+      descriptorScore * 0.13 +
+      responseScore * 0.04 +
+      activeScore * 0.05 -
+      dropoutPenalty
+    );
+  }
+
+  updateLandmarkQuality(point) {
+    point.landmarkQuality = this.getLandmarkQuality(point);
+    return point.landmarkQuality;
+  }
+
+  getLandmarkQualityStats() {
+    const points = this.trackedPoints || [];
+    const activePoints = points.filter(point => point.status === 'active');
+    const qualities = activePoints.map(point => this.getLandmarkQuality(point));
+    if (qualities.length === 0) {
+      return {
+        average: 0,
+        highQuality: 0,
+        poseEligible: 0,
+      };
+    }
+
+    const total = qualities.reduce((sum, quality) => sum + quality, 0);
+    return {
+      average: total / qualities.length,
+      highQuality: qualities.filter(quality => quality >= 0.7).length,
+      poseEligible: qualities.filter(quality => quality >= 0.52).length,
+    };
   }
 
   /**
@@ -1141,7 +1216,7 @@ export class KeypointTracker {
       distance: anchorReference
         ? Math.hypot(point.original.x - anchorReference.x, point.original.y - anchorReference.y)
         : 0,
-      quality: (point.stabilityScore || 0) + Math.min(point.age || 0, 30) / 30 + (point.response || 0),
+      quality: this.getLandmarkQuality(point),
     }));
     const locallySupported = Number.isFinite(maxReferenceDistance)
       ? scoredPoints.filter(item => item.distance <= maxReferenceDistance)
@@ -1151,15 +1226,21 @@ export class KeypointTracker {
       : scoredPoints
         .sort((a, b) => a.distance - b.distance || b.quality - a.quality)
         .slice(0, Math.min(scoredPoints.length, minCount));
+    const hasExplicitObjectOwnership = selected.some(item => item.point.objectOwned === true);
+    const sortBySupport = Number.isFinite(maxReferenceDistance) || !hasExplicitObjectOwnership
+      ? (a, b) => a.distance - b.distance || b.quality - a.quality
+      : (a, b) => b.quality - a.quality || a.distance - b.distance;
 
     return selected
-      .sort((a, b) => a.distance - b.distance || b.quality - a.quality)
+      .sort(sortBySupport)
       .slice(0, maxCount)
       .map(({ point }) => ({
+        id: point.id,
         prev: { x: point.original.x, y: point.original.y },
         curr: { x: point.current.x, y: point.current.y },
         response: point.response,
-        age: point.age
+        age: point.age,
+        landmarkQuality: this.getLandmarkQuality(point),
       }));
   }
 
@@ -1306,7 +1387,7 @@ export class KeypointTracker {
       }
 
       const stableEnough = point.isStable ||
-        (point.stabilityScore || 0) >= 0.65 ||
+        this.getLandmarkQuality(point) >= 0.62 ||
         (point.totalSuccessfulFrames || 0) >= 45;
       const maxInactiveAge = stableEnough ? 120 : 45;
       return (point.inactiveAge || 0) <= maxInactiveAge;

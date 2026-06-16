@@ -609,6 +609,97 @@ test('pose correspondences exclude active landmarks already classified as backgr
   assert.ok(correspondences.every(correspondence => correspondence.prev.x < 140));
 });
 
+test('broad pose correspondences prefer durable object-owned landmarks over fresh weak points', () => {
+  const tracker = new KeypointTracker();
+  tracker.anchorOriginalPosition = { x: 100, y: 100 };
+  tracker.trackedPoints = [
+    ...Array.from({ length: 18 }, (_, index) => ({
+      id: index,
+      original: {
+        x: 88 + (index % 6) * 6,
+        y: 88 + Math.floor(index / 6) * 6,
+      },
+      current: {
+        x: 91 + (index % 6) * 6,
+        y: 91 + Math.floor(index / 6) * 6,
+      },
+      response: 1,
+      status: 'active',
+      age: 1,
+      totalSuccessfulFrames: 1,
+      observations: 1,
+      errorHistory: [18],
+      stabilityScore: 0.08,
+    })),
+    ...Array.from({ length: 12 }, (_, index) => ({
+      id: 100 + index,
+      original: {
+        x: 172 + (index % 4) * 12,
+        y: 154 + Math.floor(index / 4) * 12,
+      },
+      current: {
+        x: 180 + (index % 4) * 12,
+        y: 159 + Math.floor(index / 4) * 12,
+      },
+      response: 0.7,
+      status: 'active',
+      age: 34,
+      totalSuccessfulFrames: 52,
+      observations: 52,
+      errorHistory: [1.2, 1.4, 1.1],
+      stabilityScore: 0.82,
+      objectOwned: true,
+    })),
+  ];
+
+  const correspondences = tracker.getCorrespondences({
+    maxReferenceDistance: Infinity,
+    minCount: 8,
+    maxCount: 12,
+  });
+
+  assert.equal(correspondences.length, 12);
+  assert.ok(correspondences.every(correspondence => correspondence.id >= 100));
+  assert.ok(correspondences.every(correspondence => correspondence.landmarkQuality >= 0.7));
+});
+
+test('landmark pruning preserves mature object-owned landmarks over fresh active points', () => {
+  const tracker = new KeypointTracker();
+  tracker.trackedPoints = [
+    ...Array.from({ length: 14 }, (_, index) => ({
+      id: index,
+      original: { x: 30 + index * 5, y: 40 },
+      current: { x: 32 + index * 5, y: 42 },
+      response: 1,
+      status: 'active',
+      age: 1,
+      totalSuccessfulFrames: 1,
+      observations: 1,
+      errorHistory: [16],
+      stabilityScore: 0.08,
+    })),
+    ...Array.from({ length: 10 }, (_, index) => ({
+      id: 100 + index,
+      original: { x: 120 + index * 6, y: 110 },
+      current: { x: 126 + index * 6, y: 113 },
+      response: 0.65,
+      status: 'lost',
+      inactiveAge: 12,
+      age: 60,
+      totalSuccessfulFrames: 70,
+      observations: 70,
+      errorHistory: [1.4, 1.2, 1.5],
+      stabilityScore: 0.86,
+      isStable: true,
+      objectOwned: true,
+    })),
+  ];
+
+  tracker._pruneLandmarkMap(10);
+
+  assert.deepEqual(tracker.trackedPoints.map(point => point.id), Array.from({ length: 10 }, (_, index) => 100 + index));
+});
+
 test('keypoint refresh rejects textured background candidates outside the object mask', () => {
   const tracker = new KeypointTracker();
   tracker.initialized = true;

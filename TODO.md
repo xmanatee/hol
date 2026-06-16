@@ -1,313 +1,201 @@
 # HOL Vision Improvement Backlog
 
-## Current Baseline
+## Current Truth
 
-- `npm test` passes: 188 tests, 0 failures, about 138 seconds.
-- Current runtime detects selectable objects with `public/models/yolo11n_480.onnx` in `src/cv/detector.worker.js` every fourth frame, then switches to OpenCV-based anchoring after a tap.
-- Anchoring currently uses Shi-Tomasi keypoints, Lucas-Kanade optical flow, patch descriptor relocalization, homography/object-pose estimation, and selectable reconstruction engines.
-- Primary target remains iPhone Safari/Chrome, where camera access requires HTTPS and the frame budget is 16.67 ms at 60 FPS.
+- The normal flow is tap-first object anchoring. YOLO is retained as optional/debug context, not the geometry authority.
+- Tap-time object support is already implemented with `ObjectSupportMask`, MediaPipe Interactive Segmenter in a worker, tap-local fallback masks, warped mask propagation, and object-owned keypoint filtering.
+- Anchor tracking combines Shi-Tomasi keypoints, Lucas-Kanade optical flow, patch keyframe relocalization, homography/object-pose estimation, and three reconstruction modes.
+- Latest verified checks in this pass: `node --test src/services/ImageAnchorService.unit.test.js`, `node --test src/cv/anchor.tracking.unit.test.js`, `npm run lint`, `npm run build`, and `git diff --check` pass.
+- Latest OpenCV replay status in this pass: `node --test src/cv/syntheticVisionReplay.unit.test.js` still fails on sparse tapered-cup max anchor error and off-center parametric can max anchor error. These are the next reconstruction-quality targets.
+- Latest quality matrix from the backlog research pass: `scripts/vision-quality-report.mjs` reported 35/54 passing and 19 failing. Remaining failures are mostly tracking drift and reconstruction/pose-source instability under occlusion, glare, curved surfaces, and busy backgrounds.
+- Primary runtime target is still iPhone Safari/Chrome. Heavy CV/model work belongs in workers, with the 16.67 ms frame budget protected.
 
-## Implemented: Mask-Guided Anchor Ownership
+## Improvement Order
 
-- `ObjectSupportMask` is now a first-class internal contract for selected-object pixel ownership.
-- MediaPipe Interactive Segmenter is integrated behind `InteractiveSegmenterService` and `interactiveSegmenter.worker.js` for tap-time masks.
-- The official `ptm_512_hdt_ptm_woid.tflite` model and MediaPipe WASM runtime assets are served locally from `public/`.
-- `KeypointDetector.extractKeypoints()` accepts an object-support mask and passes an OpenCV ROI mask into `goodFeaturesToTrack`.
-- `ImageAnchorService.createAnchor()` threads object masks into template and tracking keypoint extraction and records mask diagnostics.
-- Refresh/reinitialization paths use a cheap warped mask derived from the current anchor transform instead of rerunning segmentation every frame.
-- `AnchorManager.createAnchorFromTap()` requests a tap-time mask before creating the image anchor.
+Work through these in order. Each item should be implemented with a focused regression, replay comparison, and cleanup of any redundant older path it replaces.
 
-## Research Note: DEIMv2-Wholebody49
+## P0 - Object-Owned Landmark Quality Model
 
-- Source: https://github.com/PINTO0309/PINTO_model_zoo/tree/main/488_DEIMv2-Wholebody49
-- Origin thread: https://github.com/PINTO0309/gazelle-dinov3/issues/8
-- Status as of 2026-06-09: real model-zoo artifact, not just a social post.
-- It is a human-centric unified model for detection, human-part/keypoint-style boxes, head orientation labels, and instance masks/contours.
-- It outputs 49 classes such as body, head, eight head directions, face parts, limbs, side-specific limbs, foot/hand classes, and bone.
-- It is not a drop-in replacement for HOL's object detector because it does not target HOL's selectable object classes such as bottles, cups, books, and cans.
-- Its released demo path is Python ONNX Runtime with CPU/CUDA/TensorRT providers, not browser JavaScript. The resource tarball is about 956 MB, so direct mobile-web inclusion is not practical.
-- Best use for HOL: a later optional human-awareness worker for head direction, person context, hand/body interaction, or "is someone engaging with the object?" signals.
-
-## High-Value Improvements
-
-### P1 - Evaluate YOLO Segmentation For Selectable Objects
-
-- Sources:
-  - https://docs.ultralytics.com/tasks/segment/
-  - https://docs.ultralytics.com/models/yolo11/
-  - https://docs.ultralytics.com/modes/export/
-- Why it matters: HOL currently seeds anchors from boxes. Instance masks for COCO objects could seed keypoints only on the selected object, rejecting background corners that later cause drift.
-- Proposed experiment:
-  - Export a small YOLO segmentation model to ONNX.
-  - Build a separate detector profile for segmentation outputs instead of modifying the current YOLO box decoder in place.
-  - Use masks only at detection/tap time first, not every frame.
-  - Compare anchor quality on book, can, cup, mug, and cluttered-background fixtures.
-- Success criteria:
-  - Model loads in `onnxruntime-web`.
-  - Mask decoding stays within the detection budget when run every fourth frame or on tap.
-  - Anchor creation uses fewer background keypoints and improves replay stability.
-
-### P1 - Add A Tap-Time Segmentation Spike
-
-- Sources:
-  - MobileSAM: https://github.com/ChaoningZhang/MobileSAM
-  - FastSAM: https://github.com/CASIA-LMC-Lab/FastSAM
-  - SAM 2: https://github.com/facebookresearch/sam2
-- Why it matters: promptable segmentation maps closely to HOL's tap interaction. A model can segment "the thing the user tapped" and produce a better template region than a rectangular box.
-- Recommended scope:
-  - Start with tap-time segmentation only.
-  - Do not run SAM-style segmentation per frame on mobile.
-  - Use the mask to constrain keypoint extraction and template recovery.
-- Avoid for now:
-  - Full SAM 2 video tracking in-browser. It is conceptually relevant but too heavy until proven on target phones.
-
-### P1 - Investigate Learned Local Features For Relocalization
-
-- Sources:
-  - XFeat repository: https://github.com/verlab/accelerated_features
-  - XFeat paper: https://arxiv.org/abs/2404.19174
-- Why it matters: HOL's `PatchKeyframeRelocalizer` uses hand-built normalized patch descriptors. XFeat is designed for lightweight image matching and could be stronger under blur, lighting changes, scale, and viewpoint changes.
-- Proposed experiment:
-  - Keep Lucas-Kanade optical flow as the primary cheap tracker.
-  - Add XFeat only for lost/degraded relocalization, not every frame.
-  - Benchmark against the current patch descriptor path using the synthetic replay suite.
-- Success criteria:
-  - Better recovery rate after occlusion or fast motion.
-  - No regression in the 60 FPS frame budget because learned matching runs only at recovery cadence.
-
-### P1 - Split Raw Detection Time From Amortized Cost
-
-- Source in repo: `src/views/CameraView.jsx` records `Detection amortized cost` from the raw detector processing time.
-- Why it matters: detection runs every fourth frame, so raw inference time and amortized per-frame cost are different numbers. The HUD should show both to avoid wrong performance decisions.
+- Research basis: classical SLAM systems such as COLMAP and ORB-SLAM3 succeed by ranking observations, rejecting outliers, and using long-lived high-quality landmarks; learned trackers such as CoTracker show the value of jointly reasoning over point tracks.
+- Current weakness: HOL counts object-owned landmarks but does not yet score each landmark as a durable map element. A point that is old, mask-owned, low residual, spatially useful, and parallax-rich should not be treated like a fresh weak corner.
 - Proposed change:
-  - Track raw detector time.
-  - Track amortized detector cost as `rawTime / detectionInterval`.
-  - Add replay or unit coverage for the metric calculation.
+  - Add per-landmark quality fields: mask ownership history, age, successful observations, reprojection/flow residual, descriptor stability, parallax contribution, spatial cell, recovery count, and recent dropout state.
+  - Prefer landmarks by quality when estimating planar/object/reconstruction poses.
+  - Demote or retire points that repeatedly leave the object mask or only agree with weak similarity fallback.
+- Acceptance:
+  - Tests prove low-quality background-like points cannot dominate pose selection.
+  - Vision quality report has no new failures.
+  - At least one existing drift-heavy scenario improves numerically.
+- Sources: [COLMAP](https://github.com/colmap/colmap), [ORB-SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3), [CoTracker](https://github.com/facebookresearch/co-tracker)
 
-### P1 - Keep Model Runtime Abstractions Explicit
+## P0 - Pose Candidate Arbitration Cleanup
 
-- Sources:
-  - ONNX Runtime Web: https://onnxruntime.ai/docs/tutorials/web/
-  - ONNX Runtime WebGPU EP: https://onnxruntime.ai/docs/tutorials/web/ep-webgpu.html
-- Why it matters: WebGPU can be faster, but operator support and browser availability vary. HOL currently uses a stable WASM execution provider.
-- Proposed experiment:
-  - Keep the current WASM detector profile.
-  - Add a separate WebGPU compatibility probe for candidate segmentation or feature models.
-  - Do not silently switch providers; expose the selected runtime in diagnostics.
+- Research basis: robust visual odometry/SLAM systems separate frontend tracking, pose hypotheses, quality scoring, and backend map updates. HOL currently has the pieces, but pose source selection has accumulated many local gates.
+- Current weakness: planar homography, object affine pose, sparse reconstruction, parametric surface, direct photometric, centroid recovery, and reference similarity each compete through scattered conditional logic.
+- Proposed change:
+  - Introduce a single pose candidate scoring function with explicit candidate records: source, position, transform, normal, inliers, residual, confidence, object-owned ratio, map maturity, continuity, and allowed overlay ownership.
+  - Keep source-specific estimators separate; centralize only selection and readiness.
+  - Delete redundant local gates once their logic is represented in the candidate score.
+- Acceptance:
+  - Existing source-selection unit tests move to candidate scoring.
+  - No swallowed/implicit fallback: rejected candidates carry a reason.
+  - `reference_similarity_transform` cannot own overlay readiness in reconstruction modes.
+- Sources: [DROID-SLAM](https://github.com/princeton-vl/droid-slam), [ORB-SLAM3 paper](https://ar5iv.labs.arxiv.org/html/2007.11898)
 
-### P2 - Add A Human-Awareness Worker Separately From Object Anchoring
+## P0 - Occlusion-Aware Recovery State
 
-- Sources:
-  - MediaPipe Pose Landmarker: https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker
-  - MediaPipe Holistic Landmarker: https://ai.google.dev/edge/mediapipe/solutions/vision/holistic_landmarker
-  - DEIMv2-Wholebody49: https://github.com/PINTO0309/PINTO_model_zoo/tree/main/488_DEIMv2-Wholebody49
-- Why it matters: human pose/head/hand signals are useful, but they should not contaminate the object detector. HOL's core interaction is still object selection and anchoring.
-- Possible uses:
-  - Determine whether a person is facing the object.
-  - Detect hand proximity before auto-starting object voice.
-  - Drive gaze or expression behavior on the 3D face.
-- Constraint:
-  - Run at low cadence or only when enabled. This must not compete with anchor tracking on the main frame path.
+- Research basis: video object segmentation systems such as SAM 2, XMem, and Cutie preserve object identity through memory and explicitly handle mask/visibility changes. HOL should copy the state idea, not the heavy model dependency.
+- Current weakness: occlusion is inferred indirectly from point counts and residuals. The app needs a clear state for visible, partially occluded, recovering, and lost.
+- Proposed change:
+  - Derive occlusion state from object-owned ratio, active landmark count, mask coverage continuity, residual spikes, and pose-source dropouts.
+  - During partial occlusion, freeze map growth, avoid adding new landmarks, preserve mature landmarks, and prefer conservative recovery poses.
+  - After recovery, require a short stable window before new landmarks affect reconstruction.
+- Acceptance:
+  - Unit tests cover repeated occlusion, glare, and moving-background cases.
+  - Busy-background replays do not add background points during occlusion.
+  - Overlay readiness remains hidden when pose is background-driven.
+- Sources: [SAM 2](https://github.com/facebookresearch/sam2), [XMem](https://github.com/hkchengrex/XMem), [Cutie](https://github.com/hkchengrex/Cutie)
 
-### P2 - Move More Anchor CV Off The Main Thread
+## P1 - Progressive Full-Object Map Growth
 
-- Why it matters: detection is already in a worker, but anchor tracking/reconstruction runs from the camera frame loop. Heavy OpenCV and reconstruction modes can compete with canvas capture, React state updates, and R3F rendering.
-- Proposed experiment:
-  - Prototype an `anchor.worker.js` boundary for degraded/lost recovery and reconstruction-heavy paths first.
-  - Keep synchronous main-thread work only for capture, overlay drawing, and cheap state projection.
-- Success criteria:
-  - Lower frame-time spikes on mobile during occlusion, relocalization, and reconstruction map growth.
+- Research basis: multi-view reconstruction depends on view diversity and stable correspondences. A tap-local region is a safe bootstrap, but full-object reconstruction needs controlled expansion.
+- Current weakness: growth still sometimes behaves like “more points near the initial support” instead of deliberate object-wide coverage.
+- Proposed change:
+  - Divide the current object mask/bounds into spatial cells and track coverage per cell.
+  - Refresh keypoints preferentially in under-covered object-owned cells.
+  - Add growth phases: bootstrap local patch, expand within mask, mature full-object map, lock mature landmarks.
+  - Block expansion into cells whose points repeatedly fail mask/pose consistency.
+- Acceptance:
+  - Tests prove detection/debug boxes do not expand default support.
+  - Replay diagnostics show coverage growth across the object, not only near the tap.
+  - Full-object growth does not increase background-rejected point counts.
+- Sources: [COLMAP MVS docs](https://colmap.github.io/tutorial.html), [DUSt3R](https://github.com/naver/dust3r), [MASt3R](https://github.com/naver/mast3r)
 
-### P2 - Build A Device Benchmark Harness
+## P1 - Better Keyframe Relocalization
 
-- Why it matters: synthetic replay tests are strong, but they run in Node and do not answer iPhone Safari timing questions.
-- Proposed experiment:
-  - Add a browser benchmark route or debug mode that records detector raw time, amortized time, anchor update time, render frame time, WebGL context loss, and orientation-change recovery.
-  - Export a compact JSON report from real device runs.
-  - Test HTTPS iPhone Safari/Chrome before accepting new model work.
+- Research basis: LightGlue/SuperPoint and LoFTR-style matchers outperform hand-built patch descriptors under larger viewpoint and lighting changes, while classical LK flow remains cheaper for normal frames.
+- Current weakness: patch relocalization is lightweight but limited under glare, blur, scale change, and repeated texture.
+- Proposed change:
+  - Keep LK optical flow as the primary frame path.
+  - Add a stronger keyframe matcher only for degraded/lost recovery or low-cadence validation.
+  - First evaluate an ONNX/browser route for LightGlue/SuperPoint or XFeat-like features in a worker; do not put it on every frame.
+  - Compare against the existing patch relocalizer on occlusion and glare fixtures.
+- Acceptance:
+  - Recovery improves without increasing steady-state frame cost.
+  - Worker boundaries are explicit; runtime/provider selection is visible in diagnostics.
+  - If learned matching is not mobile-safe, keep the experiment out of production.
+- Sources: [LightGlue](https://github.com/cvg/lightglue), [LightGlue paper](https://openaccess.thecvf.com/content/ICCV2023/html/Lindenberger_LightGlue_Local_Feature_Matching_at_Light_Speed_ICCV_2023_paper.html), [LoFTR](https://github.com/zju3dv/LoFTR)
 
-## Segmentation And Reconstruction Research
+## P1 - Segmentation Refresh Quality Gates
 
-### First-Principles Read
+- Research basis: promptable segmentation is best used sparsely on mobile. Google documents MediaPipe web segmentation calls as synchronous, so worker/throttled use is required.
+- Current weakness: segmentation refresh exists, but it should become more explicit about why a refreshed mask is accepted, rejected, or ignored.
+- Proposed change:
+  - Score refresh masks by tap/current-position continuity, coverage bounds, connected component stability, overlap with warped mask, and object-owned landmark agreement.
+  - Store the last accepted and last rejected refresh reason for diagnostics.
+  - Trigger immediate refresh only when occlusion/recovery state says the existing mask is stale.
+- Acceptance:
+  - Tests cover empty, oversized, discontinuous, shifted, and good masks.
+  - No more than one pending segmentation request.
+  - Refresh does not create new object support from debug detections.
+- Sources: [MediaPipe Interactive Segmenter](https://developers.google.com/edge/mediapipe/solutions/vision/interactive_segmenter), [MediaPipe Web Guide](https://developers.google.com/edge/mediapipe/solutions/vision/interactive_segmenter/web_js)
 
-- Segmentation answers "which pixels belong to the selected object?"
-- Tracking answers "where did those pixels move?"
-- Reconstruction answers "what 2D/3D surface model explains the tracked object over time?"
-- A mask by itself does not produce true 3D. It can produce a cleaner object support region, better foreground/background rejection, and a stronger silhouette prior.
-- True monocular 3D reconstruction needs either multiple views/correspondences over time, known camera motion/intrinsics, or a learned shape/depth prior. HOL already has the multi-view path through tracked landmarks and reconstruction modes.
-- The most useful near-term role for segmentation is therefore not "replace tracking"; it is "make tracking and reconstruction trust only the selected object's pixels."
+## P1 - Surface Prior Selection And Validation
 
-### P1 - Add An Object Support Mask Contract
+- Research basis: monocular live reconstruction needs priors. Depth/geometry foundation models can infer plausible shape, but observed tracked geometry must remain the authority for AR attachment.
+- Current weakness: plane/cylinder/ellipsoid/tapered-surface choices exist, but their validation can be clearer and more tied to observed evidence.
+- Proposed change:
+  - Make surface prior selection explicit: target class, mask aspect, silhouette curvature, parallax, depth consistency, and reconstruction residual.
+  - Add a confidence/rationale object for the selected surface model.
+  - Allow fallback from curved prior to planar only when observed geometry supports it, not because the curved model temporarily drops.
+- Acceptance:
+  - Tests cover book/card/phone, can/bottle, tapered cup, mug, pouch, and ball.
+  - Rigid planar targets do not get curved normals from unstable fits.
+  - Curved objects do not collapse to planar attachment during brief dropout.
+- Sources: [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2), [UniDepth](https://github.com/lpiccinelli-eth/unidepth), [Metric3D](https://github.com/yvanyin/metric3d)
 
-- Why it matters: every segmentation option should feed one clean internal shape instead of leaking model-specific tensors into anchoring.
-- Proposed contract:
-  - `mask`: binary or confidence mask in frame coordinates, possibly downsampled.
-  - `bbox`: tight bounding box around the mask.
-  - `source`: `interactive-segmenter`, `yolo-seg`, `warped-mask`, `manual-roi`, or `future-vos`.
-  - `confidence`: object-support confidence, separate from detector confidence.
-  - `createdAtFrame` and `updatedAtFrame`.
-  - `referencePoint`: the original tap in mask coordinates.
-- Consumers:
-  - Keypoint extraction should accept an object mask and reject corners outside it.
-  - Relocalization should prefer matches inside the current propagated mask.
-  - Reconstruction should use the mask bounds/silhouette to choose plane/cylinder/cup/ellipsoid priors.
+## P2 - Optional Server/Cloud Reconstruction Track
 
-### P1 - Use MediaPipe Interactive Segmenter As The Cleanest Tap-Time Mask Spike
+- Research basis: VGGT, DUSt3R/MASt3R, MonST3R, Gaussian Splatting, and modern image-to-3D models are powerful but too heavy for reliable iPhone browser real-time use.
+- Current weakness: HOL is a live mobile app, but “perfect full object reconstruction” may require an offline/cloud tier for high-quality assets.
+- Proposed change:
+  - Add a capture-mode concept separate from live anchoring: collect selected-object keyframes, masks, camera/frame metadata, and quality diagnostics.
+  - Export a reconstruction bundle that can be processed by a server pipeline later.
+  - Keep generated/offline meshes or splats separate from live pose truth.
+- Acceptance:
+  - Capture quality tells the user when there is enough view diversity.
+  - Live tracking works without the server path.
+  - Offline results cannot silently replace live object pose unless calibrated back to tracked landmarks.
+- Sources: [VGGT](https://github.com/facebookresearch/vggt), [DUSt3R](https://github.com/naver/dust3r), [MASt3R](https://github.com/naver/mast3r), [MonST3R](https://github.com/junyi42/monst3r), [3D Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting), [gsplat](https://github.com/nerfstudio-project/gsplat)
 
-- Sources:
-  - Overview: https://developers.google.com/edge/mediapipe/solutions/vision/interactive_segmenter
-  - Web JS guide: https://developers.google.com/edge/mediapipe/solutions/vision/interactive_segmenter/web_js
-- Why it fits HOL:
-  - HOL already has a tap point.
-  - The model is explicitly designed to segment the object at a selected point.
-  - It supports web JavaScript through `@mediapipe/tasks-vision`.
-- Important constraint:
-  - MediaPipe documents `segment()` and `segmentForVideo()` as synchronous calls that block the UI thread, so this must run in a worker if used on camera frames.
-- Recommended experiment:
-  - Run interactive segmentation only when the user taps an object.
-  - Store the mask as the anchor's initial object support.
-  - Pass the mask into Shi-Tomasi keypoint extraction using OpenCV's `goodFeaturesToTrack` mask argument instead of the current empty mask.
-  - Keep all existing tracking/reconstruction logic at first.
-- Success criteria:
-  - Higher template quality on cluttered backgrounds.
-  - Fewer background keypoints.
-  - Better replay stability through partial occlusion.
+## P2 - Device Benchmark Harness
 
-### P1 - Propagate The Mask With Existing Geometry Instead Of Segmenting Every Frame
+- Research basis: browser ML runtime support varies quickly. WebGPU is increasingly available, including Safari 26/iOS 26, but ONNX Runtime WebGPU and mobile stability still need feature probes and fallbacks.
+- Current weakness: Node replay tests verify behavior, but not iPhone Safari frame budget, WebGL context stability, camera policy issues, or worker latency.
+- Proposed change:
+  - Add a debug benchmark route/panel that records camera frame time, anchor update time, segmentation worker latency, detector raw/amortized time, R3F render time, dropped frames, and WebGL context loss.
+  - Export compact JSON from real device sessions.
+  - Gate new models by device benchmark, not desktop assumptions.
+- Acceptance:
+  - Browser QA covers desktop and iPhone-sized viewport.
+  - HTTPS camera flow is verified.
+  - Benchmark output is stable enough to compare before/after changes.
+- Sources: [ONNX Runtime Web](https://onnxruntime.ai/docs/get-started/with-javascript/web.html), [ONNX WebGPU EP](https://onnxruntime.ai/docs/tutorials/web/ep-webgpu.html), [WebGPU implementation status](https://github.com/gpuweb/gpuweb/wiki/Implementation-Status)
 
-- Sources:
-  - MediaPipe object detection/tracking pattern: https://developers.googleblog.com/object-detection-and-tracking-using-mediapipe/
-  - MediaPipe Instant Motion Tracking: https://developers.googleblog.com/instant-motion-tracking-with-mediapipe/
-  - MediaPipe KNIFT: https://developers.googleblog.com/mediapipe-knift-template-based-feature-matching/
-- Why it fits HOL:
-  - HOL already estimates planar transforms, object pose, and reconstruction pose.
-  - A warped mask is much cheaper than re-running segmentation.
-  - Google/MediaPipe's long-running mobile pattern is also "run heavy perception sparsely, track cheaply between inferences."
-- Proposed path:
-  - On anchor creation, get a mask.
-  - On each frame, warp the reference mask with the best available transform: planar homography first, then affine/object-pose transform, then tracker similarity.
-  - Use the warped mask to reject tracked points that drift outside the object.
-  - Trigger re-segmentation only when mask/keypoint agreement collapses.
-- Success criteria:
-  - Mask update cost is much lower than ML segmentation.
-  - Anchor stays attached to the selected object instead of nearby background texture.
-  - The mask remains useful even when the object is partly occluded.
+## P2 - Model Runtime Profiles
 
-### P1 - Evaluate YOLO Segment Models For Known Selectable Classes
+- Research basis: modern browser CV may use WASM, WebGL, WebGPU, WebNN, or server inference. Runtime choice should be explicit and diagnosable.
+- Current weakness: adding models ad hoc risks hidden fallbacks, duplicated workers, and unclear performance tradeoffs.
+- Proposed change:
+  - Define runtime profiles for each model family: detector, interactive segmentation, learned matcher, depth prior, and future cloud/offline path.
+  - Each profile should declare provider, cadence, worker ownership, model assets, expected memory, and mobile support.
+  - Do not silently switch providers; surface selected runtime in diagnostics.
+- Acceptance:
+  - No duplicate model loading paths.
+  - Runtime failures report actionable reasons.
+  - `.env.local` and secrets remain untouched.
+- Sources: [ONNX Runtime Web](https://onnxruntime.ai/docs/get-started/with-javascript/web.html), [MediaPipe Tasks Vision](https://developers.google.com/edge/mediapipe/solutions/vision)
 
-- Sources:
-  - Segmentation task: https://docs.ultralytics.com/tasks/segment/
-  - Tracking mode with Detect/Segment/Pose models: https://docs.ultralytics.com/modes/track/
-  - Export mode: https://docs.ultralytics.com/modes/export/
-- Why it fits:
-  - HOL already uses a YOLO-family ONNX detector.
-  - Segment models are a natural replacement for the current box-only detector when the target classes are known.
-- Limits:
-  - This helps bottles/cups/books/persons if the model covers them.
-  - It does not solve arbitrary tapped-object segmentation unless the model is trained for those objects.
-  - Browser ONNX output decoding for masks is more complex than the current box-only tensor path.
-- Recommended experiment:
-  - Use a small segmentation model as a separate detector profile.
-  - Decode masks at detection cadence or only on tap.
-  - Compare against MediaPipe Interactive Segmenter for mask quality and mobile runtime.
+## P3 - Optional Known-Class Segmentation Profile
 
-### P2 - Treat SAM 2, XMem, And Cutie As Future VOS References, Not Immediate Mobile-Web Dependencies
+- Research basis: YOLO segmentation models can provide masks for known classes at detection/tap cadence, but they do not solve arbitrary tapped-object segmentation.
+- Current weakness: detection boxes are still useful debug context, but box geometry should not guide object support.
+- Proposed change:
+  - Evaluate a small YOLO segmentation model as a separate debug/profile path.
+  - Decode masks without changing the existing box detector contract.
+  - Compare known-class masks against MediaPipe tap masks on bottles, cups, books, phones, and cans.
+- Acceptance:
+  - If mask quality/runtime loses to MediaPipe Interactive Segmenter, do not ship it.
+  - If shipped, it remains optional and does not re-authorize detection-box geometry.
+- Sources: [Ultralytics segmentation](https://docs.ultralytics.com/tasks/segment/), [YOLO11](https://docs.ultralytics.com/models/yolo11/), [Ultralytics export](https://docs.ultralytics.com/modes/export/)
 
-- Sources:
-  - SAM 2: https://ai.meta.com/research/sam2/
-  - SAM 2 code: https://github.com/facebookresearch/sam2
-  - XMem: https://github.com/hkchengrex/XMem
-  - Cutie: https://github.com/hkchengrex/Cutie
-- Why they matter:
-  - These systems are closer to "nice segmentation on video" in the research sense: select an object and maintain its mask over time.
-  - SAM 2 is promptable for images and videos and uses session memory for tracking objects across video frames.
-  - XMem and Cutie show the memory-based VOS architecture that preserves object identity over long sequences.
-- Why not first:
-  - They are not shaped for lightweight iPhone Safari integration.
-  - They introduce model memory, large feature tensors, and runtime complexity beyond HOL's current frame budget.
-- Useful takeaway:
-  - Copy the architecture idea, not the dependency: keep a compact object memory and update it only when confidence requires it.
+## P3 - Generative 3D Asset Experiments
 
-### P2 - Use Depth Or Feed-Forward 3D Only As Priors, Not As The Main Mobile Path
+- Research basis: TripoSR, Stable Fast 3D, InstantMesh, Wonder3D, and Hunyuan3D can synthesize plausible object meshes from one or a few images, but they hallucinate hidden geometry.
+- Current weakness: user expectations around “full object reconstruction” can blur observed reconstruction and generated plausible assets.
+- Proposed change:
+  - Treat image-to-3D as an optional asset-generation mode, not live reconstruction.
+  - Use generated meshes only after explicit user action and calibration to tracked object landmarks.
+  - Never let generated hidden geometry drive live pose confidence.
+- Acceptance:
+  - Generated asset state is visually and architecturally separate from observed reconstruction.
+  - Tests/diagnostics label generated geometry as inferred, not measured.
+- Sources: [TripoSR](https://github.com/VAST-AI-Research/TripoSR), [Stable Fast 3D](https://github.com/Stability-AI/stable-fast-3d), [InstantMesh](https://github.com/tencentarc/instantmesh), [Wonder3D](https://github.com/xxlong0/Wonder3D), [Hunyuan3D 2](https://github.com/Tencent-Hunyuan/Hunyuan3D-2)
 
-- Sources:
-  - Depth Anything V2: https://github.com/DepthAnything/Depth-Anything-V2
-  - VGGT: https://github.com/facebookresearch/vggt
-  - DUSt3R: https://github.com/naver/dust3r
-  - MASt3R: https://github.com/naver/mast3r
-- First-principles position:
-  - "Reconstruction right away" from one RGB frame is only possible with a prior. It can estimate plausible depth or shape, not observed object geometry.
-  - Depth Anything V2 can provide relative depth and edge-aware depth cues, but it is scene-level, not object-identity tracking.
-  - VGGT/DUSt3R/MASt3R are important research directions for dense 3D, but they are too heavy for the current mobile web loop.
-- Practical near-term use:
-  - Use class/mask-driven parametric priors immediately: plane for books/screens, cylinder for cans, tapered cylinder for cups, ellipsoid for balls.
-  - Let tracked multi-view evidence refine the prior over time.
-  - Consider depth only as a low-cadence debug/research signal after segmentation and tracking are stable.
+## Cleanup Rules For Every Step
 
-### Recommended Architecture: Mask-Guided Reconstruction
-
-1. Detection mode keeps the existing YOLO box detector.
-2. User taps a detection or free point.
-3. A worker runs tap-time segmentation and returns an `ObjectSupportMask`.
-4. `ImageAnchorService.createAnchor` extracts keypoints inside the mask, not inside the full rectangle.
-5. The existing tracker/reconstructor runs as it does today.
-6. Each frame warps the reference mask by the selected pose/transform.
-7. Keypoints outside the warped mask are demoted or rejected.
-8. Reconstruction uses mask shape to choose and constrain the surface prior.
-9. When confidence drops, run re-segmentation or YOLO-seg refresh at low cadence.
-
-This keeps the current architecture intact while giving it object ownership. It is the cleanest path to "keep reconstructing a specific segmented object" without betting the frame budget on full video segmentation.
-
-## Ready/Open-Source Option Assessment
-
-### Best Fit Now
-
-| Option | What It Gives | Why It Fits HOL | Main Risk | Verdict |
-|---|---|---|---|---|
-| MediaPipe Interactive Segmenter | Point-prompted object mask in web JS | HOL's user tap is exactly the prompt this model expects | Synchronous calls block UI unless moved to worker | Best first segmentation spike |
-| YOLO Segment via ONNX Runtime Web | Instance masks for known COCO/custom classes | HOL already uses YOLO ONNX and targets known objects | Mask postprocessing and model size are higher than box-only YOLO | Best detector-family upgrade |
-| Mask propagation with OpenCV geometry | Per-frame object support from a cheap warped mask | Uses HOL's existing planar/object/reconstruction transforms | Mask drift if geometry is wrong | Best per-frame strategy |
-| XFeat ONNX | Stronger feature matches/relocalization | Targets the weak point of hand-built patch descriptors | ONNX/browser integration needs proof | Best learned-feature spike |
-
-### Useful But Secondary
-
-| Option | What It Gives | Fit | Main Risk | Verdict |
-|---|---|---|---|---|
-| MediaPipe Object Detector + Model Maker | Ready/custom TFLite object detection | Could replace YOLO if TFLite Tasks are simpler on mobile | Does not solve masks unless paired with segmenter | Consider only if YOLO runtime becomes a problem |
-| MediaPipe KNIFT | Learned template matching concept | Very relevant to relocalization | Legacy solution support ended in 2023 | Use concept/reference, not dependency |
-| MediaPipe Objectron | 3D boxes for cups/chairs/shoes/cameras | Cup class overlaps HOL | Legacy solution support ended in 2023 and class coverage is narrow | Reference only |
-| LightGlue/SuperPoint ONNX | High-quality image matching | Strong relocalization candidate | Heavier and less browser-stable than XFeat; WebGPU issues reported | Research after XFeat |
-| Depth Anything V2 ONNX/Transformers.js | Relative depth prior | Can help choose rough object depth/occlusion hints | Not object-specific and not true reconstruction | Low-cadence research only |
-
-### Powerful But Not First
-
-| Option | What It Gives | Why It Is Tempting | Why It Is Not First |
-|---|---|---|---|
-| SAM 2 | Promptable image/video segmentation with memory | Closest to "click object and track mask through video" | Browser/mobile integration is nontrivial; much heavier than HOL's frame budget |
-| XMem/Cutie | Dedicated video object segmentation with memory | Designed for keeping masks over time | Python/PyTorch research stack, not ready mobile web |
-| VGGT/DUSt3R/MASt3R | Feed-forward dense 3D/geometry | Could bypass classical reconstruction someday | Too heavy for iPhone browser and not object-isolated by default |
-| RMBG/U2-Net/saliency/background-removal models | Foreground masks | Easy browser demos exist | They segment salient foreground/background, not "the tapped object"; license can be restrictive |
-| Human matting models such as MODNet/RVM | Stable person mattes/video mattes | Fast in the human-matting domain | Wrong target for object anchoring |
-
-### Professional Recommendation
-
-Do not chase full video segmentation first. The correct HOL-specific stack is:
-
-1. Add an `ObjectSupportMask` data contract.
-2. Add MediaPipe Interactive Segmenter in a worker for tap-time masks.
-3. Modify `KeypointDetector.extractKeypoints` to accept an OpenCV mask.
-4. Propagate that mask with the existing transform hierarchy.
-5. Use mask/keypoint agreement as a tracking confidence signal.
-6. Benchmark YOLO segmentation as an alternate mask source for known classes.
-7. Only then test XFeat ONNX for relocalization.
-
-This gives HOL most of the benefit of modern segmentation while preserving the current high-value reconstruction work.
+- Remove obsolete branches, duplicate helpers, and redundant gates while touching the owning module.
+- Prefer one explicit contract over parallel special cases.
+- Keep heavy CV in workers or low-cadence paths.
+- Add a regression before production behavior changes.
+- Compare `scripts/vision-quality-report.mjs` before/after for tracking, reconstruction, and head attachment deltas.
+- Keep UI diagnostics compact: operational controls by default, details in debug surfaces.
+- Do not add a new model family to the live frame path without a device benchmark and rollback path.
 
 ## Do Not Do Yet
 
-- Do not replace YOLO detection with DEIMv2-Wholebody49 for object selection.
-- Do not download the 956 MB Wholebody49 resource bundle into `public/`.
-- Do not add multiple vision models to the live frame path without a measured cadence and device benchmark.
+- Do not replace tap-first segmentation with detection-box geometry.
+- Do not run SAM 2, DUSt3R, VGGT, Gaussian Splatting, or image-to-3D models in the live mobile frame loop.
 - Do not mix human-body perception and object anchoring in the same worker contract.
-- Do not run heavyweight video object segmentation every frame on mobile until a device benchmark proves it fits.
-- Do not treat single-frame depth as true object reconstruction; use it only as a prior or diagnostic signal.
+- Do not treat monocular depth or generated meshes as measured object geometry.
+- Do not commit model assets or large runtime bundles without measured mobile value.

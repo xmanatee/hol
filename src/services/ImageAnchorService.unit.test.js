@@ -434,6 +434,68 @@ test('non-rigid reconstruction targets keep the conservative position step', () 
   assert.equal(limited.y, 160);
 });
 
+test('mature curved reconstruction can take a larger bounded recovery step', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'can';
+  service.currentPosition = { x: 200, y: 160, z: 0 };
+  service.templateRegion = { width: 120, height: 120 };
+  service.metrics.lastUpdateResult = 'success';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.69;
+  service.metrics.reconstructionMatureLandmarks = 18;
+  service.metrics.reconstructionTrackerDelta = 14;
+  service.metrics.poseInliers = 20;
+
+  const limited = service._limitPositionStep(
+    { x: 240, y: 160, z: 0 },
+    'parametric-surface'
+  );
+
+  assert.ok(limited.x > 211);
+  assert.ok(limited.x < 213);
+  assert.equal(limited.y, 160);
+
+  service.currentPosition = { x: 200, y: 160, z: 0 };
+  const filtered = service._filterPositionCandidate(
+    { x: 240, y: 160, z: 0 },
+    1000,
+    'parametric-surface'
+  );
+
+  assert.ok(filtered.x > 211);
+  assert.ok(filtered.x < 213);
+  assert.equal(service.metrics.positionFilterAdjustment, 'curved-recovery-step-position');
+});
+
+test('selected curved modes can catch up from a held pose with strong reference tracking', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'can';
+  service.currentPosition = { x: 200, y: 160, z: 0 };
+  service.templateRegion = { width: 120, height: 120 };
+  service.metrics.lastUpdateResult = 'success';
+  service.metrics.lastUpdateMethod = 'held-degraded-object-pose';
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'cylinder' },
+  };
+
+  const limited = service._limitPositionStep(
+    {
+      x: 240,
+      y: 160,
+      z: 0,
+      confidence: 0.76,
+      averageResidual: 2.8,
+    },
+    'reference_similarity_transform'
+  );
+
+  assert.ok(limited.x > 217);
+  assert.ok(limited.x <= 220);
+  assert.equal(limited.y, 160);
+});
+
 test('small position updates are not step-limited', () => {
   const service = new ImageAnchorService();
   service.currentPosition = { x: 200, y: 160, z: 0 };
@@ -1276,6 +1338,29 @@ test('landmark metrics report zero object ownership after all active points leav
   assert.equal(service.metrics.objectOwnedLandmarks, 0);
 });
 
+test('landmark metrics expose tracker quality buckets', () => {
+  const service = new ImageAnchorService();
+  service.metrics = {};
+  service.keypointTracker = {
+    trackedPoints: [
+      { id: 1, current: { x: 10, y: 12 }, status: 'active' },
+      { id: 2, current: { x: 24, y: 18 }, status: 'active' },
+      { id: 3, current: { x: 36, y: 26 }, status: 'lost' },
+    ],
+    getLandmarkQualityStats: () => ({
+      average: 0.64,
+      highQuality: 1,
+      poseEligible: 2,
+    }),
+  };
+
+  service._recordLandmarkMetrics();
+
+  assert.equal(service.metrics.averageLandmarkQuality, 0.64);
+  assert.equal(service.metrics.highQualityLandmarks, 1);
+  assert.equal(service.metrics.poseEligibleLandmarks, 2);
+});
+
 test('mask rejection immediately removes background landmarks from pose ownership', () => {
   const service = new ImageAnchorService();
   const data = new Uint8Array(120 * 90);
@@ -1333,6 +1418,7 @@ test('mask rejection immediately removes background landmarks from pose ownershi
 
   assert.equal(rejected, 6);
   assert.equal(service.keypointTracker.trackedPoints.filter(point => point.objectOwned === false).length, 6);
+  assert.equal(service.keypointTracker.trackedPoints.filter(point => point.status === 'outlier').length, 6);
   assert.equal(correspondences.length, 10);
   assert.ok(correspondences.every(correspondence => correspondence.curr.x <= 68));
 });
@@ -1418,6 +1504,54 @@ test('keeps tracking state during the keypoint retry budget', () => {
   assert.equal(state.metrics.keypointFailureCount, 1);
   assert.equal(state.metrics.lostFrameCount, 0);
   assert.match(result.reason, /Optical flow/);
+});
+
+test('max keypoint failures hold degraded pose when template recovery misses', () => {
+  const service = new ImageAnchorService();
+  class FakeMat {
+    delete() {}
+  }
+
+  service.initialized = true;
+  service.anchored = true;
+  service.anchorState = 'tracking';
+  service.maxKeypointFailures = 3;
+  service.keypointFailureCount = 2;
+  service.currentPosition = { x: 140, y: 118, z: 0 };
+  service.currentNormal = { x: 0.2, y: -0.1, z: 0.97 };
+  service.currentPlanarTransform = {
+    scale: 0.92,
+    rotation: -0.14,
+    confidence: 0.62,
+    method: 'parametric-surface',
+  };
+  service.keypointTracker = {
+    trackedPoints: Array.from({ length: 6 }, () => ({ status: 'active' })),
+  };
+  service.cv = {
+    Mat: FakeMat,
+    COLOR_RGBA2GRAY: 0,
+    matFromImageData: () => new FakeMat(),
+    cvtColor: () => {}
+  };
+  service._updateWithKeypoints = () => ({
+    success: false,
+    reason: 'Insufficient keypoint tracking quality',
+    state: 'tracking',
+  });
+  service.persistenceSystem = {
+    attemptRecovery: () => ({ success: false, reason: 'Template match below threshold' }),
+  };
+
+  const result = service.updateAnchor({ width: 320, height: 240 });
+
+  assert.equal(result.success, true);
+  assert.equal(result.method, 'held-degraded-object-pose');
+  assert.equal(result.recoverable, true);
+  assert.deepEqual(result.position, service.currentPosition);
+  assert.deepEqual(result.normal, service.currentNormal);
+  assert.equal(result.planarTransform.scale, 0.92);
+  assert.equal(service.anchorState, 'degraded');
 });
 
 test('keypoint failure recovers through descriptor keyframe relocalization before template fallback', () => {
@@ -1965,7 +2099,7 @@ test('weak sparse segmented recovery keeps transform when every active landmark 
 
 test('mature reconstruction dropout uses object-owned centroid instead of raw similarity drift', () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'book';
   service.currentPosition = { x: 96, y: 84, z: 0 };
   service.objectSupportMask = { source: 'interactive-segmenter' };
@@ -3793,6 +3927,55 @@ test('curved sparse reconstruction uses tracker-local scale when its attachment 
   });
 
   assert.equal(transform.scale, trackerAnchorPosition.scale);
+  assert.equal(transform.rotation, trackerAnchorPosition.rotation);
+});
+
+test('selected curved reconstruction blends tracker scale when selected scale diverges', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'can';
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'cylinder' },
+  };
+  const trackerAnchorPosition = {
+    scale: 0.94,
+    rotation: -0.08,
+    confidence: 0.78,
+    averageResidual: 2.6,
+    inlierCount: 18,
+    method: 'reference_similarity_transform',
+  };
+  const reconstructionPose = {
+    success: true,
+    method: 'parametric-surface',
+    inlierCount: 16,
+    averageResidual: 3.4,
+    confidence: 0.72,
+    normal: { x: 0.18, y: -0.08, z: 0.98 },
+    planarTransform: {
+      scale: 1.38,
+      rotation: 0.24,
+      confidence: 0.72,
+      inlierCount: 16,
+      method: 'parametric-surface',
+    },
+    preview: {
+      surface: { model: 'cylinder' },
+      statistics: { mapConfidence: 0.76 },
+    },
+  };
+
+  assert.equal(service._shouldBlendTrackerScaleForSelectedCurvedTransform({
+    reconstructionPose,
+    trackerAnchorPosition,
+  }), true);
+
+  const transform = service._selectBlendedCurvedAttachmentTransform({
+    trackerAnchorPosition,
+    reconstructionPose
+  });
+
+  assert.equal(transform.scale, Math.sqrt(trackerAnchorPosition.scale * reconstructionPose.planarTransform.scale));
   assert.equal(transform.rotation, trackerAnchorPosition.rotation);
 });
 
