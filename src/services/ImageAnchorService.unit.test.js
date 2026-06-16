@@ -1963,6 +1963,58 @@ test('weak sparse segmented recovery keeps transform when every active landmark 
   }), trackerAnchorPosition);
 });
 
+test('mature reconstruction dropout uses object-owned centroid instead of raw similarity drift', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'book';
+  service.currentPosition = { x: 96, y: 84, z: 0 };
+  service.objectSupportMask = { source: 'interactive-segmenter' };
+  service.metrics = {
+    reconstructionReady: true,
+    reconstructionMapConfidence: 0.68,
+    reconstructionMatureLandmarks: 28,
+    activeLandmarkCount: 16,
+    objectOwnedLandmarks: 15,
+  };
+  service.keypointTracker = {
+    trackedPoints: [
+      { status: 'active', objectOwned: true, current: { x: 94, y: 82 } },
+      { status: 'active', objectOwned: true, current: { x: 102, y: 86 } },
+      { status: 'active', objectOwned: false, current: { x: 130, y: 106 } },
+    ],
+    getCentroidAnchorPosition: points => ({
+      x: 98,
+      y: 84,
+      confidence: 0.22,
+      inlierCount: points.length,
+    }),
+  };
+
+  const selected = service._selectTrackerAnchorPosition({
+    reconstructionPose: {
+      success: false,
+      reason: 'Low affine inlier ratio',
+    },
+    trackerAnchorPosition: {
+      x: 122,
+      y: 98,
+      scale: 1.03,
+      rotation: 0.1,
+      confidence: 0.3,
+      inlierCount: 16,
+      averageResidual: 24,
+      method: 'reference_similarity_transform',
+    },
+  });
+
+  assert.equal(selected.method, 'object-owned-centroid-position');
+  assert.equal(selected.transformMethod, 'reference_similarity_transform');
+  assert.equal(selected.x, 98);
+  assert.equal(selected.y, 84);
+  assert.equal(selected.inlierCount, 2);
+  assert.equal(service.metrics.trackerAnchorAdjustment, 'mature-reconstruction-dropout-centroid');
+});
+
 const createRefreshDecisionService = metrics => {
   const service = new ImageAnchorService();
   service.anchorState = 'tracking';

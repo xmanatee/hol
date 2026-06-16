@@ -2392,6 +2392,29 @@ export class ImageAnchorService {
     }
 
     if (!this._shouldUseCurvedDropoutCentroidPosition({ trackerAnchorPosition, reconstructionPose })) {
+      if (this._shouldUseMatureReconstructionDropoutCentroid({ trackerAnchorPosition, reconstructionPose })) {
+        const centroidPosition = typeof this.keypointTracker.getCentroidAnchorPosition === 'function'
+          ? this.keypointTracker.getCentroidAnchorPosition(this._objectOwnedActivePoints())
+          : null;
+
+        if (centroidPosition) {
+          this.metrics.trackerAnchorAdjustment = 'mature-reconstruction-dropout-centroid';
+          this.metrics.trackerAnchorRawResidual = trackerAnchorPosition.averageResidual ?? null;
+
+          return {
+            ...trackerAnchorPosition,
+            x: centroidPosition.x,
+            y: centroidPosition.y,
+            confidence: Math.min(
+              trackerAnchorPosition.confidence ?? centroidPosition.confidence ?? 0,
+              centroidPosition.confidence ?? trackerAnchorPosition.confidence ?? 0
+            ),
+            inlierCount: centroidPosition.inlierCount ?? trackerAnchorPosition.inlierCount,
+            method: 'object-owned-centroid-position',
+            transformMethod: trackerAnchorPosition.method,
+          };
+        }
+      }
       return trackerAnchorPosition;
     }
 
@@ -2476,6 +2499,33 @@ export class ImageAnchorService {
       residual >= 18 &&
       confidence <= 0.12 &&
       activeLandmarks >= 32;
+  }
+
+  _shouldUseMatureReconstructionDropoutCentroid({ trackerAnchorPosition, reconstructionPose }) {
+    if (!trackerAnchorPosition ||
+        trackerAnchorPosition.method !== 'reference_similarity_transform' ||
+        reconstructionPose?.success ||
+        !isReconstructionMode(this.trackingMode) ||
+        !this._hasPlanarTargetClass() ||
+        !this.currentPosition ||
+        !this.objectSupportMask) {
+      return false;
+    }
+
+    const mapConfidence = this.metrics.reconstructionMapConfidence ?? 0;
+    const matureLandmarks = this.metrics.reconstructionMatureLandmarks ?? 0;
+    const activeLandmarks = this.metrics.activeLandmarkCount || this.metrics.keypointCount || 0;
+    const objectOwnedLandmarks = this.metrics.objectOwnedLandmarks ?? activeLandmarks;
+    const ownedRatio = objectOwnedLandmarks / Math.max(1, activeLandmarks);
+    const residual = trackerAnchorPosition.averageResidual ?? 0;
+
+    return this.metrics.reconstructionReady === true &&
+      mapConfidence >= 0.62 &&
+      matureLandmarks >= 16 &&
+      activeLandmarks >= 8 &&
+      activeLandmarks <= 18 &&
+      residual >= 18 &&
+      ownedRatio >= 0.65;
   }
 
   _selectTrackedAttachmentTransform({ trackerAnchorPosition, reconstructionPose, useTrackedTransform = false }) {
