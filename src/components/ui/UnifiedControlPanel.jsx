@@ -546,7 +546,7 @@ const UnifiedControlPanel = ({
                 <DrawerSection title="Anchor">
                   <AnchorDiagnostics diagnostics={anchorDiagnostics} />
                 </DrawerSection>
-                <DrawerSection title="3D reconstruction" className="bg-white/[0.02]">
+                <DrawerSection title="3D reconstruction">
                   <ReconstructionPreviewSection details={{
                     ...(anchorDiagnostics?.details || {}),
                     poseModel: anchorDiagnostics?.details?.poseModel || anchorTrackingMode,

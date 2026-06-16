@@ -66,7 +66,7 @@ const PreviewSvg = ({ title, points, anchor, surface, normal, projector, embedde
   if (!points.length && !(surface.mesh || []).length) {
     return (
       <div className={embedded
-        ? 'bg-white/[0.03] px-2 py-3 text-center text-[10px] text-gray-500'
+        ? 'rounded-md border border-white/10 bg-black/35 px-2 py-3 text-center text-[10px] text-gray-500'
         : 'rounded border border-gray-800 bg-gray-950 px-2 py-3 text-center text-[10px] text-gray-500'}
       >
         {title}: no points
@@ -101,7 +101,7 @@ const PreviewSvg = ({ title, points, anchor, surface, normal, projector, embedde
   } : null;
 
   return (
-    <div className={embedded ? 'bg-white/[0.03] px-2 py-2' : 'rounded border border-gray-800 bg-gray-950 px-2 py-2'}>
+    <div className={embedded ? 'rounded-md border border-white/10 bg-black/35 px-2 py-2' : 'rounded border border-gray-800 bg-gray-950 px-2 py-2'}>
       <div className="mb-1 text-[10px] uppercase tracking-wide text-gray-500">{title}</div>
       <svg viewBox={`0 0 ${PREVIEW_WIDTH} ${PREVIEW_HEIGHT}`} className="h-24 w-full rounded bg-black">
         <rect x="0" y="0" width={PREVIEW_WIDTH} height={PREVIEW_HEIGHT} fill="#020617" />
@@ -186,16 +186,18 @@ export const ReconstructionPreviewSection = ({ details, embedded = false }) => {
 
   return (
     <div className={embedded ? 'space-y-2' : 'mt-3 rounded border border-gray-800 bg-gray-950/70 p-2'}>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-wide text-gray-500">3D Reconstruction</span>
-        <span className={`rounded border px-1.5 py-0.5 text-[10px] ${
-          isReconstructionMode(details.poseModel)
-            ? 'border-green-700 bg-green-950 text-green-300'
-            : 'border-gray-700 bg-gray-900 text-gray-400'
-        }`}>
-          {isReconstructionMode(details.poseModel) ? 'ON' : 'OFF'}
-        </span>
-      </div>
+      {!embedded && (
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="text-[10px] uppercase tracking-wide text-gray-500">3D Reconstruction</span>
+          <span className={`rounded border px-1.5 py-0.5 text-[10px] ${
+            isReconstructionMode(details.poseModel)
+              ? 'border-green-700 bg-green-950 text-green-300'
+              : 'border-gray-700 bg-gray-900 text-gray-400'
+          }`}>
+            {isReconstructionMode(details.poseModel) ? 'ON' : 'OFF'}
+          </span>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-1 text-[10px] sm:grid-cols-2">
         <PreviewSvg
