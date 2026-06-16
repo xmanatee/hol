@@ -1963,6 +1963,67 @@ test('weak sparse segmented recovery keeps transform when every active landmark 
   }), trackerAnchorPosition);
 });
 
+const createRefreshDecisionService = metrics => {
+  const service = new ImageAnchorService();
+  service.anchorState = 'tracking';
+  service.framesSinceRefresh = 0;
+  service.objectSupportMask = createObjectSupportMask({
+    width: 80,
+    height: 80,
+    data: new Uint8Array(80 * 80).fill(255),
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 40, y: 40 },
+    createdAtFrame: 0,
+  });
+  service.metrics = {
+    trackingSuccessRate: 0.72,
+    keypointCount: 9,
+    activeLandmarkCount: 9,
+    ...metrics,
+  };
+  return service;
+};
+
+test('low object-owned landmark support triggers adaptive refresh after pose dropout', () => {
+  const service = createRefreshDecisionService({
+    objectOwnedLandmarks: 8,
+  });
+
+  assert.equal(service._shouldRefreshKeypoints({
+    overallQuality: 0.36,
+    poseInliers: 0,
+  }), true);
+  assert.equal(service.metrics.landmarkRefreshReason, 'object-support-recovery');
+});
+
+test('fully object-owned sparse support does not bypass refresh cadence', () => {
+  const service = createRefreshDecisionService({
+    objectOwnedLandmarks: 9,
+  });
+
+  assert.equal(service._shouldRefreshKeypoints({
+    overallQuality: 0.36,
+    poseInliers: 0,
+  }), false);
+  assert.equal(service.metrics.landmarkRefreshReason, null);
+});
+
+test('mature reconstruction map blocks sparse support recovery refresh', () => {
+  const service = createRefreshDecisionService({
+    objectOwnedLandmarks: 8,
+    reconstructionReady: true,
+    reconstructionMapConfidence: 0.72,
+    reconstructionMatureLandmarks: 24,
+  });
+
+  assert.equal(service._shouldRefreshKeypoints({
+    overallQuality: 0.36,
+    poseInliers: 0,
+  }), false);
+  assert.equal(service.metrics.landmarkRefreshReason, null);
+});
+
 test('masked recovery refresh forwards adaptive extraction options', () => {
   const service = new ImageAnchorService();
   const maskData = new Uint8Array(120 * 100).fill(255);

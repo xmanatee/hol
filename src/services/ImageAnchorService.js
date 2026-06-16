@@ -1522,12 +1522,32 @@ export class ImageAnchorService {
       this.metrics.trackingSuccessRate >= 0.6 &&
       this.metrics.keypointCount >= 8 &&
       this.metrics.keypointCount < 18;
+    const objectOwnedLandmarks = this.metrics.objectOwnedLandmarks ?? this.metrics.keypointCount;
+    const objectOwnedRatio = objectOwnedLandmarks / Math.max(1, this.metrics.keypointCount);
+    const matureReconstructionReady = this.metrics.reconstructionReady === true &&
+      (this.metrics.reconstructionMapConfidence ?? 0) >= 0.55 &&
+      (this.metrics.reconstructionMatureLandmarks ?? 0) >= 16;
+    const needsObjectSupportRecovery = this.objectSupportMask &&
+      !matureReconstructionReady &&
+      poseInliers < 8 &&
+      this.metrics.trackingSuccessRate >= 0.6 &&
+      this.metrics.keypointCount >= 8 &&
+      this.metrics.keypointCount < 12 &&
+      objectOwnedLandmarks >= 6 &&
+      objectOwnedRatio < 0.95 &&
+      objectOwnedRatio >= 0.65;
 
-    if (this.framesSinceRefresh < this.refreshInterval && !needsOcclusionSupport) {
+    if (this.framesSinceRefresh < this.refreshInterval &&
+        !needsOcclusionSupport &&
+        !needsObjectSupportRecovery) {
       return false;
     }
 
     if (this.metrics.trackingSuccessRate < 0.55 || this.metrics.keypointCount < 12) {
+      if (needsObjectSupportRecovery) {
+        this.metrics.landmarkRefreshReason = 'object-support-recovery';
+        return true;
+      }
       if (needsOcclusionSupport) {
         this.metrics.landmarkRefreshReason = 'occlusion-support';
       }
@@ -1543,10 +1563,13 @@ export class ImageAnchorService {
     const poseNeedsSupport = geometrySupportsMapGrowth && poseInliers < 24;
     const trackingIsUseful = overallQuality >= 0.5 || this.anchorState === 'stable';
 
-    const shouldRefresh = needsOcclusionSupport ||
+    const shouldRefresh = needsObjectSupportRecovery ||
+      needsOcclusionSupport ||
       (geometrySupportsMapGrowth && trackingIsUseful && (mapNeedsExpansion || poseNeedsSupport || this.anchorState === 'stable'));
     if (shouldRefresh) {
-      this.metrics.landmarkRefreshReason = needsOcclusionSupport ? 'occlusion-support' : 'map-growth';
+      this.metrics.landmarkRefreshReason = needsObjectSupportRecovery
+        ? 'object-support-recovery'
+        : needsOcclusionSupport ? 'occlusion-support' : 'map-growth';
     }
     return shouldRefresh;
   }
