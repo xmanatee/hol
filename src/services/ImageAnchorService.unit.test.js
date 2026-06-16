@@ -118,6 +118,39 @@ test('moderate template quality is usable but starts degraded', () => {
   assert.equal(service._getInitialAnchorState(0.31), 'tracking');
 });
 
+test('pose candidate arbitration uses current silhouette evidence', () => {
+  const service = new ImageAnchorService();
+  service.trackingMode = 'sparse-reconstruction';
+  service.metrics.objectOwnedLandmarks = 22;
+  service.metrics.activeLandmarkCount = 24;
+  service.metrics.reconstructionMatureLandmarks = 20;
+  service.metrics.contourFitResidual = 9.4;
+  service.metrics.silhouetteCoverage = 0.16;
+
+  const result = service._recordPoseCandidates({
+    reconstructionPose: createObjectPose({
+      method: 'sparse-reconstruction',
+      confidence: 0.86,
+      inlierCount: 28,
+      averageResidual: 1.2,
+    }),
+    planarPose: createPlanarPose({
+      confidence: 0.62,
+      inlierCount: 20,
+      averageResidual: 2.1,
+    }),
+    objectPose: null,
+    trackerAnchorPosition: null,
+    reconstructionConsistentWithTracker: true,
+  });
+
+  assert.equal(result.selected, null);
+  assert.equal(result.rejected['sparse-reconstruction'].reason, 'silhouette-mismatch');
+  assert.equal(result.rejected['planar-homography'].reason, 'silhouette-mismatch');
+  assert.equal(service.metrics.poseCandidates[0].contourFitResidual, 9.4);
+  assert.equal(service.metrics.poseCandidates[0].silhouetteCoverage, 0.16);
+});
+
 test('object pose is the single anchor pose model', () => {
   const service = new ImageAnchorService();
   const metrics = service.getState().metrics;
@@ -879,6 +912,12 @@ test('weak tap-time object evidence creates a candidate anchor instead of throwi
       method: 'fake-gftt',
       count: 5,
     }),
+    extractAdaptiveKeypoints: () => ({
+      keypoints: Array.from({ length: 5 }, (_, index) => ({ pt: { x: 84 + index * 10, y: 96 + index * 8 }, response: 1 })),
+      descriptors: null,
+      method: 'fake-gftt-adaptive',
+      count: 5,
+    }),
     assessTemplateQuality: () => ({ overall: 0.05, keypointCount: 5, spatialDistribution: 0.1 })
   };
   Object.assign(service.keypointTracker, {
@@ -1526,7 +1565,15 @@ test('weak tap-local evidence records candidate diagnostics instead of failing c
       descriptors: {},
       method: 'fake-orb'
     }),
+    extractAdaptiveKeypoints: () => ({
+      keypoints: Array.from({ length: 20 }, (_, index) => ({ x: 50 + index, y: 60 + index })),
+      descriptors: {},
+      method: 'fake-orb-adaptive'
+    }),
     assessTemplateQuality: () => ({ overall: 0.08 })
+  };
+  service.persistenceSystem = {
+    storeTemplate: () => true
   };
 
   const result = await service.createAnchor(
@@ -2277,6 +2324,23 @@ test('fully object-owned sparse support does not bypass refresh cadence', () => 
     poseInliers: 0,
   }), false);
   assert.equal(service.metrics.landmarkRefreshReason, null);
+});
+
+test('recent support growth refreshes landmarks before pose geometry is ready', () => {
+  const service = createRefreshDecisionService({
+    keypointCount: 20,
+    activeLandmarkCount: 20,
+    objectOwnedLandmarks: 20,
+    segmentationRefreshReason: 'tap-local-support-growth',
+    segmentationRefreshFrame: 12,
+  });
+  service.frameIndex = 12;
+
+  assert.equal(service._shouldRefreshKeypoints({
+    overallQuality: 0.42,
+    poseInliers: 0,
+  }), true);
+  assert.equal(service.metrics.landmarkRefreshReason, 'support-growth');
 });
 
 test('mature reconstruction map blocks sparse support recovery refresh', () => {
@@ -4182,6 +4246,7 @@ test('mature curved pose dropout centroid ignores active landmarks demoted from 
   assert.equal(centroidInput.length, 2);
   assert.equal(centroidInput.every(point => point.objectOwned === true), true);
 });
+
 
 test('selected curved reconstruction modes do not use sparse centroid dropout fallback', () => {
   for (const mode of ['parametric-surface', 'direct-photometric']) {

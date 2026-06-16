@@ -208,7 +208,7 @@ export class AnchorManager {
     }
 
     const position = this.anchorState.position || this.activeAnchor.position;
-    const continuityRadius = this._getSegmentationRefreshRadius(imageData);
+    const refreshRadius = this._getSegmentationRefreshRadius(imageData);
 
     this.segmentationRefreshInFlight = true;
     this.lastSegmentationRefreshAt = now;
@@ -216,14 +216,24 @@ export class AnchorManager {
     this._segmentTapObject({
       imageData,
       tapPosition: position,
+      maxRadius: refreshRadius,
       createdAtFrame: this.anchorState.metrics?.segmentationRefreshFrame || 0,
     }).then(objectSupportMask => {
-      if (objectSupportMask && this._isAcceptableSegmentationRefresh(objectSupportMask, position, continuityRadius)) {
-        const applied = this.imageAnchorService.updateObjectSupportMask(objectSupportMask, {
-          reason: lowObjectOwnership ? 'object-ownership-recovery' : 'periodic-segmentation-refresh',
-        });
-        if (applied && this.activeAnchor) {
-          this.activeAnchor.objectSupportMaskSource = objectSupportMask.source;
+      const acceptedMask = objectSupportMask && this._isAcceptableSegmentationRefresh(objectSupportMask, position, refreshRadius)
+        ? objectSupportMask
+        : this._createTapLocalGrowthMask({ imageData, position, radius: refreshRadius });
+      if (!acceptedMask) {
+        return;
+      }
+
+      const reason = acceptedMask === objectSupportMask
+        ? lowObjectOwnership ? 'object-ownership-recovery' : 'periodic-segmentation-refresh'
+        : 'tap-local-support-growth';
+      const applied = this.imageAnchorService.updateObjectSupportMask(acceptedMask, { reason });
+      if (applied && this.activeAnchor) {
+        this.activeAnchor.objectSupportMaskSource = acceptedMask.source;
+        if (this.activeAnchor.sourceDetection) {
+          this.activeAnchor.sourceDetection.objectSupportMask = acceptedMask;
         }
       }
     }).catch(error => {
@@ -359,6 +369,34 @@ export class AnchorManager {
     const smallerArea = Math.min(maskArea, currentBounds.width * currentBounds.height);
     return overlapArea / Math.max(1, smallerArea) >= 0.18 ||
       Math.hypot(center.x - previousCenter.x, center.y - previousCenter.y) <= continuityRadius;
+  }
+
+  _createTapLocalGrowthMask({ imageData, position, radius }) {
+    const metrics = this.anchorState?.metrics || {};
+    const currentMask = this.activeAnchor?.sourceDetection?.objectSupportMask || null;
+    const currentSource = currentMask?.source ||
+      metrics.objectSupportMaskSource ||
+      this.activeAnchor?.objectSupportMaskSource;
+    if (currentSource !== 'tap-local') {
+      return null;
+    }
+
+    const currentBounds = metrics.currentObjectSupportMaskBounds ||
+      metrics.objectSupportMaskBounds ||
+      currentMask?.bbox ||
+      null;
+    if (currentBounds && radius * 2 <= Math.max(currentBounds.width, currentBounds.height) + 2) {
+      return null;
+    }
+
+    return createTapLocalObjectSupportMask({
+      width: imageData.width,
+      height: imageData.height,
+      referencePoint: position,
+      radius,
+      createdAtFrame: metrics.segmentationRefreshFrame || 0,
+      confidence: Math.min(0.48, (currentMask?.confidence ?? 0.32) + 0.08),
+    });
   }
 
   _createFreeTapDetection(objectSupportMask) {

@@ -128,6 +128,12 @@ const AnchorDiagnostics = ({ diagnostics }) => {
   }
 
   const details = diagnostics.details || {};
+  const refreshValue = details.landmarkRefreshReason
+    ? `${details.landmarkRefreshReason} +${details.landmarkRefreshAdded ?? 0}/${details.landmarkRefreshTotal ?? 0}`
+    : 'idle';
+  const supportValue = details.segmentationRefreshReason
+    ? `${details.segmentationRefreshReason} @ ${details.segmentationRefreshFrame ?? 'N/A'}`
+    : 'idle';
   return (
     <div className="space-y-1 text-xs">
       <div className={cx(
@@ -145,13 +151,27 @@ const AnchorDiagnostics = ({ diagnostics }) => {
       <DiagnosticRow label="Object landmarks" value={details.objectOwnedLandmarks ?? 0} tone={(details.objectOwnedLandmarks ?? 0) >= 8 ? 'good' : 'warn'} />
       <DiagnosticRow label="Mask coverage" value={formatPercent(details.maskCoverage)} tone={(details.maskCoverage ?? 0) > 0.03 ? 'good' : 'warn'} />
       <DiagnosticRow label="Mask source" value={details.currentObjectSupportMaskSource || details.objectSupportMaskSource || 'N/A'} />
+      <DiagnosticRow label="Surface" value={details.surfacePrior || details.surfaceModel || 'N/A'} />
+      <DiagnosticRow label="Surface coverage" value={formatPercent(details.surfaceCoverage)} tone={(details.surfaceCoverage ?? 0) > 0.45 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Silhouette" value={formatPercent(details.silhouetteCoverage)} tone={(details.silhouetteCoverage ?? 0) > 0.35 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Contour residual" value={formatNumber(details.contourFitResidual, 1)} tone={(details.contourFitResidual ?? 0) <= 5 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Locked landmarks" value={details.surfaceLockedLandmarks ?? 0} tone={(details.surfaceLockedLandmarks ?? 0) >= 12 ? 'good' : 'warn'} />
+      <DiagnosticRow label="Occlusion" value={details.occlusionState || 'N/A'} tone={details.occlusionState === 'visible' ? 'good' : 'warn'} />
+      <DiagnosticRow label="Support refresh" value={supportValue} tone={details.segmentationRefreshReason ? 'good' : 'neutral'} />
+      <DiagnosticRow label="Landmark refresh" value={refreshValue} tone={(details.landmarkRefreshAdded ?? 0) > 0 ? 'good' : 'neutral'} />
+      <DiagnosticRow label="Rejected by mask" value={details.landmarkRefreshRejectedByMask ?? 0} />
       <DiagnosticRow label="Tracking success" value={formatPercent(details.trackingSuccessRate)} />
       <DiagnosticRow label="Pose model" value={details.poseModel || 'auto'} />
       <DiagnosticRow label="Pose source" value={details.poseSource || 'N/A'} />
+      <DiagnosticRow label="Pose candidate" value={details.poseCandidateSource || 'N/A'} />
+      <DiagnosticRow label="Pose rejection" value={details.poseRejectedReason || details.poseSourceHoldReason || 'N/A'} />
       <DiagnosticRow label="3D map" value={details.reconstructionState || 'inactive'} tone={details.reconstructionReady ? 'good' : 'warn'} />
       <DiagnosticRow label="3D landmarks" value={details.reconstructionLandmarks ?? 0} />
+      <DiagnosticRow label="3D rejection" value={details.reconstructionPoseRejectedReason || details.reconstructionFailureReason || 'N/A'} />
       <DiagnosticRow label="Processing" value={`${formatNumber(details.processingTime, 1)} ms`} />
       <DiagnosticRow label="Template region" value={formatRegion(details.templateRegion)} />
+      <DiagnosticRow label="Tracking region" value={formatRegion(details.trackingRegion)} />
+      <DiagnosticRow label="Support bounds" value={formatRegion(details.currentObjectSupportMaskBounds || details.objectSupportMaskBounds)} />
     </div>
   );
 };

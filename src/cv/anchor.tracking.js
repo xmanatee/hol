@@ -329,17 +329,15 @@ export class KeypointTracker {
         this.trackingHistory = this.trackingHistory.slice(-this.maxHistory);
       }
 
-      // Try to recover outlier points if we have too few active points
       const finalActiveCount = this.trackedPoints.filter(pt => pt.status === 'active').length;
       if (finalActiveCount < 12) {
         this._recoverOutlierPoints();
       }
 
-      // Clean up inactive keypoints to prevent memory growth and visual clutter
       this._cleanupInactiveKeypoints();
 
       return {
-        success: successRate >= 0.5, // Require at least 50% success rate
+        success: successRate >= 0.5,
         successRate: successRate,
         activePointCount: this.trackedPoints.filter(pt => pt.status === 'active').length,
         averageError: avgError,
@@ -1286,7 +1284,7 @@ export class KeypointTracker {
 
       const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
       const referenceTransformation = this._selectRefreshReferenceTransformation(cv, activePoints);
-      const newKeypoints = adaptive && typeof keypointDetector.extractAdaptiveKeypoints === 'function'
+      const newKeypoints = adaptive
         ? keypointDetector.extractAdaptiveKeypoints(cv, currentGray, region, objectSupportMask, {
             minKeypoints: minNewKeypoints,
           })
@@ -1315,7 +1313,6 @@ export class KeypointTracker {
         logger.debug('KeypointTracker', `Insufficient new keypoints for refresh: ${newKeypoints.keypoints.length}`);
       }
     } catch (error) {
-      // Proper error handling for OpenCV errors
       const errorMessage = typeof error === 'number' ? `OpenCV error code: ${error}` : error.message || 'Unknown error';
       logger.error('KeypointTracker', 'Failed to refresh keypoints:', errorMessage);
     }

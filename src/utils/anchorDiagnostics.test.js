@@ -144,3 +144,90 @@ test('includes object support mask source and preview diagnostics', () => {
   assert.equal(result.details.objectSupportMaskSource, 'warped-mask');
   assert.deepEqual(result.details.objectSupportMaskPreview, maskPreview);
 });
+
+test('includes support growth and landmark refresh diagnostics', () => {
+  const result = describeAnchorState({
+    cameraState: 'active',
+    anchorSystemState: {
+      mode: 'anchor',
+      activeAnchor: { keypoints: 20, quality: 0.28 },
+      anchorState: {
+        anchored: true,
+        state: 'mapping',
+        metrics: {
+          keypointCount: 20,
+          templateQuality: 0.28,
+          segmentationRefreshReason: 'tap-local-support-growth',
+          segmentationRefreshFrame: 12,
+          landmarkRefreshReason: 'support-growth',
+          landmarkRefreshAdded: 18,
+          landmarkRefreshTotal: 38,
+          landmarkRefreshRejectedByMask: 4,
+          trackingRegion: { x: 28, y: 18, width: 112, height: 96 },
+          currentObjectSupportMaskBounds: { x: 35, y: 22, width: 90, height: 82 },
+          reconstructionRegion: { x: 28, y: 18, width: 112, height: 96 },
+          poseRejectedReason: 'Insufficient pose inliers',
+          reconstructionPoseRejectedReason: 'Map not mature',
+        }
+      }
+    }
+  });
+
+  assert.equal(result.details.segmentationRefreshReason, 'tap-local-support-growth');
+  assert.equal(result.details.segmentationRefreshFrame, 12);
+  assert.equal(result.details.landmarkRefreshReason, 'support-growth');
+  assert.equal(result.details.landmarkRefreshAdded, 18);
+  assert.equal(result.details.landmarkRefreshTotal, 38);
+  assert.equal(result.details.landmarkRefreshRejectedByMask, 4);
+  assert.deepEqual(result.details.trackingRegion, { x: 28, y: 18, width: 112, height: 96 });
+  assert.deepEqual(result.details.currentObjectSupportMaskBounds, { x: 35, y: 22, width: 90, height: 82 });
+  assert.deepEqual(result.details.reconstructionRegion, { x: 28, y: 18, width: 112, height: 96 });
+  assert.equal(result.details.poseRejectedReason, 'Insufficient pose inliers');
+  assert.equal(result.details.reconstructionPoseRejectedReason, 'Map not mature');
+});
+
+test('includes object surface and pose candidate diagnostics', () => {
+  const rejected = {
+    reference_similarity_transform: { reason: 'insufficient-object-ownership', score: 0.31 },
+  };
+  const result = describeAnchorState({
+    cameraState: 'active',
+    anchorSystemState: {
+      mode: 'anchor',
+      activeAnchor: { keypoints: 28, quality: 0.42 },
+      anchorState: {
+        anchored: true,
+        state: 'stable',
+        metrics: {
+          keypointCount: 28,
+          templateQuality: 0.42,
+          surfaceCoverage: 0.68,
+          surfacePrior: 'tapered-cylinder',
+          surfaceLockedLandmarks: 19,
+          surfaceContourSegments: 5,
+          silhouetteCoverage: 0.52,
+          contourFitResidual: 2.6,
+          landmarksInsideMask: 24,
+          landmarksOutsideMask: 4,
+          occlusionState: 'visible',
+          poseCandidateSource: 'sparse-reconstruction',
+          poseCandidateScore: 0.77,
+          rejectedPoseCandidates: rejected,
+        }
+      }
+    }
+  });
+
+  assert.equal(result.details.surfaceCoverage, 0.68);
+  assert.equal(result.details.surfacePrior, 'tapered-cylinder');
+  assert.equal(result.details.surfaceLockedLandmarks, 19);
+  assert.equal(result.details.surfaceContourSegments, 5);
+  assert.equal(result.details.silhouetteCoverage, 0.52);
+  assert.equal(result.details.contourFitResidual, 2.6);
+  assert.equal(result.details.landmarksInsideMask, 24);
+  assert.equal(result.details.landmarksOutsideMask, 4);
+  assert.equal(result.details.occlusionState, 'visible');
+  assert.equal(result.details.poseCandidateSource, 'sparse-reconstruction');
+  assert.equal(result.details.poseCandidateScore, 0.77);
+  assert.equal(result.details.rejectedPoseCandidates, rejected);
+});

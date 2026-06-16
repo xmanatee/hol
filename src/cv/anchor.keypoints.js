@@ -54,10 +54,11 @@ export class KeypointDetector {
       roi = image.roi(rect);
     }
 
+    let corners = null;
+    let mask = null;
     try {
-      // Extract corners using goodFeaturesToTrack (Shi-Tomasi)
-      const corners = new cv.Mat();
-      const mask = objectSupportMask && extractionRegion
+      corners = new cv.Mat();
+      mask = objectSupportMask && extractionRegion
         ? createRegionOpenCvMask(cv, objectSupportMask, extractionRegion)
         : new cv.Mat();
       
@@ -93,11 +94,6 @@ export class KeypointDetector {
         });
       }
 
-      // Cleanup
-      corners.delete();
-      mask.delete();
-      if (roi !== image) roi.delete();
-
       logger.debug('KeypointDetector', `Extracted ${keypoints.length} Shi-Tomasi corners`);
       
       return {
@@ -107,11 +103,16 @@ export class KeypointDetector {
         maskSource: objectSupportMask ? objectSupportMask.source : null,
         count: keypoints.length
       };
-      
-    } catch (error) {
-      logger.error('KeypointDetector', 'Error extracting corners:', error);
-      if (roi !== image) roi.delete();
-      return { keypoints: [], descriptors: null, method: 'FAILED', count: 0 };
+    } finally {
+      if (corners) {
+        corners.delete();
+      }
+      if (mask) {
+        mask.delete();
+      }
+      if (roi !== image) {
+        roi.delete();
+      }
     }
   }
 

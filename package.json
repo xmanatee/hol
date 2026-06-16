@@ -12,6 +12,7 @@
     "test:vision:real": "node scripts/test-real-vision-fixtures.mjs",
     "fetch:vision-fixtures": "node scripts/fetch-vision-fixtures.mjs",
     "validate:vision-assets": "node scripts/validate-vision-assets.mjs",
+    "audit:anchor-flow": "node scripts/audit-anchor-flow.mjs",
     "validate": "npm run lint && npm run build && npm run validate:vision-assets && npm test && npm run test:vision",
     "vision:report": "node scripts/vision-replay-report.mjs",
     "vision:quality": "node scripts/vision-quality-report.mjs",

@@ -27,29 +27,19 @@ export class AnchorPersistenceSystem {
     logger.info('AnchorPersistenceSystem', 'Initialized template matching system');
   }
 
-  /**
-   * Store template for later matching
-   * @param {cv.Mat} grayImage - Grayscale image
-   * @param {Object} region - {x, y, width, height}
-   * @param {Object} position - Current anchor position
-   */
   storeTemplate(cv, grayImage, region, position) {
+    let templateRoi = null;
     try {
-      // Extract template region
       const rect = new cv.Rect(region.x, region.y, region.width, region.height);
-      const templateRoi = grayImage.roi(rect);
-      
-      // Store template copy
+      templateRoi = grayImage.roi(rect);
+
       if (this.template) {
         this.template.delete();
       }
       this.template = templateRoi.clone();
-      
-      templateRoi.delete();
-      
+
       const templateCenter = this._getTemplateCenter(region);
 
-      // Store template info
       this.templateRegion = { ...region };
       this.lastKnownPosition = { ...position };
       this.anchorOffset = {
@@ -60,10 +50,10 @@ export class AnchorPersistenceSystem {
       
       logger.info('AnchorPersistenceSystem', `Stored template ${region.width}x${region.height} at (${position.x}, ${position.y})`);
       return true;
-      
-    } catch (error) {
-      logger.error('AnchorPersistenceSystem', 'Error storing template:', error);
-      return false;
+    } finally {
+      if (templateRoi) {
+        templateRoi.delete();
+      }
     }
   }
 

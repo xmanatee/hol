@@ -372,6 +372,7 @@ test('anchor manager refreshes segmentation when object-owned landmark ratio dro
   refreshedMask.bbox = { x: 70, y: 50, width: 21, height: 21 };
 
   let updateReason = null;
+  let receivedMaxRadius = null;
   const manager = new AnchorManager({
     imageAnchorService: {
       setTrackingMode: () => {},
@@ -384,7 +385,7 @@ test('anchor manager refreshes segmentation when object-owned landmark ratio dro
     interactiveSegmenterService: {
       segmentTap: async ({ tapPosition, maxRadius }) => {
         assert.deepEqual(tapPosition, { x: 80, y: 60, z: 0 });
-        assert.equal(maxRadius, undefined);
+        receivedMaxRadius = maxRadius;
         return refreshedMask;
       },
     },
@@ -410,7 +411,77 @@ test('anchor manager refreshes segmentation when object-owned landmark ratio dro
   await new Promise(resolve => setTimeout(resolve, 0));
 
   assert.equal(updateReason, 'object-ownership-recovery');
+  assert.ok(receivedMaxRadius > 28);
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'interactive-segmenter');
+});
+
+test('segmentation refresh expands tap-local fallback support when segmenter returns no mask', async () => {
+  let appliedMask = null;
+  let updateReason = null;
+  const initialMask = createObjectSupportMask({
+    width: 160,
+    height: 120,
+    data: new Uint8Array(160 * 120),
+    source: 'tap-local',
+    confidence: 0.32,
+    referencePoint: { x: 80, y: 60 },
+    createdAtFrame: 0,
+    updatedAtFrame: 0,
+  });
+  for (let y = 52; y <= 68; y++) {
+    for (let x = 72; x <= 88; x++) {
+      initialMask.data[y * initialMask.width + x] = 255;
+    }
+  }
+  initialMask.bbox = { x: 72, y: 52, width: 17, height: 17 };
+
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      updateObjectSupportMask: (mask, { reason }) => {
+        appliedMask = mask;
+        updateReason = reason;
+        return true;
+      },
+    },
+    interactiveSegmenterService: {
+      segmentTap: async () => null,
+    },
+  });
+  manager.initialized = true;
+  manager.mode = 'anchor';
+  manager.activeAnchor = {
+    position: { x: 80, y: 60, z: 0 },
+    objectSupportMaskSource: 'tap-local',
+    sourceDetection: {
+      objectSupportMask: initialMask,
+    },
+  };
+  manager.anchorState = {
+    state: 'tracking',
+    position: { x: 80, y: 60, z: 0 },
+    metrics: {
+      activeLandmarkCount: 20,
+      objectOwnedLandmarks: 20,
+      objectSupportMaskSource: 'tap-local',
+      currentObjectSupportMaskBounds: initialMask.bbox,
+    },
+  };
+  manager.lastSegmentationRefreshAt = -1000;
+
+  assert.equal(manager.refreshSegmentationIfNeeded({
+    width: 160,
+    height: 120,
+    data: new Uint8ClampedArray(160 * 120 * 4),
+  }), true);
+
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(updateReason, 'tap-local-support-growth');
+  assert.equal(appliedMask.source, 'tap-local');
+  assert.ok(appliedMask.bbox.width > initialMask.bbox.width * 2);
+  assert.ok(appliedMask.bbox.height > initialMask.bbox.height * 2);
+  assert.equal(manager.activeAnchor.objectSupportMaskSource, 'tap-local');
 });
 
 test('segmentation refresh radius starts local and grows with object evidence', () => {
