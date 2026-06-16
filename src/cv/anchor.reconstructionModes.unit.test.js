@@ -133,9 +133,28 @@ test('reconstruction mode registry exposes the three selectable engines', () => 
   for (const mode of RECONSTRUCTION_MODES) {
     const engine = createReconstructionEngine(mode.id);
     assert.equal(typeof engine.reset, 'function');
+    assert.equal(typeof engine.updateReferenceRegion, 'function');
     assert.equal(typeof engine.addFrameFromTrackedPoints, 'function');
     assert.equal(typeof engine.estimatePoseFromTrackedPoints, 'function');
     assert.equal(typeof engine.getState, 'function');
+  }
+});
+
+test('reconstruction engines update object reference region without resetting mapped observations', () => {
+  for (const mode of RECONSTRUCTION_MODES) {
+    const engine = createReconstructionEngine(mode.id);
+    engine.reset({
+      anchorReference: { x: 120, y: 160 },
+      templateRegion: { x: 98, y: 138, width: 44, height: 44 },
+      targetClass: null,
+    });
+    engine.frames.push({ observations: [] });
+
+    engine.updateReferenceRegion({ x: 64, y: 52, width: 94, height: 180 }, null);
+
+    assert.deepEqual(engine.templateRegion, { x: 64, y: 52, width: 94, height: 180 });
+    assert.equal(engine.frames.length, 1);
+    assert.equal(engine.targetSurfaceModel || engine.model || engine.surfaceModel, 'cylinder');
   }
 });
 

@@ -279,6 +279,12 @@ export class SparseObjectReconstructor {
     this.landmarkStats = new Map();
   }
 
+  updateReferenceRegion(templateRegion, targetClass = this.targetClass) {
+    this.templateRegion = { ...templateRegion };
+    this.targetClass = targetClass;
+    this.targetSurfaceModel = modelFromRegion(templateRegion, targetClass);
+  }
+
   addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now()) {
     const observations = trackedPoints
       .filter(point => point.status === 'active')

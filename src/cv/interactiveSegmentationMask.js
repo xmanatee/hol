@@ -1,4 +1,5 @@
 import {
+  constrainObjectSupportMaskToTapLocalCircle,
   createObjectSupportMask,
   keepConnectedComponentContainingPoint,
   OBJECT_SUPPORT_MASK_SOURCES,
@@ -13,6 +14,7 @@ export const createInteractiveObjectSupportMask = ({
   threshold,
   referencePoint,
   createdAtFrame,
+  maxRadius = null,
 }) => {
   const data = new Uint8Array(frameWidth * frameHeight);
   let confidenceSum = 0;
@@ -38,7 +40,7 @@ export const createInteractiveObjectSupportMask = ({
     point: referencePoint,
   });
 
-  return createObjectSupportMask({
+  const connectedMask = createObjectSupportMask({
     width: frameWidth,
     height: frameHeight,
     data: connectedData,
@@ -47,5 +49,15 @@ export const createInteractiveObjectSupportMask = ({
     referencePoint,
     createdAtFrame,
     updatedAtFrame: createdAtFrame,
+  });
+
+  if (!Number.isFinite(maxRadius)) {
+    return connectedMask;
+  }
+
+  return constrainObjectSupportMaskToTapLocalCircle({
+    objectSupportMask: connectedMask,
+    referencePoint,
+    radius: maxRadius,
   });
 };

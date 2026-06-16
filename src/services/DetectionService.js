@@ -10,7 +10,7 @@ export class DetectionService {
     this.listeners = new Set();
     this.frameCounter = 0;
     this.detectionInterval = 4; // Run detection every 4th frame
-    this.detectionEnabled = true; // Can disable detection for anchor mode
+    this.detectionEnabled = false; // Debug-only by default; anchoring is tap/segmentation driven
   }
 
   addListener(listener) {

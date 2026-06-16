@@ -8,7 +8,7 @@ export class InteractiveSegmenterService {
     this.nextRequestId = 1;
   }
 
-  segmentTap({ imageData, tapPosition, createdAtFrame }) {
+  segmentTap({ imageData, tapPosition, createdAtFrame, maxRadius = null }) {
     const requestId = this.nextRequestId++;
     const copiedImageData = {
       width: imageData.width,
@@ -29,6 +29,7 @@ export class InteractiveSegmenterService {
           imageData: copiedImageData,
           tapPosition: { ...tapPosition },
           createdAtFrame,
+          maxRadius,
         }, [copiedImageData.data.buffer]);
       }, error => {
         if (this.pendingRequests.has(requestId)) {

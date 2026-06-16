@@ -62,10 +62,13 @@ const facePolygons = (faces, byId) => faces
   }))
   .filter(item => item.points.length >= 3);
 
-const PreviewSvg = ({ title, points, anchor, surface, normal, projector }) => {
+const PreviewSvg = ({ title, points, anchor, surface, normal, projector, embedded = false }) => {
   if (!points.length && !(surface.mesh || []).length) {
     return (
-      <div className="rounded border border-gray-800 bg-gray-950 px-2 py-3 text-center text-[10px] text-gray-500">
+      <div className={embedded
+        ? 'bg-white/[0.03] px-2 py-3 text-center text-[10px] text-gray-500'
+        : 'rounded border border-gray-800 bg-gray-950 px-2 py-3 text-center text-[10px] text-gray-500'}
+      >
         {title}: no points
       </div>
     );
@@ -98,7 +101,7 @@ const PreviewSvg = ({ title, points, anchor, surface, normal, projector }) => {
   } : null;
 
   return (
-    <div className="rounded border border-gray-800 bg-gray-950 px-2 py-2">
+    <div className={embedded ? 'bg-white/[0.03] px-2 py-2' : 'rounded border border-gray-800 bg-gray-950 px-2 py-2'}>
       <div className="mb-1 text-[10px] uppercase tracking-wide text-gray-500">{title}</div>
       <svg viewBox={`0 0 ${PREVIEW_WIDTH} ${PREVIEW_HEIGHT}`} className="h-24 w-full rounded bg-black">
         <rect x="0" y="0" width={PREVIEW_WIDTH} height={PREVIEW_HEIGHT} fill="#020617" />
@@ -165,7 +168,7 @@ const PreviewSvg = ({ title, points, anchor, surface, normal, projector }) => {
   );
 };
 
-export const ReconstructionPreviewSection = ({ details }) => {
+export const ReconstructionPreviewSection = ({ details, embedded = false }) => {
   const preview = details.reconstructionPreview;
   const current = preview?.current;
   const planar = details.planarTransform ?? current?.planarTransform;
@@ -182,7 +185,7 @@ export const ReconstructionPreviewSection = ({ details }) => {
   const totalLandmarks = preview?.landmarkCount ?? details.reconstructionLandmarks ?? 0;
 
   return (
-    <div className="mt-3 rounded border border-gray-800 bg-gray-950/70 p-2">
+    <div className={embedded ? 'space-y-2' : 'mt-3 rounded border border-gray-800 bg-gray-950/70 p-2'}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-[10px] uppercase tracking-wide text-gray-500">3D Reconstruction</span>
         <span className={`rounded border px-1.5 py-0.5 text-[10px] ${
@@ -205,6 +208,7 @@ export const ReconstructionPreviewSection = ({ details }) => {
             y: point.y * 0.35 + point.z * 0.75,
             depth: point.z,
           })}
+          embedded={embedded}
         />
         <PreviewSvg
           title="Live"
@@ -217,6 +221,7 @@ export const ReconstructionPreviewSection = ({ details }) => {
             y: point.y,
             depth: 0,
           })}
+          embedded={embedded}
         />
       </div>
 

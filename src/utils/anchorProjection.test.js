@@ -195,7 +195,7 @@ test('uses live service position instead of stale active anchor position', () =>
   assert.deepEqual(transform.position.map(round), [0, 0, 0]);
 });
 
-test('uses selected template region as the overlay footprint before whole detection box', () => {
+test('uses object support region as the overlay footprint before local template box', () => {
   const fullDetectionScale = computeAnchorOverlayTransform({
     width: 1280,
     height: 720,
@@ -211,7 +211,7 @@ test('uses selected template region as the overlay footprint before whole detect
     },
   }).scale;
 
-  const templateScale = computeAnchorOverlayTransform({
+  const objectSupportScale = computeAnchorOverlayTransform({
     width: 1280,
     height: 720,
     activeAnchor: {
@@ -224,13 +224,13 @@ test('uses selected template region as the overlay footprint before whole detect
       position: { x: 640, y: 360, z: 0 },
       normal: { x: 0, y: 0, z: 1 },
       metrics: {
+        currentObjectSupportMaskBounds: { x: 420, y: 120, width: 440, height: 560 },
         templateRegion: { x: 588, y: 300, width: 104, height: 120 },
       },
     },
   }).scale;
 
-  assert.ok(templateScale < fullDetectionScale * 0.35);
-  assert.ok(templateScale > 0.28);
+  assert.equal(objectSupportScale, fullDetectionScale);
 });
 
 test('hides the overlay when no live anchor is available', () => {

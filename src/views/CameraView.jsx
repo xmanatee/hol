@@ -13,10 +13,6 @@ import { collectRuntimeReadiness } from '../utils/runtimeReadiness.js';
 import { RECONSTRUCTION_POSE_MODEL, isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
 import { shouldAutoStartObjectVoice } from '../audio/objectVoicePolicy.js';
 import { shouldRenderAnchorOverlay } from '../utils/overlayVisibility.js';
-import {
-  clampControlPanelWidth,
-  createDefaultControlPanelWidth,
-} from '../utils/controlPanelState.js';
 
 const OverlayScene = lazy(() => import('../scenes/OverlayScene.jsx'));
 
@@ -39,7 +35,7 @@ const StartScreen = ({ cameraState, cameraError, onStartCamera }) => {
           High on Life
         </h1>
         <p className="text-base mb-8 text-gray-400">
-          Point your camera at bottles and cans to bring them to life
+          Tap an object in view to bring it to life
         </p>
         <button
           onClick={onStartCamera}
@@ -106,7 +102,6 @@ const CameraView = () => {
   const [manualRotation, setManualRotation] = useState({ x: 0, y: 0, z: 0 });
   const [anchorFeedback, setAnchorFeedback] = useState(null);
   const [controlPanelVisible, setControlPanelVisible] = useState(false);
-  const [controlPanelWidth, setControlPanelWidth] = useState(() => createDefaultControlPanelWidth(window.innerWidth));
   
   // Microphone state
   const [microphoneMode, setMicrophoneMode] = useState(false);
@@ -141,6 +136,7 @@ const CameraView = () => {
     detectObjects,
     processDetections,
     updateAnchor,
+    refreshAnchorSegmentation,
     createAnchorFromTap,
     clearAnchor,
     findDetectionAtPosition,
@@ -149,31 +145,15 @@ const CameraView = () => {
     stopTTS,
     speakGreeting,
     setCurrentCanvas,
-    setAnchorTrackingMode
+    setAnchorTrackingMode,
+    setDetectionEnabled
   } = useCameraSystem({ onMetricUpdate: updateMetric });
   const throttledFrame = useFrameRate(30);
   const anchorDiagnostics = useMemo(() => describeAnchorState({
     cameraState,
     anchorSystemState
   }), [cameraState, anchorSystemState]);
-  const cameraViewportStyle = useMemo(() => (
-    controlPanelVisible && cameraState === 'active'
-      ? { width: `calc(100vw - ${controlPanelWidth}px)` }
-      : {}
-  ), [cameraState, controlPanelVisible, controlPanelWidth]);
-
-  useEffect(() => {
-    const handleResize = () => {
-      setControlPanelWidth(width => clampControlPanelWidth(width, window.innerWidth));
-    };
-
-    window.addEventListener('resize', handleResize);
-    window.addEventListener('orientationchange', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      window.removeEventListener('orientationchange', handleResize);
-    };
-  }, []);
+  const cameraViewportStyle = useMemo(() => ({}), []);
 
   useEffect(() => () => {
     if (anchorFeedbackTimeoutRef.current) {
@@ -235,10 +215,13 @@ const CameraView = () => {
     if (config.detectionInterval) {
       services.detection.setDetectionInterval(config.detectionInterval);
     }
-    if (config.anchorTrackingMode) {
-      setAnchorTrackingMode(config.anchorTrackingMode);
+    if (typeof config.detectionEnabled === 'boolean') {
+      setDetectionEnabled(config.detectionEnabled);
     }
-  }, [services.detection, setAnchorTrackingMode]);
+    if (config.anchorTrackingMode) {
+      setAnchorTrackingMode(config.anchorTrackingMode === 'auto' ? RECONSTRUCTION_POSE_MODEL : config.anchorTrackingMode);
+    }
+  }, [services.detection, setAnchorTrackingMode, setDetectionEnabled]);
 
   const handleGeneratePersonality = useCallback(async () => {
     if (anchorSystemState.mode !== 'anchor' || !anchorSystemState.activeAnchor || !canvasRef.current) {
@@ -331,7 +314,7 @@ const CameraView = () => {
     }
   }, [microphoneMode]);
 
-  // Handle canvas tap for detection selection or anchor clearing
+  // Handle canvas tap for anchor creation or clearing
   const handleCanvasTap = useCallback(async (event, canvas) => {
     if (!canvas || !cvLoaded || !anchorSystemState.initialized) {
       return;
@@ -348,73 +331,55 @@ const CameraView = () => {
     const position = { x, y };
 
     if (anchorSystemState.mode === 'detection') {
-      // In detection mode: create anchor from tap
-      if (anchorSystemState.detections.length === 0) {
-        logger.info('CameraView', 'No detections available for anchor creation');
-        showAnchorFeedback('No selectable object detected yet. Keep the label in view.', 'warn');
-        return;
-      }
-
       const detection = findDetectionAtPosition(position);
-      if (detection) {
-        try {
-          // Get current image data
-          const ctx = canvas.getContext('2d', { willReadFrequently: true });
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          
-          logger.info('CameraView', `Creating anchor at (${position.x.toFixed(1)}, ${position.y.toFixed(1)}) on detection:`, {
-            detection: {
+      try {
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+        logger.info('CameraView', `Creating tap-local anchor at (${position.x.toFixed(1)}, ${position.y.toFixed(1)})`, {
+          detection: detection
+            ? {
               class: detection.class,
               confidence: detection.confidence?.toFixed(3),
               bbox: `${detection.x1?.toFixed(1)},${detection.y1?.toFixed(1)} -> ${detection.x2?.toFixed(1)},${detection.y2?.toFixed(1)}`
-            },
-            imageSize: `${imageData.width}x${imageData.height}`,
-            canvasSize: `${canvas.width}x${canvas.height}`
-          });
-          
-          const result = await createAnchorFromTap(position, imageData);
-          
-          if (result.success) {
-            logger.info('CameraView', `Anchor created successfully:`, {
-              keypoints: result.keypoints,
-              quality: result.quality?.toFixed(3),
-              method: result.method,
-              position: result.position
-            });
-            const qualityLabel = result.state === 'degraded' ? 'weak' : 'solid';
-            if (result.state === 'candidate' || result.state === 'mapping') {
-              showAnchorFeedback(`Object selected. Building support from ${result.evidence?.objectOwnedLandmarks || result.keypoints} object landmarks.`, 'warn');
-            } else if (isReconstructionMode(result.trackingMode)) {
-              showAnchorFeedback(`Anchor created with ${result.keypoints} keypoints. Slowly turn and tilt the object to build the 3D map.`, 'warn');
-            } else {
-              showAnchorFeedback(`Anchor created with ${result.keypoints} keypoints (${qualityLabel} lock).`, result.state === 'degraded' ? 'warn' : 'good');
-              if (shouldAutoStartObjectVoice({
-                trackingMode: result.trackingMode,
-                reconstructionReady: false,
-                hasUserGesture: true,
-              })) {
-                generateAndSpeakForAnchor(imageData, result.position, detection);
-              }
             }
-          } else {
-            logger.warn('CameraView', 'Anchor creation failed:', result);
-            showAnchorFeedback('Anchor was not created. Try a sharper textured area.', 'warn');
-          }
-        } catch (error) {
-          logger.warn('CameraView', `Anchor not created: ${error.message}`);
-          updateMetric('Anchor creation', error.message);
-          showAnchorFeedback(`Anchor not created: ${error.message}`, 'bad');
-        }
-      } else {
-        logger.warn('CameraView', 'No detection found at tap position:', {
-          tapPosition: position,
-          availableDetections: anchorSystemState.detections?.map(d => ({
-            class: d.class,
-            bbox: `${d.x1?.toFixed(1)},${d.y1?.toFixed(1)} -> ${d.x2?.toFixed(1)},${d.y2?.toFixed(1)}`,
-            confidence: d.confidence?.toFixed(3)
-          }))
+            : null,
+          imageSize: `${imageData.width}x${imageData.height}`,
+          canvasSize: `${canvas.width}x${canvas.height}`
         });
-        showAnchorFeedback('Tap inside a highlighted object to create an anchor.', 'warn');
+
+        const result = await createAnchorFromTap(position, imageData);
+
+        if (result.success) {
+          logger.info('CameraView', 'Anchor created successfully:', {
+            keypoints: result.keypoints,
+            quality: result.quality?.toFixed(3),
+            method: result.method,
+            position: result.position
+          });
+          const qualityLabel = result.state === 'degraded' ? 'weak' : 'solid';
+          if (result.state === 'candidate' || result.state === 'mapping') {
+            showAnchorFeedback(`Object selected. Building support from ${result.evidence?.objectOwnedLandmarks || result.keypoints} object landmarks.`, 'warn');
+          } else if (isReconstructionMode(result.trackingMode)) {
+            showAnchorFeedback(`Anchor created with ${result.keypoints} local points. Move slowly to build the 3D map.`, 'warn');
+          } else {
+            showAnchorFeedback(`Anchor created with ${result.keypoints} local points (${qualityLabel} lock).`, result.state === 'degraded' ? 'warn' : 'good');
+            if (shouldAutoStartObjectVoice({
+              trackingMode: result.trackingMode,
+              reconstructionReady: false,
+              hasUserGesture: true,
+            })) {
+              generateAndSpeakForAnchor(imageData, result.position, detection);
+            }
+          }
+        } else {
+          logger.warn('CameraView', 'Anchor creation failed:', result);
+          showAnchorFeedback('Anchor was not created. Try a sharper textured area.', 'warn');
+        }
+      } catch (error) {
+        logger.warn('CameraView', `Anchor not created: ${error.message}`);
+        updateMetric('Anchor creation', error.message);
+        showAnchorFeedback(`Anchor not created: ${error.message}`, 'bad');
       }
     } else if (anchorSystemState.mode === 'anchor') {
       // In anchor mode: clear anchor on tap
@@ -422,7 +387,7 @@ const CameraView = () => {
       autoVoiceRequestRef.current++;
       mapReadyAnchorRef.current = null;
       clearAnchor();
-      showAnchorFeedback('Anchor cleared. Detection is active again.', 'good');
+      showAnchorFeedback('Anchor cleared. Tap any object to anchor again.', 'good');
     }
   }, [cvLoaded, anchorSystemState, findDetectionAtPosition, createAnchorFromTap, clearAnchor, updateMetric, showAnchorFeedback, generateAndSpeakForAnchor]);
 
@@ -489,7 +454,7 @@ const CameraView = () => {
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
         if (anchorSystemState.mode === 'detection') {
-          // Detection mode: run YOLO detection periodically
+          // Optional detection overlay for debug mode.
           frameCountRef.current++;
           const shouldDetect = frameCountRef.current % 4 === 0 && detectionState.isModelLoaded && detectionState.detectionEnabled;
 
@@ -497,7 +462,6 @@ const CameraView = () => {
             detectObjects(imageData);
           }
           
-          // Process new detections if available
           if (detectionState.lastDetections && detectionState.lastDetections !== lastProcessedDetections) {
             processDetections(detectionState.lastDetections, imageData);
             setLastProcessedDetections(detectionState.lastDetections);
@@ -505,8 +469,8 @@ const CameraView = () => {
         } else if (anchorSystemState.mode === 'anchor') {
           // Anchor mode: update image-based anchor tracking
           const updateResult = updateAnchor(imageData);
+          refreshAnchorSegmentation(imageData);
           
-          // Log tracking updates every 30 frames (~1s at 30fps) to avoid spam
           if (frameCountRef.current % 30 === 0) {
             logger.debug('CameraView', 'Anchor tracking update:', {
               success: updateResult?.success,
@@ -520,15 +484,12 @@ const CameraView = () => {
           }
         }
 
-        // Draw overlay based on current mode
-        if (anchorSystemState.mode === 'detection') {
-          // Draw detection boxes
+        if (anchorSystemState.mode === 'detection' && detectionState.detectionEnabled) {
           renderDetectionOverlay(ctx, {
             detections: anchorSystemState.detections,
             mode: 'detection'
           });
         } else if (anchorSystemState.mode === 'anchor' && anchorSystemState.activeAnchor) {
-          // Draw anchor visualization
           renderDetectionOverlay(ctx, {
             anchor: anchorSystemState.activeAnchor,
             anchorState: anchorSystemState.anchorState,
@@ -543,8 +504,6 @@ const CameraView = () => {
           anchorSystemState.detections?.length || 0 : 
           (anchorSystemState.activeAnchor ? 1 : 0);
         
-        // Debug: logger.info('Metrics', 'Updating:', { fps, frameTime, processingTime, objectCount });
-        
         if (typeof fps === 'number' && !isNaN(fps)) {
           updateMetric('Capture FPS', fps);
         }
@@ -554,7 +513,6 @@ const CameraView = () => {
         updateMetric('Detection amortized cost', processingTime);
         updateMetric('Object Count', objectCount);
         
-        // Debug: Count stable anchors for sparkles
         const stableAnchorCount = anchorSystemState?.anchorState?.state === 'stable' ? 1 : 0;
         updateMetric('Stable Anchors', stableAnchorCount);
         
@@ -562,7 +520,6 @@ const CameraView = () => {
         if (anchorSystemState?.activeAnchor) {
           const anchorState = anchorSystemState.anchorState;
           if (anchorState) {
-            // Update metrics based on new anchor system structure
             const stabilityScore = anchorState.confidence || 0;
             updateMetric('Stability score', stabilityScore.toFixed(3));
             
@@ -680,10 +637,7 @@ const CameraView = () => {
       {cameraState === 'active' && (
         <UnifiedControlPanel
           cameraState={cameraState}
-          detectionInitialized={detectionState.isInitialized}
-          isModelLoaded={detectionState.isModelLoaded}
-          detectionError={detectionState.error}
-          trackedObjects={anchorSystemState?.mode === 'detection' ? (anchorSystemState.detections || []) : []}
+          detectionEnabled={detectionState.detectionEnabled}
           activeTrackId={anchorSystemState?.activeAnchor ? 'anchor' : null}
           showStats={showStats}
           onToggleStats={() => setShowStats(!showStats)}
@@ -718,9 +672,7 @@ const CameraView = () => {
           microphoneGain={microphoneGain}
           microphoneDebugMode={microphoneDebugMode}
           isVisible={controlPanelVisible}
-          panelWidth={controlPanelWidth}
           onVisibilityChange={setControlPanelVisible}
-          onPanelWidthChange={setControlPanelWidth}
         />
       )}
     </div>

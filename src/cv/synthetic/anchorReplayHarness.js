@@ -143,7 +143,7 @@ export const replayImageAnchorSequence = async ({
   cv,
   sequence,
   trackingMode = 'sparse-reconstruction',
-  useObjectSupportMask = false,
+  useObjectSupportMask = true,
 }) => {
   setupOpenCvGlobals(cv);
 

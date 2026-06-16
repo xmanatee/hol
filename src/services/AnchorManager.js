@@ -2,7 +2,11 @@ import { ImageAnchorService } from './ImageAnchorService.js';
 import { InteractiveSegmenterService } from './InteractiveSegmenterService.js';
 import { HomographyEstimator } from '../cv/anchor.homography.js';
 import { RECONSTRUCTION_POSE_MODEL } from '../cv/anchor.reconstructionModes.js';
-import { createTapLocalDetectionObjectSupportMask } from '../cv/objectSupportMask.js';
+import {
+  calculateTapLocalRadius,
+  createTapLocalObjectSupportMask,
+  isPointInsideObjectSupport,
+} from '../cv/objectSupportMask.js';
 import { logger } from '../utils/logger.js';
 
 export class AnchorManager {
@@ -15,9 +19,8 @@ export class AnchorManager {
     this.trackingMode = RECONSTRUCTION_POSE_MODEL;
     this.imageAnchorService.setTrackingMode(this.trackingMode);
     
-    // State management
-    this.mode = 'detection'; // 'detection' or 'anchor'
-    this.detections = []; // Store last detections for tap selection
+    this.mode = 'detection';
+    this.detections = [];
     this.activeAnchor = null;
     this.anchorState = null;
     this.listeners = new Set();
@@ -25,27 +28,19 @@ export class AnchorManager {
     
     // Camera parameters for homography estimation
     this.cameraParams = null;
+    this.segmentationRefreshInFlight = false;
+    this.lastSegmentationRefreshAt = 0;
+    this.segmentationRefreshIntervalMs = 500;
   }
 
   async initialize(cv, viewportWidth, viewportHeight, fov = 63) {
     if (!this.initialized) {
       logger.info('AnchorManager', 'Starting initialization...');
-      try {
-        // Calculate camera parameters from viewport and FOV
-        this.cameraParams = HomographyEstimator.createCameraMatrix(fov, viewportWidth, viewportHeight);
-        
-        // Initialize image anchor service
-        await this.imageAnchorService.initialize(cv, this.cameraParams);
-        
-        // Listen to anchor updates
-        this.imageAnchorService.addListener(this._onAnchorUpdate.bind(this));
-        
-        this.initialized = true;
-        logger.info('AnchorManager', 'Successfully initialized image-based anchor system');
-      } catch (error) {
-        logger.error('AnchorManager', 'Initialization failed:', error);
-        throw error;
-      }
+      this.cameraParams = HomographyEstimator.createCameraMatrix(fov, viewportWidth, viewportHeight);
+      await this.imageAnchorService.initialize(cv, this.cameraParams);
+      this.imageAnchorService.addListener(this._onAnchorUpdate.bind(this));
+      this.initialized = true;
+      logger.info('AnchorManager', 'Successfully initialized image-based anchor system');
     }
   }
 
@@ -55,7 +50,7 @@ export class AnchorManager {
   }
 
   /**
-   * Process detections from YOLO (only used in detection mode)
+   * Process optional debug detections.
    * @param {Array} detections - Detection results
    * @param {ImageData} imageData - Current frame
    * @returns {Array} Processed detections for UI display
@@ -65,7 +60,6 @@ export class AnchorManager {
       return [];
     }
 
-    // Store detections for potential tap selection
     this.detections = detections.map(detection => ({
       ...detection,
       id: `${detection.class}-${Math.round(detection.x1)}-${Math.round(detection.y1)}-${Math.round(detection.x2)}-${Math.round(detection.y2)}`
@@ -102,7 +96,7 @@ export class AnchorManager {
   }
 
   /**
-   * Select detection and create image-based anchor
+   * Create an image anchor from a tap.
    * @param {Object} tapPosition - {x, y} coordinates
    * @param {ImageData} imageData - Current frame
    * @returns {Object} Creation result
@@ -113,25 +107,14 @@ export class AnchorManager {
     }
 
     const selectedDetection = this.findDetectionAtPosition(tapPosition);
-
-    let segmentedObjectSupportMask = null;
-    try {
-      segmentedObjectSupportMask = await this.interactiveSegmenterService.segmentTap({
-        imageData,
-        tapPosition,
-        createdAtFrame: 0,
-      });
-    } catch (error) {
-      logger.warn('AnchorManager', `Tap segmentation unavailable; using weak tap-local detection support: ${error.message}`);
-    }
-
-    if (!selectedDetection && !this._hasUsableObjectSupportMask(segmentedObjectSupportMask)) {
-      throw new Error('No detection selected at tap position and tap segmentation did not identify an object');
-    }
+    const segmentedObjectSupportMask = await this._segmentTapObject({
+      imageData,
+      tapPosition,
+      createdAtFrame: 0,
+    });
 
     const objectSupportMask = this._selectTapObjectSupportMask({
       segmentedObjectSupportMask,
-      selectedDetection,
       imageData,
       tapPosition,
     });
@@ -171,20 +154,82 @@ export class AnchorManager {
     return result;
   }
 
+  refreshSegmentationIfNeeded(imageData) {
+    if (!this.initialized ||
+        this.mode !== 'anchor' ||
+        !this.activeAnchor ||
+        !this.anchorState ||
+        this.segmentationRefreshInFlight) {
+      return false;
+    }
+
+    const now = performance.now();
+    const lowObjectOwnership = this._hasLowObjectOwnership();
+    const due = now - this.lastSegmentationRefreshAt >= this.segmentationRefreshIntervalMs;
+    const stableEnough = ['mapping', 'tracking', 'stable', 'degraded'].includes(this.anchorState.state);
+    if (!stableEnough || (!due && !lowObjectOwnership)) {
+      return false;
+    }
+
+    const position = this.anchorState.position || this.activeAnchor.position;
+    const continuityRadius = this._getSegmentationRefreshRadius(imageData);
+
+    this.segmentationRefreshInFlight = true;
+    this.lastSegmentationRefreshAt = now;
+
+    this._segmentTapObject({
+      imageData,
+      tapPosition: position,
+      createdAtFrame: this.anchorState.metrics?.segmentationRefreshFrame || 0,
+    }).then(objectSupportMask => {
+      if (objectSupportMask && this._isAcceptableSegmentationRefresh(objectSupportMask, position, continuityRadius)) {
+        const applied = this.imageAnchorService.updateObjectSupportMask(objectSupportMask, {
+          reason: lowObjectOwnership ? 'object-ownership-recovery' : 'periodic-segmentation-refresh',
+        });
+        if (applied && this.activeAnchor) {
+          this.activeAnchor.objectSupportMaskSource = objectSupportMask.source;
+        }
+      }
+    }).catch(error => {
+      logger.warn('AnchorManager', `Segmentation refresh unavailable: ${error.message}`);
+    }).finally(() => {
+      this.segmentationRefreshInFlight = false;
+    });
+
+    return true;
+  }
+
+  async _segmentTapObject({ imageData, tapPosition, maxRadius, createdAtFrame }) {
+    try {
+      const objectSupportMask = await this.interactiveSegmenterService.segmentTap({
+        imageData,
+        tapPosition,
+        maxRadius,
+        createdAtFrame,
+      });
+
+      if (this._hasUsableObjectSupportMask(objectSupportMask)) {
+        return objectSupportMask;
+      }
+    } catch (error) {
+      logger.warn('AnchorManager', `Tap segmentation unavailable; using tap-local support: ${error.message}`);
+    }
+
+    return null;
+  }
+
   _selectTapObjectSupportMask({
     segmentedObjectSupportMask,
-    selectedDetection,
     imageData,
     tapPosition,
   }) {
-    if (this._hasUsableObjectSupportMask(segmentedObjectSupportMask)) {
+    if (this._isAcceptableTapObjectSupportMask(segmentedObjectSupportMask, tapPosition, imageData)) {
       return segmentedObjectSupportMask;
     }
 
-    return createTapLocalDetectionObjectSupportMask({
+    return createTapLocalObjectSupportMask({
       width: imageData.width,
       height: imageData.height,
-      detection: selectedDetection,
       referencePoint: tapPosition,
       createdAtFrame: 0,
     });
@@ -192,6 +237,92 @@ export class AnchorManager {
 
   _hasUsableObjectSupportMask(objectSupportMask) {
     return objectSupportMask?.bbox?.width > 0 && objectSupportMask?.bbox?.height > 0;
+  }
+
+  _isAcceptableTapObjectSupportMask(objectSupportMask, tapPosition, imageData) {
+    if (!this._hasUsableObjectSupportMask(objectSupportMask) ||
+        !isPointInsideObjectSupport(objectSupportMask, tapPosition)) {
+      return false;
+    }
+
+    const frameArea = imageData.width * imageData.height;
+    const maskArea = objectSupportMask.bbox.width * objectSupportMask.bbox.height;
+    return maskArea >= 16 && maskArea <= frameArea * 0.72;
+  }
+
+  _hasLowObjectOwnership() {
+    const metrics = this.anchorState?.metrics || {};
+    const active = metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0;
+    if (active < 8) {
+      return true;
+    }
+
+    const owned = metrics.objectOwnedLandmarks ?? active;
+    return owned / Math.max(1, active) < 0.65;
+  }
+
+  _getSegmentationRefreshRadius(imageData) {
+    const baseRadius = calculateTapLocalRadius({
+      width: imageData.width,
+      height: imageData.height,
+    });
+    const metrics = this.anchorState?.metrics || {};
+    const active = metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0;
+    const owned = metrics.objectOwnedLandmarks ?? active;
+    const ownershipRatio = owned / Math.max(1, active);
+    const state = this.anchorState?.state;
+    const growthScale = this._hasLowObjectOwnership()
+      ? 1.75
+      : state === 'stable' || metrics.reconstructionReady
+        ? 3.25
+        : active >= 24 && ownershipRatio >= 0.7
+          ? 2.75
+          : active >= 12 && ownershipRatio >= 0.65
+            ? 2.25
+            : 1.5;
+
+    return Math.min(
+      baseRadius * growthScale,
+      Math.hypot(imageData.width, imageData.height) * 0.28
+    );
+  }
+
+  _isAcceptableSegmentationRefresh(objectSupportMask, position, continuityRadius) {
+    if (!this._hasUsableObjectSupportMask(objectSupportMask) ||
+        !isPointInsideObjectSupport(objectSupportMask, position)) {
+      return false;
+    }
+
+    const frameArea = objectSupportMask.width * objectSupportMask.height;
+    const maskArea = objectSupportMask.bbox.width * objectSupportMask.bbox.height;
+    if (maskArea < 16 || maskArea > frameArea * 0.72) {
+      return false;
+    }
+
+    const currentBounds = this.anchorState?.metrics?.currentObjectSupportMaskBounds ||
+      this.anchorState?.metrics?.objectSupportMaskBounds ||
+      this.activeAnchor?.sourceDetection?.objectSupportMask?.bbox ||
+      null;
+    if (!currentBounds) {
+      return true;
+    }
+
+    const center = {
+      x: objectSupportMask.bbox.x + objectSupportMask.bbox.width / 2,
+      y: objectSupportMask.bbox.y + objectSupportMask.bbox.height / 2,
+    };
+    const previousCenter = {
+      x: currentBounds.x + currentBounds.width / 2,
+      y: currentBounds.y + currentBounds.height / 2,
+    };
+    const overlapX = Math.max(0, Math.min(objectSupportMask.bbox.x + objectSupportMask.bbox.width, currentBounds.x + currentBounds.width) -
+      Math.max(objectSupportMask.bbox.x, currentBounds.x));
+    const overlapY = Math.max(0, Math.min(objectSupportMask.bbox.y + objectSupportMask.bbox.height, currentBounds.y + currentBounds.height) -
+      Math.max(objectSupportMask.bbox.y, currentBounds.y));
+    const overlapArea = overlapX * overlapY;
+    const smallerArea = Math.min(maskArea, currentBounds.width * currentBounds.height);
+    return overlapArea / Math.max(1, smallerArea) >= 0.18 ||
+      Math.hypot(center.x - previousCenter.x, center.y - previousCenter.y) <= continuityRadius;
   }
 
   _createFreeTapDetection(objectSupportMask) {
@@ -281,7 +412,6 @@ export class AnchorManager {
     const previousState = this.anchorState?.state;
     this.anchorState = anchorServiceState;
     
-    // CRITICAL FIX: Synchronize activeAnchor position with live tracking
     if (this.activeAnchor && anchorServiceState.position) {
       this.activeAnchor.position = {
         x: anchorServiceState.position.x,

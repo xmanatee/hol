@@ -1,8 +1,14 @@
 export const OBJECT_SUPPORT_MASK_SOURCES = Object.freeze({
   INTERACTIVE_SEGMENTER: 'interactive-segmenter',
-  TAP_LOCAL_DETECTION: 'tap-local-detection',
+  TAP_LOCAL: 'tap-local',
   WARPED_MASK: 'warped-mask',
 });
+
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+export const calculateTapLocalRadius = ({ width, height }) => (
+  clamp(Math.min(width, height) * 0.055, 28, 64)
+);
 
 export const getObjectSupportBounds = objectSupportMask => {
   let minX = objectSupportMask.width;
@@ -172,32 +178,27 @@ export const createObjectSupportMaskPreview = (objectSupportMask, { maxPoints = 
   };
 };
 
-export const createTapLocalDetectionObjectSupportMask = ({
+export const createTapLocalObjectSupportMask = ({
   width,
   height,
-  detection,
   referencePoint,
   createdAtFrame,
+  radius = calculateTapLocalRadius({ width, height }),
+  source = OBJECT_SUPPORT_MASK_SOURCES.TAP_LOCAL,
+  confidence = 0.32,
 }) => {
   const data = new Uint8Array(width * height);
-  const minX = Math.max(0, Math.floor(detection.x1));
-  const minY = Math.max(0, Math.floor(detection.y1));
-  const maxX = Math.min(width - 1, Math.ceil(detection.x2));
-  const maxY = Math.min(height - 1, Math.ceil(detection.y2));
-  const detectionWidth = Math.max(1, maxX - minX + 1);
-  const detectionHeight = Math.max(1, maxY - minY + 1);
-  const centerX = Math.max(minX, Math.min(maxX, Math.round(referencePoint.x)));
-  const centerY = Math.max(minY, Math.min(maxY, Math.round(referencePoint.y)));
-  const radius = Math.round(Math.max(18, Math.min(40, Math.min(detectionWidth, detectionHeight) * 0.24)));
-  const radiusX = Math.min(radius, Math.ceil(detectionWidth / 2));
-  const radiusY = Math.min(radius, Math.ceil(detectionHeight / 2));
+  const centerX = Math.round(clamp(referencePoint.x, 0, width - 1));
+  const centerY = Math.round(clamp(referencePoint.y, 0, height - 1));
+  const localRadius = Math.round(clamp(radius, 1, Math.min(width, height)));
+  const radiusSquared = localRadius * localRadius;
 
-  for (let y = Math.max(minY, centerY - radiusY); y <= Math.min(maxY, centerY + radiusY); y++) {
+  for (let y = Math.max(0, centerY - localRadius); y <= Math.min(height - 1, centerY + localRadius); y++) {
     const rowOffset = y * width;
-    for (let x = Math.max(minX, centerX - radiusX); x <= Math.min(maxX, centerX + radiusX); x++) {
-      const normalizedX = (x - centerX) / Math.max(1, radiusX);
-      const normalizedY = (y - centerY) / Math.max(1, radiusY);
-      if (normalizedX * normalizedX + normalizedY * normalizedY <= 1) {
+    for (let x = Math.max(0, centerX - localRadius); x <= Math.min(width - 1, centerX + localRadius); x++) {
+      const dx = x - centerX;
+      const dy = y - centerY;
+      if (dx * dx + dy * dy <= radiusSquared) {
         data[rowOffset + x] = 255;
       }
     }
@@ -207,11 +208,49 @@ export const createTapLocalDetectionObjectSupportMask = ({
     width,
     height,
     data,
-    source: OBJECT_SUPPORT_MASK_SOURCES.TAP_LOCAL_DETECTION,
-    confidence: 0.28,
-    referencePoint,
+    source,
+    confidence,
+    referencePoint: { x: centerX, y: centerY },
     createdAtFrame,
     updatedAtFrame: createdAtFrame,
+  });
+};
+
+export const constrainObjectSupportMaskToTapLocalCircle = ({
+  objectSupportMask,
+  referencePoint,
+  radius = calculateTapLocalRadius(objectSupportMask),
+  source = objectSupportMask.source,
+  confidence = objectSupportMask.confidence,
+  updatedAtFrame = objectSupportMask.updatedAtFrame,
+}) => {
+  const data = new Uint8Array(objectSupportMask.width * objectSupportMask.height);
+  const centerX = Math.round(clamp(referencePoint.x, 0, objectSupportMask.width - 1));
+  const centerY = Math.round(clamp(referencePoint.y, 0, objectSupportMask.height - 1));
+  const localRadius = Math.round(clamp(radius, 1, Math.min(objectSupportMask.width, objectSupportMask.height)));
+  const radiusSquared = localRadius * localRadius;
+
+  for (let y = Math.max(0, centerY - localRadius); y <= Math.min(objectSupportMask.height - 1, centerY + localRadius); y++) {
+    const rowOffset = y * objectSupportMask.width;
+    for (let x = Math.max(0, centerX - localRadius); x <= Math.min(objectSupportMask.width - 1, centerX + localRadius); x++) {
+      const dx = x - centerX;
+      const dy = y - centerY;
+      if (dx * dx + dy * dy <= radiusSquared &&
+          objectSupportMask.data[rowOffset + x] > 0) {
+        data[rowOffset + x] = 255;
+      }
+    }
+  }
+
+  return createObjectSupportMask({
+    width: objectSupportMask.width,
+    height: objectSupportMask.height,
+    data,
+    source,
+    confidence,
+    referencePoint: { x: centerX, y: centerY },
+    createdAtFrame: objectSupportMask.createdAtFrame,
+    updatedAtFrame,
   });
 };
 

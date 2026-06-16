@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  calculateTapLocalRadius,
+  constrainObjectSupportMaskToTapLocalCircle,
   createObjectSupportMask,
   createObjectSupportMaskPreview,
   createRegionOpenCvMask,
-  createTapLocalDetectionObjectSupportMask,
+  createTapLocalObjectSupportMask,
   getObjectSupportBounds,
   isPointInsideObjectSupport,
   keepConnectedComponentContainingPoint,
@@ -159,26 +161,55 @@ test('object support mask keeps only the connected component containing the tap 
   assert.equal(filtered[5 * 12 + 9], 0);
 });
 
-test('tap-local detection support stays near the click instead of filling the whole box', () => {
-  const mask = createTapLocalDetectionObjectSupportMask({
+test('tap-local support radius is frame-scaled and bounded', () => {
+  assert.equal(calculateTapLocalRadius({ width: 320, height: 240 }), 28);
+  assert.equal(calculateTapLocalRadius({ width: 1280, height: 720 }), 39.6);
+  assert.equal(calculateTapLocalRadius({ width: 4000, height: 3000 }), 64);
+});
+
+test('tap-local object support is centered on the click and clipped to the frame', () => {
+  const mask = createTapLocalObjectSupportMask({
     width: 80,
-    height: 80,
-    detection: {
-      x1: 5,
-      y1: 5,
-      x2: 70,
-      y2: 70,
-    },
-    referencePoint: { x: 38, y: 32 },
-    createdAtFrame: 3,
+    height: 60,
+    referencePoint: { x: 4, y: 5 },
+    createdAtFrame: 7,
+    radius: 18,
   });
 
-  assert.equal(mask.source, 'tap-local-detection');
-  assert.ok(mask.bbox.width < 66);
-  assert.ok(mask.bbox.height < 66);
-  assert.equal(isPointInsideObjectSupport(mask, { x: 38, y: 32 }), true);
-  assert.equal(isPointInsideObjectSupport(mask, { x: 8, y: 8 }), false);
-  assert.equal(isPointInsideObjectSupport(mask, { x: 68, y: 68 }), false);
+  assert.equal(mask.source, 'tap-local');
+  assert.deepEqual(mask.referencePoint, { x: 4, y: 5 });
+  assert.equal(isPointInsideObjectSupport(mask, { x: 4, y: 5 }), true);
+  assert.equal(isPointInsideObjectSupport(mask, { x: 30, y: 5 }), false);
+  assert.equal(mask.bbox.x, 0);
+  assert.equal(mask.bbox.y, 0);
+  assert.ok(mask.bbox.width <= 23);
+  assert.ok(mask.bbox.height <= 24);
+});
+
+test('interactive support can be constrained to the tap-local circle', () => {
+  const data = new Uint8Array(120 * 80).fill(255);
+  const mask = createObjectSupportMask({
+    width: 120,
+    height: 80,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.84,
+    referencePoint: { x: 60, y: 40 },
+    createdAtFrame: 1,
+    updatedAtFrame: 1,
+  });
+
+  const constrained = constrainObjectSupportMaskToTapLocalCircle({
+    objectSupportMask: mask,
+    referencePoint: { x: 60, y: 40 },
+    radius: 12,
+  });
+
+  assert.equal(constrained.source, 'interactive-segmenter');
+  assert.equal(isPointInsideObjectSupport(constrained, { x: 60, y: 40 }), true);
+  assert.equal(isPointInsideObjectSupport(constrained, { x: 20, y: 40 }), false);
+  assert.ok(constrained.bbox.width <= 25);
+  assert.ok(constrained.bbox.height <= 25);
 });
 
 test('object support preview samples mask boundary instead of rectangular background', () => {

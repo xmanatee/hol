@@ -39,12 +39,10 @@ export const renderDetectionOverlay = (ctx, params) => {
 const renderDetectionMode = (ctx, { detections }) => {
   if (!detections || detections.length === 0) return;
   
-  // Draw detection boxes
   for (const detection of detections) {
     const { x1, y1, x2, y2 } = detection;
     
-    // Draw bounding box
-    ctx.strokeStyle = '#00ff00'; // Green for detections
+    ctx.strokeStyle = '#00ff00';
     ctx.lineWidth = 2;
     ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
     
@@ -156,10 +154,10 @@ const drawObjectMaskPreview = (ctx, maskPreview) => {
   const sampleSize = clamp(maskPreview.sampleStride || 3, 3, 9);
 
   ctx.save();
-  ctx.strokeStyle = maskPreview.source === 'tap-local-detection'
+  ctx.strokeStyle = maskPreview.source === 'tap-local'
     ? 'rgba(250, 204, 21, 0.76)'
     : 'rgba(45, 212, 191, 0.92)';
-  ctx.fillStyle = maskPreview.source === 'tap-local-detection'
+  ctx.fillStyle = maskPreview.source === 'tap-local'
     ? 'rgba(250, 204, 21, 0.2)'
     : 'rgba(20, 184, 166, 0.22)';
   ctx.lineWidth = 1.5;

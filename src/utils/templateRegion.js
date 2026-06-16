@@ -1,3 +1,5 @@
+import { calculateTapLocalRadius } from '../cv/objectSupportMask.js';
+
 const MIN_TEMPLATE_SIZE = 80;
 const MAX_TEMPLATE_SIZE = 180;
 const FALLBACK_TEMPLATE_SIZE = 160;
@@ -60,6 +62,17 @@ export const calculateTemplateRegion = (tapPosition, boundingBox, imageWidth, im
   }
 
   const size = clamp(Math.min(imageWidth, imageHeight) * 0.22, 96, FALLBACK_TEMPLATE_SIZE);
+  return clampRegion({
+    x: tapPosition.x - size / 2,
+    y: tapPosition.y - size / 2,
+    width: size,
+    height: size,
+  }, imageWidth, imageHeight);
+};
+
+export const calculateTapLocalTemplateRegion = (tapPosition, imageWidth, imageHeight, { scale = 1 } = {}) => {
+  const radius = calculateTapLocalRadius({ width: imageWidth, height: imageHeight }) * scale;
+  const size = Math.max(scale > 1 ? 180 : 140, radius * 2);
   return clampRegion({
     x: tapPosition.x - size / 2,
     y: tapPosition.y - size / 2,

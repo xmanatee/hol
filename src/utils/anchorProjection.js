@@ -11,6 +11,14 @@ const TRACKED_SCALE_MAX = 2.2;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 const getAnchorPixelSize = (activeAnchor, anchorState, width, height) => {
+  const objectRegion = anchorState.metrics?.reconstructionRegion ||
+    anchorState.metrics?.trackingRegion ||
+    anchorState.metrics?.currentObjectSupportMaskBounds ||
+    anchorState.metrics?.objectSupportMaskBounds;
+  if (objectRegion) {
+    return Math.max(objectRegion.width, objectRegion.height);
+  }
+
   const templateRegion = anchorState.metrics?.templateRegion;
   if (templateRegion) {
     return Math.max(templateRegion.width, templateRegion.height);

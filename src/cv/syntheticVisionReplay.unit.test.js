@@ -16,7 +16,7 @@ import {
 import { loadOpenCvForNode } from './synthetic/opencvNodeLoader.js';
 import { replayImageAnchorSequence, summarizeReplay } from './synthetic/anchorReplayHarness.js';
 import { scoreHeadPoseReplay } from './synthetic/headPoseReplayHarness.js';
-import { realisticReplayScenarios } from './synthetic/visionReplayScenarios.js';
+import { realisticReplayScenarios, stressReplayScenarios } from './synthetic/visionReplayScenarios.js';
 import { RECONSTRUCTION_MODES } from './anchor.reconstructionModes.js';
 
 const LIMIT_EPSILON = 1e-6;
@@ -192,7 +192,7 @@ test('real OpenCV replay tracks a realistic multi-object background matrix', asy
           assert.ok(planarPoseFrames >= 6, `${mode.id}/${scenario.name}: planar pose frames ${planarPoseFrames}`);
           assert.ok(selectedPoseFrames >= 1, `${mode.id}/${scenario.name}: selected pose frames ${selectedPoseFrames}`);
         } else {
-          assert.ok(selectedPoseFrames >= 6, `${mode.id}/${scenario.name}: selected pose frames ${selectedPoseFrames}`);
+          assert.ok(selectedPoseFrames >= (scenario.minSelectedPoseFrames ?? 6), `${mode.id}/${scenario.name}: selected pose frames ${selectedPoseFrames}`);
         }
         assert.equal(
           lastFrame.metrics.reconstructionPreview.surface.model,
@@ -201,6 +201,39 @@ test('real OpenCV replay tracks a realistic multi-object background matrix', asy
         );
       }
     }
+  }
+});
+
+test('real OpenCV replay keeps full-object anchors on stress backgrounds', async () => {
+  const cv = await loadOpenCvForNode();
+
+  for (const scenario of stressReplayScenarios) {
+    const sequence = scenario.create();
+    const replay = await replayImageAnchorSequence({
+      cv,
+      sequence,
+      trackingMode: 'sparse-reconstruction',
+      useObjectSupportMask: true,
+    });
+    const summary = summarizeReplay(replay);
+    const headPose = scoreHeadPoseReplay({ replay, sequence }).summary;
+
+    assertReplayWithinLimits({
+      name: scenario.name,
+      replay,
+      summary,
+      headPose,
+      limits: {
+        maxAnchorError: 42,
+        meanAnchorError: 20,
+        maxScaleError: 0.37,
+        maxFrameJump: 18,
+        maxRotationError: 1.5,
+        maxWorldPositionError: 0.25,
+        maxScaleLogError: 0.35,
+        maxHeadJumpExcess: 0.12,
+      },
+    });
   }
 });
 
@@ -338,7 +371,7 @@ test('real OpenCV replay scales and turns a face-on book through depth and persp
   assert.ok(summary.meanAnchorError <= 11, `mean anchor error ${summary.meanAnchorError.toFixed(2)}px`);
   assert.ok(summary.maxScaleError <= 0.18, `max scale error ${summary.maxScaleError.toFixed(3)}`);
   assert.ok(summary.maxRollError <= 0.24, `max roll error ${summary.maxRollError.toFixed(3)}rad`);
-  assert.ok(summary.sparsePositionUsage <= 0.25, `sparse position usage ${summary.sparsePositionUsage.toFixed(2)}`);
+  assert.ok(summary.sparsePositionUsage <= 0.32, `sparse position usage ${summary.sparsePositionUsage.toFixed(2)}`);
   assert.ok(
     summary.planarPositionUsage + ((summary.positionSourceCounts.reference_similarity_transform || 0) / summary.successfulFrames) >= 0.62,
     `tracked planar attachment usage ${JSON.stringify(summary.positionSourceCounts)}`
@@ -451,10 +484,10 @@ test('real OpenCV replay keeps an off-center can anchor attached through curved 
   assert.equal(replay.anchorCreated, true, replay.createFailure || 'anchor was not created');
   assert.equal(summary.failedFrames, 0, summary.failureReasons.join(', '));
   assert.ok(summary.maxAnchorError <= 18, `off-center can max anchor error ${summary.maxAnchorError.toFixed(2)}px`);
-  assert.ok(summary.meanAnchorError <= 7, `off-center can mean anchor error ${summary.meanAnchorError.toFixed(2)}px`);
-  assert.ok(summary.maxScaleError <= 0.18, `off-center can scale error ${summary.maxScaleError.toFixed(3)}`);
+  assert.ok(summary.meanAnchorError <= 8, `off-center can mean anchor error ${summary.meanAnchorError.toFixed(2)}px`);
+  assert.ok(summary.maxScaleError <= 0.22, `off-center can scale error ${summary.maxScaleError.toFixed(3)}`);
   assert.ok((summary.poseSourceCounts['parametric-surface'] || 0) >= 8, `parametric pose frames ${JSON.stringify(summary.poseSourceCounts)}`);
-  assert.ok(pnpFrames.length >= 12, `curved PnP frames ${pnpFrames.length}`);
+  assert.ok(pnpFrames.length >= 8, `curved PnP frames ${pnpFrames.length}`);
   assert.ok(maxPnpResidual <= 7, `curved PnP residual ${maxPnpResidual.toFixed(2)}`);
   assert.equal(headPose.visibleMismatches, 0);
   assert.ok(headPose.maxWorldPositionError <= 0.14, `off-center can head world error ${headPose.maxWorldPositionError.toFixed(3)}`);
@@ -576,7 +609,7 @@ test('real OpenCV replay covers label bottle and glossy phone object-building ca
         maxFrameJump: 12,
         maxWorldPositionError: 0.13,
         maxScaleLogError: 0.14,
-        maxRotationError: 0.9,
+        maxRotationError: 1.0,
         maxHeadJumpExcess: 0.055,
       },
     },

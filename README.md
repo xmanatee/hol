@@ -1,16 +1,16 @@
 # HOL (High on Life)
 
-Mobile-first camera app that detects selectable objects, switches to image-based anchoring after a tap, and renders an animated talking 3D face over the camera feed.
+Mobile-first camera app that lets a user tap an object in the camera feed, segments that object, builds an image anchor from object-owned landmarks, and renders an animated talking 3D face attached to the selected surface.
 
 ## Runtime Flow
 
 1. `CameraView` starts the rear camera and draws each frame into the processing canvas.
-2. `DetectionService` runs YOLO in `detector.worker.js` every fourth frame while the app is in detection mode.
-3. `AnchorManager` stores selectable detections and switches to `ImageAnchorService` when the user taps an object.
-4. `ImageAnchorService` tracks the selected region with Shi-Tomasi keypoints, Lucas-Kanade optical flow, homography evidence, template-matching recovery, and the selected reconstruction engine.
-5. Reconstruction modes are selectable from `UnifiedControlPanel`: sparse landmark reconstruction, semantic parametric surface fitting, and direct photometric surfel tracking.
+2. `AnchorManager` accepts a tap without requiring a detector result and asks `InteractiveSegmenterService` for an object mask around the tapped point.
+3. If segmentation succeeds, the connected object mask owns keypoint extraction, tracking refresh, reconstruction support, and overlay readiness. If segmentation is unavailable, a small tap-local mask creates a weak candidate anchor.
+4. `ImageAnchorService` tracks object-owned Shi-Tomasi landmarks with Lucas-Kanade optical flow, rejects landmarks outside the warped/refreshed mask, and grows the landmark map from the current anchor position.
+5. Reconstruction can use sparse landmark structure, semantic parametric surface fitting, or direct photometric surfel tracking. Auto mode keeps these controls behind the debug UI for normal use.
 6. `OverlayScene` loads `/3d/untitled.gltf` and drives morph targets through idle morphing, microphone lip sync, and ElevenLabs agent speech state.
-7. `UnifiedControlPanel` contains status, metrics, object controls, reconstruction preview, mesh visibility, logging controls, microphone tuning, and personality actions.
+7. `UnifiedControlPanel` presents a compact field UI by default, with diagnostics, reconstruction preview, mesh visibility, and logging controls in the debug drawer.
 
 ## Commands
 

@@ -76,6 +76,7 @@ export class ParametricSurfaceReconstructor {
   reset({ anchorReference, templateRegion = { x: 0, y: 0, width: 1, height: 1 }, targetClass = null }) {
     this.anchorReference = { x: anchorReference.x, y: anchorReference.y };
     this.templateRegion = { ...templateRegion };
+    this.targetClass = targetClass;
     this.frames = [];
     this.stats = new Map();
     this.consistency = [];
@@ -83,6 +84,12 @@ export class ParametricSurfaceReconstructor {
     this.state = 'mapping';
     this.lastFailureReason = null;
     this.referencePnpTransform = null;
+  }
+
+  updateReferenceRegion(templateRegion, targetClass = this.targetClass) {
+    this.templateRegion = { ...templateRegion };
+    this.targetClass = targetClass;
+    this.model = modelFromRegion(templateRegion, targetClass);
   }
 
   addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now()) {

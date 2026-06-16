@@ -25,7 +25,7 @@ export const useCameraSystem = (config = {}) => {
   const [detectionState, setDetectionState] = useState({
     isInitialized: false,
     isModelLoaded: false,
-    detectionEnabled: true,
+    detectionEnabled: false,
     error: null,
     processingTime: 0,
     lastDetections: null
@@ -444,6 +444,13 @@ export const useCameraSystem = (config = {}) => {
     return { success: false, reason: 'Not in anchor mode' };
   }, [anchorSystemState.mode]);
 
+  const refreshAnchorSegmentation = useCallback((imageData) => {
+    if (anchorSystemState.mode === 'anchor') {
+      return anchorManagerRef.current.refreshSegmentationIfNeeded(imageData);
+    }
+    return false;
+  }, [anchorSystemState.mode]);
+
   const createAnchorFromTap = useCallback(async (tapPosition, imageData) => {
     const result = await anchorManagerRef.current.createAnchorFromTap(tapPosition, imageData);
     
@@ -459,12 +466,14 @@ export const useCameraSystem = (config = {}) => {
 
   const clearAnchor = useCallback(() => {
     anchorManagerRef.current.clearAnchor();
-    
-    // Re-enable detection when returning to detection mode
-    detectionServiceRef.current.setDetectionEnabled(true);
-    setDetectionState(prev => ({ ...prev, detectionEnabled: true }));
-    
+
     updateMetric('Anchor cleared', 'Returned to detection mode');
+  }, [updateMetric]);
+
+  const setDetectionEnabled = useCallback((enabled) => {
+    detectionServiceRef.current.setDetectionEnabled(enabled);
+    setDetectionState(prev => ({ ...prev, detectionEnabled: enabled }));
+    updateMetric('Detection debug overlay', enabled ? 'Enabled' : 'Disabled');
   }, [updateMetric]);
 
   const setAnchorTrackingMode = useCallback((mode) => {
@@ -556,10 +565,12 @@ export const useCameraSystem = (config = {}) => {
     // New image-based anchor controls
     processDetections,
     updateAnchor,
+    refreshAnchorSegmentation,
     createAnchorFromTap,
     clearAnchor,
     findDetectionAtPosition,
     setAnchorTrackingMode,
+    setDetectionEnabled,
 
     // Personality generation
     generatePersonality,

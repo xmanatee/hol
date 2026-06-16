@@ -61,21 +61,20 @@ const createPlanarPose = ({
   referenceSpread,
 });
 
-test('template region follows the selected detection instead of a full-frame generic crop', () => {
+test('template region ignores raw detection metadata without object support', () => {
   const service = new ImageAnchorService();
+  const tap = { x: 500, y: 320 };
   const region = service._calculateTemplateRegion(
-    { x: 500, y: 320 },
-    { x1: 440, y1: 260, x2: 560, y2: 380 },
+    tap,
+    { x1: 0, y1: 0, x2: 100, y2: 100 },
     1280,
     720
   );
 
-  assert.ok(region.x >= 400);
-  assert.ok(region.y >= 220);
-  assert.ok(region.width < 220);
-  assert.ok(region.height < 220);
-  assert.ok(region.x <= 500 && region.x + region.width >= 500);
-  assert.ok(region.y <= 320 && region.y + region.height >= 320);
+  assert.equal(region.width, 140);
+  assert.equal(region.height, 140);
+  assert.equal(region.x + region.width / 2, tap.x);
+  assert.equal(region.y + region.height / 2, tap.y);
 });
 
 test('large detections create a tap-local template instead of seeding the whole box', () => {
@@ -83,7 +82,17 @@ test('large detections create a tap-local template instead of seeding the whole 
   const tap = { x: 240, y: 180 };
   const region = service._calculateTemplateRegion(
     tap,
-    { x1: 100, y1: 80, x2: 900, y2: 680 },
+    {
+      x1: 100,
+      y1: 80,
+      x2: 900,
+      y2: 680,
+      objectSupportMask: {
+        width: 1280,
+        height: 720,
+        bbox: { x: 200, y: 140, width: 80, height: 80 },
+      },
+    },
     1280,
     720
   );
@@ -453,7 +462,7 @@ test('records usable weak-anchor diagnostics after creation', async () => {
   };
   service.keypointDetector = {
     extractKeypoints: () => ({
-      keypoints: Array.from({ length: 18 }, (_, index) => ({ x: 20 + index, y: 30 + index })),
+      keypoints: Array.from({ length: 18 }, (_, index) => ({ x: 102 + index, y: 112 + index })),
       descriptors: {},
       method: 'fake-orb'
     }),
@@ -477,6 +486,7 @@ test('records usable weak-anchor diagnostics after creation', async () => {
   assert.equal(state.metrics.qualityState, 'weak');
   assert.equal(state.metrics.templateQuality, 0.17);
   assert.equal(state.metrics.templateKeypoints, 18);
+  assert.equal(state.metrics.objectSupportMaskSource, 'tap-local');
   assert.deepEqual(state.metrics.templateRegion, service.templateRegion);
   assert.deepEqual(state.normal, { x: 0, y: 0, z: 1 });
   assert.deepEqual(service.normalStabilizer.getNormal(), { x: 0, y: 0, z: 1 });
@@ -537,6 +547,9 @@ test('anchor creation passes selected object support mask into keypoint extracti
   assert.ok(receivedMasks.every(mask => mask === objectSupportMask));
   assert.equal(state.metrics.objectSupportMaskSource, 'interactive-segmenter');
   assert.deepEqual(state.metrics.objectSupportMaskBounds, objectSupportMask.bbox);
+  assert.ok(state.metrics.reconstructionRegion.width > state.metrics.templateRegion.width);
+  assert.deepEqual(state.metrics.reconstructionRegion, state.metrics.trackingRegion);
+  assert.equal(service.expandedObjectSupportRegion, true);
   assert.equal(state.metrics.objectSupportMaskPreview.source, 'interactive-segmenter');
   assert.deepEqual(state.metrics.objectSupportMaskPreview.bbox, objectSupportMask.bbox);
   assert.ok(state.metrics.objectSupportMaskPreview.points.length > 0);
@@ -835,6 +848,56 @@ test('candidate anchor transitions to mapping after object-owned refresh landmar
   assert.equal(state.metrics.objectOwnedLandmarks, 9);
 });
 
+test('tracking region ignores broad debug detection when object support is local', () => {
+  const service = new ImageAnchorService();
+  const objectSupportMask = {
+    width: 420,
+    height: 360,
+    bbox: { x: 170, y: 80, width: 80, height: 80 },
+  };
+  const templateRegion = service._calculateTemplateRegion(
+    { x: 210, y: 120 },
+    { x1: 0, y1: 0, x2: 420, y2: 360, objectSupportMask },
+    420,
+    360
+  );
+  const trackingRegion = service._calculateTrackingRegion(
+    { x1: 0, y1: 0, x2: 420, y2: 360, objectSupportMask },
+    420,
+    360,
+    templateRegion
+  );
+
+  assert.ok(templateRegion.width <= 140);
+  assert.ok(templateRegion.height <= 140);
+  assert.ok(trackingRegion.width <= 180);
+  assert.ok(trackingRegion.height <= 180);
+  assert.ok(trackingRegion.width < 420);
+  assert.ok(trackingRegion.height < 360);
+});
+
+test('overlay readiness fails when object-owned landmark ratio is too low', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('sparse-reconstruction');
+  service.metrics = {
+    activeLandmarkCount: 20,
+    objectOwnedLandmarks: 8,
+  };
+
+  const readiness = service._createReadiness({
+    state: 'stable',
+    poseSource: 'sparse-reconstruction',
+    positionSource: 'sparse-reconstruction',
+    reconstructionReady: true,
+  });
+
+  assert.equal(readiness.poseReady, true);
+  assert.equal(readiness.surfaceReady, true);
+  assert.equal(readiness.objectOwnershipReady, false);
+  assert.equal(readiness.attachmentReady, false);
+  assert.equal(readiness.faceReady, false);
+});
+
 test('reconstruction face readiness requires a current usable pose source', () => {
   const service = new ImageAnchorService();
   service.setTrackingMode('parametric-surface');
@@ -851,6 +914,7 @@ test('reconstruction face readiness requires a current usable pose source', () =
     poseQualityReady: true,
     surfaceReady: false,
     attachmentSourceReady: true,
+    objectOwnershipReady: true,
     attachmentReady: false,
     reason: 'Recovering object pose before showing the face',
   });
@@ -1273,7 +1337,7 @@ test('mask rejection immediately removes background landmarks from pose ownershi
   assert.ok(correspondences.every(correspondence => correspondence.curr.x <= 68));
 });
 
-test('records failed anchor creation diagnostics before returning to inactive', async () => {
+test('weak tap-local evidence records candidate diagnostics instead of failing creation', async () => {
   const service = new ImageAnchorService();
   class FakeMat {
     delete() {}
@@ -1295,21 +1359,18 @@ test('records failed anchor creation diagnostics before returning to inactive', 
     assessTemplateQuality: () => ({ overall: 0.08 })
   };
 
-  await assert.rejects(
-    () => service.createAnchor(
-      { width: 320, height: 240 },
-      { x: 110, y: 120 },
-      { x1: 70, y1: 80, x2: 150, y2: 160 }
-    ),
-    /Poor template quality/
+  const result = await service.createAnchor(
+    { width: 320, height: 240 },
+    { x: 110, y: 120 },
+    { x1: 70, y1: 80, x2: 150, y2: 160 }
   );
 
   const state = service.getState();
-  assert.equal(state.state, 'inactive');
-  assert.equal(state.metrics.lastFailureStage, 'template-quality');
-  assert.match(state.metrics.lastFailureReason, /Poor template quality/);
+  assert.equal(result.state, 'candidate');
+  assert.equal(state.state, 'candidate');
   assert.equal(state.metrics.templateQuality, 0.08);
-  assert.equal(state.metrics.templateKeypoints, 20);
+  assert.equal(state.metrics.qualityState, 'weak');
+  assert.equal(state.metrics.objectSupportMaskSource, 'tap-local');
 });
 
 test('keeps tracking state during the keypoint retry budget', () => {
@@ -1744,6 +1805,25 @@ test('template recovery preserves partial reference tracking before full reiniti
   assert.deepEqual(service.currentPosition, { x: 130, y: 150, z: 0 });
 });
 
+test('degraded recovery holds the last object pose while landmarks remain', () => {
+  const service = new ImageAnchorService();
+  service.anchorState = 'degraded';
+  service.currentPosition = { x: 120, y: 140, z: 0 };
+  service.currentNormal = { x: 0, y: 0, z: 1 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 0.4 };
+  service.metrics = { trackingSuccessRate: 0.34 };
+  service.keypointTracker = {
+    trackedPoints: Array.from({ length: 5 }, () => ({ status: 'active' })),
+  };
+
+  const result = service._createDegradedHoldResult('Template match below threshold');
+
+  assert.equal(result.success, true);
+  assert.equal(result.method, 'held-degraded-object-pose');
+  assert.deepEqual(result.position, service.currentPosition);
+  assert.equal(result.recoverable, true);
+});
+
 test('weak reference transforms fall back to object-owned centroid during segmented recovery', () => {
   const service = new ImageAnchorService();
   const maskData = new Uint8Array(80 * 80);
@@ -1935,6 +2015,61 @@ test('masked recovery refresh forwards adaptive extraction options', () => {
   });
   assert.equal(service.metrics.landmarkRefreshAdded, 5);
   assert.equal(service.metrics.landmarkRefreshRejectedByMask, 11);
+});
+
+test('segmentation refresh expands tracking region used by landmark refresh', () => {
+  const service = new ImageAnchorService();
+  const maskData = new Uint8Array(200 * 160);
+  for (let y = 46; y <= 132; y++) {
+    for (let x = 38; x <= 164; x++) {
+      maskData[y * 200 + x] = 255;
+    }
+  }
+  const objectSupportMask = createObjectSupportMask({
+    width: 200,
+    height: 160,
+    data: maskData,
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 100, y: 88 },
+    createdAtFrame: 0,
+    updatedAtFrame: 3,
+  });
+  let refreshRegion = null;
+  let reconstructorRegion = null;
+
+  service.cv = {};
+  service.keypointDetector = {};
+  service.currentPosition = { x: 100, y: 88, z: 0 };
+  service.templateRegion = { x: 84, y: 72, width: 32, height: 32 };
+  service.trackingRegion = { x: 76, y: 64, width: 48, height: 48 };
+  service.metrics = {
+    reconstructionRegion: { x: 84, y: 72, width: 32, height: 32 },
+  };
+  service.reconstructor = {
+    updateReferenceRegion: region => {
+      reconstructorRegion = region;
+    },
+  };
+  service.keypointTracker = {
+    trackedPoints: [],
+    lastRefreshStats: null,
+    refreshKeypoints: (cv, grayImage, detector, region) => {
+      refreshRegion = region;
+      return false;
+    },
+  };
+
+  assert.equal(service.updateObjectSupportMask(objectSupportMask), true);
+  assert.ok(service.trackingRegion.width > 120);
+  assert.ok(service.trackingRegion.height > 80);
+  assert.deepEqual(service.metrics.reconstructionRegion, service.trackingRegion);
+  assert.deepEqual(reconstructorRegion, service.trackingRegion);
+
+  service._refreshKeypoints({ cols: 200, rows: 160 });
+
+  assert.equal(refreshRegion.width, service.trackingRegion.width);
+  assert.equal(refreshRegion.height, service.trackingRegion.height);
 });
 
 test('keypoint updates expose tracked planar scale and roll for the overlay', () => {

@@ -51,12 +51,19 @@ export class DirectPhotometricReconstructor {
   reset({ anchorReference, templateRegion = { x: 0, y: 0, width: 1, height: 1 }, targetClass = null }) {
     this.anchorReference = { x: anchorReference.x, y: anchorReference.y };
     this.templateRegion = { ...templateRegion };
+    this.targetClass = targetClass;
     this.surfaceModel = modelFromRegion(templateRegion, targetClass);
     this.frames = [];
     this.surfels = new Map();
     this.consistency = [];
     this.state = 'mapping';
     this.lastFailureReason = null;
+  }
+
+  updateReferenceRegion(templateRegion, targetClass = this.targetClass) {
+    this.templateRegion = { ...templateRegion };
+    this.targetClass = targetClass;
+    this.surfaceModel = modelFromRegion(templateRegion, targetClass);
   }
 
   addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now(), grayImage = null) {
