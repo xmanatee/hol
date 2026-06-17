@@ -80,7 +80,7 @@ const initialize = async config => {
   });
 };
 
-const estimate = async ({ requestId, imageData, timestamp }) => {
+const estimateDepth = async ({ requestId, imageData, timestamp }) => {
   if (!session) {
     throw new Error('Depth model has not initialized');
   }
@@ -118,7 +118,7 @@ self.onmessage = event => {
   }
 
   if (message.type === 'estimate') {
-    estimate(message).catch(error => {
+    estimateDepth(message).catch(error => {
       postMessage({
         type: 'error',
         stage: 'estimate',

@@ -72,6 +72,12 @@ const PLANAR_POSE_POSITION_METHODS = new Set([
   'homography',
   'object-pose-affine',
 ]);
+const TRACKER_SPINE_POSITION_METHODS = new Set([
+  'reference_similarity_transform',
+  'object-owned-centroid-position',
+  'curved-centroid-position',
+  'keypoint_centroid_only',
+]);
 
 const transformHomographyPoint = (matrix, point) => {
   const denominator = matrix[6] * point.x + matrix[7] * point.y + matrix[8];
@@ -988,6 +994,10 @@ export class ImageAnchorService {
       reconstructionPose,
       trackerAnchorPosition,
     });
+    const holdDepthFusionTrackerPosition = this._shouldHoldTrackerPositionForDepthFusion({
+      trackerAnchorPosition,
+      reconstructionPose,
+    });
     const selectedReconstructionReady = this._hasSelectedReconstructionPose(reconstructionPose);
     const suppressReconstructionForPlanarTarget = this._hasPlanarDominance() &&
       !selectedReconstructionReady &&
@@ -1038,6 +1048,27 @@ export class ImageAnchorService {
       planarTransform = this._updatePlanarTransform(planarPose.planarTransform, timestamp);
       this._recordPlanarHomographyMetrics(planarPose);
       logger.debugEvery('ImageAnchor', 'positioning-choice', 1000, `Using planar homography positioning: ${positionMethod}`);
+    } else if (trackerAnchorPosition &&
+        reconstructionPoseUsableForTransform &&
+        reconstructionCandidateAllowed &&
+        holdDepthFusionTrackerPosition) {
+      newPosition = this._filterPositionCandidate(trackerAnchorPosition, timestamp, trackerAnchorPosition.method);
+      positionMethod = trackerAnchorPosition.method;
+      planarTransform = this._updatePlanarTransform(
+        useBlendedCurvedAttachmentTransform
+          ? this._selectBlendedCurvedAttachmentTransform({
+            trackerAnchorPosition,
+            reconstructionPose,
+          })
+          : this._selectTrackedAttachmentTransform({
+            trackerAnchorPosition,
+            reconstructionPose,
+            useTrackedTransform: true
+          }),
+        timestamp
+      );
+      this._recordReconstructionPoseMetrics(reconstructionPose, { active: false });
+      logger.debugEvery('ImageAnchor', 'positioning-choice', 1000, 'Using depth-fusion tracker-spine positioning');
     } else if (trackerAnchorPosition &&
         reconstructionPoseUsableForTransform &&
         reconstructionCandidateAllowed &&
@@ -2873,6 +2904,12 @@ export class ImageAnchorService {
       this._hasTolerantCurvedReconstructionRecovery(reconstructionPose);
   }
 
+  _shouldHoldTrackerPositionForDepthFusion({ trackerAnchorPosition, reconstructionPose }) {
+    return this.trackingMode === DEPTH_FUSION_POSE_MODEL &&
+      !!trackerAnchorPosition &&
+      this._hasSelectedReconstructionPose(reconstructionPose);
+  }
+
   _hasPreciseCurvedReconstructionPosition(reconstructionPose) {
     if (!this._hasCurvedReconstructionTarget(reconstructionPose) ||
         reconstructionPose.method !== this.trackingMode) {
@@ -2971,7 +3008,8 @@ export class ImageAnchorService {
 
     const selectedScale = reconstructionPose.planarTransform.scale;
     const trackerScale = trackerAnchorPosition.scale;
-    if (!Number.isFinite(selectedScale) || !Number.isFinite(trackerScale) || trackerScale <= 0) {
+    if (!Number.isFinite(selectedScale) || !Number.isFinite(trackerScale) ||
+        selectedScale <= 0 || trackerScale <= 0) {
       return false;
     }
 
@@ -3587,6 +3625,10 @@ export class ImageAnchorService {
 
     if (strongPlanarPose) {
       return positionSource === 'planar-homography';
+    }
+
+    if (poseSource === DEPTH_FUSION_POSE_MODEL && TRACKER_SPINE_POSITION_METHODS.has(positionSource)) {
+      return true;
     }
 
     return strongReconstructionPose && positionSource === poseSource;

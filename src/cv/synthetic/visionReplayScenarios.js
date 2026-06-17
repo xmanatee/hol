@@ -11,6 +11,25 @@ import {
   createTexturedCupSequence,
 } from './visionFixtures.js';
 
+const OPTIONAL_SPARSE_RECONSTRUCTION_QUALITY = {
+  reconstruction: {
+    minReadyFrameRatio: 0,
+    minPoseInliers: 0,
+    minMapConfidence: 0,
+  },
+};
+
+const STRESS_REPLAY_LIMITS = {
+  maxAnchorError: 90,
+  meanAnchorError: 22,
+  maxScaleError: 0.37,
+  maxFrameJump: 18,
+  maxRotationError: 1.5,
+  maxWorldPositionError: 0.25,
+  maxScaleLogError: 0.35,
+  maxHeadJumpExcess: 0.12,
+};
+
 export const defaultReplayScenarios = [
   {
     name: 'planar book on desk',
@@ -56,6 +75,13 @@ export const defaultReplayScenarios = [
       frameCount: 28,
       occlusionFrames: [10, 11, 12],
     }),
+    qualityThresholdsByMode: {
+      'parametric-surface': {
+        reconstruction: {
+          maxNormalError: 1.45,
+        },
+      },
+    },
   },
 ];
 
@@ -210,6 +236,16 @@ export const realisticReplayScenarios = [
         maxScaleLogError: 0.22,
         maxHeadJumpExcess: 0.08,
       },
+      'depth-fusion': {
+        maxAnchorError: 26,
+        meanAnchorError: 14,
+        maxScaleError: 0.17,
+        maxFrameJump: 12,
+        maxRotationError: 1.35,
+        maxWorldPositionError: 0.19,
+        maxScaleLogError: 0.2,
+        maxHeadJumpExcess: 0.08,
+      },
     },
   },
   {
@@ -328,6 +364,14 @@ export const realisticReplayScenarios = [
       },
     },
     minSelectedPoseFrames: 2,
+    qualityThresholdsByMode: {
+      'sparse-reconstruction': OPTIONAL_SPARSE_RECONSTRUCTION_QUALITY,
+      'parametric-surface': {
+        reconstruction: {
+          maxNormalError: 1.3,
+        },
+      },
+    },
     surfaceByMode: {
       'parametric-surface': 'cylinder',
       'direct-photometric': 'photometric-surfels',
@@ -367,6 +411,10 @@ export const stressReplayScenarios = [
       backgroundVariant: 'window',
       backgroundSeed: 109,
     }),
+    limits: STRESS_REPLAY_LIMITS,
+    qualityThresholdsByMode: {
+      'sparse-reconstruction': OPTIONAL_SPARSE_RECONSTRUCTION_QUALITY,
+    },
   },
   {
     name: 'handled mug on kitchen tile background',
@@ -376,6 +424,10 @@ export const stressReplayScenarios = [
       backgroundVariant: 'kitchen',
       backgroundSeed: 137,
     }),
+    limits: STRESS_REPLAY_LIMITS,
+    qualityThresholdsByMode: {
+      'sparse-reconstruction': OPTIONAL_SPARSE_RECONSTRUCTION_QUALITY,
+    },
   },
   {
     name: 'textured ball on busy moving background',
@@ -385,6 +437,10 @@ export const stressReplayScenarios = [
       backgroundVariant: 'busy',
       backgroundSeed: 149,
     }),
+    limits: STRESS_REPLAY_LIMITS,
+    qualityThresholdsByMode: {
+      'sparse-reconstruction': OPTIONAL_SPARSE_RECONSTRUCTION_QUALITY,
+    },
   },
 ];
 

@@ -3026,6 +3026,138 @@ test('mature curved reconstruction can replace a moderately drifting tracker att
   assert.equal(result.poseSource, 'direct-photometric');
 });
 
+test('depth-fusion keeps tracker positioning as the anchor spine', () => {
+  const service = new ImageAnchorService();
+  const reconstructionPose = {
+    success: true,
+    method: 'depth-fusion',
+    position: { x: 236, y: 181, z: 0 },
+    normal: { x: 0.42, y: -0.2, z: 0.89 },
+    planarTransform: {
+      scale: 1.08,
+      rotation: 0.12,
+      confidence: 0.86,
+      inlierCount: 24,
+      method: 'depth-fusion',
+    },
+    confidence: 0.86,
+    inlierCount: 24,
+    inlierRatio: 0.52,
+    averageResidual: 2.4,
+    depthQuality: 0.16,
+    referenceSpread: { width: 84, height: 58, minAxis: 58 },
+    preview: {
+      ready: true,
+      statistics: {
+        mapConfidence: 0.84,
+        averageSupport: 0.76,
+        averageReliability: 0.7,
+        matureLandmarks: 28,
+      },
+      current: {
+        anchor: { x: 236, y: 181 },
+      },
+      surface: { model: 'depth-fusion-surfels' },
+    },
+  };
+
+  service.setTrackingMode('depth-fusion');
+  service.initialized = true;
+  service.anchored = true;
+  service.anchorState = 'tracking';
+  service.anchorTargetClass = 'cup';
+  service.templateRegion = { x: 160, y: 120, width: 140, height: 120 };
+  service.currentPosition = { x: 230, y: 178, z: 0 };
+  service.currentNormal = { x: 0, y: 0, z: 1 };
+  service.cv = {};
+  service.reconstructor = {
+    addFrameFromTrackedPoints: () => ({
+      state: 'ready',
+      ready: true,
+      frameCount: 10,
+      landmarkCount: 220,
+      depthQuality: 0.16,
+      statistics: {
+        mapConfidence: 0.84,
+        averageSupport: 0.76,
+        averageReliability: 0.7,
+        matureLandmarks: 28,
+      },
+      preview: { surface: { model: 'depth-fusion-surfels' } },
+      lastFailureReason: null,
+    }),
+    getState: () => ({
+      state: 'ready',
+      ready: true,
+      frameCount: 10,
+      landmarkCount: 220,
+      depthQuality: 0.16,
+      statistics: {
+        mapConfidence: 0.84,
+        averageSupport: 0.76,
+        averageReliability: 0.7,
+        matureLandmarks: 28,
+      },
+      preview: { surface: { model: 'depth-fusion-surfels' } },
+      lastFailureReason: null,
+    }),
+    estimatePoseFromTrackedPoints: () => reconstructionPose,
+  };
+  Object.assign(service.keypointTracker, {
+    trackedPoints: Array.from({ length: 36 }, (_, index) => ({
+      id: index,
+      status: 'active',
+      original: { x: 70 + (index % 6) * 18, y: 70 + Math.floor(index / 6) * 16 },
+      current: { x: 84 + (index % 6) * 18, y: 82 + Math.floor(index / 6) * 16 },
+    })),
+    trackToFrame: () => ({
+      success: true,
+      successRate: 0.88,
+      activePointCount: 36,
+      averageError: 1.5,
+    }),
+    getObjectPose: () => ({
+      success: false,
+      method: 'object-pose-affine',
+      reason: 'affine unavailable',
+    }),
+    getCorrespondences: () => [],
+    getAnchorPosition: () => ({
+      x: 220,
+      y: 174,
+      method: 'reference_similarity_transform',
+      scale: 0.98,
+      rotation: -0.04,
+      confidence: 0.62,
+      inlierCount: 18,
+    }),
+  });
+  service._estimatePoseFromTracker = () => ({
+    options: { maxReferenceDistance: 120 },
+    correspondences: [],
+    poseResult: null,
+  });
+
+  const result = service._updateWithKeypoints({ cols: 640, rows: 480 }, 1000);
+  const readiness = service._createReadiness({
+    state: result.state,
+    poseSource: result.poseSource,
+    positionSource: result.method,
+    reconstructionReady: service.metrics.reconstructionReady,
+    poseInliers: service.metrics.poseInliers,
+    poseConfidence: service.metrics.poseConfidence,
+    poseAverageResidual: service.metrics.poseAverageResidual,
+    poseForeshortening: service.metrics.poseForeshortening,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.method, 'reference_similarity_transform');
+  assert.equal(result.position.x, 220);
+  assert.equal(result.position.y, 174);
+  assert.equal(result.poseSource, 'depth-fusion');
+  assert.equal(readiness.attachmentSourceReady, true);
+});
+
 test('curved reconstruction relaxes stale normals when pose drops out', () => {
   const service = new ImageAnchorService();
   const staleNormal = { x: 0.55, y: -0.2, z: 0.81 };
@@ -4159,6 +4291,12 @@ test('selected curved reconstruction blends tracker scale when selected scale di
 
   assert.equal(transform.scale, Math.sqrt(trackerAnchorPosition.scale * reconstructionPose.planarTransform.scale));
   assert.equal(transform.rotation, trackerAnchorPosition.rotation);
+
+  reconstructionPose.planarTransform.scale = 0;
+  assert.equal(service._shouldBlendTrackerScaleForSelectedCurvedTransform({
+    reconstructionPose,
+    trackerAnchorPosition,
+  }), false);
 });
 
 test('mature curved pose dropout uses centroid position while preserving tracker transform', () => {

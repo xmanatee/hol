@@ -2,6 +2,7 @@ import { loadOpenCvForNode } from '../src/cv/synthetic/opencvNodeLoader.js';
 import { createSyntheticObjectSuite } from '../src/cv/synthetic/visionFixtures.js';
 import { reportReplayScenarios } from '../src/cv/synthetic/visionReplayScenarios.js';
 import {
+  createSyntheticDepthFrame,
   replayImageAnchorSequence,
   summarizeReplay,
 } from '../src/cv/synthetic/anchorReplayHarness.js';
@@ -20,6 +21,7 @@ for (const scenario of reportReplayScenarios) {
       sequence,
       trackingMode: mode.id,
       useObjectSupportMask: true,
+      depthFrameForFrame: mode.requiresDepthFrame ? createSyntheticDepthFrame : null,
     });
     const lastFrame = replay.frames.at(-1);
     const preview = lastFrame?.metrics?.reconstructionPreview;

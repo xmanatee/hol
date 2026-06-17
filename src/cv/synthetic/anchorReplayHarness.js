@@ -134,6 +134,32 @@ const createSyntheticObjectSupportMask = ({ sequence, frame }) => {
   });
 };
 
+export const createSyntheticDepthFrame = ({ frame, sequence, index, timestamp }) => {
+  const width = sequence.width;
+  const height = sequence.height;
+  const data = new Float32Array(width * height);
+  const anchor = frame.groundTruth.anchor;
+  const phase = index * 0.018;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const dx = (x - anchor.x) / width;
+      const dy = (y - anchor.y) / height;
+      data[y * width + x] = Math.max(0.04, Math.min(0.96, 0.48 + dx * 0.34 + dy * 0.18 + phase));
+    }
+  }
+
+  return {
+    width,
+    height,
+    data,
+    timestamp,
+    processingTime: 7.5,
+    provider: 'synthetic-depth',
+    modelUrl: 'synthetic://depth-fusion-replay',
+  };
+};
+
 const settle = promise => promise.then(
   value => ({ ok: true, value }),
   error => ({ ok: false, error })
