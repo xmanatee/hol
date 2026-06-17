@@ -144,6 +144,7 @@ export const replayImageAnchorSequence = async ({
   sequence,
   trackingMode = 'sparse-reconstruction',
   useObjectSupportMask = true,
+  depthFrameForFrame = null,
 }) => {
   setupOpenCvGlobals(cv);
 
@@ -183,7 +184,16 @@ export const replayImageAnchorSequence = async ({
   for (let index = 1; index < sequence.frames.length; index++) {
     replayTime += 1000 / 30;
     const frame = sequence.frames[index];
-    const result = service.updateAnchor(frame.imageData);
+    const depthFrame = depthFrameForFrame?.({ frame, index, sequence, timestamp: replayTime }) || null;
+    const result = service.updateAnchor(frame.imageData, depthFrame
+      ? {
+          depthFrame,
+          depthState: { state: 'ready', provider: depthFrame.provider },
+        }
+      : {
+          depthFrame: null,
+          depthState: { state: 'idle' },
+        });
     const state = service.getState();
     const transform = result.planarTransform || state.planarTransform || {};
     const predicted = result.position || state.position || null;

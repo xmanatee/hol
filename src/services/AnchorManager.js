@@ -35,6 +35,10 @@ const createActiveAnchorDiagnostics = (metrics, readiness) => ({
   reconstructionFrames: metrics.reconstructionFrames ?? 0,
   reconstructionLandmarks: metrics.reconstructionLandmarks ?? 0,
   reconstructionDepthQuality: metrics.reconstructionDepthQuality ?? 0,
+  reconstructionDepthStatus: metrics.reconstructionDepthStatus ?? null,
+  reconstructionDepthProvider: metrics.reconstructionDepthProvider ?? null,
+  reconstructionDepthInferenceTime: metrics.reconstructionDepthInferenceTime ?? 0,
+  reconstructionDepthFrameTimestamp: metrics.reconstructionDepthFrameTimestamp ?? null,
   reconstructionPreview: metrics.reconstructionPreview ?? null,
   reconstructionFailureReason: metrics.reconstructionFailureReason ?? null,
   recoveryAttempts: metrics.recoveryAttempts ?? 0,
@@ -120,12 +124,12 @@ export class AnchorManager {
    * @param {ImageData} imageData - Current frame
    * @returns {Object} Update result
    */
-  updateAnchor(imageData) {
+  updateAnchor(imageData, depthContext = {}) {
     if (!this.initialized || this.mode !== 'anchor') {
       return { success: false, reason: 'Not in anchor mode' };
     }
 
-    const result = this.imageAnchorService.updateAnchor(imageData);
+    const result = this.imageAnchorService.updateAnchor(imageData, depthContext);
 
     // The anchor service will notify via _onAnchorUpdate callback
     return result;

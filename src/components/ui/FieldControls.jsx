@@ -477,6 +477,7 @@ const FieldControls = ({
   onStop,
   onConfigChange,
   metrics = {},
+  depthState = null,
   anchorDiagnostics,
   anchorTrackingMode = 'sparse-reconstruction',
   runtimeReadiness,
@@ -570,6 +571,9 @@ const FieldControls = ({
                   <ReconstructionPreviewSection details={{
                     ...(anchorDiagnostics?.details || {}),
                     poseModel: anchorDiagnostics?.details?.poseModel || anchorTrackingMode,
+                    reconstructionDepthStatus: anchorDiagnostics?.details?.reconstructionDepthStatus ?? depthState?.state,
+                    reconstructionDepthProvider: anchorDiagnostics?.details?.reconstructionDepthProvider ?? depthState?.provider,
+                    reconstructionDepthInferenceTime: anchorDiagnostics?.details?.reconstructionDepthInferenceTime ?? depthState?.processingTime,
                   }} embedded />
                 </DrawerSection>
               </>

@@ -7,11 +7,16 @@ import {
   DirectPhotometricReconstructor,
   DIRECT_PHOTOMETRIC_POSE_MODEL,
 } from './anchor.directPhotometric.js';
+import {
+  DepthFusionReconstructor,
+  DEPTH_FUSION_POSE_MODEL,
+} from './anchor.depthFusion.js';
 
 export {
   RECONSTRUCTION_POSE_MODEL,
   PARAMETRIC_SURFACE_POSE_MODEL,
   DIRECT_PHOTOMETRIC_POSE_MODEL,
+  DEPTH_FUSION_POSE_MODEL,
 };
 
 export const RECONSTRUCTION_MODES = [
@@ -30,6 +35,12 @@ export const RECONSTRUCTION_MODES = [
     label: 'Photometric',
     description: 'Gradient surfel map with photometric consistency',
   },
+  {
+    id: DEPTH_FUSION_POSE_MODEL,
+    label: 'Depth Fusion',
+    description: 'Learned monocular depth fused into dense object surfels',
+    requiresDepthFrame: true,
+  },
 ];
 
 export const RECONSTRUCTION_MODE_IDS = new Set(RECONSTRUCTION_MODES.map(mode => mode.id));
@@ -42,6 +53,8 @@ export const createReconstructionEngine = mode => {
       return new ParametricSurfaceReconstructor();
     case DIRECT_PHOTOMETRIC_POSE_MODEL:
       return new DirectPhotometricReconstructor();
+    case DEPTH_FUSION_POSE_MODEL:
+      return new DepthFusionReconstructor();
   }
 
   throw new Error(`Unsupported reconstruction mode: ${mode}`);

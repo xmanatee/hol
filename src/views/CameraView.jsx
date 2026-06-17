@@ -124,6 +124,7 @@ const CameraView = () => {
     cameraError,
     videoDimensions,
     detectionState,
+    depthState,
     anchorSystemState,
     personalityData,
     ttsData,
@@ -647,6 +648,7 @@ const CameraView = () => {
           onStop={stopCamera}
           onConfigChange={handleConfigChange}
           metrics={metrics}
+          depthState={depthState}
           anchorDiagnostics={anchorDiagnostics}
           anchorTrackingMode={anchorSystemState.trackingMode}
           runtimeReadiness={runtimeReadiness}

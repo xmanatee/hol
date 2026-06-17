@@ -237,6 +237,9 @@ export const ReconstructionPreviewSection = ({ details, embedded = false }) => {
         <DiagnosticRow label="Inferred roll" value={formatDegrees(planar?.rotation)} tone={typeof planar?.rotation === 'number' ? 'good' : 'warn'} />
         <DiagnosticRow label="Target class" value={details.targetClass || 'N/A'} tone={details.targetClass ? 'good' : 'warn'} />
         <DiagnosticRow label="Surface model" value={previewSurface.model || 'N/A'} tone={previewSurface.model ? 'good' : 'warn'} />
+        <DiagnosticRow label="Depth model" value={details.reconstructionDepthStatus || 'N/A'} tone={details.reconstructionDepthStatus === 'ready' ? 'good' : 'warn'} />
+        <DiagnosticRow label="Depth provider" value={details.reconstructionDepthProvider || 'N/A'} />
+        <DiagnosticRow label="Depth inference" value={`${formatNumber(details.reconstructionDepthInferenceTime, 1)} ms`} />
         <DiagnosticRow label="Preview points" value={`${previewPoints.length}/${totalLandmarks}`} tone={previewPoints.length >= 18 ? 'good' : 'warn'} />
         <DiagnosticRow label="Map confidence" value={formatPercent(mapConfidence)} tone={(mapConfidence ?? 0) > 0.55 ? 'good' : 'warn'} />
         <DiagnosticRow label="Avg support" value={formatPercent(averageSupport)} tone={(averageSupport ?? 0) > 0.65 ? 'good' : 'warn'} />

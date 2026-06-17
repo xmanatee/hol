@@ -19,8 +19,36 @@ import { scoreHeadPoseReplay } from './synthetic/headPoseReplayHarness.js';
 import { realisticReplayScenarios, stressReplayScenarios } from './synthetic/visionReplayScenarios.js';
 import { RECONSTRUCTION_MODES } from './anchor.reconstructionModes.js';
 
+const SYNTHETIC_REPLAY_RECONSTRUCTION_MODES = RECONSTRUCTION_MODES
+  .filter(mode => !mode.requiresDepthFrame);
 const LIMIT_EPSILON = 1e-6;
 const withinLimit = (value, limit) => value - limit <= LIMIT_EPSILON;
+
+const createSyntheticDepthFrame = ({ frame, sequence, index, timestamp }) => {
+  const width = sequence.width;
+  const height = sequence.height;
+  const data = new Float32Array(width * height);
+  const anchor = frame.groundTruth.anchor;
+  const phase = index * 0.018;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const dx = (x - anchor.x) / width;
+      const dy = (y - anchor.y) / height;
+      data[y * width + x] = Math.max(0.04, Math.min(0.96, 0.48 + dx * 0.34 + dy * 0.18 + phase));
+    }
+  }
+
+  return {
+    width,
+    height,
+    data,
+    timestamp,
+    processingTime: 7.5,
+    provider: 'synthetic-depth',
+    modelUrl: 'synthetic://depth-fusion-replay',
+  };
+};
 
 const createPerfectHeadPoseReplay = () => {
   const templateRegion = { x: 270, y: 178, width: 112, height: 126 };
@@ -212,7 +240,7 @@ test('real OpenCV replay tracks a realistic multi-object background matrix', asy
   const cv = await loadOpenCvForNode();
 
   for (const scenario of realisticReplayScenarios) {
-    for (const mode of RECONSTRUCTION_MODES) {
+    for (const mode of SYNTHETIC_REPLAY_RECONSTRUCTION_MODES) {
       const sequence = scenario.create();
       const replay = await replayImageAnchorSequence({
         cv,
@@ -321,7 +349,7 @@ test('real OpenCV replay exercises every selectable reconstruction engine on boo
     },
   ];
 
-  for (const mode of RECONSTRUCTION_MODES) {
+  for (const mode of SYNTHETIC_REPLAY_RECONSTRUCTION_MODES) {
     for (const scenario of scenarios) {
       const replay = await replayImageAnchorSequence({
         cv,
@@ -357,6 +385,44 @@ test('real OpenCV replay exercises every selectable reconstruction engine on boo
       }
     }
   }
+});
+
+test('real OpenCV replay validates depth-fusion readiness with synthetic depth frames', async () => {
+  const cv = await loadOpenCvForNode();
+  const sequence = createTexturedCupSequence({ frameCount: 18, occlusionFrames: [] });
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence,
+    trackingMode: 'depth-fusion',
+    depthFrameForFrame: createSyntheticDepthFrame,
+  });
+  const summary = summarizeReplay(replay);
+  const lastFrame = replay.frames.at(-1);
+
+  assert.equal(replay.anchorCreated, true, replay.createFailure || 'anchor failed');
+  assert.equal(summary.failedFrames, 0, summary.failureReasons.join(', '));
+  assert.equal(lastFrame.metrics.reconstructionReady, true);
+  assert.equal(lastFrame.metrics.reconstructionPreview.surface.model, 'depth-fusion-surfels');
+  assert.equal(lastFrame.metrics.reconstructionDepthProvider, 'synthetic-depth');
+  assert.ok(lastFrame.metrics.reconstructionLandmarks >= 90);
+  assert.ok((summary.poseSourceCounts['depth-fusion'] || 0) >= 1);
+});
+
+test('real OpenCV replay keeps depth-fusion recoverable while depth is unavailable', async () => {
+  const cv = await loadOpenCvForNode();
+  const sequence = createTexturedCupSequence({ frameCount: 12, occlusionFrames: [] });
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence,
+    trackingMode: 'depth-fusion',
+  });
+  const lastFrame = replay.frames.at(-1);
+
+  assert.equal(replay.anchorCreated, true, replay.createFailure || 'anchor failed');
+  assert.equal(lastFrame.metrics.reconstructionReady, false);
+  assert.equal(lastFrame.metrics.reconstructionDepthStatus, 'idle');
+  assert.match(lastFrame.metrics.reconstructionFailureReason, /Waiting for depth map/);
+  assert.ok(replay.frames.every(frame => frame.success), replay.frames.map(frame => frame.failureReason).join(', '));
 });
 
 test('real OpenCV replay selects ellipsoid and photometric surfaces on a textured ball', async () => {

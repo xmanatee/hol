@@ -3,8 +3,11 @@ import { CameraService } from '../services/CameraService.js';
 import { DetectionService } from '../services/DetectionService.js';
 import { AnchorManager } from '../services/AnchorManager.js';
 import { PersonalityService } from '../services/PersonalityService.js';
+import { DepthEstimationService } from '../services/DepthEstimationService.js';
 import { LazyTTSClient } from '../audio/lazyTTSClient.js';
 import { logger } from '../utils/logger.js';
+
+const DEPTH_FUSION_MODE = 'depth-fusion';
 
 export const useCameraSystem = (config = {}) => {
   // Services
@@ -12,8 +15,10 @@ export const useCameraSystem = (config = {}) => {
   const detectionServiceRef = useRef(new DetectionService());
   const anchorManagerRef = useRef(new AnchorManager());
   const personalityServiceRef = useRef(new PersonalityService(config.personality));
+  const depthServiceRef = useRef(new DepthEstimationService(config.depth));
   const ttsClientRef = useRef(new LazyTTSClient(config.tts));
   const currentCanvasRef = useRef(null);
+  const latestDepthFrameRef = useRef(null);
   const metricUpdateRef = useRef(config.onMetricUpdate || null);
   const [_initialized, setInitialized] = useState(false);
   const [cvLoaded, setCvLoaded] = useState(false);
@@ -38,6 +43,7 @@ export const useCameraSystem = (config = {}) => {
     trackingMode: 'sparse-reconstruction',
     initialized: false
   });
+  const [depthState, setDepthState] = useState(depthServiceRef.current.getState());
   
   const [personalityData, setPersonalityData] = useState({
     isProcessing: false,
@@ -223,6 +229,7 @@ export const useCameraSystem = (config = {}) => {
     const cameraService = cameraServiceRef.current;
     const detectionService = detectionServiceRef.current;
     const anchorManager = anchorManagerRef.current;
+    const depthService = depthServiceRef.current;
 
     // Camera service listeners
     const removeCameraListener = cameraService.addListener({
@@ -291,6 +298,9 @@ export const useCameraSystem = (config = {}) => {
             updateMetric('Reconstruction frames', metrics.reconstructionFrames ?? 0);
             updateMetric('Reconstruction landmarks', metrics.reconstructionLandmarks ?? 0);
             updateMetric('Reconstruction depth', metrics.reconstructionDepthQuality ?? 0);
+            updateMetric('Reconstruction depth status', metrics.reconstructionDepthStatus || 'None');
+            updateMetric('Reconstruction depth provider', metrics.reconstructionDepthProvider || 'None');
+            updateMetric('Reconstruction depth inference', metrics.reconstructionDepthInferenceTime ?? 0);
             updateMetric('Anchor processing time', metrics.processingTime ?? 0);
             updateMetric('Recovery attempts', metrics.recoveryAttempts ?? 0);
             updateMetric('Lost frame count', metrics.lostFrameCount ?? 0);
@@ -317,6 +327,14 @@ export const useCameraSystem = (config = {}) => {
         
         updateMetric('System mode', state.mode);
       }
+    });
+
+    const removeDepthListener = depthService.addListener((state) => {
+      setDepthState(state);
+      updateMetric('Depth model state', state.state);
+      updateMetric('Depth provider', state.provider || 'None');
+      updateMetric('Depth inference', state.processingTime ?? 0);
+      updateMetric('Depth error', state.error || 'None');
     });
 
     // Personality service listeners
@@ -406,6 +424,7 @@ export const useCameraSystem = (config = {}) => {
       removeCameraListener();
       removeDetectionListener();
       removeAnchorListener();
+      removeDepthListener();
       removePersonalityListener();
       removeTTSListener();
     };
@@ -413,7 +432,11 @@ export const useCameraSystem = (config = {}) => {
 
   // Camera controls
   const startCamera = useCallback(async (videoElement) => {
-    return await cameraServiceRef.current.start(videoElement);
+    const result = await cameraServiceRef.current.start(videoElement);
+    depthServiceRef.current.initialize().catch(error => {
+      logger.warn('CameraSystem', `Depth model preload failed: ${error.message}`);
+    });
+    return result;
   }, []);
 
   const resumeCamera = useCallback(async () => {
@@ -422,6 +445,8 @@ export const useCameraSystem = (config = {}) => {
 
   const stopCamera = useCallback(() => {
     cameraServiceRef.current.stop();
+    depthServiceRef.current.dispose();
+    latestDepthFrameRef.current = null;
   }, []);
 
   // Detection controls
@@ -439,10 +464,24 @@ export const useCameraSystem = (config = {}) => {
 
   const updateAnchor = useCallback((imageData) => {
     if (anchorSystemState.mode === 'anchor') {
-      return anchorManagerRef.current.updateAnchor(imageData);
+      if (anchorSystemState.trackingMode === DEPTH_FUSION_MODE) {
+        const timestamp = performance.now();
+        depthServiceRef.current.estimate(imageData, { timestamp }).then(depthFrame => {
+          if (depthFrame) {
+            latestDepthFrameRef.current = depthFrame;
+          }
+        }).catch(error => {
+          logger.warn('CameraSystem', `Depth inference failed: ${error.message}`);
+        });
+      }
+
+      return anchorManagerRef.current.updateAnchor(imageData, {
+        depthFrame: latestDepthFrameRef.current,
+        depthState,
+      });
     }
     return { success: false, reason: 'Not in anchor mode' };
-  }, [anchorSystemState.mode]);
+  }, [anchorSystemState.mode, anchorSystemState.trackingMode, depthState]);
 
   const refreshAnchorSegmentation = useCallback((imageData) => {
     if (anchorSystemState.mode === 'anchor') {
@@ -466,6 +505,7 @@ export const useCameraSystem = (config = {}) => {
 
   const clearAnchor = useCallback(() => {
     anchorManagerRef.current.clearAnchor();
+    latestDepthFrameRef.current = null;
 
     updateMetric('Anchor cleared', 'Returned to detection mode');
   }, [updateMetric]);
@@ -477,6 +517,7 @@ export const useCameraSystem = (config = {}) => {
   }, [updateMetric]);
 
   const setAnchorTrackingMode = useCallback((mode) => {
+    latestDepthFrameRef.current = null;
     anchorManagerRef.current.setTrackingMode(mode);
     updateMetric('Anchor tracking mode', mode);
   }, [updateMetric]);
@@ -540,6 +581,7 @@ export const useCameraSystem = (config = {}) => {
     cameraError,
     videoDimensions,
     detectionState,
+    depthState,
     anchorSystemState, // New unified anchor system state
     personalityData,
     ttsData,
@@ -549,6 +591,7 @@ export const useCameraSystem = (config = {}) => {
     services: {
       camera: cameraServiceRef.current,
       detection: detectionServiceRef.current,
+      depth: depthServiceRef.current,
       anchor: anchorManagerRef.current,
       personality: personalityServiceRef.current,
       tts: ttsClientRef.current

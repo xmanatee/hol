@@ -11,6 +11,7 @@ import { HomographyEstimator } from '../cv/anchor.homography.js';
 import { AffineParallaxPoseEstimator } from '../cv/anchor.affinePose.js';
 import {
   createReconstructionEngine,
+  DEPTH_FUSION_POSE_MODEL,
   isReconstructionMode,
   RECONSTRUCTION_MODE_IDS,
   RECONSTRUCTION_POSE_MODEL,
@@ -569,7 +570,7 @@ export class ImageAnchorService {
    * @param {ImageData} imageData - Current frame
    * @returns {Object} Update result with pose information
    */
-  updateAnchor(imageData) {
+  updateAnchor(imageData, depthContext = {}) {
     if (!this.anchored || !this.initialized) {
       logger.warn('ImageAnchor', 'Update called but anchor not ready:', {
         anchored: this.anchored,
@@ -605,7 +606,10 @@ export class ImageAnchorService {
       } else if (this.anchorState === 'mapping' || this.anchorState === 'tracking' || this.anchorState === 'stable') {
         // Primary tracking via keypoints
         logger.debugEvery('ImageAnchor', 'attempting-keypoint-tracking', 1000, 'Attempting keypoint tracking');
-        updateResult = this._updateWithKeypoints(gray, timestamp);
+        updateResult = this._updateWithKeypoints(gray, timestamp, {
+          ...depthContext,
+          imageData,
+        });
 
         if (!updateResult.success && this.anchorState !== 'lost') {
           // Increment failure counter instead of immediately degrading
@@ -653,7 +657,10 @@ export class ImageAnchorService {
       } else if (this.anchorState === 'degraded' || this.anchorState === 'lost') {
         if (this.keypointTracker.trackedPoints?.length > 0) {
           logger.debugEvery('ImageAnchor', 'attempting-keypoint-recovery', 1000, 'Attempting keypoint tracking recovery from degraded state');
-          const recoveryResult = this._updateWithKeypoints(gray, timestamp);
+          const recoveryResult = this._updateWithKeypoints(gray, timestamp, {
+            ...depthContext,
+            imageData,
+          });
 
           if (recoveryResult.success) {
             logger.info('ImageAnchor', 'Keypoint tracking recovered from degraded state!');
@@ -791,7 +798,7 @@ export class ImageAnchorService {
   /**
    * Update using keypoint tracking and homography
    */
-  _updateWithKeypoints(grayImage, timestamp) {
+  _updateWithKeypoints(grayImage, timestamp, depthContext = {}) {
     logger.debugEvery('ImageAnchor', 'track-to-frame-start', 1000, 'Keypoint tracking - starting trackToFrame');
     let trackingResult = this.keypointTracker.trackToFrame(this.cv, grayImage);
 
@@ -916,7 +923,7 @@ export class ImageAnchorService {
     this.metrics.poseSourceHoldReason = null;
     this.metrics.poseModel = isReconstructionMode(this.trackingMode) ? this.trackingMode : POSE_MODEL;
     const objectPose = this._estimateObjectPoseFromTracker();
-    const reconstructionPose = this._updateReconstructionPoseFromTracker(timestamp, grayImage);
+    const reconstructionPose = this._updateReconstructionPoseFromTracker(timestamp, grayImage, depthContext);
 
     const poseAttempt = this._estimatePoseFromTracker();
     const poseCorrespondenceOptions = poseAttempt.options;
@@ -2234,13 +2241,29 @@ export class ImageAnchorService {
     };
   }
 
-  _updateReconstructionPoseFromTracker(timestamp, grayImage) {
+  _updateReconstructionPoseFromTracker(timestamp, grayImage, depthContext = {}) {
     if (!isReconstructionMode(this.trackingMode)) {
       this._recordReconstructionMetrics(this.reconstructor.getState());
       return null;
     }
 
-    const reconstructionState = this.reconstructor.addFrameFromTrackedPoints(this.keypointTracker.trackedPoints, timestamp, grayImage);
+    const reconstructionContext = {
+      ...depthContext,
+      objectSupportMask: this.currentObjectSupportMask || this.objectSupportMask,
+      templateRegion: this.trackingRegion || this.templateRegion,
+    };
+    const reconstructionState = this.trackingMode === DEPTH_FUSION_POSE_MODEL
+      ? this.reconstructor.addFrameFromTrackedPoints(
+          this.keypointTracker.trackedPoints,
+          timestamp,
+          reconstructionContext
+        )
+      : this.reconstructor.addFrameFromTrackedPoints(
+          this.keypointTracker.trackedPoints,
+          timestamp,
+          grayImage,
+          reconstructionContext
+        );
     this._recordReconstructionMetrics(reconstructionState);
 
     const pose = this.reconstructor.estimatePoseFromTrackedPoints(this.keypointTracker.trackedPoints, grayImage);
@@ -3030,6 +3053,10 @@ export class ImageAnchorService {
     this.metrics.reconstructionAverageReliability = statistics?.averageReliability;
     this.metrics.reconstructionGeometricConsistency = statistics?.geometricConsistency;
     this.metrics.reconstructionMatureLandmarks = statistics?.matureLandmarks;
+    this.metrics.reconstructionDepthStatus = reconstructionState.depthStatus;
+    this.metrics.reconstructionDepthProvider = reconstructionState.depthProvider;
+    this.metrics.reconstructionDepthInferenceTime = reconstructionState.depthInferenceTime;
+    this.metrics.reconstructionDepthFrameTimestamp = reconstructionState.depthFrameTimestamp;
   }
 
   _recordReconstructionPoseMetrics(reconstructionPose, { active = true } = {}) {

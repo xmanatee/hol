@@ -123,11 +123,12 @@ const createGrayImage = (width, height, frameIndex) => {
   return { cols: width, rows: height, data };
 };
 
-test('reconstruction mode registry exposes the three selectable engines', () => {
+test('reconstruction mode registry exposes selectable engines', () => {
   assert.deepEqual(RECONSTRUCTION_MODES.map(mode => mode.id), [
     'sparse-reconstruction',
     'parametric-surface',
     'direct-photometric',
+    'depth-fusion',
   ]);
 
   for (const mode of RECONSTRUCTION_MODES) {
@@ -138,6 +139,8 @@ test('reconstruction mode registry exposes the three selectable engines', () => 
     assert.equal(typeof engine.estimatePoseFromTrackedPoints, 'function');
     assert.equal(typeof engine.getState, 'function');
   }
+
+  assert.equal(RECONSTRUCTION_MODES.find(mode => mode.id === 'depth-fusion').requiresDepthFrame, true);
 });
 
 test('reconstruction engines update object reference region without resetting mapped observations', () => {
