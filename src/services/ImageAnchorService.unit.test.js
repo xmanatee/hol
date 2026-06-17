@@ -470,6 +470,40 @@ test('selected curved surface modes use bounded motion hold for weak dropout tra
   assert.equal(sparseService.metrics.positionFilterAdjustment, null);
 });
 
+test('mature sparse curved maps keep weak dropout tracking out of centroid fallback', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('sparse-reconstruction');
+  service.anchorTargetClass = 'cup';
+  service.objectSupportMask = { bbox: { x: 80, y: 80, width: 120, height: 160 } };
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.8;
+  service.metrics.reconstructionMatureLandmarks = 22;
+  service.metrics.activeLandmarkCount = 12;
+  service.metrics.objectOwnedLandmarks = 12;
+  service.reconstructor.targetSurfaceModel = 'tapered-cylinder';
+  service.keypointTracker.getCentroidAnchorPosition = () => ({
+    x: 140,
+    y: 130,
+    confidence: 0.1,
+    inlierCount: 12,
+  });
+
+  const trackerAnchorPosition = {
+    x: 180,
+    y: 150,
+    confidence: 0.12,
+    averageResidual: 24,
+    method: 'reference_similarity_transform',
+  };
+  const selected = service._selectTrackerAnchorPosition({
+    trackerAnchorPosition,
+    reconstructionPose: { success: false },
+  });
+
+  assert.equal(selected, trackerAnchorPosition);
+  assert.equal(service.metrics.trackerAnchorAdjustment, null);
+});
+
 test('reconstruction position updates are step-limited to prevent head teleports', () => {
   const service = new ImageAnchorService();
   service.setTrackingMode('sparse-reconstruction');

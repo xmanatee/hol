@@ -2674,6 +2674,10 @@ export class ImageAnchorService {
       return false;
     }
 
+    if (this._hasMatureSparseCurvedMap()) {
+      return false;
+    }
+
     const activeLandmarks = this.metrics.activeLandmarkCount || this.metrics.keypointCount || 0;
     const objectOwnedLandmarks = this.metrics.objectOwnedLandmarks || 0;
     const residual = trackerAnchorPosition.averageResidual ?? 0;
@@ -3193,6 +3197,14 @@ export class ImageAnchorService {
       matureLandmarks >= 16 &&
       mapConfidence >= 0.6 &&
       (confidence <= 0.32 || residual >= 9);
+  }
+
+  _hasMatureSparseCurvedMap() {
+    return this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
+      this._hasCurvedReconstructionTarget() &&
+      this.metrics.reconstructionReady === true &&
+      (this.metrics.reconstructionMapConfidence ?? 0) >= 0.65 &&
+      (this.metrics.reconstructionMatureLandmarks || 0) >= 16;
   }
 
   _predictCurvedMotionPosition(timestamp) {
