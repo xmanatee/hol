@@ -248,14 +248,17 @@ const calculateDepthQuality = landmarks => {
 
 export class SparseObjectReconstructor {
   constructor(config = {}) {
-    this.minFrames = config.minFrames ?? 6;
-    this.minLandmarks = config.minLandmarks ?? 18;
-    this.minPoseLandmarks = config.minPoseLandmarks ?? 10;
-    this.maxFrames = config.maxFrames ?? 18;
-    this.maxBuildFrames = config.maxBuildFrames ?? 10;
-    this.rebuildInterval = config.rebuildInterval ?? 4;
-    this.minObservationRatio = config.minObservationRatio ?? 0.58;
-    this.maxMappedLandmarks = config.maxMappedLandmarks ?? 72;
+    this.baseConfig = {
+      minFrames: config.minFrames ?? 6,
+      minLandmarks: config.minLandmarks ?? 18,
+      minPoseLandmarks: config.minPoseLandmarks ?? 10,
+      maxFrames: config.maxFrames ?? 18,
+      maxBuildFrames: config.maxBuildFrames ?? 10,
+      rebuildInterval: config.rebuildInterval ?? 4,
+      minObservationRatio: config.minObservationRatio ?? 0.58,
+      maxMappedLandmarks: config.maxMappedLandmarks ?? 72,
+    };
+    this._applyBaseConfig();
     this.reset({ anchorReference: { x: 0, y: 0 } });
     this.state = 'inactive';
   }
@@ -270,6 +273,7 @@ export class SparseObjectReconstructor {
     this.templateRegion = { ...templateRegion };
     this.targetClass = targetClass;
     this.targetSurfaceModel = modelFromRegion(templateRegion, targetClass);
+    this._applyTargetSurfaceConfig();
     this.frames = [];
     this.map = null;
     this.state = 'mapping';
@@ -283,6 +287,40 @@ export class SparseObjectReconstructor {
     this.templateRegion = { ...templateRegion };
     this.targetClass = targetClass;
     this.targetSurfaceModel = modelFromRegion(templateRegion, targetClass);
+    this._applyTargetSurfaceConfig();
+  }
+
+  _applyBaseConfig() {
+    this.minFrames = this.baseConfig.minFrames;
+    this.minLandmarks = this.baseConfig.minLandmarks;
+    this.minPoseLandmarks = this.baseConfig.minPoseLandmarks;
+    this.maxFrames = this.baseConfig.maxFrames;
+    this.maxBuildFrames = this.baseConfig.maxBuildFrames;
+    this.rebuildInterval = this.baseConfig.rebuildInterval;
+    this.minObservationRatio = this.baseConfig.minObservationRatio;
+    this.maxMappedLandmarks = this.baseConfig.maxMappedLandmarks;
+  }
+
+  _applyTargetSurfaceConfig() {
+    this._applyBaseConfig();
+    if (!this._usesTargetSurfacePrior()) {
+      return;
+    }
+
+    this.minFrames = Math.min(this.minFrames, 4);
+    this.minLandmarks = Math.min(this.minLandmarks, 14);
+    this.minPoseLandmarks = Math.min(this.minPoseLandmarks, 8);
+    this.maxBuildFrames = Math.min(this.maxBuildFrames, 8);
+    this.minObservationRatio = Math.min(this.minObservationRatio, 0.46);
+  }
+
+  _mappingCoherenceOptions() {
+    return {
+      minInliers: this.minLandmarks,
+      threshold: this._usesTargetSurfacePrior() ? 12 : 10,
+      minInlierRatio: this._usesTargetSurfacePrior() ? 0.42 : 0.56,
+      model: 'affine',
+    };
   }
 
   addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now()) {
@@ -304,12 +342,7 @@ export class SparseObjectReconstructor {
       return this.getState();
     }
 
-    const coherent = selectCoherentObservations(observations, {
-      minInliers: this.minLandmarks,
-      threshold: 10,
-      minInlierRatio: 0.56,
-      model: 'affine',
-    });
+    const coherent = selectCoherentObservations(observations, this._mappingCoherenceOptions());
     if (!coherent.success) {
       this.state = this.map ? 'ready' : 'mapping';
       this.lastFailureReason = coherent.reason;

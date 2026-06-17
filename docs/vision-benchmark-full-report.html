@@ -1,0 +1,1397 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HOL Full 3D Reconstruction Benchmark Report</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: oklch(0.19 0.018 247);
+      --muted: oklch(0.46 0.018 247);
+      --paper: oklch(0.98 0.006 247);
+      --surface: oklch(1 0.004 247);
+      --line: oklch(0.88 0.01 247);
+      --low: oklch(0.56 0.12 155);
+      --moderate: oklch(0.63 0.13 82);
+      --high: oklch(0.59 0.18 45);
+      --severe: oklch(0.52 0.2 25);
+      --accent: oklch(0.43 0.11 238);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 15px/1.55 "Avenir Next", "Segoe UI", sans-serif;
+    }
+
+    main {
+      width: min(1440px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 32px 0 56px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+      gap: 32px;
+      align-items: end;
+      padding: 24px 0 32px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1, h2, h3, p { margin: 0; }
+
+    h1 {
+      max-width: 780px;
+      font-size: clamp(2.25rem, 5vw, 5rem);
+      line-height: 0.95;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin-top: 48px;
+      margin-bottom: 14px;
+      font-size: 1.35rem;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 28px 0 10px;
+      font-size: 1rem;
+      letter-spacing: 0;
+    }
+
+    .lede {
+      max-width: 760px;
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+
+    .meta {
+      display: grid;
+      gap: 8px;
+      padding: 16px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .meta div {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .muted { color: var(--muted); }
+
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(160px, 1fr));
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .kpi {
+      padding: 16px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .kpi span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .kpi strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 1.8rem;
+      line-height: 1.1;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 0.55fr);
+      gap: 18px;
+      margin-top: 28px;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+    }
+
+    .panel ul, .panel ol {
+      margin: 0;
+      padding-left: 1.2rem;
+    }
+
+    .panel li + li { margin-top: 10px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    thead th {
+      background: oklch(0.95 0.008 247);
+      color: oklch(0.31 0.018 247);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    tbody tr:last-child th,
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 8px;
+    }
+
+    .risk, .band {
+      display: inline-flex;
+      min-width: 56px;
+      justify-content: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      color: oklch(0.99 0.004 247);
+      font-weight: 700;
+      font-size: 0.82rem;
+    }
+
+    .risk.low, .band.low { background: var(--low); }
+    .risk.moderate, .band.moderate { background: var(--moderate); color: oklch(0.2 0.03 82); }
+    .risk.high, .band.high { background: var(--high); }
+    .risk.severe, .band.severe { background: var(--severe); }
+
+    .bar {
+      height: 5px;
+      margin-top: 5px;
+      background: oklch(0.92 0.008 247);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar span {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+    }
+
+    .bar.fail span { background: var(--high); }
+    .bar.riskbar span { background: var(--severe); }
+
+    .grid-two {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    header > *,
+    .summary > *,
+    .grid-two > * {
+      min-width: 0;
+    }
+
+    .note {
+      margin-top: 14px;
+      color: var(--muted);
+      max-width: 82ch;
+    }
+
+    code {
+      font-family: "SFMono-Regular", ui-monospace, monospace;
+      background: oklch(0.94 0.008 247);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
+    @media (max-width: 980px) {
+      header, .summary, .grid-two { grid-template-columns: 1fr; }
+      .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 560px) {
+      main { width: min(100% - 20px, 1440px); padding-top: 16px; }
+      .kpis { grid-template-columns: 1fr; }
+      th, td { padding: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <section>
+        <h1>HOL Full 3D Reconstruction Benchmark</h1>
+        <p class="lede">A full synthetic stress sweep across all reconstruction modes, target geometries, backgrounds, motion profiles, and occlusion profiles. Lower risk is better; strict pass/fail uses the shared vision quality thresholds.</p>
+      </section>
+      <aside class="meta" aria-label="Benchmark metadata">
+        <div><span>Input JSON</span><strong>docs/vision-benchmark-runs/2026-06-17T21-17-28-full.json</strong></div>
+        <div><span>Matrix size</span><strong>full</strong></div>
+        <div><span>Scenarios</span><strong>300</strong></div>
+        <div><span>Modes</span><strong>4</strong></div>
+        <div><span>Replays</span><strong>1,200</strong></div>
+      </aside>
+    </header>
+
+    <section class="kpis" aria-label="Headline metrics">
+      <div class="kpi"><span>Strict pass rate</span><strong>37.83%</strong></div>
+      <div class="kpi"><span>Strict failures</span><strong>746</strong></div>
+      <div class="kpi"><span>Mean risk</span><strong>31.72</strong></div>
+      <div class="kpi"><span>High + severe risk</span><strong>350</strong></div>
+      <div class="kpi"><span>Severe rate</span><strong>0.83%</strong></div>
+    </section>
+
+    <section class="summary">
+      <div class="panel">
+        <h2>Executive Conclusions</h2>
+        <ol>
+          <li>Depth fusion is the strongest mode overall: 29.83 mean risk, 0 severe cases, and 166 strict failures out of 300 replays.</li><li>The primary bottleneck is still anchor tracking, not dense fusion. Tracking accounts for 694 failed stages, and tracking.meanAnchorError is the top weakness across every major group.</li><li>Fast motion is the most damaging dynamic condition: 334 failures out of 480, with 195 high-or-severe runs.</li><li>Early and repeated occlusion are the most damaging occlusion patterns. Clean scenes still fail 36.67%, so this is not only an occlusion problem.</li><li>Handled mugs are the clearest object weak point: 90% strict failure rate and 5 severe cases.</li><li>Background differences matter less than geometry and motion. Shelf, busy, window, desk, and kitchen backgrounds cluster tightly around mean risk 31.09-32.07.</li>
+        </ol>
+      </div>
+      <div class="panel">
+        <h2>Failure Shape</h2>
+        <p>Strict quality failures affect 746 of 1,200 replays (62.17%). Stage failures overlap, but their counts show the priority order.</p>
+        <h3>Failed stages</h3>
+        <ul>
+          <li>Tracking: 694 (57.83%)</li>
+          <li>Reconstruction: 115 (9.58%)</li>
+          <li>Head attachment: 53 (4.42%)</li>
+        </ul>
+        <h3>Risk bands</h3>
+        <ul>
+          <li>Low: 66</li>
+          <li>Moderate: 784</li>
+          <li>High: 340</li>
+          <li>Severe: 10</li>
+        </ul>
+      </div>
+    </section>
+
+    <h2>Mode Comparison</h2>
+    <p class="note">Depth fusion is the best current direction by average risk and severe-case avoidance, but it inherits anchor quality from the same tracker spine.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Mode</th><th>Runs</th><th>Mean risk</th><th>Max risk</th><th>Severe</th><th>High</th><th>Strict failures</th><th>High + severe</th><th>Top weakness</th><th>Worst case</th>
+          </tr>
+        </thead>
+        <tbody>
+    <tr>
+      <th scope="row">sparse-reconstruction</th>
+      <td>300</td>
+      <td><span class="risk moderate">33.77</span></td>
+      <td><span class="risk severe">70.48</span></td>
+      <td>5</td>
+      <td>109</td>
+      <td>197 <span class="muted">(65.67%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 65.66666666666666%"></span>
+  </div>
+</td>
+      <td>114 <span class="muted">(38%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 38%"></span>
+  </div>
+</td>
+      <td>tracking.meanAnchorError</td>
+      <td>laminated-card / busy / fast / early <span class="muted">/ sparse-reconstruction</span></td>
+    </tr>
+  
+    <tr>
+      <th scope="row">parametric-surface</th>
+      <td>300</td>
+      <td><span class="risk moderate">32.05</span></td>
+      <td><span class="risk severe">66.79</span></td>
+      <td>4</td>
+      <td>87</td>
+      <td>203 <span class="muted">(67.67%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 67.66666666666666%"></span>
+  </div>
+</td>
+      <td>91 <span class="muted">(30.33%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 30.333333333333336%"></span>
+  </div>
+</td>
+      <td>tracking.meanAnchorError</td>
+      <td>textured-cup / busy / standard / mid <span class="muted">/ parametric-surface</span></td>
+    </tr>
+  
+    <tr>
+      <th scope="row">direct-photometric</th>
+      <td>300</td>
+      <td><span class="risk moderate">31.24</span></td>
+      <td><span class="risk severe">58.73</span></td>
+      <td>1</td>
+      <td>79</td>
+      <td>180 <span class="muted">(60%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 60%"></span>
+  </div>
+</td>
+      <td>80 <span class="muted">(26.67%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 26.666666666666668%"></span>
+  </div>
+</td>
+      <td>tracking.meanAnchorError</td>
+      <td>handled-mug / busy / fast / early <span class="muted">/ direct-photometric</span></td>
+    </tr>
+  
+    <tr>
+      <th scope="row">depth-fusion</th>
+      <td>300</td>
+      <td><span class="risk moderate">29.83</span></td>
+      <td><span class="risk high">51.13</span></td>
+      <td>0</td>
+      <td>65</td>
+      <td>166 <span class="muted">(55.33%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 55.333333333333336%"></span>
+  </div>
+</td>
+      <td>65 <span class="muted">(21.67%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 21.666666666666668%"></span>
+  </div>
+</td>
+      <td>tracking.meanAnchorError</td>
+      <td>handled-mug / window / fast / early <span class="muted">/ depth-fusion</span></td>
+    </tr>
+  </tbody>
+      </table>
+    </div>
+
+    <h2>Object And Geometry Weak Points</h2>
+    <div class="grid-two">
+      <section>
+        <h3>Objects</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Object</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Worst case</th></tr></thead>
+            <tbody>
+  <tr>
+    <th scope="row">handled-mug</th>
+    <td><span class="risk high">41.29</span></td>
+    <td><span class="risk severe">66.02</span></td>
+    <td>90 <span class="muted">(90%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 90%"></span>
+  </div>
+</td>
+    <td>60 <span class="muted">(60%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 60%"></span>
+  </div>
+</td>
+    <td>handled-mug / window / fast / repeated <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">laminated-card</th>
+    <td><span class="risk high">38.83</span></td>
+    <td><span class="risk severe">70.48</span></td>
+    <td>94 <span class="muted">(94%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 94%"></span>
+  </div>
+</td>
+    <td>56 <span class="muted">(56%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 56.00000000000001%"></span>
+  </div>
+</td>
+    <td>laminated-card / busy / fast / early <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">textured-ball</th>
+    <td><span class="risk high">36.51</span></td>
+    <td><span class="risk high">48.94</span></td>
+    <td>91 <span class="muted">(91%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 91%"></span>
+  </div>
+</td>
+    <td>52 <span class="muted">(52%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 52%"></span>
+  </div>
+</td>
+    <td>textured-ball / desk / fast / repeated <span class="muted">/ direct-photometric</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">textured-cup</th>
+    <td><span class="risk moderate">35.95</span></td>
+    <td><span class="risk severe">66.79</span></td>
+    <td>82 <span class="muted">(82%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 82%"></span>
+  </div>
+</td>
+    <td>54 <span class="muted">(54%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 54%"></span>
+  </div>
+</td>
+    <td>textured-cup / busy / standard / mid <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">label-bottle</th>
+    <td><span class="risk moderate">31.74</span></td>
+    <td><span class="risk high">51.81</span></td>
+    <td>75 <span class="muted">(75%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 75%"></span>
+  </div>
+</td>
+    <td>29 <span class="muted">(29%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 28.999999999999996%"></span>
+  </div>
+</td>
+    <td>label-bottle / desk / fast / early <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">rigid-box</th>
+    <td><span class="risk moderate">31</span></td>
+    <td><span class="risk high">44.35</span></td>
+    <td>70 <span class="muted">(70%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 70%"></span>
+  </div>
+</td>
+    <td>18 <span class="muted">(18%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 18%"></span>
+  </div>
+</td>
+    <td>rigid-box / desk / fast / early <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">depth-book</th>
+    <td><span class="risk moderate">30.89</span></td>
+    <td><span class="risk high">56.52</span></td>
+    <td>49 <span class="muted">(49%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 49%"></span>
+  </div>
+</td>
+    <td>22 <span class="muted">(22%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 22%"></span>
+  </div>
+</td>
+    <td>depth-book / desk / fast / early <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">snack-pouch</th>
+    <td><span class="risk moderate">29.75</span></td>
+    <td><span class="risk high">42.03</span></td>
+    <td>54 <span class="muted">(54%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 54%"></span>
+  </div>
+</td>
+    <td>12 <span class="muted">(12%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 12%"></span>
+  </div>
+</td>
+    <td>snack-pouch / shelf / standard / mid <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">dark-book</th>
+    <td><span class="risk moderate">29.21</span></td>
+    <td><span class="risk high">48.58</span></td>
+    <td>28 <span class="muted">(28%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 28.000000000000004%"></span>
+  </div>
+</td>
+    <td>24 <span class="muted">(24%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 24%"></span>
+  </div>
+</td>
+    <td>dark-book / desk / slow / late <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">planar-book</th>
+    <td><span class="risk moderate">27.37</span></td>
+    <td><span class="risk high">46.48</span></td>
+    <td>25 <span class="muted">(25%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 25%"></span>
+  </div>
+</td>
+    <td>13 <span class="muted">(13%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 13%"></span>
+  </div>
+</td>
+    <td>planar-book / shelf / slow / late <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">cylindrical-can</th>
+    <td><span class="risk moderate">24.84</span></td>
+    <td><span class="risk high">51.7</span></td>
+    <td>70 <span class="muted">(70%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 70%"></span>
+  </div>
+</td>
+    <td>7 <span class="muted">(7%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 7.000000000000001%"></span>
+  </div>
+</td>
+    <td>cylindrical-can / window / fast / early <span class="muted">/ direct-photometric</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">glossy-phone</th>
+    <td><span class="risk moderate">23.28</span></td>
+    <td><span class="risk high">42.95</span></td>
+    <td>18 <span class="muted">(18%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 18%"></span>
+  </div>
+</td>
+    <td>3 <span class="muted">(3%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 3%"></span>
+  </div>
+</td>
+    <td>glossy-phone / desk / fast / early <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3>Geometry Families</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Geometry</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Worst case</th></tr></thead>
+            <tbody>
+  <tr>
+    <th scope="row">handled-tapered-cylinder</th>
+    <td><span class="risk high">41.29</span></td>
+    <td><span class="risk severe">66.02</span></td>
+    <td>90 <span class="muted">(90%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 90%"></span>
+  </div>
+</td>
+    <td>60 <span class="muted">(60%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 60%"></span>
+  </div>
+</td>
+    <td>handled-mug / window / fast / repeated <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">ellipsoid</th>
+    <td><span class="risk high">36.51</span></td>
+    <td><span class="risk high">48.94</span></td>
+    <td>91 <span class="muted">(91%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 91%"></span>
+  </div>
+</td>
+    <td>52 <span class="muted">(52%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 52%"></span>
+  </div>
+</td>
+    <td>textured-ball / desk / fast / repeated <span class="muted">/ direct-photometric</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">tapered-cylinder</th>
+    <td><span class="risk moderate">35.95</span></td>
+    <td><span class="risk severe">66.79</span></td>
+    <td>82 <span class="muted">(82%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 82%"></span>
+  </div>
+</td>
+    <td>54 <span class="muted">(54%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 54%"></span>
+  </div>
+</td>
+    <td>textured-cup / busy / standard / mid <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">curved-label</th>
+    <td><span class="risk moderate">31.74</span></td>
+    <td><span class="risk high">51.81</span></td>
+    <td>75 <span class="muted">(75%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 75%"></span>
+  </div>
+</td>
+    <td>29 <span class="muted">(29%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 28.999999999999996%"></span>
+  </div>
+</td>
+    <td>label-bottle / desk / fast / early <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">planar-glossy</th>
+    <td><span class="risk moderate">31.06</span></td>
+    <td><span class="risk severe">70.48</span></td>
+    <td>112 <span class="muted">(56%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 56.00000000000001%"></span>
+  </div>
+</td>
+    <td>59 <span class="muted">(29.5%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 29.5%"></span>
+  </div>
+</td>
+    <td>laminated-card / busy / fast / early <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">multi-plane</th>
+    <td><span class="risk moderate">31</span></td>
+    <td><span class="risk high">44.35</span></td>
+    <td>70 <span class="muted">(70%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 70%"></span>
+  </div>
+</td>
+    <td>18 <span class="muted">(18%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 18%"></span>
+  </div>
+</td>
+    <td>rigid-box / desk / fast / early <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">planar-depth-texture</th>
+    <td><span class="risk moderate">30.89</span></td>
+    <td><span class="risk high">56.52</span></td>
+    <td>49 <span class="muted">(49%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 49%"></span>
+  </div>
+</td>
+    <td>22 <span class="muted">(22%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 22%"></span>
+  </div>
+</td>
+    <td>depth-book / desk / fast / early <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">deformable-planar</th>
+    <td><span class="risk moderate">29.75</span></td>
+    <td><span class="risk high">42.03</span></td>
+    <td>54 <span class="muted">(54%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 54%"></span>
+  </div>
+</td>
+    <td>12 <span class="muted">(12%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 12%"></span>
+  </div>
+</td>
+    <td>snack-pouch / shelf / standard / mid <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">planar-low-light</th>
+    <td><span class="risk moderate">29.21</span></td>
+    <td><span class="risk high">48.58</span></td>
+    <td>28 <span class="muted">(28%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 28.000000000000004%"></span>
+  </div>
+</td>
+    <td>24 <span class="muted">(24%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 24%"></span>
+  </div>
+</td>
+    <td>dark-book / desk / slow / late <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">planar</th>
+    <td><span class="risk moderate">27.37</span></td>
+    <td><span class="risk high">46.48</span></td>
+    <td>25 <span class="muted">(25%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 25%"></span>
+  </div>
+</td>
+    <td>13 <span class="muted">(13%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 13%"></span>
+  </div>
+</td>
+    <td>planar-book / shelf / slow / late <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">cylindrical</th>
+    <td><span class="risk moderate">24.84</span></td>
+    <td><span class="risk high">51.7</span></td>
+    <td>70 <span class="muted">(70%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 70%"></span>
+  </div>
+</td>
+    <td>7 <span class="muted">(7%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 7.000000000000001%"></span>
+  </div>
+</td>
+    <td>cylindrical-can / window / fast / early <span class="muted">/ direct-photometric</span></td>
+  </tr>
+</tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <h2>Condition Weak Points</h2>
+    <div class="grid-two">
+      <section>
+        <h3>Motion</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Motion</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Worst case</th></tr></thead>
+            <tbody>
+  <tr>
+    <th scope="row">fast</th>
+    <td><span class="risk moderate">34.89</span></td>
+    <td><span class="risk severe">70.48</span></td>
+    <td>334 <span class="muted">(69.58%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 69.58333333333333%"></span>
+  </div>
+</td>
+    <td>195 <span class="muted">(40.63%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 40.625%"></span>
+  </div>
+</td>
+    <td>laminated-card / busy / fast / early <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">slow</th>
+    <td><span class="risk moderate">33.24</span></td>
+    <td><span class="risk high">50.76</span></td>
+    <td>183 <span class="muted">(76.25%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 76.25%"></span>
+  </div>
+</td>
+    <td>85 <span class="muted">(35.42%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 35.41666666666667%"></span>
+  </div>
+</td>
+    <td>textured-cup / desk / slow / late <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">standard</th>
+    <td><span class="risk moderate">27.79</span></td>
+    <td><span class="risk severe">66.79</span></td>
+    <td>229 <span class="muted">(47.71%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 47.708333333333336%"></span>
+  </div>
+</td>
+    <td>70 <span class="muted">(14.58%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 14.583333333333334%"></span>
+  </div>
+</td>
+    <td>textured-cup / busy / standard / mid <span class="muted">/ parametric-surface</span></td>
+  </tr>
+</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3>Occlusion</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Occlusion</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Worst case</th></tr></thead>
+            <tbody>
+  <tr>
+    <th scope="row">early</th>
+    <td><span class="risk moderate">35.92</span></td>
+    <td><span class="risk severe">70.48</span></td>
+    <td>177 <span class="muted">(73.75%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 73.75%"></span>
+  </div>
+</td>
+    <td>100 <span class="muted">(41.67%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 41.66666666666667%"></span>
+  </div>
+</td>
+    <td>laminated-card / busy / fast / early <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">repeated</th>
+    <td><span class="risk moderate">33.87</span></td>
+    <td><span class="risk severe">66.02</span></td>
+    <td>157 <span class="muted">(65.42%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 65.41666666666667%"></span>
+  </div>
+</td>
+    <td>95 <span class="muted">(39.58%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 39.58333333333333%"></span>
+  </div>
+</td>
+    <td>handled-mug / window / fast / repeated <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">late</th>
+    <td><span class="risk moderate">33.24</span></td>
+    <td><span class="risk high">50.76</span></td>
+    <td>183 <span class="muted">(76.25%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 76.25%"></span>
+  </div>
+</td>
+    <td>85 <span class="muted">(35.42%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 35.41666666666667%"></span>
+  </div>
+</td>
+    <td>textured-cup / desk / slow / late <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">mid</th>
+    <td><span class="risk moderate">30.42</span></td>
+    <td><span class="risk severe">66.79</span></td>
+    <td>141 <span class="muted">(58.75%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 58.75%"></span>
+  </div>
+</td>
+    <td>56 <span class="muted">(23.33%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 23.333333333333332%"></span>
+  </div>
+</td>
+    <td>textured-cup / busy / standard / mid <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">clean</th>
+    <td><span class="risk moderate">25.15</span></td>
+    <td><span class="risk high">43.23</span></td>
+    <td>88 <span class="muted">(36.67%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 36.666666666666664%"></span>
+  </div>
+</td>
+    <td>14 <span class="muted">(5.83%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 5.833333333333333%"></span>
+  </div>
+</td>
+    <td>laminated-card / shelf / standard / clean <span class="muted">/ direct-photometric</span></td>
+  </tr>
+</tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <h2>Background And Lighting</h2>
+    <div class="grid-two">
+      <section>
+        <h3>Backgrounds</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Background</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Worst case</th></tr></thead>
+            <tbody>
+  <tr>
+    <th scope="row">shelf</th>
+    <td><span class="risk moderate">32.07</span></td>
+    <td><span class="risk severe">58.84</span></td>
+    <td>158 <span class="muted">(65.83%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 65.83333333333333%"></span>
+  </div>
+</td>
+    <td>75 <span class="muted">(31.25%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 31.25%"></span>
+  </div>
+</td>
+    <td>handled-mug / shelf / fast / repeated <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">window</th>
+    <td><span class="risk moderate">32.01</span></td>
+    <td><span class="risk severe">66.02</span></td>
+    <td>154 <span class="muted">(64.17%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 64.16666666666667%"></span>
+  </div>
+</td>
+    <td>71 <span class="muted">(29.58%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 29.583333333333332%"></span>
+  </div>
+</td>
+    <td>handled-mug / window / fast / repeated <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">desk</th>
+    <td><span class="risk moderate">31.93</span></td>
+    <td><span class="risk severe">62.99</span></td>
+    <td>152 <span class="muted">(63.33%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 63.33333333333333%"></span>
+  </div>
+</td>
+    <td>71 <span class="muted">(29.58%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 29.583333333333332%"></span>
+  </div>
+</td>
+    <td>handled-mug / desk / fast / repeated <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">busy</th>
+    <td><span class="risk moderate">31.5</span></td>
+    <td><span class="risk severe">70.48</span></td>
+    <td>141 <span class="muted">(58.75%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 58.75%"></span>
+  </div>
+</td>
+    <td>68 <span class="muted">(28.33%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 28.333333333333332%"></span>
+  </div>
+</td>
+    <td>laminated-card / busy / fast / early <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">kitchen</th>
+    <td><span class="risk moderate">31.09</span></td>
+    <td><span class="risk high">56.51</span></td>
+    <td>141 <span class="muted">(58.75%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 58.75%"></span>
+  </div>
+</td>
+    <td>65 <span class="muted">(27.08%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 27.083333333333332%"></span>
+  </div>
+</td>
+    <td>handled-mug / kitchen / fast / repeated <span class="muted">/ parametric-surface</span></td>
+  </tr>
+</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3>Lighting Proxies</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Lighting</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Worst case</th></tr></thead>
+            <tbody>
+  <tr>
+    <th scope="row">horizontal-edge-clutter</th>
+    <td><span class="risk moderate">32.07</span></td>
+    <td><span class="risk severe">58.84</span></td>
+    <td>158 <span class="muted">(65.83%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 65.83333333333333%"></span>
+  </div>
+</td>
+    <td>75 <span class="muted">(31.25%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 31.25%"></span>
+  </div>
+</td>
+    <td>handled-mug / shelf / fast / repeated <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">high-contrast-backlight</th>
+    <td><span class="risk moderate">32.01</span></td>
+    <td><span class="risk severe">66.02</span></td>
+    <td>154 <span class="muted">(64.17%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 64.16666666666667%"></span>
+  </div>
+</td>
+    <td>71 <span class="muted">(29.58%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 29.583333333333332%"></span>
+  </div>
+</td>
+    <td>handled-mug / window / fast / repeated <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">soft-desk</th>
+    <td><span class="risk moderate">31.93</span></td>
+    <td><span class="risk severe">62.99</span></td>
+    <td>152 <span class="muted">(63.33%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 63.33333333333333%"></span>
+  </div>
+</td>
+    <td>71 <span class="muted">(29.58%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 29.583333333333332%"></span>
+  </div>
+</td>
+    <td>handled-mug / desk / fast / repeated <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">moving-high-frequency-clutter</th>
+    <td><span class="risk moderate">31.5</span></td>
+    <td><span class="risk severe">70.48</span></td>
+    <td>141 <span class="muted">(58.75%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 58.75%"></span>
+  </div>
+</td>
+    <td>68 <span class="muted">(28.33%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 28.333333333333332%"></span>
+  </div>
+</td>
+    <td>laminated-card / busy / fast / early <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">tiled-specular-clutter</th>
+    <td><span class="risk moderate">31.09</span></td>
+    <td><span class="risk high">56.51</span></td>
+    <td>141 <span class="muted">(58.75%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 58.75%"></span>
+  </div>
+</td>
+    <td>65 <span class="muted">(27.08%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 27.083333333333332%"></span>
+  </div>
+</td>
+    <td>handled-mug / kitchen / fast / repeated <span class="muted">/ parametric-surface</span></td>
+  </tr>
+</tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <h2>Worst Individual Replays</h2>
+    <p class="note">These are the highest risk cases across all 1,200 replays. They are the best starting set for debugging because they combine the largest anchor errors with missing or unstable reconstruction support.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Scenario</th><th>Mode</th><th>Risk</th><th>Band</th><th>Primary weakness</th><th>Failed stages</th><th>Mean anchor</th><th>Max anchor</th><th>Ready frames</th>
+          </tr>
+        </thead>
+        <tbody>
+  <tr>
+    <td>1</td>
+    <th scope="row">laminated-card / busy / fast / early</th>
+    <td>sparse-reconstruction</td>
+    <td><span class="risk severe">70.48</span></td>
+    <td><span class="band severe">severe</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, reconstruction</td>
+    <td>16.35 px</td>
+    <td>39.11 px</td>
+    <td>0%</td>
+  </tr>
+
+  <tr>
+    <td>2</td>
+    <th scope="row">textured-cup / busy / standard / mid</th>
+    <td>parametric-surface</td>
+    <td><span class="risk severe">66.79</span></td>
+    <td><span class="band severe">severe</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, reconstruction, headAttachment</td>
+    <td>24.84 px</td>
+    <td>56.4 px</td>
+    <td>87.88%</td>
+  </tr>
+
+  <tr>
+    <td>3</td>
+    <th scope="row">handled-mug / window / fast / repeated</th>
+    <td>sparse-reconstruction</td>
+    <td><span class="risk severe">66.02</span></td>
+    <td><span class="band severe">severe</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, reconstruction, headAttachment</td>
+    <td>21.38 px</td>
+    <td>39.27 px</td>
+    <td>86.96%</td>
+  </tr>
+
+  <tr>
+    <td>4</td>
+    <th scope="row">handled-mug / desk / fast / repeated</th>
+    <td>parametric-surface</td>
+    <td><span class="risk severe">62.99</span></td>
+    <td><span class="band severe">severe</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, headAttachment</td>
+    <td>21.79 px</td>
+    <td>50.03 px</td>
+    <td>82.61%</td>
+  </tr>
+
+  <tr>
+    <td>5</td>
+    <th scope="row">handled-mug / window / fast / early</th>
+    <td>parametric-surface</td>
+    <td><span class="risk severe">62.73</span></td>
+    <td><span class="band severe">severe</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, reconstruction</td>
+    <td>42.68 px</td>
+    <td>77.41 px</td>
+    <td>0%</td>
+  </tr>
+
+  <tr>
+    <td>6</td>
+    <th scope="row">laminated-card / window / fast / early</th>
+    <td>sparse-reconstruction</td>
+    <td><span class="risk severe">61.4</span></td>
+    <td><span class="band severe">severe</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, reconstruction, headAttachment</td>
+    <td>10.45 px</td>
+    <td>24.37 px</td>
+    <td>28.57%</td>
+  </tr>
+
+  <tr>
+    <td>7</td>
+    <th scope="row">laminated-card / busy / fast / early</th>
+    <td>parametric-surface</td>
+    <td><span class="risk severe">60.92</span></td>
+    <td><span class="band severe">severe</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, headAttachment</td>
+    <td>18.16 px</td>
+    <td>47.75 px</td>
+    <td>80.95%</td>
+  </tr>
+
+  <tr>
+    <td>8</td>
+    <th scope="row">handled-mug / shelf / fast / repeated</th>
+    <td>sparse-reconstruction</td>
+    <td><span class="risk severe">58.84</span></td>
+    <td><span class="band severe">severe</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, reconstruction, headAttachment</td>
+    <td>14.08 px</td>
+    <td>23.68 px</td>
+    <td>86.96%</td>
+  </tr>
+
+  <tr>
+    <td>9</td>
+    <th scope="row">laminated-card / shelf / fast / early</th>
+    <td>sparse-reconstruction</td>
+    <td><span class="risk severe">58.75</span></td>
+    <td><span class="band severe">severe</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, reconstruction</td>
+    <td>9.25 px</td>
+    <td>21.19 px</td>
+    <td>19.05%</td>
+  </tr>
+
+  <tr>
+    <td>10</td>
+    <th scope="row">handled-mug / busy / fast / early</th>
+    <td>direct-photometric</td>
+    <td><span class="risk severe">58.73</span></td>
+    <td><span class="band severe">severe</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, reconstruction</td>
+    <td>18.24 px</td>
+    <td>49.91 px</td>
+    <td>80.95%</td>
+  </tr>
+
+  <tr>
+    <td>11</td>
+    <th scope="row">handled-mug / shelf / fast / repeated</th>
+    <td>parametric-surface</td>
+    <td><span class="risk high">57.96</span></td>
+    <td><span class="band high">high</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, headAttachment</td>
+    <td>25.96 px</td>
+    <td>76.01 px</td>
+    <td>82.61%</td>
+  </tr>
+
+  <tr>
+    <td>12</td>
+    <th scope="row">handled-mug / busy / fast / early</th>
+    <td>sparse-reconstruction</td>
+    <td><span class="risk high">56.96</span></td>
+    <td><span class="band high">high</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking</td>
+    <td>20.11 px</td>
+    <td>37.6 px</td>
+    <td>85.71%</td>
+  </tr>
+
+  <tr>
+    <td>13</td>
+    <th scope="row">depth-book / desk / fast / early</th>
+    <td>sparse-reconstruction</td>
+    <td><span class="risk high">56.52</span></td>
+    <td><span class="band high">high</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, reconstruction</td>
+    <td>12.42 px</td>
+    <td>25.66 px</td>
+    <td>0%</td>
+  </tr>
+
+  <tr>
+    <td>14</td>
+    <th scope="row">handled-mug / kitchen / fast / repeated</th>
+    <td>parametric-surface</td>
+    <td><span class="risk high">56.51</span></td>
+    <td><span class="band high">high</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, headAttachment</td>
+    <td>24.59 px</td>
+    <td>71.98 px</td>
+    <td>82.61%</td>
+  </tr>
+
+  <tr>
+    <td>15</td>
+    <th scope="row">textured-cup / desk / standard / mid</th>
+    <td>parametric-surface</td>
+    <td><span class="risk high">56.02</span></td>
+    <td><span class="band high">high</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking, reconstruction</td>
+    <td>28.67 px</td>
+    <td>71.95 px</td>
+    <td>87.88%</td>
+  </tr>
+
+  <tr>
+    <td>16</td>
+    <th scope="row">handled-mug / window / fast / early</th>
+    <td>sparse-reconstruction</td>
+    <td><span class="risk high">55.57</span></td>
+    <td><span class="band high">high</span></td>
+    <td>tracking.meanAnchorError</td>
+    <td>tracking</td>
+    <td>21.73 px</td>
+    <td>39.62 px</td>
+    <td>85.71%</td>
+  </tr>
+</tbody>
+      </table>
+    </div>
+
+    <h2>Recommended Engineering Focus</h2>
+    <div class="panel">
+      <ol>
+        <li>Prioritize fast-motion and occlusion recovery in the tracking spine. Improve landmark reacquisition, local support preservation, and post-occlusion anchor correction before investing more in dense model complexity.</li>
+        <li>Keep depth fusion as the preferred advanced mode candidate. It has the lowest mean risk and no severe cases in the full synthetic sweep, but it still needs tracker stability to reach production quality.</li>
+        <li>Use handled mugs, laminated cards, cups, rigid boxes, and label bottles as the core regression set. These families expose the most geometry and texture failures.</li>
+        <li>Add real iPhone capture fixtures for window backlight, shelf clutter, and busy moving backgrounds. Synthetic results show background is secondary to geometry and motion, but mobile camera noise may change that ranking.</li>
+        <li>Add recovery-specific metrics: frames to recover after occlusion, anchor drift slope, and map pose reacquisition delay. The current benchmark identifies bad cases; these metrics would explain recovery behavior more directly.</li>
+      </ol>
+    </div>
+
+    <h2>Method Notes</h2>
+    <div class="panel">
+      <ul>
+        <li>Full matrix: 12 object cases x 5 background variants x 5 motion/occlusion profiles x 4 reconstruction modes.</li>
+        <li>Depth fusion replays use the synthetic depth-frame harness so geometry fusion logic is exercised without timing browser ONNX inference.</li>
+        <li>Risk targets are stricter than the curated release quality report; this report is intended to expose weak points, not to act as the normal pass/fail release gate.</li>
+        <li>Worst-case and grouped rankings use mean risk first, then max risk. Lower is better.</li>
+      </ul>
+    </div>
+  </main>
+</body>
+</html>

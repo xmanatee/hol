@@ -69,16 +69,16 @@ export class DepthEstimationService {
     this.worker = this.workerFactory();
     this.worker.onmessage = event => this._handleWorkerMessage(event.data);
     this.worker.onerror = event => {
-      const pending = this.pending.get('initialize');
-      this.pending.delete('initialize');
+      const message = event.message ?? 'Depth worker failed';
+      this._rejectPending(message);
       this.initializePromise = null;
+      this.inFlight = false;
       disposeWorker(this.worker);
       this.worker = null;
       this._setStatus({
         state: 'error',
-        error: event.message,
+        error: message,
       });
-      pending?.reject(new Error(event.message));
     };
     this._setStatus({ state: 'loading', error: null });
     this.initializePromise = new Promise((resolve, reject) => {
@@ -122,12 +122,9 @@ export class DepthEstimationService {
   }
 
   dispose() {
-    this.pending.forEach(pending => {
-      pending.reject?.(new Error('Depth estimation service disposed'));
-    });
+    this._rejectPending('Depth estimation service disposed');
     disposeWorker(this.worker);
     this.worker = null;
-    this.pending.clear();
     this.initializePromise = null;
     this.inFlight = false;
     this._setStatus({ state: 'idle' });
@@ -195,5 +192,12 @@ export class DepthEstimationService {
       ...patch,
     };
     this.listeners.forEach(listener => listener(this.getState()));
+  }
+
+  _rejectPending(message) {
+    this.pending.forEach(pending => {
+      pending.reject(new Error(message));
+    });
+    this.pending.clear();
   }
 }

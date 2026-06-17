@@ -24,6 +24,7 @@ import { checkCriticalFeatures } from '../cv/opencv.features.test.js';
 import {
   calculateTapLocalRadius,
   createTapLocalObjectSupportMask,
+  createObjectSupportMask,
   createObjectSupportMaskPreview,
   isPointInsideObjectSupport,
   warpObjectSupportMask,
@@ -66,6 +67,8 @@ const MIN_LOW_LAG_TRACKER_CONFIDENCE = 0.55;
 const MAX_LOW_LAG_TRACKER_RESIDUAL = 7;
 const CURVED_DROPOUT_MAX_PREDICTION_MS = 220;
 const CURVED_DROPOUT_MAX_STEP = 18;
+const SPARSE_CURVED_REFERENCE_MAX_STEP = 8;
+const OBJECT_SUPPORT_POSITION_CORRECTION_MIN_DELTA = 4;
 const PLANAR_POSE_POSITION_METHODS = new Set([
   RECONSTRUCTION_POSE_MODEL,
   'planar-homography',
@@ -136,6 +139,7 @@ export class ImageAnchorService {
     this.curvedMotionSample = null;
     this.objectSupportMask = null;
     this.currentObjectSupportMask = null;
+    this.objectSupportAnchorUv = null;
     this.expandedObjectSupportRegion = false;
     this.anchorTargetClass = null;
     this.trackingMode = POSE_MODEL;
@@ -411,6 +415,7 @@ export class ImageAnchorService {
       this.currentNormal = { x: 0, y: 0, z: 1 };
       this.objectSupportMask = objectSupportMask;
       this.currentObjectSupportMask = objectSupportMask;
+      this.objectSupportAnchorUv = this._calculateObjectSupportAnchorUv(objectSupportMask, tapPosition);
       this.expandedObjectSupportRegion = !!objectSupportMask && objectSupportMask.source === 'interactive-segmenter' &&
         !this._isTapLocalObjectSupportMask(objectSupportMask);
       this.anchorTargetClass = targetClass;
@@ -468,6 +473,7 @@ export class ImageAnchorService {
         keypointDensity: evidence.keypointDensity,
         backgroundRejected: evidence.backgroundRejected,
         objectSupportMaskBounds: objectSupportMask ? { ...objectSupportMask.bbox } : null,
+        objectSupportAnchorUv: this.objectSupportAnchorUv ? { ...this.objectSupportAnchorUv } : null,
         objectSupportMaskPreview,
         currentObjectSupportMaskSource: objectSupportMask ? objectSupportMask.source : null,
         currentObjectSupportMaskBounds: objectSupportMask ? { ...objectSupportMask.bbox } : null,
@@ -551,17 +557,31 @@ export class ImageAnchorService {
       return false;
     }
 
-    this.objectSupportMask = objectSupportMask;
-    this.currentObjectSupportMask = objectSupportMask;
+    if (!this.objectSupportAnchorUv) {
+      this.objectSupportAnchorUv = this._calculateObjectSupportAnchorUv(
+        objectSupportMask,
+        this.currentPosition || objectSupportMask.referencePoint
+      );
+    }
+
+    const correctedAnchorPosition = this._applyObjectSupportPositionCorrection(objectSupportMask, reason);
+    const anchoredSupportMask = this._createAnchorReferencedObjectSupportMask(
+      objectSupportMask,
+      correctedAnchorPosition || this._objectSupportAnchorPosition(objectSupportMask) || objectSupportMask.referencePoint
+    );
+
+    this.objectSupportMask = anchoredSupportMask;
+    this.currentObjectSupportMask = anchoredSupportMask;
     this.expandedObjectSupportRegion = true;
-    this.metrics.objectSupportMaskSource = objectSupportMask.source;
-    this.metrics.objectSupportMaskConfidence = objectSupportMask.confidence;
-    this.metrics.objectSupportMaskBounds = { ...objectSupportMask.bbox };
-    this.metrics.objectSupportMaskPreview = createObjectSupportMaskPreview(objectSupportMask);
-    this.metrics.currentObjectSupportMaskSource = objectSupportMask.source;
-    this.metrics.currentObjectSupportMaskBounds = { ...objectSupportMask.bbox };
+    this.metrics.objectSupportMaskSource = anchoredSupportMask.source;
+    this.metrics.objectSupportMaskConfidence = anchoredSupportMask.confidence;
+    this.metrics.objectSupportMaskBounds = { ...anchoredSupportMask.bbox };
+    this.metrics.objectSupportAnchorUv = this.objectSupportAnchorUv ? { ...this.objectSupportAnchorUv } : null;
+    this.metrics.objectSupportMaskPreview = createObjectSupportMaskPreview(anchoredSupportMask);
+    this.metrics.currentObjectSupportMaskSource = anchoredSupportMask.source;
+    this.metrics.currentObjectSupportMaskBounds = { ...anchoredSupportMask.bbox };
     this.metrics.currentObjectSupportMaskPreview = this.metrics.objectSupportMaskPreview;
-    this.trackingRegion = this._calculateObjectSupportTrackingRegion(objectSupportMask, this.trackingRegion || this.templateRegion);
+    this.trackingRegion = this._calculateObjectSupportTrackingRegion(anchoredSupportMask, this.trackingRegion || this.templateRegion);
     this.metrics.trackingRegion = { ...this.trackingRegion };
     this._setReconstructionRegion(this.trackingRegion);
     this.metrics.segmentationRefreshReason = reason;
@@ -569,6 +589,114 @@ export class ImageAnchorService {
     this._recordLandmarkMetrics();
     this._notifyStateChange();
     return true;
+  }
+
+  _calculateObjectSupportAnchorUv(objectSupportMask, anchorPosition) {
+    if (!objectSupportMask?.bbox || !anchorPosition) {
+      return null;
+    }
+
+    const { bbox } = objectSupportMask;
+    if (bbox.width <= 0 || bbox.height <= 0) {
+      return null;
+    }
+
+    return {
+      u: clamp((anchorPosition.x - bbox.x) / bbox.width, 0, 1),
+      v: clamp((anchorPosition.y - bbox.y) / bbox.height, 0, 1),
+    };
+  }
+
+  _objectSupportAnchorPosition(objectSupportMask) {
+    if (!objectSupportMask?.bbox || !this.objectSupportAnchorUv) {
+      return null;
+    }
+
+    const { bbox } = objectSupportMask;
+    if (bbox.width <= 0 || bbox.height <= 0) {
+      return null;
+    }
+
+    return {
+      x: bbox.x + bbox.width * this.objectSupportAnchorUv.u,
+      y: bbox.y + bbox.height * this.objectSupportAnchorUv.v,
+      z: 0,
+    };
+  }
+
+  _createAnchorReferencedObjectSupportMask(objectSupportMask, referencePoint) {
+    return createObjectSupportMask({
+      width: objectSupportMask.width,
+      height: objectSupportMask.height,
+      data: objectSupportMask.data,
+      source: objectSupportMask.source,
+      confidence: objectSupportMask.confidence,
+      referencePoint,
+      createdAtFrame: objectSupportMask.createdAtFrame,
+      updatedAtFrame: objectSupportMask.updatedAtFrame,
+    });
+  }
+
+  _applyObjectSupportPositionCorrection(objectSupportMask, reason) {
+    const candidate = this._objectSupportAnchorPosition(objectSupportMask);
+    if (!candidate || !this.currentPosition || objectSupportMask.source === 'warped-mask') {
+      this.metrics.objectSupportPositionCorrection = null;
+      this.metrics.objectSupportPositionSource = null;
+      return null;
+    }
+
+    const deltaX = candidate.x - this.currentPosition.x;
+    const deltaY = candidate.y - this.currentPosition.y;
+    const distance = Math.hypot(deltaX, deltaY);
+    const maxStep = this._getObjectSupportPositionCorrectionMaxStep(objectSupportMask);
+    if (distance < OBJECT_SUPPORT_POSITION_CORRECTION_MIN_DELTA || maxStep <= 0) {
+      this.metrics.objectSupportPositionCorrection = null;
+      this.metrics.objectSupportPositionSource = null;
+      return null;
+    }
+
+    const stepScale = distance > maxStep ? maxStep / distance : 1;
+    const corrected = {
+      x: this.currentPosition.x + deltaX * stepScale,
+      y: this.currentPosition.y + deltaY * stepScale,
+      z: 0,
+    };
+    const appliedStep = distance * stepScale;
+
+    this.currentPosition = corrected;
+    this.positionFilterX = createPositionFilter();
+    this.positionFilterY = createPositionFilter();
+    this.positionFilterX.filter(corrected.x, this.now());
+    this.positionFilterY.filter(corrected.y, this.now());
+    this.metrics.objectSupportPositionCorrection = reason;
+    this.metrics.objectSupportPositionSource = objectSupportMask.source;
+    this.metrics.objectSupportPositionDelta = distance;
+    this.metrics.objectSupportPositionStep = appliedStep;
+
+    return corrected;
+  }
+
+  _getObjectSupportPositionCorrectionMaxStep(objectSupportMask) {
+    if (this._hasRigidPlanarTargetClass()) {
+      return 0;
+    }
+
+    const maxExtent = Math.max(objectSupportMask.bbox.width, objectSupportMask.bbox.height);
+    const targetClass = this.anchorTargetClass || '';
+    const mugLike = /mug/i.test(targetClass);
+    const curved = this._hasCurvedReconstructionTarget();
+    const ratio = curved ? 0.24 : 0.3;
+    if (mugLike && this.trackingMode === 'parametric-surface') {
+      return 0;
+    }
+    if (mugLike && this.trackingMode === DEPTH_FUSION_POSE_MODEL) {
+      return 4;
+    }
+    if (mugLike && this.trackingMode === RECONSTRUCTION_POSE_MODEL) {
+      return clamp(maxExtent * ratio, 8, 10);
+    }
+    const hardMax = mugLike ? 12 : curved ? 14 : 16;
+    return clamp(maxExtent * ratio, 8, hardMax);
   }
 
   /**
@@ -3139,11 +3267,17 @@ export class ImageAnchorService {
     let boundedScale = this.currentPlanarTransform
       ? clamp(rawScale, previous.scale * Math.exp(-SCALE_STEP_LOG_LIMIT), previous.scale * Math.exp(SCALE_STEP_LOG_LIMIT))
       : rawScale;
-    const shouldHoldSparseMugScaleShrink = anchorPosition.method === 'reference_similarity_transform' &&
+    const holdSparseMugReferenceScale = anchorPosition.method === 'reference_similarity_transform' &&
       this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
       /mug/i.test(this.anchorTargetClass || '');
-    if (this.currentPlanarTransform && shouldHoldSparseMugScaleShrink) {
+    const holdSparseMugCentroidScale = anchorPosition.method === 'curved-centroid-position' &&
+      this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
+      /mug/i.test(this.anchorTargetClass || '');
+    if (this.currentPlanarTransform && holdSparseMugReferenceScale) {
       boundedScale = Math.max(boundedScale, previous.scale * 0.985);
+    }
+    if (this.currentPlanarTransform && holdSparseMugCentroidScale) {
+      boundedScale = Math.max(boundedScale, previous.scale);
     }
     const rawRotation = typeof anchorPosition.rotation === 'number'
       ? unwrapAngle(anchorPosition.rotation, previous.rotation)
@@ -3345,11 +3479,14 @@ export class ImageAnchorService {
         ? RIGID_PLANAR_BOOK_POSITION_STEP_RATIO
         : RIGID_PLANAR_POSITION_STEP_RATIO;
     }
-    const maxStep = postHoldReferenceRecovery
+    let maxStep = postHoldReferenceRecovery
       ? clamp(templateSize * ratio, 12, 20)
       : isReconstructionMode(this.trackingMode)
         ? clamp(templateSize * ratio, 8, 12)
         : clamp(templateSize * ratio, 8, 24);
+    if (this._shouldUseSparseCurvedReferenceStepLimit(method)) {
+      maxStep = Math.min(maxStep, SPARSE_CURVED_REFERENCE_MAX_STEP);
+    }
 
     if (distance <= maxStep || distance === 0) {
       return position;
@@ -3372,6 +3509,19 @@ export class ImageAnchorService {
       (this.metrics.reconstructionMapConfidence ?? 0) >= 0.66 &&
       (this.metrics.reconstructionMatureLandmarks || 0) >= 16 &&
       (this.metrics.reconstructionTrackerDelta || 0) >= 8;
+  }
+
+  _shouldUseSparseCurvedReferenceStepLimit(method) {
+    const activeLandmarks = this.metrics.activeLandmarkCount || this.metrics.keypointCount || 0;
+    return method === 'reference_similarity_transform' &&
+      this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
+      this._hasCurvedReconstructionTarget() &&
+      /cup|vase/i.test(this.anchorTargetClass || '') &&
+      !/mug/i.test(this.anchorTargetClass || '') &&
+      this.metrics.reconstructionReady === true &&
+      (this.metrics.reconstructionMapConfidence ?? 0) >= 0.6 &&
+      (this.metrics.reconstructionMatureLandmarks || 0) >= 16 &&
+      activeLandmarks <= 22;
   }
 
   _shouldUsePostHoldReferenceRecoveryStep(position, method) {
@@ -3838,6 +3988,7 @@ export class ImageAnchorService {
       this.curvedMotionSample = null;
       this.objectSupportMask = null;
       this.currentObjectSupportMask = null;
+      this.objectSupportAnchorUv = null;
       this.expandedObjectSupportRegion = false;
       this.planarDominanceScore = 0;
       this.templateRegion = null;

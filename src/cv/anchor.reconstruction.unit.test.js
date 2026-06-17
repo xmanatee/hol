@@ -120,6 +120,33 @@ const trackedPointsForPose = (shape, pose, ids = null, outlierIds = new Set()) =
   });
 };
 
+test('surface-prior sparse targets build from shorter occlusion-tolerant tracks', () => {
+  const reconstructor = new SparseObjectReconstructor();
+
+  reconstructor.reset({
+    anchorReference: { x: 200, y: 160 },
+    templateRegion: { x: 140, y: 60, width: 120, height: 190 },
+    targetClass: 'cup',
+  });
+
+  assert.equal(reconstructor.minFrames, 4);
+  assert.equal(reconstructor.minLandmarks, 14);
+  assert.equal(reconstructor.minPoseLandmarks, 8);
+  assert.equal(reconstructor.maxBuildFrames, 8);
+  assert.equal(reconstructor.minObservationRatio, 0.46);
+
+  reconstructor.updateReferenceRegion(
+    { x: 130, y: 100, width: 160, height: 110 },
+    'book'
+  );
+
+  assert.equal(reconstructor.minFrames, 6);
+  assert.equal(reconstructor.minLandmarks, 18);
+  assert.equal(reconstructor.minPoseLandmarks, 10);
+  assert.equal(reconstructor.maxBuildFrames, 10);
+  assert.equal(reconstructor.minObservationRatio, 0.58);
+});
+
 const buildReconstructor = () => {
   const shape = createShape();
   const reconstructor = new SparseObjectReconstructor({

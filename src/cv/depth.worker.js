@@ -20,6 +20,7 @@ let modelConfig = {
 let provider = 'uninitialized';
 
 const configureRuntime = ({ crossOriginIsolated, hardwareConcurrency }) => {
+  ort.env.logLevel = 'error';
   ort.env.wasm.simd = true;
   ort.env.wasm.numThreads = crossOriginIsolated
     ? Math.max(1, Math.min(4, Math.floor((hardwareConcurrency || 2) / 2)))

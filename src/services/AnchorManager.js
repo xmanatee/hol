@@ -67,7 +67,9 @@ export class AnchorManager {
     this.cameraParams = null;
     this.segmentationRefreshInFlight = false;
     this.lastSegmentationRefreshAt = 0;
+    this.lastPoseDropoutRefreshAt = 0;
     this.segmentationRefreshIntervalMs = 500;
+    this.poseDropoutRefreshIntervalMs = 180;
   }
 
   async initialize(cv, viewportWidth, viewportHeight, fov = 63) {
@@ -205,9 +207,12 @@ export class AnchorManager {
 
     const now = performance.now();
     const lowObjectOwnership = this._hasLowObjectOwnership();
+    const poseDropout = this._hasPoseDropout();
     const due = now - this.lastSegmentationRefreshAt >= this.segmentationRefreshIntervalMs;
+    const poseDropoutDue = this.lastPoseDropoutRefreshAt === 0 ||
+      now - this.lastPoseDropoutRefreshAt >= this.poseDropoutRefreshIntervalMs;
     const stableEnough = ['mapping', 'tracking', 'stable', 'degraded'].includes(this.anchorState.state);
-    if (!stableEnough || (!due && !lowObjectOwnership)) {
+    if (!stableEnough || (!due && !lowObjectOwnership && !(poseDropout && poseDropoutDue))) {
       return false;
     }
 
@@ -231,7 +236,7 @@ export class AnchorManager {
       }
 
       const reason = acceptedMask === objectSupportMask
-        ? lowObjectOwnership ? 'object-ownership-recovery' : 'periodic-segmentation-refresh'
+        ? poseDropout ? 'pose-dropout-recovery' : lowObjectOwnership ? 'object-ownership-recovery' : 'periodic-segmentation-refresh'
         : 'tap-local-support-growth';
       const applied = this.imageAnchorService.updateObjectSupportMask(acceptedMask, { reason });
       if (applied && this.activeAnchor) {
@@ -245,6 +250,10 @@ export class AnchorManager {
     }).finally(() => {
       this.segmentationRefreshInFlight = false;
     });
+
+    if (poseDropout) {
+      this.lastPoseDropoutRefreshAt = now;
+    }
 
     return true;
   }
@@ -311,6 +320,18 @@ export class AnchorManager {
     return owned / Math.max(1, active) < 0.65;
   }
 
+  _hasPoseDropout() {
+    const metrics = this.anchorState?.metrics || {};
+    const active = metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0;
+    const trackingRate = metrics.trackingSuccessRate ?? 0;
+    const poseInliers = metrics.poseInliers ?? 0;
+
+    return active >= 8 &&
+      trackingRate >= 0.55 &&
+      poseInliers < 8 &&
+      metrics.poseSource == null;
+  }
+
   _getSegmentationRefreshRadius(imageData) {
     const baseRadius = calculateTapLocalRadius({
       width: imageData.width,
@@ -323,13 +344,15 @@ export class AnchorManager {
     const state = this.anchorState?.state;
     const growthScale = this._hasLowObjectOwnership()
       ? 1.75
-      : state === 'stable' || metrics.reconstructionReady
+      : this._hasPoseDropout()
         ? 3.25
-        : active >= 24 && ownershipRatio >= 0.7
-          ? 2.75
-          : active >= 12 && ownershipRatio >= 0.65
-            ? 2.25
-            : 1.5;
+        : state === 'stable' || metrics.reconstructionReady
+          ? 3.25
+          : active >= 24 && ownershipRatio >= 0.7
+            ? 2.75
+            : active >= 12 && ownershipRatio >= 0.65
+              ? 2.25
+              : 1.5;
 
     return Math.min(
       baseRadius * growthScale,
@@ -338,8 +361,7 @@ export class AnchorManager {
   }
 
   _isAcceptableSegmentationRefresh(objectSupportMask, position, continuityRadius) {
-    if (!this._hasUsableObjectSupportMask(objectSupportMask) ||
-        !isPointInsideObjectSupport(objectSupportMask, position)) {
+    if (!this._hasUsableObjectSupportMask(objectSupportMask)) {
       return false;
     }
 
@@ -350,11 +372,11 @@ export class AnchorManager {
     }
 
     const currentBounds = this.anchorState?.metrics?.currentObjectSupportMaskBounds ||
-      this.anchorState?.metrics?.objectSupportMaskBounds ||
+        this.anchorState?.metrics?.objectSupportMaskBounds ||
       this.activeAnchor?.sourceDetection?.objectSupportMask?.bbox ||
       null;
     if (!currentBounds) {
-      return true;
+      return isPointInsideObjectSupport(objectSupportMask, position);
     }
 
     const center = {
@@ -371,7 +393,8 @@ export class AnchorManager {
       Math.max(objectSupportMask.bbox.y, currentBounds.y));
     const overlapArea = overlapX * overlapY;
     const smallerArea = Math.min(maskArea, currentBounds.width * currentBounds.height);
-    return overlapArea / Math.max(1, smallerArea) >= 0.18 ||
+    return isPointInsideObjectSupport(objectSupportMask, position) ||
+      overlapArea / Math.max(1, smallerArea) >= 0.18 ||
       Math.hypot(center.x - previousCenter.x, center.y - previousCenter.y) <= continuityRadius;
   }
 

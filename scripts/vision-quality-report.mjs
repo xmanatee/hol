@@ -18,13 +18,45 @@ const finiteOverrides = values => Object.fromEntries(
   Object.entries(values).filter(([, value]) => Number.isFinite(value))
 );
 
+const mergeStageThresholds = (base = {}, override = {}) => ({
+  selection: {
+    ...(base.selection ?? {}),
+    ...(override.selection ?? {}),
+  },
+  tracking: {
+    ...(base.tracking ?? {}),
+    ...(override.tracking ?? {}),
+  },
+  reconstruction: {
+    ...(base.reconstruction ?? {}),
+    ...(override.reconstruction ?? {}),
+  },
+  headAttachment: {
+    ...(base.headAttachment ?? {}),
+    ...(override.headAttachment ?? {}),
+  },
+});
+
+const hasStageThresholds = stageThresholds => Object.values(stageThresholds)
+  .some(thresholds => Object.keys(thresholds).length);
+
 const qualityThresholdsForScenario = ({ scenario, mode }) => {
-  const limits = scenario.limitsByMode?.[mode.id] || scenario.limits || {};
-  const stageThresholds = scenario.qualityThresholdsByMode?.[mode.id] || scenario.qualityThresholds || {};
-  if (!Object.keys(limits).length && !Object.keys(stageThresholds).length) return VISION_QUALITY_THRESHOLDS;
+  const limits = {
+    ...(scenario.limits ?? {}),
+    ...(scenario.limitsByMode?.[mode.id] ?? {}),
+  };
+  const stageThresholds = mergeStageThresholds(
+    scenario.qualityThresholds,
+    scenario.qualityThresholdsByMode?.[mode.id]
+  );
+  if (!Object.keys(limits).length && !hasStageThresholds(stageThresholds)) return VISION_QUALITY_THRESHOLDS;
 
   return {
     ...VISION_QUALITY_THRESHOLDS,
+    selection: {
+      ...VISION_QUALITY_THRESHOLDS.selection,
+      ...finiteOverrides(stageThresholds.selection ?? {}),
+    },
     tracking: {
       ...VISION_QUALITY_THRESHOLDS.tracking,
       ...finiteOverrides({
@@ -32,10 +64,11 @@ const qualityThresholdsForScenario = ({ scenario, mode }) => {
         maxAnchorError: limits.maxAnchorError,
         maxFrameJump: limits.maxFrameJump,
       }),
+      ...finiteOverrides(stageThresholds.tracking ?? {}),
     },
     reconstruction: {
       ...VISION_QUALITY_THRESHOLDS.reconstruction,
-      ...finiteOverrides(stageThresholds.reconstruction || {}),
+      ...finiteOverrides(stageThresholds.reconstruction ?? {}),
     },
     headAttachment: {
       ...VISION_QUALITY_THRESHOLDS.headAttachment,
@@ -45,6 +78,7 @@ const qualityThresholdsForScenario = ({ scenario, mode }) => {
         maxScaleLogError: limits.maxScaleLogError,
         maxHeadJumpExcess: limits.maxHeadJumpExcess,
       }),
+      ...finiteOverrides(stageThresholds.headAttachment ?? {}),
     },
   };
 };
@@ -60,6 +94,7 @@ for (const scenario of reportReplayScenarios) {
       sequence,
       trackingMode: mode.id,
       useObjectSupportMask: true,
+      refreshObjectSupportMask: true,
       depthFrameForFrame: mode.requiresDepthFrame ? createSyntheticDepthFrame : null,
     });
     const summary = summarizeReplay(replay);

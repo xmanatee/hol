@@ -127,3 +127,47 @@ test('depth estimation service rejects pending work on dispose', async () => {
   assert.equal(worker.terminated, true);
   assert.equal(service.getState().state, 'idle');
 });
+
+test('depth estimation service rejects in-flight estimates after fatal worker errors', async () => {
+  const workers = [];
+  const service = new DepthEstimationService({
+    workerFactory: () => {
+      const worker = new FakeDepthWorker();
+      workers.push(worker);
+      return worker;
+    },
+  });
+
+  const initialized = service.initialize();
+  workers[0].reply({
+    type: 'initialized',
+    provider: 'webgpu',
+    inputName: 'image',
+    outputName: 'depth',
+    inputSize: 518,
+    modelUrl: '/models/depth_anything_v2_small.onnx',
+  });
+  await initialized;
+
+  const estimate = service.estimate(createImageData(), { force: true });
+  workers[0].onerror({ message: 'worker crashed' });
+
+  await assert.rejects(estimate, /worker crashed/);
+  assert.equal(workers[0].terminated, true);
+  assert.equal(service.getState().state, 'error');
+  assert.equal(service.getState().error, 'worker crashed');
+
+  const retry = service.initialize();
+  workers[1].reply({
+    type: 'initialized',
+    provider: 'wasm',
+    inputName: 'image',
+    outputName: 'depth',
+    inputSize: 518,
+    modelUrl: '/models/depth_anything_v2_small.onnx',
+  });
+
+  const state = await retry;
+  assert.equal(state.state, 'ready');
+  assert.equal(state.provider, 'wasm');
+});

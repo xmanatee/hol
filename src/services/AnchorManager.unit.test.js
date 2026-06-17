@@ -484,6 +484,78 @@ test('segmentation refresh expands tap-local fallback support when segmenter ret
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'tap-local');
 });
 
+test('pose dropout requests immediate segmentation refresh and accepts overlapping support', async () => {
+  const refreshedMask = createObjectSupportMask({
+    width: 180,
+    height: 140,
+    data: new Uint8Array(180 * 140),
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 96, y: 58 },
+    createdAtFrame: 8,
+  });
+  for (let y = 46; y <= 86; y++) {
+    for (let x = 52; x <= 112; x++) {
+      refreshedMask.data[y * refreshedMask.width + x] = 255;
+    }
+  }
+  refreshedMask.bbox = { x: 52, y: 46, width: 61, height: 41 };
+
+  let updateReason = null;
+  let receivedTap = null;
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      updateObjectSupportMask: (mask, { reason }) => {
+        assert.equal(mask, refreshedMask);
+        updateReason = reason;
+        return true;
+      },
+    },
+    interactiveSegmenterService: {
+      segmentTap: async ({ tapPosition }) => {
+        receivedTap = tapPosition;
+        return refreshedMask;
+      },
+    },
+  });
+  manager.initialized = true;
+  manager.mode = 'anchor';
+  manager.lastSegmentationRefreshAt = performance.now();
+  manager.activeAnchor = {
+    position: { x: 126, y: 60, z: 0 },
+    sourceDetection: {
+      objectSupportMask: {
+        bbox: { x: 58, y: 44, width: 64, height: 45 },
+      },
+    },
+  };
+  manager.anchorState = {
+    state: 'tracking',
+    position: { x: 126, y: 60, z: 0 },
+    metrics: {
+      activeLandmarkCount: 24,
+      objectOwnedLandmarks: 24,
+      poseInliers: 0,
+      poseSource: null,
+      trackingSuccessRate: 0.94,
+      currentObjectSupportMaskBounds: { x: 58, y: 44, width: 64, height: 45 },
+      lastFailureReason: 'Recovering object pose before showing the face',
+    },
+  };
+
+  assert.equal(manager.refreshSegmentationIfNeeded({
+    width: 180,
+    height: 140,
+    data: new Uint8ClampedArray(180 * 140 * 4),
+  }), true);
+
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.deepEqual(receivedTap, { x: 126, y: 60, z: 0 });
+  assert.equal(updateReason, 'pose-dropout-recovery');
+});
+
 test('segmentation refresh radius starts local and grows with object evidence', () => {
   const manager = new AnchorManager({
     imageAnchorService: {

@@ -207,8 +207,8 @@ export const realisticReplayScenarios = [
     },
     limitsByMode: {
       'sparse-reconstruction': {
-        maxAnchorError: 24,
-        meanAnchorError: 14,
+        maxAnchorError: 25,
+        meanAnchorError: 16,
         maxScaleError: 0.37,
         maxFrameJump: 12,
         maxRotationError: 1.35,

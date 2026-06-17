@@ -80,7 +80,12 @@ const pointInPolygon = (point, polygon) => {
   return inside;
 };
 
-const createSyntheticObjectSupportMask = ({ sequence, frame }) => {
+const createSyntheticObjectSupportMask = ({
+  sequence,
+  frame,
+  referencePoint = sequence.tap,
+  updatedAtFrame = 0,
+}) => {
   if (frame.objectMask) {
     return createObjectSupportMask({
       width: sequence.width,
@@ -88,9 +93,9 @@ const createSyntheticObjectSupportMask = ({ sequence, frame }) => {
       data: frame.objectMask.data,
       source: 'synthetic-object-mask',
       confidence: 0.96,
-      referencePoint: sequence.tap,
+      referencePoint,
       createdAtFrame: 0,
-      updatedAtFrame: 0,
+      updatedAtFrame,
     });
   }
 
@@ -103,9 +108,9 @@ const createSyntheticObjectSupportMask = ({ sequence, frame }) => {
       data,
       source: 'synthetic-object-mask',
       confidence: 0.96,
-      referencePoint: sequence.tap,
+      referencePoint,
       createdAtFrame: 0,
-      updatedAtFrame: 0,
+      updatedAtFrame,
     });
   }
 
@@ -128,11 +133,28 @@ const createSyntheticObjectSupportMask = ({ sequence, frame }) => {
     data,
     source: 'synthetic-object-mask',
     confidence: 0.96,
-    referencePoint: sequence.tap,
+    referencePoint,
     createdAtFrame: 0,
-    updatedAtFrame: 0,
+    updatedAtFrame,
   });
 };
+
+const hasSyntheticPoseDropout = metrics => {
+  const active = metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0;
+  const trackingRate = metrics.trackingSuccessRate ?? 0;
+  const poseInliers = metrics.poseInliers ?? 0;
+
+  return active >= 8 &&
+    trackingRate >= 0.55 &&
+    poseInliers < 8 &&
+    metrics.poseSource == null;
+};
+
+const shouldRefreshSyntheticObjectSupport = ({ enabled, frame, index, metrics, interval }) => (
+  enabled &&
+  (!!frame.objectMask || (frame.corners || []).length >= 3) &&
+  (index % interval === 0 || hasSyntheticPoseDropout(metrics))
+);
 
 export const createSyntheticDepthFrame = ({ frame, sequence, index, timestamp }) => {
   const width = sequence.width;
@@ -171,6 +193,8 @@ export const replayImageAnchorSequence = async ({
   trackingMode = 'sparse-reconstruction',
   useObjectSupportMask = true,
   depthFrameForFrame = null,
+  refreshObjectSupportMask = false,
+  objectSupportRefreshInterval = 8,
 }) => {
   setupOpenCvGlobals(cv);
 
@@ -221,6 +245,25 @@ export const replayImageAnchorSequence = async ({
           depthState: { state: 'idle' },
         });
     const state = service.getState();
+    if (useObjectSupportMask &&
+        shouldRefreshSyntheticObjectSupport({
+          enabled: refreshObjectSupportMask,
+          frame,
+          index,
+          metrics: state.metrics,
+          interval: objectSupportRefreshInterval,
+        })) {
+      service.updateObjectSupportMask(createSyntheticObjectSupportMask({
+        sequence,
+        frame,
+        referencePoint: result.position || state.position || sequence.tap,
+        updatedAtFrame: index,
+      }), {
+        reason: hasSyntheticPoseDropout(state.metrics)
+          ? 'pose-dropout-recovery'
+          : 'periodic-segmentation-refresh',
+      });
+    }
     const transform = result.planarTransform || state.planarTransform || {};
     const predicted = result.position || state.position || null;
     const normal = result.normal || state.normal || null;

@@ -2,10 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  DEPTH_MODEL_DEFAULT_INPUT_SIZE,
   normalizeDepthValues,
   postprocessDepthTensor,
   preprocessDepthImageData,
 } from './depthModelPreprocess.js';
+
+test('depth model default input size stays tuned for browser inference latency', () => {
+  assert.equal(DEPTH_MODEL_DEFAULT_INPUT_SIZE, 322);
+});
 
 test('depth preprocessing letterboxes image data into normalized NCHW tensor', () => {
   const imageData = {

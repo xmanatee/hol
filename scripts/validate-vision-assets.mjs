@@ -13,6 +13,7 @@ const minimumBytes = {
   onnxWasm: 1_000_000,
   yoloModel: 1_000_000,
   interactiveModel: 1_000_000,
+  depthModel: 50_000_000,
 };
 
 const listFiles = async directory => {
@@ -20,7 +21,11 @@ const listFiles = async directory => {
   return entries.filter(entry => entry.isFile()).map(entry => entry.name);
 };
 
-const requireFile = async (directory, fileName, label, minBytes) => {
+const requireFile = async (directory, fileName, label, minBytes, files = null) => {
+  if (files && !files.includes(fileName)) {
+    throw new Error(`${label} missing from ${directory}: ${fileName}`);
+  }
+
   const filePath = join(directory, fileName);
   const fileStat = await stat(filePath);
   if (fileStat.size < minBytes) {
@@ -83,13 +88,22 @@ const main = async () => {
     DIST_MODELS,
     'yolo11n_480.onnx',
     'YOLO detector model',
-    minimumBytes.yoloModel
+    minimumBytes.yoloModel,
+    modelFiles
   );
   await requireFile(
     DIST_MODELS,
     'ptm_512_hdt_ptm_woid.tflite',
     'MediaPipe interactive segmenter model',
-    minimumBytes.interactiveModel
+    minimumBytes.interactiveModel,
+    modelFiles
+  );
+  await requireFile(
+    DIST_MODELS,
+    'depth_anything_v2_small.onnx',
+    'Depth Anything V2 Small depth model',
+    minimumBytes.depthModel,
+    modelFiles
   );
 
   console.log('Vision assets validated');

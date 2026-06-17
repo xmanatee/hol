@@ -2262,6 +2262,120 @@ test('weak sparse segmented recovery keeps transform when every active landmark 
   }), trackerAnchorPosition);
 });
 
+test('refreshed object support recenters a drifted anchor at the original mask-relative point', () => {
+  const service = new ImageAnchorService({ now: () => 1040 });
+  const initialData = new Uint8Array(120 * 90);
+  for (let y = 20; y < 70; y++) {
+    for (let x = 30; x < 90; x++) {
+      initialData[y * 120 + x] = 255;
+    }
+  }
+
+  const initialMask = createObjectSupportMask({
+    width: 120,
+    height: 90,
+    data: initialData,
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 60, y: 45 },
+    createdAtFrame: 0,
+  });
+
+  service.objectSupportMask = initialMask;
+  service.currentObjectSupportMask = initialMask;
+  service.currentPosition = { x: 92, y: 30, z: 0 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 1, inlierCount: 20, method: 'created' };
+  service.templateRegion = { x: 30, y: 20, width: 60, height: 50 };
+  service.trackingRegion = { x: 24, y: 14, width: 72, height: 62 };
+  service.anchorTargetClass = 'mug';
+  service.objectSupportAnchorUv = { u: 0.5, v: 0.5 };
+  service.metrics.lastUpdateResult = 'success';
+  service.positionFilterX.filter(92, 1000);
+  service.positionFilterY.filter(30, 1000);
+
+  const refreshedData = new Uint8Array(120 * 90);
+  for (let y = 28; y < 78; y++) {
+    for (let x = 14; x < 74; x++) {
+      refreshedData[y * 120 + x] = 255;
+    }
+  }
+  const refreshedMask = createObjectSupportMask({
+    width: 120,
+    height: 90,
+    data: refreshedData,
+    source: 'interactive-segmenter',
+    confidence: 0.92,
+    referencePoint: { x: 42, y: 53 },
+    createdAtFrame: 4,
+  });
+
+  const applied = service.updateObjectSupportMask(refreshedMask, { reason: 'pose-dropout-recovery' });
+
+  assert.equal(applied, true);
+  assert.ok(service.currentPosition.x < 83);
+  assert.ok(service.currentPosition.x > 80);
+  assert.ok(service.currentPosition.y > 34);
+  assert.ok(service.currentPosition.y < 36);
+  assert.ok(service.metrics.objectSupportPositionStep <= 12);
+  assert.equal(service.metrics.objectSupportPositionCorrection, 'pose-dropout-recovery');
+  assert.equal(service.metrics.objectSupportPositionSource, 'interactive-segmenter');
+});
+
+test('rigid planar support refresh does not recenter homography-owned anchors', () => {
+  const service = new ImageAnchorService({ now: () => 1040 });
+  const data = new Uint8Array(120 * 90);
+  for (let y = 28; y < 78; y++) {
+    for (let x = 14; x < 74; x++) {
+      data[y * 120 + x] = 255;
+    }
+  }
+  const refreshedMask = createObjectSupportMask({
+    width: 120,
+    height: 90,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.92,
+    referencePoint: { x: 44, y: 53 },
+    createdAtFrame: 4,
+  });
+
+  service.currentPosition = { x: 92, y: 30, z: 0 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 1, inlierCount: 20, method: 'created' };
+  service.templateRegion = { x: 30, y: 20, width: 60, height: 50 };
+  service.trackingRegion = { x: 24, y: 14, width: 72, height: 62 };
+  service.anchorTargetClass = 'card';
+  service.objectSupportAnchorUv = { u: 0.5, v: 0.5 };
+
+  const applied = service.updateObjectSupportMask(refreshedMask, { reason: 'pose-dropout-recovery' });
+
+  assert.equal(applied, true);
+  assert.deepEqual(service.currentPosition, { x: 92, y: 30, z: 0 });
+  assert.equal(service.metrics.objectSupportPositionCorrection, null);
+  assert.equal(service.metrics.objectSupportPositionSource, null);
+  assert.equal(service.metrics.objectSupportMaskSource, 'interactive-segmenter');
+});
+
+test('handled mug support correction caps follow reconstruction mode ownership', () => {
+  const service = new ImageAnchorService();
+  const objectSupportMask = {
+    bbox: { x: 12, y: 16, width: 80, height: 72 },
+  };
+
+  service.anchorTargetClass = 'mug';
+
+  service.setTrackingMode('sparse-reconstruction');
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 10);
+
+  service.setTrackingMode('depth-fusion');
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 4);
+
+  service.setTrackingMode('parametric-surface');
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
+
+  service.setTrackingMode('direct-photometric');
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 12);
+});
+
 test('mature reconstruction dropout uses object-owned centroid instead of raw similarity drift', () => {
   const service = new ImageAnchorService();
   service.setTrackingMode('sparse-reconstruction');
