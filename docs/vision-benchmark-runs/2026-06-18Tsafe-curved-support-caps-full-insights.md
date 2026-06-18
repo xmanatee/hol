@@ -5,20 +5,20 @@
 - Matrix: full
 - Scenarios: 300
 - Replays: 1,200
-- Strict pass rate: 37.83%
-- Strict failures: 746
-- Mean risk: 31.72
-- High + severe risk: 350
+- Strict pass rate: 42.75%
+- Strict failures: 687
+- Mean risk: 31.36
+- High + severe risk: 329
 - Severe risk: 10
 
 ## Conclusions
 
-- Strongest mode: depth-fusion with 29.83 mean risk, 166 strict failures, and 0 severe cases.
-- Weakest mode: sparse-reconstruction with 33.77 mean risk, 197 strict failures, and 5 severe cases.
+- Strongest mode: depth-fusion with 29.43 mean risk, 154 strict failures, and 0 severe cases.
+- Weakest mode: sparse-reconstruction with 33.36 mean risk, 174 strict failures, and 5 severe cases.
 - Weakest object: handled-mug has 90 strict failures (90%), 5 severe cases, and 41.29 mean risk.
-- Weakest motion profile: fast has 334 strict failures (69.58%), 9 severe cases, and 34.89 mean risk.
-- Weakest occlusion profile: early has 177 strict failures (73.75%), 6 severe cases, and 35.92 mean risk.
-- Weakest background: shelf has 158 strict failures (65.83%), 2 severe cases, and 32.07 mean risk.
+- Weakest motion profile: fast has 316 strict failures (65.83%), 9 severe cases, and 34.57 mean risk.
+- Weakest occlusion profile: early has 164 strict failures (68.33%), 6 severe cases, and 35.66 mean risk.
+- Weakest background: shelf has 141 strict failures (58.75%), 2 severe cases, and 31.73 mean risk.
 - Worst replay: laminated-card / busy / fast / early / sparse-reconstruction; primary weakness is tracking.meanAnchorError.
 
 ## Fix Queue

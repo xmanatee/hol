@@ -2374,6 +2374,18 @@ test('handled mug support correction caps follow reconstruction mode ownership',
 
   service.setTrackingMode('direct-photometric');
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 12);
+
+  service.anchorTargetClass = 'cup';
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 14);
+
+  service.anchorTargetClass = 'bottle';
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 14);
+
+  service.anchorTargetClass = 'can';
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 10);
+
+  service.anchorTargetClass = 'bag';
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 16);
 });
 
 test('mature reconstruction dropout uses object-owned centroid instead of raw similarity drift', () => {

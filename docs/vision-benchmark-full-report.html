@@ -249,7 +249,7 @@
         <p class="lede">A full synthetic stress sweep across all reconstruction modes, target geometries, backgrounds, motion profiles, and occlusion profiles. Lower risk is better; strict pass/fail uses the shared vision quality thresholds.</p>
       </section>
       <aside class="meta" aria-label="Benchmark metadata">
-        <div><span>Input JSON</span><strong>docs/vision-benchmark-runs/2026-06-17T21-17-28-full.json</strong></div>
+        <div><span>Input JSON</span><strong>docs/vision-benchmark-runs/2026-06-18Tsafe-curved-support-caps-full.json</strong></div>
         <div><span>Matrix size</span><strong>full</strong></div>
         <div><span>Scenarios</span><strong>300</strong></div>
         <div><span>Modes</span><strong>4</strong></div>
@@ -258,10 +258,10 @@
     </header>
 
     <section class="kpis" aria-label="Headline metrics">
-      <div class="kpi"><span>Strict pass rate</span><strong>37.83%</strong></div>
-      <div class="kpi"><span>Strict failures</span><strong>746</strong></div>
-      <div class="kpi"><span>Mean risk</span><strong>31.72</strong></div>
-      <div class="kpi"><span>High + severe risk</span><strong>350</strong></div>
+      <div class="kpi"><span>Strict pass rate</span><strong>42.75%</strong></div>
+      <div class="kpi"><span>Strict failures</span><strong>687</strong></div>
+      <div class="kpi"><span>Mean risk</span><strong>31.36</strong></div>
+      <div class="kpi"><span>High + severe risk</span><strong>329</strong></div>
       <div class="kpi"><span>Severe rate</span><strong>0.83%</strong></div>
     </section>
 
@@ -269,23 +269,23 @@
       <div class="panel">
         <h2>Executive Conclusions</h2>
         <ol>
-          <li>Depth fusion is the strongest mode overall: 29.83 mean risk, 0 severe cases, and 166 strict failures out of 300 replays.</li><li>The primary bottleneck is still anchor tracking, not dense fusion. Tracking accounts for 694 failed stages, and tracking.meanAnchorError is the top weakness across every major group.</li><li>Fast motion is the most damaging dynamic condition: 334 failures out of 480, with 195 high-or-severe runs.</li><li>Early and repeated occlusion are the most damaging occlusion patterns. Clean scenes still fail 36.67%, so this is not only an occlusion problem.</li><li>Handled mugs are the clearest object weak point: 90% strict failure rate and 5 severe cases.</li><li>Background differences matter less than geometry and motion. Shelf, busy, window, desk, and kitchen backgrounds cluster tightly around mean risk 31.09-32.07.</li>
+          <li>Depth fusion is the strongest mode overall: 29.43 mean risk, 0 severe cases, and 154 strict failures out of 300 replays.</li><li>The primary bottleneck is still anchor tracking, not dense fusion. Tracking accounts for 629 failed stages, and tracking.meanAnchorError is the top weakness across every major group.</li><li>Fast motion is the most damaging dynamic condition: 316 failures out of 480, with 189 high-or-severe runs.</li><li>Early and repeated occlusion are the most damaging occlusion patterns. Clean scenes still fail 28.33%, so this is not only an occlusion problem.</li><li>Handled mugs are the clearest object weak point: 90% strict failure rate and 5 severe cases.</li><li>Background differences matter less than geometry and motion. Shelf, busy, window, desk, and kitchen backgrounds cluster tightly around mean risk 30.71-31.73.</li>
         </ol>
       </div>
       <div class="panel">
         <h2>Failure Shape</h2>
-        <p>Strict quality failures affect 746 of 1,200 replays (62.17%). Stage failures overlap, but their counts show the priority order.</p>
+        <p>Strict quality failures affect 687 of 1,200 replays (57.25%). Stage failures overlap, but their counts show the priority order.</p>
         <h3>Failed stages</h3>
         <ul>
-          <li>Tracking: 694 (57.83%)</li>
-          <li>Reconstruction: 115 (9.58%)</li>
-          <li>Head attachment: 53 (4.42%)</li>
+          <li>Tracking: 629 (52.42%)</li>
+          <li>Reconstruction: 114 (9.5%)</li>
+          <li>Head attachment: 52 (4.33%)</li>
         </ul>
         <h3>Risk bands</h3>
         <ul>
-          <li>Low: 66</li>
-          <li>Moderate: 784</li>
-          <li>High: 340</li>
+          <li>Low: 89</li>
+          <li>Moderate: 782</li>
+          <li>High: 319</li>
           <li>Severe: 10</li>
         </ul>
       </div>
@@ -304,18 +304,18 @@
     <tr>
       <th scope="row">sparse-reconstruction</th>
       <td>300</td>
-      <td><span class="risk moderate">33.77</span></td>
+      <td><span class="risk moderate">33.36</span></td>
       <td><span class="risk severe">70.48</span></td>
       <td>5</td>
-      <td>109</td>
-      <td>197 <span class="muted">(65.67%)</span>
+      <td>103</td>
+      <td>174 <span class="muted">(58%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 65.66666666666666%"></span>
+    <span style="width: 57.99999999999999%"></span>
   </div>
 </td>
-      <td>114 <span class="muted">(38%)</span>
+      <td>108 <span class="muted">(36%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 38%"></span>
+    <span style="width: 36%"></span>
   </div>
 </td>
       <td>tracking.meanAnchorError</td>
@@ -325,18 +325,18 @@
     <tr>
       <th scope="row">parametric-surface</th>
       <td>300</td>
-      <td><span class="risk moderate">32.05</span></td>
+      <td><span class="risk moderate">31.69</span></td>
       <td><span class="risk severe">66.79</span></td>
       <td>4</td>
-      <td>87</td>
-      <td>203 <span class="muted">(67.67%)</span>
+      <td>80</td>
+      <td>194 <span class="muted">(64.67%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 67.66666666666666%"></span>
+    <span style="width: 64.66666666666666%"></span>
   </div>
 </td>
-      <td>91 <span class="muted">(30.33%)</span>
+      <td>84 <span class="muted">(28%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 30.333333333333336%"></span>
+    <span style="width: 28.000000000000004%"></span>
   </div>
 </td>
       <td>tracking.meanAnchorError</td>
@@ -346,18 +346,18 @@
     <tr>
       <th scope="row">direct-photometric</th>
       <td>300</td>
-      <td><span class="risk moderate">31.24</span></td>
+      <td><span class="risk moderate">30.95</span></td>
       <td><span class="risk severe">58.73</span></td>
       <td>1</td>
-      <td>79</td>
-      <td>180 <span class="muted">(60%)</span>
+      <td>75</td>
+      <td>165 <span class="muted">(55%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 60%"></span>
+    <span style="width: 55.00000000000001%"></span>
   </div>
 </td>
-      <td>80 <span class="muted">(26.67%)</span>
+      <td>76 <span class="muted">(25.33%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 26.666666666666668%"></span>
+    <span style="width: 25.333333333333336%"></span>
   </div>
 </td>
       <td>tracking.meanAnchorError</td>
@@ -367,18 +367,18 @@
     <tr>
       <th scope="row">depth-fusion</th>
       <td>300</td>
-      <td><span class="risk moderate">29.83</span></td>
+      <td><span class="risk moderate">29.43</span></td>
       <td><span class="risk high">51.13</span></td>
       <td>0</td>
-      <td>65</td>
-      <td>166 <span class="muted">(55.33%)</span>
+      <td>61</td>
+      <td>154 <span class="muted">(51.33%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 55.333333333333336%"></span>
+    <span style="width: 51.33333333333333%"></span>
   </div>
 </td>
-      <td>65 <span class="muted">(21.67%)</span>
+      <td>61 <span class="muted">(20.33%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 21.666666666666668%"></span>
+    <span style="width: 20.333333333333332%"></span>
   </div>
 </td>
       <td>tracking.meanAnchorError</td>
@@ -431,23 +431,6 @@
   </tr>
 
   <tr>
-    <th scope="row">textured-ball</th>
-    <td><span class="risk high">36.51</span></td>
-    <td><span class="risk high">48.94</span></td>
-    <td>91 <span class="muted">(91%)</span>
-  <div class="bar fail" aria-hidden="true">
-    <span style="width: 91%"></span>
-  </div>
-</td>
-    <td>52 <span class="muted">(52%)</span>
-  <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 52%"></span>
-  </div>
-</td>
-    <td>textured-ball / desk / fast / repeated <span class="muted">/ direct-photometric</span></td>
-  </tr>
-
-  <tr>
     <th scope="row">textured-cup</th>
     <td><span class="risk moderate">35.95</span></td>
     <td><span class="risk severe">66.79</span></td>
@@ -462,6 +445,23 @@
   </div>
 </td>
     <td>textured-cup / busy / standard / mid <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">textured-ball</th>
+    <td><span class="risk moderate">33.9</span></td>
+    <td><span class="risk high">48.96</span></td>
+    <td>69 <span class="muted">(69%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 69%"></span>
+  </div>
+</td>
+    <td>31 <span class="muted">(31%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 31%"></span>
+  </div>
+</td>
+    <td>textured-ball / busy / slow / late <span class="muted">/ sparse-reconstruction</span></td>
   </tr>
 
   <tr>
@@ -567,23 +567,6 @@
   </tr>
 
   <tr>
-    <th scope="row">cylindrical-can</th>
-    <td><span class="risk moderate">24.84</span></td>
-    <td><span class="risk high">51.7</span></td>
-    <td>70 <span class="muted">(70%)</span>
-  <div class="bar fail" aria-hidden="true">
-    <span style="width: 70%"></span>
-  </div>
-</td>
-    <td>7 <span class="muted">(7%)</span>
-  <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 7.000000000000001%"></span>
-  </div>
-</td>
-    <td>cylindrical-can / window / fast / early <span class="muted">/ direct-photometric</span></td>
-  </tr>
-
-  <tr>
     <th scope="row">glossy-phone</th>
     <td><span class="risk moderate">23.28</span></td>
     <td><span class="risk high">42.95</span></td>
@@ -598,6 +581,23 @@
   </div>
 </td>
     <td>glossy-phone / desk / fast / early <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">cylindrical-can</th>
+    <td><span class="risk moderate">23.09</span></td>
+    <td><span class="risk high">51.7</span></td>
+    <td>33 <span class="muted">(33%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 33%"></span>
+  </div>
+</td>
+    <td>7 <span class="muted">(7%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 7.000000000000001%"></span>
+  </div>
+</td>
+    <td>cylindrical-can / window / fast / early <span class="muted">/ direct-photometric</span></td>
   </tr>
 </tbody>
           </table>
@@ -627,23 +627,6 @@
   </tr>
 
   <tr>
-    <th scope="row">ellipsoid</th>
-    <td><span class="risk high">36.51</span></td>
-    <td><span class="risk high">48.94</span></td>
-    <td>91 <span class="muted">(91%)</span>
-  <div class="bar fail" aria-hidden="true">
-    <span style="width: 91%"></span>
-  </div>
-</td>
-    <td>52 <span class="muted">(52%)</span>
-  <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 52%"></span>
-  </div>
-</td>
-    <td>textured-ball / desk / fast / repeated <span class="muted">/ direct-photometric</span></td>
-  </tr>
-
-  <tr>
     <th scope="row">tapered-cylinder</th>
     <td><span class="risk moderate">35.95</span></td>
     <td><span class="risk severe">66.79</span></td>
@@ -658,6 +641,23 @@
   </div>
 </td>
     <td>textured-cup / busy / standard / mid <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">ellipsoid</th>
+    <td><span class="risk moderate">33.9</span></td>
+    <td><span class="risk high">48.96</span></td>
+    <td>69 <span class="muted">(69%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 69%"></span>
+  </div>
+</td>
+    <td>31 <span class="muted">(31%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 31%"></span>
+  </div>
+</td>
+    <td>textured-ball / busy / slow / late <span class="muted">/ sparse-reconstruction</span></td>
   </tr>
 
   <tr>
@@ -781,11 +781,11 @@
 
   <tr>
     <th scope="row">cylindrical</th>
-    <td><span class="risk moderate">24.84</span></td>
+    <td><span class="risk moderate">23.09</span></td>
     <td><span class="risk high">51.7</span></td>
-    <td>70 <span class="muted">(70%)</span>
+    <td>33 <span class="muted">(33%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 70%"></span>
+    <span style="width: 33%"></span>
   </div>
 </td>
     <td>7 <span class="muted">(7%)</span>
@@ -811,16 +811,16 @@
             <tbody>
   <tr>
     <th scope="row">fast</th>
-    <td><span class="risk moderate">34.89</span></td>
+    <td><span class="risk moderate">34.57</span></td>
     <td><span class="risk severe">70.48</span></td>
-    <td>334 <span class="muted">(69.58%)</span>
+    <td>316 <span class="muted">(65.83%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 69.58333333333333%"></span>
+    <span style="width: 65.83333333333333%"></span>
   </div>
 </td>
-    <td>195 <span class="muted">(40.63%)</span>
+    <td>189 <span class="muted">(39.38%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 40.625%"></span>
+    <span style="width: 39.375%"></span>
   </div>
 </td>
     <td>laminated-card / busy / fast / early <span class="muted">/ sparse-reconstruction</span></td>
@@ -828,16 +828,16 @@
 
   <tr>
     <th scope="row">slow</th>
-    <td><span class="risk moderate">33.24</span></td>
+    <td><span class="risk moderate">32.72</span></td>
     <td><span class="risk high">50.76</span></td>
-    <td>183 <span class="muted">(76.25%)</span>
+    <td>177 <span class="muted">(73.75%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 76.25%"></span>
+    <span style="width: 73.75%"></span>
   </div>
 </td>
-    <td>85 <span class="muted">(35.42%)</span>
+    <td>77 <span class="muted">(32.08%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 35.41666666666667%"></span>
+    <span style="width: 32.083333333333336%"></span>
   </div>
 </td>
     <td>textured-cup / desk / slow / late <span class="muted">/ parametric-surface</span></td>
@@ -845,16 +845,16 @@
 
   <tr>
     <th scope="row">standard</th>
-    <td><span class="risk moderate">27.79</span></td>
+    <td><span class="risk moderate">27.46</span></td>
     <td><span class="risk severe">66.79</span></td>
-    <td>229 <span class="muted">(47.71%)</span>
+    <td>194 <span class="muted">(40.42%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 47.708333333333336%"></span>
+    <span style="width: 40.416666666666664%"></span>
   </div>
 </td>
-    <td>70 <span class="muted">(14.58%)</span>
+    <td>63 <span class="muted">(13.13%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 14.583333333333334%"></span>
+    <span style="width: 13.125%"></span>
   </div>
 </td>
     <td>textured-cup / busy / standard / mid <span class="muted">/ parametric-surface</span></td>
@@ -871,16 +871,16 @@
             <tbody>
   <tr>
     <th scope="row">early</th>
-    <td><span class="risk moderate">35.92</span></td>
+    <td><span class="risk moderate">35.66</span></td>
     <td><span class="risk severe">70.48</span></td>
-    <td>177 <span class="muted">(73.75%)</span>
+    <td>164 <span class="muted">(68.33%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 73.75%"></span>
+    <span style="width: 68.33333333333333%"></span>
   </div>
 </td>
-    <td>100 <span class="muted">(41.67%)</span>
+    <td>98 <span class="muted">(40.83%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 41.66666666666667%"></span>
+    <span style="width: 40.833333333333336%"></span>
   </div>
 </td>
     <td>laminated-card / busy / fast / early <span class="muted">/ sparse-reconstruction</span></td>
@@ -888,16 +888,16 @@
 
   <tr>
     <th scope="row">repeated</th>
-    <td><span class="risk moderate">33.87</span></td>
+    <td><span class="risk moderate">33.49</span></td>
     <td><span class="risk severe">66.02</span></td>
-    <td>157 <span class="muted">(65.42%)</span>
+    <td>152 <span class="muted">(63.33%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 65.41666666666667%"></span>
+    <span style="width: 63.33333333333333%"></span>
   </div>
 </td>
-    <td>95 <span class="muted">(39.58%)</span>
+    <td>91 <span class="muted">(37.92%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 39.58333333333333%"></span>
+    <span style="width: 37.916666666666664%"></span>
   </div>
 </td>
     <td>handled-mug / window / fast / repeated <span class="muted">/ sparse-reconstruction</span></td>
@@ -905,16 +905,16 @@
 
   <tr>
     <th scope="row">late</th>
-    <td><span class="risk moderate">33.24</span></td>
+    <td><span class="risk moderate">32.72</span></td>
     <td><span class="risk high">50.76</span></td>
-    <td>183 <span class="muted">(76.25%)</span>
+    <td>177 <span class="muted">(73.75%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 76.25%"></span>
+    <span style="width: 73.75%"></span>
   </div>
 </td>
-    <td>85 <span class="muted">(35.42%)</span>
+    <td>77 <span class="muted">(32.08%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 35.41666666666667%"></span>
+    <span style="width: 32.083333333333336%"></span>
   </div>
 </td>
     <td>textured-cup / desk / slow / late <span class="muted">/ parametric-surface</span></td>
@@ -922,16 +922,16 @@
 
   <tr>
     <th scope="row">mid</th>
-    <td><span class="risk moderate">30.42</span></td>
+    <td><span class="risk moderate">30.11</span></td>
     <td><span class="risk severe">66.79</span></td>
-    <td>141 <span class="muted">(58.75%)</span>
+    <td>126 <span class="muted">(52.5%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 58.75%"></span>
+    <span style="width: 52.5%"></span>
   </div>
 </td>
-    <td>56 <span class="muted">(23.33%)</span>
+    <td>52 <span class="muted">(21.67%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 23.333333333333332%"></span>
+    <span style="width: 21.666666666666668%"></span>
   </div>
 </td>
     <td>textured-cup / busy / standard / mid <span class="muted">/ parametric-surface</span></td>
@@ -939,16 +939,16 @@
 
   <tr>
     <th scope="row">clean</th>
-    <td><span class="risk moderate">25.15</span></td>
+    <td><span class="risk moderate">24.82</span></td>
     <td><span class="risk high">43.23</span></td>
-    <td>88 <span class="muted">(36.67%)</span>
+    <td>68 <span class="muted">(28.33%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 36.666666666666664%"></span>
+    <span style="width: 28.333333333333332%"></span>
   </div>
 </td>
-    <td>14 <span class="muted">(5.83%)</span>
+    <td>11 <span class="muted">(4.58%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 5.833333333333333%"></span>
+    <span style="width: 4.583333333333333%"></span>
   </div>
 </td>
     <td>laminated-card / shelf / standard / clean <span class="muted">/ direct-photometric</span></td>
@@ -969,16 +969,16 @@
             <tbody>
   <tr>
     <th scope="row">shelf</th>
-    <td><span class="risk moderate">32.07</span></td>
+    <td><span class="risk moderate">31.73</span></td>
     <td><span class="risk severe">58.84</span></td>
-    <td>158 <span class="muted">(65.83%)</span>
+    <td>141 <span class="muted">(58.75%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 65.83333333333333%"></span>
+    <span style="width: 58.75%"></span>
   </div>
 </td>
-    <td>75 <span class="muted">(31.25%)</span>
+    <td>74 <span class="muted">(30.83%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 31.25%"></span>
+    <span style="width: 30.833333333333336%"></span>
   </div>
 </td>
     <td>handled-mug / shelf / fast / repeated <span class="muted">/ sparse-reconstruction</span></td>
@@ -986,16 +986,16 @@
 
   <tr>
     <th scope="row">window</th>
-    <td><span class="risk moderate">32.01</span></td>
+    <td><span class="risk moderate">31.64</span></td>
     <td><span class="risk severe">66.02</span></td>
-    <td>154 <span class="muted">(64.17%)</span>
+    <td>145 <span class="muted">(60.42%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 64.16666666666667%"></span>
+    <span style="width: 60.416666666666664%"></span>
   </div>
 </td>
-    <td>71 <span class="muted">(29.58%)</span>
+    <td>67 <span class="muted">(27.92%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 29.583333333333332%"></span>
+    <span style="width: 27.916666666666668%"></span>
   </div>
 </td>
     <td>handled-mug / window / fast / repeated <span class="muted">/ sparse-reconstruction</span></td>
@@ -1003,42 +1003,8 @@
 
   <tr>
     <th scope="row">desk</th>
-    <td><span class="risk moderate">31.93</span></td>
+    <td><span class="risk moderate">31.54</span></td>
     <td><span class="risk severe">62.99</span></td>
-    <td>152 <span class="muted">(63.33%)</span>
-  <div class="bar fail" aria-hidden="true">
-    <span style="width: 63.33333333333333%"></span>
-  </div>
-</td>
-    <td>71 <span class="muted">(29.58%)</span>
-  <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 29.583333333333332%"></span>
-  </div>
-</td>
-    <td>handled-mug / desk / fast / repeated <span class="muted">/ parametric-surface</span></td>
-  </tr>
-
-  <tr>
-    <th scope="row">busy</th>
-    <td><span class="risk moderate">31.5</span></td>
-    <td><span class="risk severe">70.48</span></td>
-    <td>141 <span class="muted">(58.75%)</span>
-  <div class="bar fail" aria-hidden="true">
-    <span style="width: 58.75%"></span>
-  </div>
-</td>
-    <td>68 <span class="muted">(28.33%)</span>
-  <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 28.333333333333332%"></span>
-  </div>
-</td>
-    <td>laminated-card / busy / fast / early <span class="muted">/ sparse-reconstruction</span></td>
-  </tr>
-
-  <tr>
-    <th scope="row">kitchen</th>
-    <td><span class="risk moderate">31.09</span></td>
-    <td><span class="risk high">56.51</span></td>
     <td>141 <span class="muted">(58.75%)</span>
   <div class="bar fail" aria-hidden="true">
     <span style="width: 58.75%"></span>
@@ -1047,6 +1013,40 @@
     <td>65 <span class="muted">(27.08%)</span>
   <div class="bar riskbar" aria-hidden="true">
     <span style="width: 27.083333333333332%"></span>
+  </div>
+</td>
+    <td>handled-mug / desk / fast / repeated <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">busy</th>
+    <td><span class="risk moderate">31.17</span></td>
+    <td><span class="risk severe">70.48</span></td>
+    <td>131 <span class="muted">(54.58%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 54.58333333333333%"></span>
+  </div>
+</td>
+    <td>63 <span class="muted">(26.25%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 26.25%"></span>
+  </div>
+</td>
+    <td>laminated-card / busy / fast / early <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">kitchen</th>
+    <td><span class="risk moderate">30.71</span></td>
+    <td><span class="risk high">56.51</span></td>
+    <td>129 <span class="muted">(53.75%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 53.75%"></span>
+  </div>
+</td>
+    <td>60 <span class="muted">(25%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 25%"></span>
   </div>
 </td>
     <td>handled-mug / kitchen / fast / repeated <span class="muted">/ parametric-surface</span></td>
@@ -1063,16 +1063,16 @@
             <tbody>
   <tr>
     <th scope="row">horizontal-edge-clutter</th>
-    <td><span class="risk moderate">32.07</span></td>
+    <td><span class="risk moderate">31.73</span></td>
     <td><span class="risk severe">58.84</span></td>
-    <td>158 <span class="muted">(65.83%)</span>
+    <td>141 <span class="muted">(58.75%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 65.83333333333333%"></span>
+    <span style="width: 58.75%"></span>
   </div>
 </td>
-    <td>75 <span class="muted">(31.25%)</span>
+    <td>74 <span class="muted">(30.83%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 31.25%"></span>
+    <span style="width: 30.833333333333336%"></span>
   </div>
 </td>
     <td>handled-mug / shelf / fast / repeated <span class="muted">/ sparse-reconstruction</span></td>
@@ -1080,16 +1080,16 @@
 
   <tr>
     <th scope="row">high-contrast-backlight</th>
-    <td><span class="risk moderate">32.01</span></td>
+    <td><span class="risk moderate">31.64</span></td>
     <td><span class="risk severe">66.02</span></td>
-    <td>154 <span class="muted">(64.17%)</span>
+    <td>145 <span class="muted">(60.42%)</span>
   <div class="bar fail" aria-hidden="true">
-    <span style="width: 64.16666666666667%"></span>
+    <span style="width: 60.416666666666664%"></span>
   </div>
 </td>
-    <td>71 <span class="muted">(29.58%)</span>
+    <td>67 <span class="muted">(27.92%)</span>
   <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 29.583333333333332%"></span>
+    <span style="width: 27.916666666666668%"></span>
   </div>
 </td>
     <td>handled-mug / window / fast / repeated <span class="muted">/ sparse-reconstruction</span></td>
@@ -1097,42 +1097,8 @@
 
   <tr>
     <th scope="row">soft-desk</th>
-    <td><span class="risk moderate">31.93</span></td>
+    <td><span class="risk moderate">31.54</span></td>
     <td><span class="risk severe">62.99</span></td>
-    <td>152 <span class="muted">(63.33%)</span>
-  <div class="bar fail" aria-hidden="true">
-    <span style="width: 63.33333333333333%"></span>
-  </div>
-</td>
-    <td>71 <span class="muted">(29.58%)</span>
-  <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 29.583333333333332%"></span>
-  </div>
-</td>
-    <td>handled-mug / desk / fast / repeated <span class="muted">/ parametric-surface</span></td>
-  </tr>
-
-  <tr>
-    <th scope="row">moving-high-frequency-clutter</th>
-    <td><span class="risk moderate">31.5</span></td>
-    <td><span class="risk severe">70.48</span></td>
-    <td>141 <span class="muted">(58.75%)</span>
-  <div class="bar fail" aria-hidden="true">
-    <span style="width: 58.75%"></span>
-  </div>
-</td>
-    <td>68 <span class="muted">(28.33%)</span>
-  <div class="bar riskbar" aria-hidden="true">
-    <span style="width: 28.333333333333332%"></span>
-  </div>
-</td>
-    <td>laminated-card / busy / fast / early <span class="muted">/ sparse-reconstruction</span></td>
-  </tr>
-
-  <tr>
-    <th scope="row">tiled-specular-clutter</th>
-    <td><span class="risk moderate">31.09</span></td>
-    <td><span class="risk high">56.51</span></td>
     <td>141 <span class="muted">(58.75%)</span>
   <div class="bar fail" aria-hidden="true">
     <span style="width: 58.75%"></span>
@@ -1141,6 +1107,40 @@
     <td>65 <span class="muted">(27.08%)</span>
   <div class="bar riskbar" aria-hidden="true">
     <span style="width: 27.083333333333332%"></span>
+  </div>
+</td>
+    <td>handled-mug / desk / fast / repeated <span class="muted">/ parametric-surface</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">moving-high-frequency-clutter</th>
+    <td><span class="risk moderate">31.17</span></td>
+    <td><span class="risk severe">70.48</span></td>
+    <td>131 <span class="muted">(54.58%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 54.58333333333333%"></span>
+  </div>
+</td>
+    <td>63 <span class="muted">(26.25%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 26.25%"></span>
+  </div>
+</td>
+    <td>laminated-card / busy / fast / early <span class="muted">/ sparse-reconstruction</span></td>
+  </tr>
+
+  <tr>
+    <th scope="row">tiled-specular-clutter</th>
+    <td><span class="risk moderate">30.71</span></td>
+    <td><span class="risk high">56.51</span></td>
+    <td>129 <span class="muted">(53.75%)</span>
+  <div class="bar fail" aria-hidden="true">
+    <span style="width: 53.75%"></span>
+  </div>
+</td>
+    <td>60 <span class="muted">(25%)</span>
+  <div class="bar riskbar" aria-hidden="true">
+    <span style="width: 25%"></span>
   </div>
 </td>
     <td>handled-mug / kitchen / fast / repeated <span class="muted">/ parametric-surface</span></td>

@@ -684,6 +684,8 @@ export class ImageAnchorService {
     const maxExtent = Math.max(objectSupportMask.bbox.width, objectSupportMask.bbox.height);
     const targetClass = this.anchorTargetClass || '';
     const mugLike = /mug/i.test(targetClass);
+    const bottleLike = /bottle/i.test(targetClass);
+    const cupLike = /cup/i.test(targetClass);
     const curved = this._hasCurvedReconstructionTarget();
     const ratio = curved ? 0.24 : 0.3;
     if (mugLike && this.trackingMode === 'parametric-surface') {
@@ -695,7 +697,7 @@ export class ImageAnchorService {
     if (mugLike && this.trackingMode === RECONSTRUCTION_POSE_MODEL) {
       return clamp(maxExtent * ratio, 8, 10);
     }
-    const hardMax = mugLike ? 12 : curved ? 14 : 16;
+    const hardMax = mugLike ? 12 : bottleLike || cupLike ? 14 : curved ? 10 : 16;
     return clamp(maxExtent * ratio, 8, hardMax);
   }
 

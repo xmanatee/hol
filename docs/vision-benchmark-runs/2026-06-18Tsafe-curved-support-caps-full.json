@@ -7,20 +7,20 @@
     "aggregate": {
       "total": 1200,
       "byStatus": {
-        "pass": 454,
-        "fail": 746
+        "pass": 513,
+        "fail": 687
       },
       "failedByStage": {
-        "reconstruction": 115,
-        "tracking": 694,
-        "headAttachment": 53
+        "reconstruction": 114,
+        "tracking": 629,
+        "headAttachment": 52
       }
     },
     "failedByMode": {
-      "sparse-reconstruction": 197,
-      "parametric-surface": 203,
-      "direct-photometric": 180,
-      "depth-fusion": 166
+      "sparse-reconstruction": 174,
+      "parametric-surface": 194,
+      "direct-photometric": 165,
+      "depth-fusion": 154
     },
     "failedByScenario": {
       "planar-book / kitchen / fast / early": 1,
@@ -106,30 +106,24 @@
       "snack-pouch / busy / fast / repeated": 1,
       "snack-pouch / window / fast / repeated": 3,
       "snack-pouch / kitchen / fast / repeated": 1,
-      "cylindrical-can / desk / standard / clean": 3,
-      "cylindrical-can / shelf / standard / clean": 3,
-      "cylindrical-can / busy / standard / clean": 3,
-      "cylindrical-can / window / standard / clean": 3,
-      "cylindrical-can / kitchen / standard / clean": 3,
       "cylindrical-can / desk / fast / early": 4,
-      "cylindrical-can / shelf / fast / early": 4,
+      "cylindrical-can / shelf / fast / early": 2,
       "cylindrical-can / busy / fast / early": 1,
       "cylindrical-can / window / fast / early": 2,
-      "cylindrical-can / kitchen / fast / early": 3,
-      "cylindrical-can / desk / standard / mid": 3,
-      "cylindrical-can / shelf / standard / mid": 4,
-      "cylindrical-can / busy / standard / mid": 3,
+      "cylindrical-can / kitchen / fast / early": 2,
+      "cylindrical-can / desk / standard / mid": 2,
+      "cylindrical-can / shelf / standard / mid": 2,
       "cylindrical-can / window / standard / mid": 1,
-      "cylindrical-can / kitchen / standard / mid": 3,
-      "cylindrical-can / desk / slow / late": 2,
-      "cylindrical-can / shelf / slow / late": 4,
+      "cylindrical-can / kitchen / standard / mid": 1,
+      "cylindrical-can / desk / slow / late": 1,
+      "cylindrical-can / shelf / slow / late": 2,
       "cylindrical-can / busy / slow / late": 1,
-      "cylindrical-can / window / slow / late": 2,
-      "cylindrical-can / kitchen / slow / late": 3,
-      "cylindrical-can / desk / fast / repeated": 3,
-      "cylindrical-can / shelf / fast / repeated": 4,
-      "cylindrical-can / busy / fast / repeated": 3,
-      "cylindrical-can / window / fast / repeated": 3,
+      "cylindrical-can / window / slow / late": 1,
+      "cylindrical-can / kitchen / slow / late": 1,
+      "cylindrical-can / desk / fast / repeated": 2,
+      "cylindrical-can / shelf / fast / repeated": 3,
+      "cylindrical-can / busy / fast / repeated": 2,
+      "cylindrical-can / window / fast / repeated": 1,
       "cylindrical-can / kitchen / fast / repeated": 2,
       "label-bottle / shelf / standard / clean": 1,
       "label-bottle / busy / standard / clean": 1,
@@ -204,21 +198,20 @@
       "handled-mug / busy / fast / repeated": 4,
       "handled-mug / window / fast / repeated": 4,
       "handled-mug / kitchen / fast / repeated": 4,
-      "textured-ball / desk / standard / clean": 3,
-      "textured-ball / shelf / standard / clean": 3,
-      "textured-ball / busy / standard / clean": 3,
-      "textured-ball / window / standard / clean": 3,
-      "textured-ball / kitchen / standard / clean": 3,
-      "textured-ball / desk / fast / early": 4,
-      "textured-ball / shelf / fast / early": 4,
-      "textured-ball / busy / fast / early": 3,
-      "textured-ball / window / fast / early": 4,
-      "textured-ball / kitchen / fast / early": 3,
-      "textured-ball / desk / standard / mid": 3,
-      "textured-ball / shelf / standard / mid": 4,
+      "textured-ball / desk / standard / clean": 2,
+      "textured-ball / shelf / standard / clean": 2,
+      "textured-ball / busy / standard / clean": 2,
+      "textured-ball / window / standard / clean": 2,
+      "textured-ball / kitchen / standard / clean": 2,
+      "textured-ball / desk / fast / early": 1,
+      "textured-ball / shelf / fast / early": 2,
+      "textured-ball / busy / fast / early": 1,
+      "textured-ball / window / fast / early": 2,
+      "textured-ball / kitchen / fast / early": 2,
+      "textured-ball / desk / standard / mid": 2,
       "textured-ball / busy / standard / mid": 4,
       "textured-ball / window / standard / mid": 3,
-      "textured-ball / kitchen / standard / mid": 4,
+      "textured-ball / kitchen / standard / mid": 2,
       "textured-ball / desk / slow / late": 4,
       "textured-ball / shelf / slow / late": 4,
       "textured-ball / busy / slow / late": 4,
@@ -257,34 +250,34 @@
     },
     "trackingSources": {
       "planar-homography": {
-        "frames": 9222,
-        "maxAnchorError": 29.172708630654647,
-        "meanAnchorError": 4.314371587396028
+        "frames": 9220,
+        "maxAnchorError": 33.42605907317566,
+        "meanAnchorError": 4.314234928389498
       },
       "reference_similarity_transform": {
-        "frames": 13137,
+        "frames": 13168,
         "maxAnchorError": 98.3065560821444,
-        "meanAnchorError": 11.717661934722127
+        "meanAnchorError": 11.618541524842156
       },
       "parametric-surface": {
-        "frames": 4946,
+        "frames": 4926,
         "maxAnchorError": 71.95011806222519,
-        "meanAnchorError": 8.287206746254844
+        "meanAnchorError": 8.208116193193538
       },
       "direct-photometric": {
-        "frames": 4912,
+        "frames": 4907,
         "maxAnchorError": 47.391592746293526,
-        "meanAnchorError": 8.16897025187868
+        "meanAnchorError": 8.092106206742343
       },
       "object-pose-affine": {
         "frames": 1033,
-        "maxAnchorError": 32.46904533089742,
-        "meanAnchorError": 5.519141274007246
+        "maxAnchorError": 17.692009108351282,
+        "meanAnchorError": 5.494275634450626
       },
       "depth-fusion": {
         "frames": 79,
         "maxAnchorError": 31.14802404770727,
-        "meanAnchorError": 7.46703377673255
+        "meanAnchorError": 7.355338029811661
       },
       "reference_homography": {
         "frames": 8,
@@ -297,24 +290,24 @@
         "meanAnchorError": 16.934406745076338
       },
       "held-last-pose": {
-        "frames": 110,
+        "frames": 107,
         "maxAnchorError": 55.89888892999731,
-        "meanAnchorError": 14.429928808598406
+        "meanAnchorError": 13.479074163527468
       },
       "sparse-reconstruction": {
-        "frames": 2693,
+        "frames": 2692,
         "maxAnchorError": 53.61541132005583,
-        "meanAnchorError": 6.039864895205509
+        "meanAnchorError": 5.914373635356083
       },
       "held-degraded-object-pose": {
-        "frames": 31,
+        "frames": 30,
         "maxAnchorError": 55.36312838394849,
-        "meanAnchorError": 18.151280551493805
+        "meanAnchorError": 17.52600018782959
       },
       "curved-centroid-position": {
-        "frames": 14,
-        "maxAnchorError": 24.45321350405125,
-        "meanAnchorError": 13.181720370078642
+        "frames": 15,
+        "maxAnchorError": 25.353027849558526,
+        "meanAnchorError": 14.008173245177934
       }
     },
     "headPoseSources": {
@@ -331,13 +324,13 @@
         "maxHeadJumpExcess": 0
       },
       "parametric-surface": {
-        "frames": 5594,
+        "frames": 5573,
         "maxWorldPositionError": 0.43204845121028423,
-        "maxRotationError": 1.5163625032412975,
+        "maxRotationError": 1.2514887986292602,
         "maxHeadJumpExcess": 0.0587686052151059
       },
       "direct-photometric": {
-        "frames": 5537,
+        "frames": 5535,
         "maxWorldPositionError": 0,
         "maxRotationError": 0,
         "maxHeadJumpExcess": 0
@@ -349,7 +342,7 @@
         "maxHeadJumpExcess": 0.05304471977117296
       },
       "none": {
-        "frames": 5724,
+        "frames": 5750,
         "maxWorldPositionError": 0,
         "maxRotationError": 0,
         "maxHeadJumpExcess": 0
@@ -367,25 +360,25 @@
         "maxHeadJumpExcess": 0
       },
       "sparse-reconstruction": {
-        "frames": 2880,
+        "frames": 2877,
         "maxWorldPositionError": 0.18618575117455277,
         "maxRotationError": 1.9109692733472714,
-        "maxHeadJumpExcess": 0.06735237107639827
+        "maxHeadJumpExcess": 0.054785060371701735
       }
     },
     "trackingTransitions": {
       "planar-homography->reference_similarity_transform": {
-        "frameCount": 770,
+        "frameCount": 771,
         "maxAnchorJump": 12.000000000000025,
-        "maxAnchorError": 21.74153500200313,
+        "maxAnchorError": 31.031330693603447,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
       },
       "reference_similarity_transform->planar-homography": {
-        "frameCount": 420,
+        "frameCount": 421,
         "maxAnchorJump": 12.000000000000023,
-        "maxAnchorError": 29.172708630654647,
+        "maxAnchorError": 33.42605907317566,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
@@ -407,7 +400,7 @@
         "maxRotationError": 0
       },
       "planar-homography->direct-photometric": {
-        "frameCount": 301,
+        "frameCount": 300,
         "maxAnchorJump": 11.999999999999991,
         "maxAnchorError": 20.17544912851933,
         "maxHeadJumpExcess": 0,
@@ -415,7 +408,7 @@
         "maxRotationError": 0
       },
       "direct-photometric->planar-homography": {
-        "frameCount": 178,
+        "frameCount": 177,
         "maxAnchorJump": 12.000000000000023,
         "maxAnchorError": 20.085560675727677,
         "maxHeadJumpExcess": 0,
@@ -439,15 +432,15 @@
         "maxRotationError": 0
       },
       "object-pose-affine->reference_similarity_transform": {
-        "frameCount": 380,
+        "frameCount": 379,
         "maxAnchorJump": 16.865596354614866,
-        "maxAnchorError": 30.044793628599194,
+        "maxAnchorError": 22.071886311450992,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
       },
       "parametric-surface->reference_similarity_transform": {
-        "frameCount": 232,
+        "frameCount": 229,
         "maxAnchorJump": 22.638351515722096,
         "maxAnchorError": 50.06006363721516,
         "maxHeadJumpExcess": 0,
@@ -455,7 +448,7 @@
         "maxRotationError": 0
       },
       "direct-photometric->reference_similarity_transform": {
-        "frameCount": 205,
+        "frameCount": 207,
         "maxAnchorJump": 21.73801900050906,
         "maxAnchorError": 54.086043229735715,
         "maxHeadJumpExcess": 0,
@@ -463,7 +456,7 @@
         "maxRotationError": 0
       },
       "reference_similarity_transform->direct-photometric": {
-        "frameCount": 227,
+        "frameCount": 226,
         "maxAnchorJump": 24.90287692511763,
         "maxAnchorError": 37.33663254337991,
         "maxHeadJumpExcess": 0,
@@ -511,7 +504,7 @@
         "maxRotationError": 0
       },
       "reference_similarity_transform->parametric-surface": {
-        "frameCount": 251,
+        "frameCount": 246,
         "maxAnchorJump": 25.667949056746007,
         "maxAnchorError": 67.46647564036813,
         "maxHeadJumpExcess": 0,
@@ -519,9 +512,9 @@
         "maxRotationError": 0
       },
       "reference_similarity_transform->object-pose-affine": {
-        "frameCount": 72,
+        "frameCount": 71,
         "maxAnchorJump": 13.294395462270343,
-        "maxAnchorError": 32.46904533089742,
+        "maxAnchorError": 17.692009108351282,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
@@ -543,7 +536,7 @@
         "maxRotationError": 0
       },
       "direct-photometric->object-pose-affine": {
-        "frameCount": 7,
+        "frameCount": 8,
         "maxAnchorJump": 9.959999999999985,
         "maxAnchorError": 10.513000594214532,
         "maxHeadJumpExcess": 0,
@@ -583,8 +576,8 @@
         "maxRotationError": 0
       },
       "reference_similarity_transform->held-last-pose": {
-        "frameCount": 65,
-        "maxAnchorJump": 14.000000000000018,
+        "frameCount": 61,
+        "maxAnchorJump": 13.999999999999977,
         "maxAnchorError": 44.78716469876478,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
@@ -607,7 +600,7 @@
         "maxRotationError": 0
       },
       "parametric-surface->held-last-pose": {
-        "frameCount": 10,
+        "frameCount": 11,
         "maxAnchorJump": 13.999999999999993,
         "maxAnchorError": 55.89888892999731,
         "maxHeadJumpExcess": 0,
@@ -615,7 +608,7 @@
         "maxRotationError": 0
       },
       "reference_similarity_transform->sparse-reconstruction": {
-        "frameCount": 177,
+        "frameCount": 182,
         "maxAnchorJump": 18.521320372850447,
         "maxAnchorError": 48.24446660304586,
         "maxHeadJumpExcess": 0,
@@ -623,7 +616,7 @@
         "maxRotationError": 0
       },
       "sparse-reconstruction->planar-homography": {
-        "frameCount": 71,
+        "frameCount": 74,
         "maxAnchorJump": 11.599999999999985,
         "maxAnchorError": 14.780437176652681,
         "maxHeadJumpExcess": 0,
@@ -655,8 +648,8 @@
         "maxRotationError": 0
       },
       "object-pose-affine->direct-photometric": {
-        "frameCount": 39,
-        "maxAnchorJump": 5.463884848531048,
+        "frameCount": 40,
+        "maxAnchorJump": 6.154095027609273,
         "maxAnchorError": 13.415455585751847,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
@@ -671,15 +664,15 @@
         "maxRotationError": 0
       },
       "planar-homography->sparse-reconstruction": {
-        "frameCount": 96,
-        "maxAnchorJump": 12.898321147970275,
+        "frameCount": 99,
+        "maxAnchorJump": 10.55684412495332,
         "maxAnchorError": 9.689202196265871,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
       },
       "sparse-reconstruction->reference_similarity_transform": {
-        "frameCount": 172,
+        "frameCount": 176,
         "maxAnchorJump": 22.975549790846063,
         "maxAnchorError": 42.58256414284889,
         "maxHeadJumpExcess": 0,
@@ -687,8 +680,8 @@
         "maxRotationError": 0
       },
       "sparse-reconstruction->held-last-pose": {
-        "frameCount": 8,
-        "maxAnchorJump": 0,
+        "frameCount": 9,
+        "maxAnchorJump": 10.000000000000021,
         "maxAnchorError": 7.186073405051642,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
@@ -704,7 +697,7 @@
       },
       "held-last-pose->parametric-surface": {
         "frameCount": 2,
-        "maxAnchorJump": 7.862190551870473,
+        "maxAnchorJump": 7.281723148347667,
         "maxAnchorError": 10.16359991558611,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
@@ -712,7 +705,7 @@
       },
       "held-last-pose->direct-photometric": {
         "frameCount": 3,
-        "maxAnchorJump": 8.347768818339398,
+        "maxAnchorJump": 7.840741818098175,
         "maxAnchorError": 10.241610448851768,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
@@ -743,7 +736,7 @@
         "maxRotationError": 0
       },
       "curved-centroid-position->reference_similarity_transform": {
-        "frameCount": 8,
+        "frameCount": 9,
         "maxAnchorJump": 19.59095356851996,
         "maxAnchorError": 37.6027772171509,
         "maxHeadJumpExcess": 0,
@@ -751,9 +744,9 @@
         "maxRotationError": 0
       },
       "sparse-reconstruction->curved-centroid-position": {
-        "frameCount": 4,
+        "frameCount": 5,
         "maxAnchorJump": 9.599999999999968,
-        "maxAnchorError": 21.281034055953437,
+        "maxAnchorError": 25.353027849558526,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
@@ -873,7 +866,7 @@
         "maxRotationError": 1.3523667666784256
       },
       "parametric-surface->none": {
-        "frameCount": 178,
+        "frameCount": 179,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -881,7 +874,7 @@
         "maxRotationError": 0
       },
       "none->parametric-surface": {
-        "frameCount": 188,
+        "frameCount": 187,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -889,7 +882,7 @@
         "maxRotationError": 1.0436229897553422
       },
       "direct-photometric->none": {
-        "frameCount": 172,
+        "frameCount": 174,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -1065,7 +1058,7 @@
         "maxRotationError": 0
       },
       "none->direct-photometric": {
-        "frameCount": 168,
+        "frameCount": 167,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -1073,7 +1066,7 @@
         "maxRotationError": 0
       },
       "depth-fusion->none": {
-        "frameCount": 173,
+        "frameCount": 172,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -1081,7 +1074,7 @@
         "maxRotationError": 0
       },
       "none->depth-fusion": {
-        "frameCount": 113,
+        "frameCount": 111,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -1105,7 +1098,7 @@
         "maxRotationError": 0
       },
       "object-pose-affine->none": {
-        "frameCount": 253,
+        "frameCount": 252,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -1161,11 +1154,11 @@
         "maxRotationError": 0
       },
       "none->sparse-reconstruction": {
-        "frameCount": 181,
+        "frameCount": 182,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
-        "maxWorldPositionError": 0.16329772611116425,
+        "maxWorldPositionError": 0.1800515861948662,
         "maxRotationError": 0.9096342089692321
       },
       "sparse-reconstruction->planar-homography": {
@@ -1185,7 +1178,7 @@
         "maxRotationError": 0
       },
       "object-pose-affine->direct-photometric": {
-        "frameCount": 47,
+        "frameCount": 48,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -1201,7 +1194,7 @@
         "maxRotationError": 0.38032077424686844
       },
       "sparse-reconstruction->none": {
-        "frameCount": 188,
+        "frameCount": 191,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -1236,22 +1229,6 @@
     "topFailingScenarios": [
       {
         "name": "cylindrical-can / desk / fast / early",
-        "count": 4
-      },
-      {
-        "name": "cylindrical-can / shelf / fast / early",
-        "count": 4
-      },
-      {
-        "name": "cylindrical-can / shelf / fast / repeated",
-        "count": 4
-      },
-      {
-        "name": "cylindrical-can / shelf / slow / late",
-        "count": 4
-      },
-      {
-        "name": "cylindrical-can / shelf / standard / mid",
         "count": 4
       },
       {
@@ -1639,10 +1616,6 @@
         "count": 4
       },
       {
-        "name": "textured-ball / desk / fast / early",
-        "count": 4
-      },
-      {
         "name": "textured-ball / desk / fast / repeated",
         "count": 4
       },
@@ -1659,27 +1632,11 @@
         "count": 4
       },
       {
-        "name": "textured-ball / kitchen / standard / mid",
-        "count": 4
-      },
-      {
-        "name": "textured-ball / shelf / fast / early",
-        "count": 4
-      },
-      {
         "name": "textured-ball / shelf / fast / repeated",
         "count": 4
       },
       {
         "name": "textured-ball / shelf / slow / late",
-        "count": 4
-      },
-      {
-        "name": "textured-ball / shelf / standard / mid",
-        "count": 4
-      },
-      {
-        "name": "textured-ball / window / fast / early",
         "count": 4
       },
       {
@@ -1759,55 +1716,7 @@
         "count": 4
       },
       {
-        "name": "cylindrical-can / busy / fast / repeated",
-        "count": 3
-      },
-      {
-        "name": "cylindrical-can / busy / standard / clean",
-        "count": 3
-      },
-      {
-        "name": "cylindrical-can / busy / standard / mid",
-        "count": 3
-      },
-      {
-        "name": "cylindrical-can / desk / fast / repeated",
-        "count": 3
-      },
-      {
-        "name": "cylindrical-can / desk / standard / clean",
-        "count": 3
-      },
-      {
-        "name": "cylindrical-can / desk / standard / mid",
-        "count": 3
-      },
-      {
-        "name": "cylindrical-can / kitchen / fast / early",
-        "count": 3
-      },
-      {
-        "name": "cylindrical-can / kitchen / slow / late",
-        "count": 3
-      },
-      {
-        "name": "cylindrical-can / kitchen / standard / clean",
-        "count": 3
-      },
-      {
-        "name": "cylindrical-can / kitchen / standard / mid",
-        "count": 3
-      },
-      {
-        "name": "cylindrical-can / shelf / standard / clean",
-        "count": 3
-      },
-      {
-        "name": "cylindrical-can / window / fast / repeated",
-        "count": 3
-      },
-      {
-        "name": "cylindrical-can / window / standard / clean",
+        "name": "cylindrical-can / shelf / fast / repeated",
         "count": 3
       },
       {
@@ -1911,38 +1820,6 @@
         "count": 3
       },
       {
-        "name": "textured-ball / busy / fast / early",
-        "count": 3
-      },
-      {
-        "name": "textured-ball / busy / standard / clean",
-        "count": 3
-      },
-      {
-        "name": "textured-ball / desk / standard / clean",
-        "count": 3
-      },
-      {
-        "name": "textured-ball / desk / standard / mid",
-        "count": 3
-      },
-      {
-        "name": "textured-ball / kitchen / fast / early",
-        "count": 3
-      },
-      {
-        "name": "textured-ball / kitchen / standard / clean",
-        "count": 3
-      },
-      {
-        "name": "textured-ball / shelf / standard / clean",
-        "count": 3
-      },
-      {
-        "name": "textured-ball / window / standard / clean",
-        "count": 3
-      },
-      {
         "name": "textured-ball / window / standard / mid",
         "count": 3
       },
@@ -1959,7 +1836,19 @@
         "count": 3
       },
       {
-        "name": "cylindrical-can / desk / slow / late",
+        "name": "cylindrical-can / busy / fast / repeated",
+        "count": 2
+      },
+      {
+        "name": "cylindrical-can / desk / fast / repeated",
+        "count": 2
+      },
+      {
+        "name": "cylindrical-can / desk / standard / mid",
+        "count": 2
+      },
+      {
+        "name": "cylindrical-can / kitchen / fast / early",
         "count": 2
       },
       {
@@ -1967,11 +1856,19 @@
         "count": 2
       },
       {
-        "name": "cylindrical-can / window / fast / early",
+        "name": "cylindrical-can / shelf / fast / early",
         "count": 2
       },
       {
-        "name": "cylindrical-can / window / slow / late",
+        "name": "cylindrical-can / shelf / slow / late",
+        "count": 2
+      },
+      {
+        "name": "cylindrical-can / shelf / standard / mid",
+        "count": 2
+      },
+      {
+        "name": "cylindrical-can / window / fast / early",
         "count": 2
       },
       {
@@ -2043,6 +1940,46 @@
         "count": 2
       },
       {
+        "name": "textured-ball / busy / standard / clean",
+        "count": 2
+      },
+      {
+        "name": "textured-ball / desk / standard / clean",
+        "count": 2
+      },
+      {
+        "name": "textured-ball / desk / standard / mid",
+        "count": 2
+      },
+      {
+        "name": "textured-ball / kitchen / fast / early",
+        "count": 2
+      },
+      {
+        "name": "textured-ball / kitchen / standard / clean",
+        "count": 2
+      },
+      {
+        "name": "textured-ball / kitchen / standard / mid",
+        "count": 2
+      },
+      {
+        "name": "textured-ball / shelf / fast / early",
+        "count": 2
+      },
+      {
+        "name": "textured-ball / shelf / standard / clean",
+        "count": 2
+      },
+      {
+        "name": "textured-ball / window / fast / early",
+        "count": 2
+      },
+      {
+        "name": "textured-ball / window / standard / clean",
+        "count": 2
+      },
+      {
         "name": "textured-cup / window / standard / clean",
         "count": 2
       },
@@ -2052,6 +1989,26 @@
       },
       {
         "name": "cylindrical-can / busy / slow / late",
+        "count": 1
+      },
+      {
+        "name": "cylindrical-can / desk / slow / late",
+        "count": 1
+      },
+      {
+        "name": "cylindrical-can / kitchen / slow / late",
+        "count": 1
+      },
+      {
+        "name": "cylindrical-can / kitchen / standard / mid",
+        "count": 1
+      },
+      {
+        "name": "cylindrical-can / window / fast / repeated",
+        "count": 1
+      },
+      {
+        "name": "cylindrical-can / window / slow / late",
         "count": 1
       },
       {
@@ -2147,6 +2104,14 @@
         "count": 1
       },
       {
+        "name": "textured-ball / busy / fast / early",
+        "count": 1
+      },
+      {
+        "name": "textured-ball / desk / fast / early",
+        "count": 1
+      },
+      {
         "name": "textured-cup / busy / standard / clean",
         "count": 1
       },
@@ -2162,9 +2127,9 @@
     "topTrackingSources": [
       {
         "source": "held-degraded-object-pose",
-        "frames": 31,
+        "frames": 30,
         "maxAnchorError": 55.36312838394849,
-        "meanAnchorError": 18.151280551493805
+        "meanAnchorError": 17.52600018782959
       },
       {
         "source": "object-owned-centroid-position",
@@ -2173,40 +2138,40 @@
         "meanAnchorError": 16.934406745076338
       },
       {
-        "source": "held-last-pose",
-        "frames": 110,
-        "maxAnchorError": 55.89888892999731,
-        "meanAnchorError": 14.429928808598406
+        "source": "curved-centroid-position",
+        "frames": 15,
+        "maxAnchorError": 25.353027849558526,
+        "meanAnchorError": 14.008173245177934
       },
       {
-        "source": "curved-centroid-position",
-        "frames": 14,
-        "maxAnchorError": 24.45321350405125,
-        "meanAnchorError": 13.181720370078642
+        "source": "held-last-pose",
+        "frames": 107,
+        "maxAnchorError": 55.89888892999731,
+        "meanAnchorError": 13.479074163527468
       },
       {
         "source": "reference_similarity_transform",
-        "frames": 13137,
+        "frames": 13168,
         "maxAnchorError": 98.3065560821444,
-        "meanAnchorError": 11.717661934722127
+        "meanAnchorError": 11.618541524842156
       },
       {
         "source": "parametric-surface",
-        "frames": 4946,
+        "frames": 4926,
         "maxAnchorError": 71.95011806222519,
-        "meanAnchorError": 8.287206746254844
+        "meanAnchorError": 8.208116193193538
       },
       {
         "source": "direct-photometric",
-        "frames": 4912,
+        "frames": 4907,
         "maxAnchorError": 47.391592746293526,
-        "meanAnchorError": 8.16897025187868
+        "meanAnchorError": 8.092106206742343
       },
       {
         "source": "depth-fusion",
         "frames": 79,
         "maxAnchorError": 31.14802404770727,
-        "meanAnchorError": 7.46703377673255
+        "meanAnchorError": 7.355338029811661
       },
       {
         "source": "reference_homography",
@@ -2216,37 +2181,37 @@
       },
       {
         "source": "sparse-reconstruction",
-        "frames": 2693,
+        "frames": 2692,
         "maxAnchorError": 53.61541132005583,
-        "meanAnchorError": 6.039864895205509
+        "meanAnchorError": 5.914373635356083
       },
       {
         "source": "object-pose-affine",
         "frames": 1033,
-        "maxAnchorError": 32.46904533089742,
-        "meanAnchorError": 5.519141274007246
+        "maxAnchorError": 17.692009108351282,
+        "meanAnchorError": 5.494275634450626
       },
       {
         "source": "planar-homography",
-        "frames": 9222,
-        "maxAnchorError": 29.172708630654647,
-        "meanAnchorError": 4.314371587396028
+        "frames": 9220,
+        "maxAnchorError": 33.42605907317566,
+        "meanAnchorError": 4.314234928389498
       }
     ],
     "topHeadPoseSources": [
       {
         "source": "parametric-surface",
-        "frames": 5594,
+        "frames": 5573,
         "maxWorldPositionError": 0.43204845121028423,
-        "maxRotationError": 1.5163625032412975,
+        "maxRotationError": 1.2514887986292602,
         "maxHeadJumpExcess": 0.0587686052151059
       },
       {
         "source": "sparse-reconstruction",
-        "frames": 2880,
+        "frames": 2877,
         "maxWorldPositionError": 0.18618575117455277,
         "maxRotationError": 1.9109692733472714,
-        "maxHeadJumpExcess": 0.06735237107639827
+        "maxHeadJumpExcess": 0.054785060371701735
       },
       {
         "source": "depth-fusion",
@@ -2271,7 +2236,7 @@
       },
       {
         "source": "direct-photometric",
-        "frames": 5537,
+        "frames": 5535,
         "maxWorldPositionError": 0,
         "maxRotationError": 0,
         "maxHeadJumpExcess": 0
@@ -2285,7 +2250,7 @@
       },
       {
         "source": "none",
-        "frames": 5724,
+        "frames": 5750,
         "maxWorldPositionError": 0,
         "maxRotationError": 0,
         "maxHeadJumpExcess": 0
@@ -2310,7 +2275,7 @@
       },
       {
         "transition": "reference_similarity_transform->parametric-surface",
-        "frameCount": 251,
+        "frameCount": 246,
         "maxAnchorJump": 25.667949056746007,
         "maxAnchorError": 67.46647564036813,
         "maxHeadJumpExcess": 0,
@@ -2319,7 +2284,7 @@
       },
       {
         "transition": "reference_similarity_transform->direct-photometric",
-        "frameCount": 227,
+        "frameCount": 226,
         "maxAnchorJump": 24.90287692511763,
         "maxAnchorError": 37.33663254337991,
         "maxHeadJumpExcess": 0,
@@ -2328,7 +2293,7 @@
       },
       {
         "transition": "sparse-reconstruction->reference_similarity_transform",
-        "frameCount": 172,
+        "frameCount": 176,
         "maxAnchorJump": 22.975549790846063,
         "maxAnchorError": 42.58256414284889,
         "maxHeadJumpExcess": 0,
@@ -2337,7 +2302,7 @@
       },
       {
         "transition": "parametric-surface->reference_similarity_transform",
-        "frameCount": 232,
+        "frameCount": 229,
         "maxAnchorJump": 22.638351515722096,
         "maxAnchorError": 50.06006363721516,
         "maxHeadJumpExcess": 0,
@@ -2346,7 +2311,7 @@
       },
       {
         "transition": "direct-photometric->reference_similarity_transform",
-        "frameCount": 205,
+        "frameCount": 207,
         "maxAnchorJump": 21.73801900050906,
         "maxAnchorError": 54.086043229735715,
         "maxHeadJumpExcess": 0,
@@ -2355,7 +2320,7 @@
       },
       {
         "transition": "curved-centroid-position->reference_similarity_transform",
-        "frameCount": 8,
+        "frameCount": 9,
         "maxAnchorJump": 19.59095356851996,
         "maxAnchorError": 37.6027772171509,
         "maxHeadJumpExcess": 0,
@@ -2373,7 +2338,7 @@
       },
       {
         "transition": "reference_similarity_transform->sparse-reconstruction",
-        "frameCount": 177,
+        "frameCount": 182,
         "maxAnchorJump": 18.521320372850447,
         "maxAnchorError": 48.24446660304586,
         "maxHeadJumpExcess": 0,
@@ -2391,9 +2356,9 @@
       },
       {
         "transition": "object-pose-affine->reference_similarity_transform",
-        "frameCount": 380,
+        "frameCount": 379,
         "maxAnchorJump": 16.865596354614866,
-        "maxAnchorError": 30.044793628599194,
+        "maxAnchorError": 22.071886311450992,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
@@ -2417,17 +2382,8 @@
         "maxRotationError": 0
       },
       {
-        "transition": "reference_similarity_transform->held-last-pose",
-        "frameCount": 65,
-        "maxAnchorJump": 14.000000000000018,
-        "maxAnchorError": 44.78716469876478,
-        "maxHeadJumpExcess": 0,
-        "maxWorldPositionError": 0,
-        "maxRotationError": 0
-      },
-      {
         "transition": "parametric-surface->held-last-pose",
-        "frameCount": 10,
+        "frameCount": 11,
         "maxAnchorJump": 13.999999999999993,
         "maxAnchorError": 55.89888892999731,
         "maxHeadJumpExcess": 0,
@@ -2435,10 +2391,19 @@
         "maxRotationError": 0
       },
       {
+        "transition": "reference_similarity_transform->held-last-pose",
+        "frameCount": 61,
+        "maxAnchorJump": 13.999999999999977,
+        "maxAnchorError": 44.78716469876478,
+        "maxHeadJumpExcess": 0,
+        "maxWorldPositionError": 0,
+        "maxRotationError": 0
+      },
+      {
         "transition": "reference_similarity_transform->object-pose-affine",
-        "frameCount": 72,
+        "frameCount": 71,
         "maxAnchorJump": 13.294395462270343,
-        "maxAnchorError": 32.46904533089742,
+        "maxAnchorError": 17.692009108351282,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
@@ -2457,15 +2422,6 @@
         "frameCount": 4,
         "maxAnchorJump": 13.020502614204597,
         "maxAnchorError": 11.529840450826375,
-        "maxHeadJumpExcess": 0,
-        "maxWorldPositionError": 0,
-        "maxRotationError": 0
-      },
-      {
-        "transition": "planar-homography->sparse-reconstruction",
-        "frameCount": 96,
-        "maxAnchorJump": 12.898321147970275,
-        "maxAnchorError": 9.689202196265871,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
@@ -2490,25 +2446,25 @@
       },
       {
         "transition": "planar-homography->reference_similarity_transform",
-        "frameCount": 770,
+        "frameCount": 771,
         "maxAnchorJump": 12.000000000000025,
-        "maxAnchorError": 21.74153500200313,
+        "maxAnchorError": 31.031330693603447,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
       },
       {
         "transition": "reference_similarity_transform->planar-homography",
-        "frameCount": 420,
+        "frameCount": 421,
         "maxAnchorJump": 12.000000000000023,
-        "maxAnchorError": 29.172708630654647,
+        "maxAnchorError": 33.42605907317566,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
       },
       {
         "transition": "direct-photometric->planar-homography",
-        "frameCount": 178,
+        "frameCount": 177,
         "maxAnchorJump": 12.000000000000023,
         "maxAnchorError": 20.085560675727677,
         "maxHeadJumpExcess": 0,
@@ -2553,7 +2509,7 @@
       },
       {
         "transition": "planar-homography->direct-photometric",
-        "frameCount": 301,
+        "frameCount": 300,
         "maxAnchorJump": 11.999999999999991,
         "maxAnchorError": 20.17544912851933,
         "maxHeadJumpExcess": 0,
@@ -2571,7 +2527,7 @@
       },
       {
         "transition": "sparse-reconstruction->planar-homography",
-        "frameCount": 71,
+        "frameCount": 74,
         "maxAnchorJump": 11.599999999999985,
         "maxAnchorError": 14.780437176652681,
         "maxHeadJumpExcess": 0,
@@ -2583,6 +2539,24 @@
         "frameCount": 3,
         "maxAnchorJump": 11.599999999999978,
         "maxAnchorError": 13.256578004303766,
+        "maxHeadJumpExcess": 0,
+        "maxWorldPositionError": 0,
+        "maxRotationError": 0
+      },
+      {
+        "transition": "planar-homography->sparse-reconstruction",
+        "frameCount": 99,
+        "maxAnchorJump": 10.55684412495332,
+        "maxAnchorError": 9.689202196265871,
+        "maxHeadJumpExcess": 0,
+        "maxWorldPositionError": 0,
+        "maxRotationError": 0
+      },
+      {
+        "transition": "sparse-reconstruction->held-last-pose",
+        "frameCount": 9,
+        "maxAnchorJump": 10.000000000000021,
+        "maxAnchorError": 7.186073405051642,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
@@ -2634,7 +2608,7 @@
       },
       {
         "transition": "direct-photometric->object-pose-affine",
-        "frameCount": 7,
+        "frameCount": 8,
         "maxAnchorJump": 9.959999999999985,
         "maxAnchorError": 10.513000594214532,
         "maxHeadJumpExcess": 0,
@@ -2652,9 +2626,9 @@
       },
       {
         "transition": "sparse-reconstruction->curved-centroid-position",
-        "frameCount": 4,
+        "frameCount": 5,
         "maxAnchorJump": 9.599999999999968,
-        "maxAnchorError": 21.281034055953437,
+        "maxAnchorError": 25.353027849558526,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
@@ -2664,15 +2638,6 @@
         "frameCount": 1,
         "maxAnchorJump": 8.885777442903104,
         "maxAnchorError": 11.115256240430993,
-        "maxHeadJumpExcess": 0,
-        "maxWorldPositionError": 0,
-        "maxRotationError": 0
-      },
-      {
-        "transition": "held-last-pose->direct-photometric",
-        "frameCount": 3,
-        "maxAnchorJump": 8.347768818339398,
-        "maxAnchorError": 10.241610448851768,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
@@ -2696,9 +2661,18 @@
         "maxRotationError": 0
       },
       {
+        "transition": "held-last-pose->direct-photometric",
+        "frameCount": 3,
+        "maxAnchorJump": 7.840741818098175,
+        "maxAnchorError": 10.241610448851768,
+        "maxHeadJumpExcess": 0,
+        "maxWorldPositionError": 0,
+        "maxRotationError": 0
+      },
+      {
         "transition": "held-last-pose->parametric-surface",
         "frameCount": 2,
-        "maxAnchorJump": 7.862190551870473,
+        "maxAnchorJump": 7.281723148347667,
         "maxAnchorError": 10.16359991558611,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
@@ -2715,8 +2689,8 @@
       },
       {
         "transition": "object-pose-affine->direct-photometric",
-        "frameCount": 39,
-        "maxAnchorJump": 5.463884848531048,
+        "frameCount": 40,
+        "maxAnchorJump": 6.154095027609273,
         "maxAnchorError": 13.415455585751847,
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
@@ -2757,21 +2731,12 @@
         "maxHeadJumpExcess": 0,
         "maxWorldPositionError": 0,
         "maxRotationError": 0
-      },
-      {
-        "transition": "sparse-reconstruction->held-last-pose",
-        "frameCount": 8,
-        "maxAnchorJump": 0,
-        "maxAnchorError": 7.186073405051642,
-        "maxHeadJumpExcess": 0,
-        "maxWorldPositionError": 0,
-        "maxRotationError": 0
       }
     ],
     "topHeadPoseTransitions": [
       {
         "transition": "none->parametric-surface",
-        "frameCount": 188,
+        "frameCount": 187,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -2780,11 +2745,11 @@
       },
       {
         "transition": "none->sparse-reconstruction",
-        "frameCount": 181,
+        "frameCount": 182,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
-        "maxWorldPositionError": 0.16329772611116425,
+        "maxWorldPositionError": 0.1800515861948662,
         "maxRotationError": 0.9096342089692321
       },
       {
@@ -2798,7 +2763,7 @@
       },
       {
         "transition": "none->depth-fusion",
-        "frameCount": 113,
+        "frameCount": 111,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -2942,7 +2907,7 @@
       },
       {
         "transition": "depth-fusion->none",
-        "frameCount": 173,
+        "frameCount": 172,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -2978,7 +2943,7 @@
       },
       {
         "transition": "direct-photometric->none",
-        "frameCount": 172,
+        "frameCount": 174,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -3068,7 +3033,7 @@
       },
       {
         "transition": "none->direct-photometric",
-        "frameCount": 168,
+        "frameCount": 167,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -3113,7 +3078,7 @@
       },
       {
         "transition": "object-pose-affine->direct-photometric",
-        "frameCount": 47,
+        "frameCount": 48,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -3131,7 +3096,7 @@
       },
       {
         "transition": "object-pose-affine->none",
-        "frameCount": 253,
+        "frameCount": 252,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -3149,7 +3114,7 @@
       },
       {
         "transition": "parametric-surface->none",
-        "frameCount": 178,
+        "frameCount": 179,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -3248,7 +3213,7 @@
       },
       {
         "transition": "sparse-reconstruction->none",
-        "frameCount": 188,
+        "frameCount": 191,
         "maxAnchorJump": 0,
         "maxAnchorError": 0,
         "maxHeadJumpExcess": 0,
@@ -3269,17 +3234,17 @@
   "benchmark": {
     "aggregate": {
       "total": 1200,
-      "meanRiskScore": 31.720696685366985,
+      "meanRiskScore": 31.35785093949893,
       "maxRiskScore": 70.477369209828,
       "byRiskBand": {
-        "moderate": 784,
-        "high": 340,
-        "low": 66,
+        "moderate": 782,
+        "high": 319,
+        "low": 89,
         "severe": 10
       },
       "byStatus": {
-        "pass": 454,
-        "fail": 746
+        "pass": 513,
+        "fail": 687
       }
     },
     "weakPoints": {
@@ -3287,26 +3252,26 @@
         {
           "name": "sparse-reconstruction",
           "count": 300,
-          "meanRiskScore": 33.766094332018376,
+          "meanRiskScore": 33.356982053448014,
           "maxRiskScore": 70.477369209828,
           "severe": 5,
-          "high": 109,
-          "fail": 197,
+          "high": 103,
+          "fail": 174,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 227
+              "count": 228
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 51
+              "count": 49
             },
             {
               "weakness": "tracking.maxAnchorError",
               "count": 21
             },
             {
-              "weakness": "reconstruction.readyFrameRatio",
+              "weakness": "reconstruction.poseReadyFrameRatio",
               "count": 1
             }
           ],
@@ -3378,11 +3343,11 @@
         {
           "name": "parametric-surface",
           "count": 300,
-          "meanRiskScore": 32.04567079811003,
+          "meanRiskScore": 31.69345239639464,
           "maxRiskScore": 66.78745311541427,
           "severe": 4,
-          "high": 87,
-          "fail": 203,
+          "high": 80,
+          "fail": 194,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
@@ -3390,11 +3355,11 @@
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 41
+              "count": 39
             },
             {
               "weakness": "tracking.maxAnchorError",
-              "count": 18
+              "count": 20
             }
           ],
           "worst": {
@@ -3466,11 +3431,11 @@
         {
           "name": "direct-photometric",
           "count": 300,
-          "meanRiskScore": 31.239288234609933,
+          "meanRiskScore": 30.951879763909904,
           "maxRiskScore": 58.7337921295624,
           "severe": 1,
-          "high": 79,
-          "fail": 180,
+          "high": 75,
+          "fail": 165,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
@@ -3478,11 +3443,11 @@
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 39
+              "count": 38
             },
             {
               "weakness": "tracking.maxAnchorError",
-              "count": 25
+              "count": 26
             }
           ],
           "worst": {
@@ -3553,27 +3518,23 @@
         {
           "name": "depth-fusion",
           "count": 300,
-          "meanRiskScore": 29.83173337672954,
+          "meanRiskScore": 29.429089544242974,
           "maxRiskScore": 51.13396666861259,
           "severe": 0,
-          "high": 65,
-          "fail": 166,
+          "high": 61,
+          "fail": 154,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 224
+              "count": 225
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 47
+              "count": 51
             },
             {
               "weakness": "tracking.maxAnchorError",
-              "count": 28
-            },
-            {
-              "weakness": "reconstruction.meanReadyNormalError",
-              "count": 1
+              "count": 24
             }
           ],
           "worst": {
@@ -3814,88 +3775,6 @@
           }
         },
         {
-          "name": "textured-ball",
-          "count": 100,
-          "meanRiskScore": 36.50527182696465,
-          "maxRiskScore": 48.93743935268833,
-          "severe": 0,
-          "high": 52,
-          "fail": 91,
-          "topPrimaryWeaknesses": [
-            {
-              "weakness": "tracking.meanAnchorError",
-              "count": 95
-            },
-            {
-              "weakness": "tracking.maxAnchorError",
-              "count": 5
-            }
-          ],
-          "worst": {
-            "name": "textured-ball / desk / fast / repeated",
-            "mode": "direct-photometric",
-            "axes": {
-              "object": "textured-ball",
-              "targetClass": "ball",
-              "geometry": "ellipsoid",
-              "background": "desk",
-              "lighting": "soft-desk",
-              "motion": "fast",
-              "occlusion": "repeated",
-              "frameCount": 24,
-              "backgroundSeed": 3078
-            },
-            "overallStatus": "fail",
-            "failedStages": [
-              "tracking"
-            ],
-            "risk": {
-              "score": 48.93743935268833,
-              "band": "high",
-              "primaryWeakness": "tracking.meanAnchorError",
-              "components": [
-                {
-                  "name": "tracking.meanAnchorError",
-                  "score": 17.01111624093365,
-                  "weight": 18
-                },
-                {
-                  "name": "tracking.maxAnchorError",
-                  "score": 13.442809162143325,
-                  "weight": 16
-                },
-                {
-                  "name": "tracking.maxFrameJump",
-                  "score": 10,
-                  "weight": 10
-                },
-                {
-                  "name": "reconstruction.meanReadyNormalError",
-                  "score": 4.976068133889628,
-                  "weight": 10
-                },
-                {
-                  "name": "reconstruction.maxReadyNormalError",
-                  "score": 3.50744581572173,
-                  "weight": 8
-                }
-              ]
-            },
-            "metrics": {
-              "maxAnchorError": 37.8079007685281,
-              "meanAnchorError": 14.17593020077804,
-              "maxFrameJump": 21.287310318109835,
-              "readyFrameRatio": 0.8260869565217391,
-              "poseReadyFrameRatio": 0.5652173913043478,
-              "meanReadyNormalError": 0.5598076650625832,
-              "maxReadyNormalError": 0.9864691356717367,
-              "maxWorldPositionError": 0,
-              "maxRotationError": 0,
-              "maxHeadJumpExcess": 0
-            }
-          }
-        },
-        {
           "name": "textured-cup",
           "count": 100,
           "meanRiskScore": 35.95332751559736,
@@ -3980,6 +3859,89 @@
               "maxWorldPositionError": 0.43204845121028423,
               "maxRotationError": 1.02523302774149,
               "maxHeadJumpExcess": 0.046049642447738987
+            }
+          }
+        },
+        {
+          "name": "textured-ball",
+          "count": 100,
+          "meanRiskScore": 33.89758453985388,
+          "maxRiskScore": 48.957495562250166,
+          "severe": 0,
+          "high": 31,
+          "fail": 69,
+          "topPrimaryWeaknesses": [
+            {
+              "weakness": "tracking.meanAnchorError",
+              "count": 95
+            },
+            {
+              "weakness": "tracking.maxAnchorError",
+              "count": 5
+            }
+          ],
+          "worst": {
+            "name": "textured-ball / busy / slow / late",
+            "mode": "sparse-reconstruction",
+            "axes": {
+              "object": "textured-ball",
+              "targetClass": "ball",
+              "geometry": "ellipsoid",
+              "background": "busy",
+              "lighting": "moving-high-frequency-clutter",
+              "motion": "slow",
+              "occlusion": "late",
+              "frameCount": 44,
+              "backgroundSeed": 3087
+            },
+            "overallStatus": "fail",
+            "failedStages": [
+              "tracking",
+              "headAttachment"
+            ],
+            "risk": {
+              "score": 48.957495562250166,
+              "band": "high",
+              "primaryWeakness": "tracking.meanAnchorError",
+              "components": [
+                {
+                  "name": "tracking.meanAnchorError",
+                  "score": 15.017496957660438,
+                  "weight": 18
+                },
+                {
+                  "name": "tracking.maxAnchorError",
+                  "score": 14.352565545514048,
+                  "weight": 16
+                },
+                {
+                  "name": "headAttachment.maxWorldPositionError",
+                  "score": 7.2020634477946475,
+                  "weight": 10
+                },
+                {
+                  "name": "tracking.maxFrameJump",
+                  "score": 4.658669936981455,
+                  "weight": 10
+                },
+                {
+                  "name": "reconstruction.meanReadyNormalError",
+                  "score": 3.5931520521173628,
+                  "weight": 10
+                }
+              ]
+            },
+            "metrics": {
+              "maxAnchorError": 40.36659059675826,
+              "meanAnchorError": 12.514580798050366,
+              "maxFrameJump": 9.31733987396291,
+              "readyFrameRatio": 0.9302325581395349,
+              "poseReadyFrameRatio": 0.7209302325581395,
+              "meanReadyNormalError": 0.40422960586320333,
+              "maxReadyNormalError": 0.5403110405479274,
+              "maxWorldPositionError": 0.1800515861948662,
+              "maxRotationError": 0.6243991166794429,
+              "maxHeadJumpExcess": 0.03138891010101946
             }
           }
         },
@@ -4487,96 +4449,6 @@
           }
         },
         {
-          "name": "cylindrical-can",
-          "count": 100,
-          "meanRiskScore": 24.83969370584806,
-          "maxRiskScore": 51.698193895150084,
-          "severe": 0,
-          "high": 7,
-          "fail": 70,
-          "topPrimaryWeaknesses": [
-            {
-              "weakness": "tracking.maxFrameJump",
-              "count": 60
-            },
-            {
-              "weakness": "tracking.meanAnchorError",
-              "count": 29
-            },
-            {
-              "weakness": "tracking.maxAnchorError",
-              "count": 10
-            },
-            {
-              "weakness": "reconstruction.meanReadyNormalError",
-              "count": 1
-            }
-          ],
-          "worst": {
-            "name": "cylindrical-can / window / fast / early",
-            "mode": "direct-photometric",
-            "axes": {
-              "object": "cylindrical-can",
-              "targetClass": "can",
-              "geometry": "cylindrical",
-              "background": "window",
-              "lighting": "high-contrast-backlight",
-              "motion": "fast",
-              "occlusion": "early",
-              "frameCount": 22,
-              "backgroundSeed": 2662
-            },
-            "overallStatus": "fail",
-            "failedStages": [
-              "tracking"
-            ],
-            "risk": {
-              "score": 51.698193895150084,
-              "band": "high",
-              "primaryWeakness": "tracking.meanAnchorError",
-              "components": [
-                {
-                  "name": "tracking.meanAnchorError",
-                  "score": 18,
-                  "weight": 18
-                },
-                {
-                  "name": "tracking.maxAnchorError",
-                  "score": 16,
-                  "weight": 16
-                },
-                {
-                  "name": "reconstruction.poseReadyFrameRatio",
-                  "score": 6.2592592592592595,
-                  "weight": 7
-                },
-                {
-                  "name": "tracking.maxFrameJump",
-                  "score": 4.800000000000013,
-                  "weight": 10
-                },
-                {
-                  "name": "reconstruction.meanReadyNormalError",
-                  "score": 4.742096168493436,
-                  "weight": 10
-                }
-              ]
-            },
-            "metrics": {
-              "maxAnchorError": 69.2513078297014,
-              "meanAnchorError": 33.632039139802615,
-              "maxFrameJump": 9.600000000000026,
-              "readyFrameRatio": 0.8095238095238095,
-              "poseReadyFrameRatio": 0.047619047619047616,
-              "meanReadyNormalError": 0.5334858189555116,
-              "maxReadyNormalError": 0.5334858189555116,
-              "maxWorldPositionError": 0,
-              "maxRotationError": 0,
-              "maxHeadJumpExcess": 0
-            }
-          }
-        },
-        {
           "name": "glossy-phone",
           "count": 100,
           "meanRiskScore": 23.280995829676087,
@@ -4656,6 +4528,96 @@
               "maxWorldPositionError": 0.0389789039244883,
               "maxRotationError": 1.002835752568391,
               "maxHeadJumpExcess": 0.040074852479843284
+            }
+          }
+        },
+        {
+          "name": "cylindrical-can",
+          "count": 100,
+          "meanRiskScore": 23.093232042541914,
+          "maxRiskScore": 51.698193895150084,
+          "severe": 0,
+          "high": 7,
+          "fail": 33,
+          "topPrimaryWeaknesses": [
+            {
+              "weakness": "tracking.maxFrameJump",
+              "count": 59
+            },
+            {
+              "weakness": "tracking.meanAnchorError",
+              "count": 31
+            },
+            {
+              "weakness": "tracking.maxAnchorError",
+              "count": 9
+            },
+            {
+              "weakness": "reconstruction.poseReadyFrameRatio",
+              "count": 1
+            }
+          ],
+          "worst": {
+            "name": "cylindrical-can / window / fast / early",
+            "mode": "direct-photometric",
+            "axes": {
+              "object": "cylindrical-can",
+              "targetClass": "can",
+              "geometry": "cylindrical",
+              "background": "window",
+              "lighting": "high-contrast-backlight",
+              "motion": "fast",
+              "occlusion": "early",
+              "frameCount": 22,
+              "backgroundSeed": 2662
+            },
+            "overallStatus": "fail",
+            "failedStages": [
+              "tracking"
+            ],
+            "risk": {
+              "score": 51.698193895150084,
+              "band": "high",
+              "primaryWeakness": "tracking.meanAnchorError",
+              "components": [
+                {
+                  "name": "tracking.meanAnchorError",
+                  "score": 18,
+                  "weight": 18
+                },
+                {
+                  "name": "tracking.maxAnchorError",
+                  "score": 16,
+                  "weight": 16
+                },
+                {
+                  "name": "reconstruction.poseReadyFrameRatio",
+                  "score": 6.2592592592592595,
+                  "weight": 7
+                },
+                {
+                  "name": "tracking.maxFrameJump",
+                  "score": 4.800000000000013,
+                  "weight": 10
+                },
+                {
+                  "name": "reconstruction.meanReadyNormalError",
+                  "score": 4.742096168493436,
+                  "weight": 10
+                }
+              ]
+            },
+            "metrics": {
+              "maxAnchorError": 69.48947148022837,
+              "meanAnchorError": 33.8059886398487,
+              "maxFrameJump": 9.600000000000026,
+              "readyFrameRatio": 0.8095238095238095,
+              "poseReadyFrameRatio": 0.047619047619047616,
+              "meanReadyNormalError": 0.5334858189555116,
+              "maxReadyNormalError": 0.5334858189555116,
+              "maxWorldPositionError": 0,
+              "maxRotationError": 0,
+              "maxHeadJumpExcess": 0
             }
           }
         }
@@ -4750,88 +4712,6 @@
           }
         },
         {
-          "name": "ellipsoid",
-          "count": 100,
-          "meanRiskScore": 36.50527182696465,
-          "maxRiskScore": 48.93743935268833,
-          "severe": 0,
-          "high": 52,
-          "fail": 91,
-          "topPrimaryWeaknesses": [
-            {
-              "weakness": "tracking.meanAnchorError",
-              "count": 95
-            },
-            {
-              "weakness": "tracking.maxAnchorError",
-              "count": 5
-            }
-          ],
-          "worst": {
-            "name": "textured-ball / desk / fast / repeated",
-            "mode": "direct-photometric",
-            "axes": {
-              "object": "textured-ball",
-              "targetClass": "ball",
-              "geometry": "ellipsoid",
-              "background": "desk",
-              "lighting": "soft-desk",
-              "motion": "fast",
-              "occlusion": "repeated",
-              "frameCount": 24,
-              "backgroundSeed": 3078
-            },
-            "overallStatus": "fail",
-            "failedStages": [
-              "tracking"
-            ],
-            "risk": {
-              "score": 48.93743935268833,
-              "band": "high",
-              "primaryWeakness": "tracking.meanAnchorError",
-              "components": [
-                {
-                  "name": "tracking.meanAnchorError",
-                  "score": 17.01111624093365,
-                  "weight": 18
-                },
-                {
-                  "name": "tracking.maxAnchorError",
-                  "score": 13.442809162143325,
-                  "weight": 16
-                },
-                {
-                  "name": "tracking.maxFrameJump",
-                  "score": 10,
-                  "weight": 10
-                },
-                {
-                  "name": "reconstruction.meanReadyNormalError",
-                  "score": 4.976068133889628,
-                  "weight": 10
-                },
-                {
-                  "name": "reconstruction.maxReadyNormalError",
-                  "score": 3.50744581572173,
-                  "weight": 8
-                }
-              ]
-            },
-            "metrics": {
-              "maxAnchorError": 37.8079007685281,
-              "meanAnchorError": 14.17593020077804,
-              "maxFrameJump": 21.287310318109835,
-              "readyFrameRatio": 0.8260869565217391,
-              "poseReadyFrameRatio": 0.5652173913043478,
-              "meanReadyNormalError": 0.5598076650625832,
-              "maxReadyNormalError": 0.9864691356717367,
-              "maxWorldPositionError": 0,
-              "maxRotationError": 0,
-              "maxHeadJumpExcess": 0
-            }
-          }
-        },
-        {
           "name": "tapered-cylinder",
           "count": 100,
           "meanRiskScore": 35.95332751559736,
@@ -4916,6 +4796,89 @@
               "maxWorldPositionError": 0.43204845121028423,
               "maxRotationError": 1.02523302774149,
               "maxHeadJumpExcess": 0.046049642447738987
+            }
+          }
+        },
+        {
+          "name": "ellipsoid",
+          "count": 100,
+          "meanRiskScore": 33.89758453985388,
+          "maxRiskScore": 48.957495562250166,
+          "severe": 0,
+          "high": 31,
+          "fail": 69,
+          "topPrimaryWeaknesses": [
+            {
+              "weakness": "tracking.meanAnchorError",
+              "count": 95
+            },
+            {
+              "weakness": "tracking.maxAnchorError",
+              "count": 5
+            }
+          ],
+          "worst": {
+            "name": "textured-ball / busy / slow / late",
+            "mode": "sparse-reconstruction",
+            "axes": {
+              "object": "textured-ball",
+              "targetClass": "ball",
+              "geometry": "ellipsoid",
+              "background": "busy",
+              "lighting": "moving-high-frequency-clutter",
+              "motion": "slow",
+              "occlusion": "late",
+              "frameCount": 44,
+              "backgroundSeed": 3087
+            },
+            "overallStatus": "fail",
+            "failedStages": [
+              "tracking",
+              "headAttachment"
+            ],
+            "risk": {
+              "score": 48.957495562250166,
+              "band": "high",
+              "primaryWeakness": "tracking.meanAnchorError",
+              "components": [
+                {
+                  "name": "tracking.meanAnchorError",
+                  "score": 15.017496957660438,
+                  "weight": 18
+                },
+                {
+                  "name": "tracking.maxAnchorError",
+                  "score": 14.352565545514048,
+                  "weight": 16
+                },
+                {
+                  "name": "headAttachment.maxWorldPositionError",
+                  "score": 7.2020634477946475,
+                  "weight": 10
+                },
+                {
+                  "name": "tracking.maxFrameJump",
+                  "score": 4.658669936981455,
+                  "weight": 10
+                },
+                {
+                  "name": "reconstruction.meanReadyNormalError",
+                  "score": 3.5931520521173628,
+                  "weight": 10
+                }
+              ]
+            },
+            "metrics": {
+              "maxAnchorError": 40.36659059675826,
+              "meanAnchorError": 12.514580798050366,
+              "maxFrameJump": 9.31733987396291,
+              "readyFrameRatio": 0.9302325581395349,
+              "poseReadyFrameRatio": 0.7209302325581395,
+              "meanReadyNormalError": 0.40422960586320333,
+              "maxReadyNormalError": 0.5403110405479274,
+              "maxWorldPositionError": 0.1800515861948662,
+              "maxRotationError": 0.6243991166794429,
+              "maxHeadJumpExcess": 0.03138891010101946
             }
           }
         },
@@ -5512,26 +5475,26 @@
         {
           "name": "cylindrical",
           "count": 100,
-          "meanRiskScore": 24.83969370584806,
+          "meanRiskScore": 23.093232042541914,
           "maxRiskScore": 51.698193895150084,
           "severe": 0,
           "high": 7,
-          "fail": 70,
+          "fail": 33,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 60
+              "count": 59
             },
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 29
+              "count": 31
             },
             {
               "weakness": "tracking.maxAnchorError",
-              "count": 10
+              "count": 9
             },
             {
-              "weakness": "reconstruction.meanReadyNormalError",
+              "weakness": "reconstruction.poseReadyFrameRatio",
               "count": 1
             }
           ],
@@ -5586,8 +5549,8 @@
               ]
             },
             "metrics": {
-              "maxAnchorError": 69.2513078297014,
-              "meanAnchorError": 33.632039139802615,
+              "maxAnchorError": 69.48947148022837,
+              "meanAnchorError": 33.8059886398487,
               "maxFrameJump": 9.600000000000026,
               "readyFrameRatio": 0.8095238095238095,
               "poseReadyFrameRatio": 0.047619047619047616,
@@ -5604,19 +5567,19 @@
         {
           "name": "shelf",
           "count": 240,
-          "meanRiskScore": 32.07022106379459,
+          "meanRiskScore": 31.73030406927875,
           "maxRiskScore": 58.8417592273037,
           "severe": 2,
-          "high": 73,
-          "fail": 158,
+          "high": 72,
+          "fail": 141,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 183
+              "count": 184
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 35
+              "count": 34
             },
             {
               "weakness": "tracking.maxAnchorError",
@@ -5692,26 +5655,26 @@
         {
           "name": "window",
           "count": 240,
-          "meanRiskScore": 32.01219763477567,
+          "meanRiskScore": 31.63799906105341,
           "maxRiskScore": 66.02041873653306,
           "severe": 3,
-          "high": 68,
-          "fail": 154,
+          "high": 64,
+          "fail": 145,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 176
+              "count": 174
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 40
+              "count": 42
             },
             {
               "weakness": "tracking.maxAnchorError",
               "count": 23
             },
             {
-              "weakness": "reconstruction.meanReadyNormalError",
+              "weakness": "reconstruction.poseReadyFrameRatio",
               "count": 1
             }
           ],
@@ -5784,11 +5747,11 @@
         {
           "name": "desk",
           "count": 240,
-          "meanRiskScore": 31.93183926218493,
+          "meanRiskScore": 31.540347547229523,
           "maxRiskScore": 62.98910169123146,
           "severe": 1,
-          "high": 70,
-          "fail": 152,
+          "high": 64,
+          "fail": 141,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
@@ -5871,23 +5834,23 @@
         {
           "name": "busy",
           "count": 240,
-          "meanRiskScore": 31.495225618147163,
+          "meanRiskScore": 31.168126164028646,
           "maxRiskScore": 70.477369209828,
           "severe": 4,
-          "high": 64,
-          "fail": 141,
+          "high": 59,
+          "fail": 131,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 188
+              "count": 190
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 35
+              "count": 34
             },
             {
               "weakness": "tracking.maxAnchorError",
-              "count": 17
+              "count": 16
             }
           ],
           "worst": {
@@ -5958,19 +5921,19 @@
         {
           "name": "kitchen",
           "count": 240,
-          "meanRiskScore": 31.093999847932473,
+          "meanRiskScore": 30.712477855904094,
           "maxRiskScore": 56.51458855742377,
           "severe": 0,
-          "high": 65,
-          "fail": 141,
+          "high": 60,
+          "fail": 129,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 193
+              "count": 194
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 32
+              "count": 31
             },
             {
               "weakness": "tracking.maxAnchorError",
@@ -6051,19 +6014,19 @@
         {
           "name": "horizontal-edge-clutter",
           "count": 240,
-          "meanRiskScore": 32.07022106379459,
+          "meanRiskScore": 31.73030406927875,
           "maxRiskScore": 58.8417592273037,
           "severe": 2,
-          "high": 73,
-          "fail": 158,
+          "high": 72,
+          "fail": 141,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 183
+              "count": 184
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 35
+              "count": 34
             },
             {
               "weakness": "tracking.maxAnchorError",
@@ -6139,26 +6102,26 @@
         {
           "name": "high-contrast-backlight",
           "count": 240,
-          "meanRiskScore": 32.01219763477567,
+          "meanRiskScore": 31.63799906105341,
           "maxRiskScore": 66.02041873653306,
           "severe": 3,
-          "high": 68,
-          "fail": 154,
+          "high": 64,
+          "fail": 145,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 176
+              "count": 174
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 40
+              "count": 42
             },
             {
               "weakness": "tracking.maxAnchorError",
               "count": 23
             },
             {
-              "weakness": "reconstruction.meanReadyNormalError",
+              "weakness": "reconstruction.poseReadyFrameRatio",
               "count": 1
             }
           ],
@@ -6231,11 +6194,11 @@
         {
           "name": "soft-desk",
           "count": 240,
-          "meanRiskScore": 31.93183926218493,
+          "meanRiskScore": 31.540347547229523,
           "maxRiskScore": 62.98910169123146,
           "severe": 1,
-          "high": 70,
-          "fail": 152,
+          "high": 64,
+          "fail": 141,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
@@ -6318,23 +6281,23 @@
         {
           "name": "moving-high-frequency-clutter",
           "count": 240,
-          "meanRiskScore": 31.495225618147163,
+          "meanRiskScore": 31.168126164028646,
           "maxRiskScore": 70.477369209828,
           "severe": 4,
-          "high": 64,
-          "fail": 141,
+          "high": 59,
+          "fail": 131,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 188
+              "count": 190
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 35
+              "count": 34
             },
             {
               "weakness": "tracking.maxAnchorError",
-              "count": 17
+              "count": 16
             }
           ],
           "worst": {
@@ -6405,19 +6368,19 @@
         {
           "name": "tiled-specular-clutter",
           "count": 240,
-          "meanRiskScore": 31.093999847932473,
+          "meanRiskScore": 30.712477855904094,
           "maxRiskScore": 56.51458855742377,
           "severe": 0,
-          "high": 65,
-          "fail": 141,
+          "high": 60,
+          "fail": 129,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 193
+              "count": 194
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 32
+              "count": 31
             },
             {
               "weakness": "tracking.maxAnchorError",
@@ -6498,26 +6461,26 @@
         {
           "name": "fast",
           "count": 480,
-          "meanRiskScore": 34.894565352459935,
+          "meanRiskScore": 34.57361164259942,
           "maxRiskScore": 70.477369209828,
           "severe": 9,
-          "high": 186,
-          "fail": 334,
+          "high": 180,
+          "fail": 316,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 427
+              "count": 424
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 43
+              "count": 44
             },
             {
               "weakness": "tracking.maxAnchorError",
-              "count": 9
+              "count": 10
             },
             {
-              "weakness": "reconstruction.readyFrameRatio",
+              "weakness": "reconstruction.poseReadyFrameRatio",
               "count": 1
             }
           ],
@@ -6589,23 +6552,23 @@
         {
           "name": "slow",
           "count": 240,
-          "meanRiskScore": 33.24367021241961,
+          "meanRiskScore": 32.715755489424666,
           "maxRiskScore": 50.76482704923574,
           "severe": 0,
-          "high": 85,
-          "fail": 183,
+          "high": 77,
+          "fail": 177,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 141
+              "count": 145
             },
             {
               "weakness": "tracking.maxAnchorError",
-              "count": 69
+              "count": 67
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 30
+              "count": 28
             }
           ],
           "worst": {
@@ -6675,15 +6638,15 @@
         {
           "name": "standard",
           "count": 480,
-          "meanRiskScore": 27.785341254747685,
+          "meanRiskScore": 27.463137961435486,
           "maxRiskScore": 66.78745311541427,
           "severe": 1,
-          "high": 69,
-          "fail": 229,
+          "high": 62,
+          "fail": 194,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 360
+              "count": 361
             },
             {
               "weakness": "tracking.maxFrameJump",
@@ -6692,10 +6655,6 @@
             {
               "weakness": "tracking.maxAnchorError",
               "count": 14
-            },
-            {
-              "weakness": "reconstruction.meanReadyNormalError",
-              "count": 1
             }
           ],
           "worst": {
@@ -6769,15 +6728,15 @@
         {
           "name": "early",
           "count": 240,
-          "meanRiskScore": 35.91908256306086,
+          "meanRiskScore": 35.65528401049988,
           "maxRiskScore": 70.477369209828,
           "severe": 6,
-          "high": 94,
-          "fail": 177,
+          "high": 92,
+          "fail": 164,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 226
+              "count": 225
             },
             {
               "weakness": "tracking.maxFrameJump",
@@ -6788,7 +6747,7 @@
               "count": 3
             },
             {
-              "weakness": "reconstruction.readyFrameRatio",
+              "weakness": "reconstruction.poseReadyFrameRatio",
               "count": 1
             }
           ],
@@ -6860,23 +6819,23 @@
         {
           "name": "repeated",
           "count": 240,
-          "meanRiskScore": 33.870048141859,
+          "meanRiskScore": 33.49193927469888,
           "maxRiskScore": 66.02041873653306,
           "severe": 3,
-          "high": 92,
-          "fail": 157,
+          "high": 88,
+          "fail": 152,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 201
+              "count": 199
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 33
+              "count": 34
             },
             {
               "weakness": "tracking.maxAnchorError",
-              "count": 6
+              "count": 7
             }
           ],
           "worst": {
@@ -6948,23 +6907,23 @@
         {
           "name": "late",
           "count": 240,
-          "meanRiskScore": 33.24367021241961,
+          "meanRiskScore": 32.715755489424666,
           "maxRiskScore": 50.76482704923574,
           "severe": 0,
-          "high": 85,
-          "fail": 183,
+          "high": 77,
+          "fail": 177,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 141
+              "count": 145
             },
             {
               "weakness": "tracking.maxAnchorError",
-              "count": 69
+              "count": 67
             },
             {
               "weakness": "tracking.maxFrameJump",
-              "count": 30
+              "count": 28
             }
           ],
           "worst": {
@@ -7034,15 +6993,15 @@
         {
           "name": "mid",
           "count": 240,
-          "meanRiskScore": 30.416807536904972,
+          "meanRiskScore": 30.108233615385718,
           "maxRiskScore": 66.78745311541427,
           "severe": 1,
-          "high": 55,
-          "fail": 141,
+          "high": 51,
+          "fail": 126,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
-              "count": 178
+              "count": 179
             },
             {
               "weakness": "tracking.maxFrameJump",
@@ -7051,10 +7010,6 @@
             {
               "weakness": "tracking.maxAnchorError",
               "count": 14
-            },
-            {
-              "weakness": "reconstruction.meanReadyNormalError",
-              "count": 1
             }
           ],
           "worst": {
@@ -7126,11 +7081,11 @@
         {
           "name": "clean",
           "count": 240,
-          "meanRiskScore": 25.153874972590394,
+          "meanRiskScore": 24.818042307485268,
           "maxRiskScore": 43.23044967380306,
           "severe": 0,
-          "high": 14,
-          "fail": 88,
+          "high": 11,
+          "fail": 68,
           "topPrimaryWeaknesses": [
             {
               "weakness": "tracking.meanAnchorError",
