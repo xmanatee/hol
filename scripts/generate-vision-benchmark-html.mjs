@@ -6,6 +6,7 @@ const [inputPath = '/tmp/hol-vision-benchmark-full.json', outputPath = 'docs/vis
 const benchmarkOutput = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
 const benchmark = benchmarkOutput.benchmark;
 const quality = benchmarkOutput.qualitySummary.aggregate;
+const performance = benchmarkOutput.performanceSummary || null;
 const risk = benchmark.aggregate;
 
 const formatNumber = value => Number(value).toLocaleString('en-US', {
@@ -28,6 +29,8 @@ const riskClass = score => {
 };
 
 const riskCell = score => `<span class="risk ${riskClass(score)}">${formatNumber(score)}</span>`;
+
+const msCell = value => `${formatNumber(value)}ms`;
 
 const percentBar = (value, total, className = '') => `
   <div class="bar ${className}" aria-hidden="true">
@@ -65,6 +68,40 @@ const compactGroupRows = group => group.map(item => `
   </tr>
 `).join('');
 
+const performanceRows = group => group.map(item => `
+  <tr>
+    <th scope="row">${escapeHtml(item.name)}</th>
+    <td>${formatNumber(item.count)}</td>
+    <td>${msCell(item.meanReplayWallTimeMs)}</td>
+    <td>${msCell(item.maxReplayWallTimeMs)}</td>
+    <td>${msCell(item.meanFrameWallTimeMs)}</td>
+    <td>${msCell(item.meanFrameProcessingTimeMs)}</td>
+    <td>${msCell(item.maxFrameProcessingTimeMs)}</td>
+  </tr>
+`).join('');
+
+const slowestRows = reports => reports.map((report, index) => `
+  <tr>
+    <td>${index + 1}</td>
+    <th scope="row">${escapeHtml(report.name)}</th>
+    <td>${escapeHtml(report.mode)}</td>
+    <td>${msCell(report.runtime.wallTimeMs)}</td>
+    <td>${msCell(report.runtime.meanFrameWallTimeMs)}</td>
+    <td>${msCell(report.runtime.meanProcessingTimeMs)}</td>
+    <td>${msCell(report.runtime.maxProcessingTimeMs)}</td>
+  </tr>
+`).join('');
+
+const stageTimingRows = stageTimings => Object.entries(stageTimings || {})
+  .slice(0, 12)
+  .map(([stage, timing]) => `
+    <tr>
+      <th scope="row">${escapeHtml(stage)}</th>
+      <td>${msCell(timing.meanMs)}</td>
+      <td>${msCell(timing.maxMs)}</td>
+    </tr>
+  `).join('');
+
 const worstRows = benchmark.worstReports.map((report, index) => `
   <tr>
     <td>${index + 1}</td>
@@ -87,6 +124,7 @@ const occlusionRanking = benchmark.weakPoints.byOcclusion;
 const backgroundRanking = benchmark.weakPoints.byBackground;
 const bestMode = [...modeRanking].sort((left, right) => left.meanRiskScore - right.meanRiskScore)[0];
 const highSevereCount = (risk.byRiskBand.high || 0) + (risk.byRiskBand.severe || 0);
+const slowMode = performance?.byMode?.[0] || null;
 
 const conclusions = [
   `Depth fusion is the strongest mode overall: ${formatNumber(bestMode.meanRiskScore)} mean risk, ${bestMode.severe} severe cases, and ${formatNumber(bestMode.fail)} strict failures out of ${formatNumber(bestMode.count)} replays.`,
@@ -95,6 +133,9 @@ const conclusions = [
   `Early and repeated occlusion are the most damaging occlusion patterns. Clean scenes still fail ${formatPercent(occlusionRanking.find(item => item.name === 'clean').fail, occlusionRanking.find(item => item.name === 'clean').count)}, so this is not only an occlusion problem.`,
   `Handled mugs are the clearest object weak point: ${formatPercent(objectRanking[0].fail, objectRanking[0].count)} strict failure rate and ${formatNumber(objectRanking[0].severe)} severe cases.`,
   `Background differences matter less than geometry and motion. Shelf, busy, window, desk, and kitchen backgrounds cluster tightly around mean risk ${formatNumber(backgroundRanking[backgroundRanking.length - 1].meanRiskScore)}-${formatNumber(backgroundRanking[0].meanRiskScore)}.`,
+  performance
+    ? `Runtime is now measured in the same loop. The slowest mode is ${slowMode.name}: ${formatNumber(slowMode.meanReplayWallTimeMs)}ms mean replay wall time and ${formatNumber(slowMode.maxFrameProcessingTimeMs)}ms max frame processing.`
+    : 'Runtime is not present in this JSON; rerun the feedback loop with the current benchmark runner to include lag analysis.',
 ];
 
 const html = `<!doctype html>
@@ -362,6 +403,7 @@ const html = `<!doctype html>
       <div class="kpi"><span>Mean risk</span><strong>${formatNumber(risk.meanRiskScore)}</strong></div>
       <div class="kpi"><span>High + severe risk</span><strong>${formatNumber(highSevereCount)}</strong></div>
       <div class="kpi"><span>Severe rate</span><strong>${formatPercent(risk.byRiskBand.severe, risk.total)}</strong></div>
+      <div class="kpi"><span>Mean replay time</span><strong>${performance ? msCell(performance.aggregate.meanReplayWallTimeMs) : 'n/a'}</strong></div>
     </section>
 
     <section class="summary">
@@ -402,6 +444,38 @@ const html = `<!doctype html>
         <tbody>${groupRows(modeRanking)}</tbody>
       </table>
     </div>
+
+    ${performance ? `
+    <h2>Performance Bottlenecks</h2>
+    <p class="note">Wall time measures the Node synthetic replay loop. Frame processing time is measured around each <code>updateAnchor</code> call and is the closest synthetic proxy for app-side lag.</p>
+    <div class="grid-two">
+      <section>
+        <h3>Modes By Runtime</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Mode</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th></tr></thead>
+            <tbody>${performanceRows(performance.byMode)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3>Slowest Replays</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>Scenario</th><th>Mode</th><th>Replay</th><th>Frame wall</th><th>Mean processing</th><th>Max processing</th></tr></thead>
+            <tbody>${slowestRows(performance.slowestReports)}</tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+    <h3>Aggregate Stage Timings</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Stage</th><th>Mean</th><th>Max</th></tr></thead>
+        <tbody>${stageTimingRows(performance.aggregate.stageTimings)}</tbody>
+      </table>
+    </div>
+    ` : ''}
 
     <h2>Object And Geometry Weak Points</h2>
     <div class="grid-two">
@@ -506,5 +580,5 @@ const html = `<!doctype html>
 </body>
 </html>`;
 
-fs.writeFileSync(outputPath, html);
+fs.writeFileSync(outputPath, html.replace(/[ \t]+$/gm, ''));
 console.log(outputPath);

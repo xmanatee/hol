@@ -55,6 +55,29 @@ test('depth postprocessing normalizes tensor output back to source dimensions', 
   assert.deepEqual([...result.data].map(value => Number(value.toFixed(3))), [0, 0.333, 0.667, 1]);
 });
 
+test('depth postprocessing can emit a compact map with source dimensions', () => {
+  const tensor = {
+    dims: [1, 1, 2, 2],
+    data: new Float32Array([0, 1, 2, 3]),
+  };
+  const preprocessInfo = {
+    inputSize: 2,
+    originalWidth: 4,
+    originalHeight: 2,
+    scale: 0.5,
+    padX: 0,
+    padY: 0,
+  };
+
+  const result = postprocessDepthTensor(tensor, preprocessInfo, { outputMaxSize: 2 });
+
+  assert.equal(result.width, 2);
+  assert.equal(result.height, 1);
+  assert.equal(result.sourceWidth, 4);
+  assert.equal(result.sourceHeight, 2);
+  assert.equal(result.data.length, 2);
+});
+
 test('depth normalization ignores non-finite model outputs', () => {
   const result = normalizeDepthValues(new Float32Array([4, Number.NaN, 8, Infinity]));
 

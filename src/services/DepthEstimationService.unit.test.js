@@ -90,6 +90,8 @@ test('depth estimation service throttles in-flight and recent estimates', async 
     requestId: 1,
     width: 4,
     height: 4,
+    sourceWidth: 8,
+    sourceHeight: 6,
     data: new Float32Array(16),
     timestamp: now,
     processingTime: 6.5,
@@ -97,6 +99,8 @@ test('depth estimation service throttles in-flight and recent estimates', async 
     modelUrl: '/models/depth_anything_v2_small.onnx',
   });
   const firstDepth = await first;
+  assert.equal(firstDepth.sourceWidth, 8);
+  assert.equal(firstDepth.sourceHeight, 6);
   now += 80;
   const throttledRecent = await service.estimate(createImageData(), { timestamp: now });
 

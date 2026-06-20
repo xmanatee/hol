@@ -37,6 +37,7 @@ const POSE_MODEL = 'object-pose';
 const TRACKING_MODES = new Set([POSE_MODEL, ...RECONSTRUCTION_MODE_IDS]);
 const PLANAR_TARGET_CLASS_PATTERN = /book|notebook|paper|document|poster|photo|picture|painting|card|ticket|label|badge|laptop|keyboard|cell phone|smartphone|phone|tablet|tv|screen|sign|whiteboard|bag/i;
 const RIGID_PLANAR_TARGET_CLASS_PATTERN = /book|notebook|paper|document|poster|photo|picture|painting|card|ticket|label|badge|laptop|keyboard|cell phone|smartphone|phone|tablet|tv|screen|sign|whiteboard/i;
+const TEXTURED_PLANAR_RECOVERY_EXCLUSION_PATTERN = /book|notebook/i;
 const CANDIDATE_MIN_TRACKABLE_POINTS = 8;
 const CANDIDATE_REFRESH_INTERVAL = 3;
 const FACE_READINESS_REASON_RECONSTRUCTION = 'Build more object landmarks before showing the face';
@@ -62,6 +63,8 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const SCALE_STEP_LOG_LIMIT = 0.1;
 const RIGID_PLANAR_POSITION_STEP_RATIO = 0.1;
 const RIGID_PLANAR_BOOK_POSITION_STEP_RATIO = 0.083;
+const RIGID_PLANAR_RECOVERY_DOMINANCE_SCORE = 3.4;
+const OBJECT_SUPPORT_RECOVERY_REASON_PATTERN = /dropout|recovery/i;
 const PLANAR_POSE_POSITION_BLEND = 0.85;
 const MIN_LOW_LAG_TRACKER_CONFIDENCE = 0.55;
 const MAX_LOW_LAG_TRACKER_RESIDUAL = 7;
@@ -99,11 +102,12 @@ const unwrapAngle = (target, reference) => {
 };
 
 export class ImageAnchorService {
-  constructor({ now = () => performance.now() } = {}) {
+  constructor({ now = () => performance.now(), profileUpdates = false } = {}) {
     this.initialized = false;
     this.cv = null;
     this.cameraParams = null;
     this.now = now;
+    this.profileUpdates = profileUpdates;
 
     // Core components
     this.keypointDetector = new KeypointDetector();
@@ -648,7 +652,7 @@ export class ImageAnchorService {
     const deltaX = candidate.x - this.currentPosition.x;
     const deltaY = candidate.y - this.currentPosition.y;
     const distance = Math.hypot(deltaX, deltaY);
-    const maxStep = this._getObjectSupportPositionCorrectionMaxStep(objectSupportMask);
+    const maxStep = this._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, reason);
     if (distance < OBJECT_SUPPORT_POSITION_CORRECTION_MIN_DELTA || maxStep <= 0) {
       this.metrics.objectSupportPositionCorrection = null;
       this.metrics.objectSupportPositionSource = null;
@@ -676,7 +680,7 @@ export class ImageAnchorService {
     return corrected;
   }
 
-  _getObjectSupportPositionCorrectionMaxStep(objectSupportMask) {
+  _getObjectSupportPositionCorrectionMaxStep(objectSupportMask, reason = 'segmentation-refresh') {
     if (this._hasRigidPlanarTargetClass()) {
       return 0;
     }
@@ -688,16 +692,23 @@ export class ImageAnchorService {
     const cupLike = /cup/i.test(targetClass);
     const curved = this._hasCurvedReconstructionTarget();
     const ratio = curved ? 0.24 : 0.3;
-    if (mugLike && this.trackingMode === 'parametric-surface') {
-      return 0;
-    }
+    const recoveryCorrection = OBJECT_SUPPORT_RECOVERY_REASON_PATTERN.test(reason);
     if (mugLike && this.trackingMode === DEPTH_FUSION_POSE_MODEL) {
       return 4;
     }
     if (mugLike && this.trackingMode === RECONSTRUCTION_POSE_MODEL) {
-      return clamp(maxExtent * ratio, 8, 10);
+      return clamp(maxExtent * ratio, 8, recoveryCorrection ? 12 : 10);
     }
-    const hardMax = mugLike ? 12 : bottleLike || cupLike ? 14 : curved ? 10 : 16;
+    if (mugLike && this.trackingMode === 'parametric-surface') {
+      return recoveryCorrection ? clamp(maxExtent * ratio, 8, 12) : 0;
+    }
+    let hardMax = curved ? 10 : 16;
+    if (bottleLike || cupLike) {
+      hardMax = recoveryCorrection ? 14 : 12;
+    }
+    if (mugLike) {
+      hardMax = 12;
+    }
     return clamp(maxExtent * ratio, 8, hardMax);
   }
 
@@ -717,6 +728,8 @@ export class ImageAnchorService {
     }
 
     const startTime = this.now();
+    const updateTimings = this.profileUpdates ? {} : null;
+    const timingStart = this._startUpdateTiming(updateTimings);
     const timestamp = startTime;
     this.frameIndex++;
 
@@ -733,19 +746,24 @@ export class ImageAnchorService {
       src = this.cv.matFromImageData(imageData);
       gray = new this.cv.Mat();
       this.cv.cvtColor(src, gray, this.cv.COLOR_RGBA2GRAY);
+      this._recordUpdateTiming(updateTimings, 'framePrepareMs', timingStart);
 
       let updateResult;
 
       if (this.anchorState === 'candidate' ||
           (this.anchorState === 'mapping' && this._activeTrackedPointCount() < CANDIDATE_MIN_TRACKABLE_POINTS)) {
+        const stageStart = this._startUpdateTiming(updateTimings);
         updateResult = this._updateProgressiveBootstrap(gray, timestamp);
+        this._recordUpdateTiming(updateTimings, 'bootstrapUpdateMs', stageStart);
       } else if (this.anchorState === 'mapping' || this.anchorState === 'tracking' || this.anchorState === 'stable') {
         // Primary tracking via keypoints
         logger.debugEvery('ImageAnchor', 'attempting-keypoint-tracking', 1000, 'Attempting keypoint tracking');
+        const stageStart = this._startUpdateTiming(updateTimings);
         updateResult = this._updateWithKeypoints(gray, timestamp, {
           ...depthContext,
           imageData,
-        });
+        }, updateTimings);
+        this._recordUpdateTiming(updateTimings, 'keypointUpdateMs', stageStart);
 
         if (!updateResult.success && this.anchorState !== 'lost') {
           // Increment failure counter instead of immediately degrading
@@ -766,7 +784,9 @@ export class ImageAnchorService {
           if (this.keypointFailureCount >= this.maxKeypointFailures) {
             logger.info('ImageAnchor', `Max keypoint failures reached (${this.keypointFailureCount}), degrading to template matching`);
             this.anchorState = 'degraded';
+            const fallbackStart = this._startUpdateTiming(updateTimings);
             updateResult = this._updateWithTemplate(gray);
+            this._recordUpdateTiming(updateTimings, 'templateUpdateMs', fallbackStart);
             if (!updateResult.success) {
               updateResult = this._createDegradedHoldResult(updateResult.reason);
             }
@@ -793,10 +813,12 @@ export class ImageAnchorService {
       } else if (this.anchorState === 'degraded' || this.anchorState === 'lost') {
         if (this.keypointTracker.trackedPoints?.length > 0) {
           logger.debugEvery('ImageAnchor', 'attempting-keypoint-recovery', 1000, 'Attempting keypoint tracking recovery from degraded state');
+          const stageStart = this._startUpdateTiming(updateTimings);
           const recoveryResult = this._updateWithKeypoints(gray, timestamp, {
             ...depthContext,
             imageData,
-          });
+          }, updateTimings);
+          this._recordUpdateTiming(updateTimings, 'keypointUpdateMs', stageStart);
 
           if (recoveryResult.success) {
             logger.info('ImageAnchor', 'Keypoint tracking recovered from degraded state!');
@@ -805,14 +827,18 @@ export class ImageAnchorService {
             updateResult = recoveryResult;
           } else {
             logger.debugEvery('ImageAnchor', 'keypoint-recovery-template', 1000, 'Keypoint recovery failed; switching to template matching');
+            const fallbackStart = this._startUpdateTiming(updateTimings);
             updateResult = this._updateWithTemplate(gray);
+            this._recordUpdateTiming(updateTimings, 'templateUpdateMs', fallbackStart);
             if (!updateResult.success) {
               updateResult = this._createDegradedHoldResult(updateResult.reason);
             }
           }
         } else {
           logger.debugEvery('ImageAnchor', 'attempting-template-recovery', 1000, 'Attempting template matching recovery');
+          const fallbackStart = this._startUpdateTiming(updateTimings);
           updateResult = this._updateWithTemplate(gray);
+          this._recordUpdateTiming(updateTimings, 'templateUpdateMs', fallbackStart);
           if (!updateResult.success) {
             updateResult = this._createDegradedHoldResult(updateResult.reason);
           }
@@ -848,7 +874,9 @@ export class ImageAnchorService {
         if (this.framesSinceFullFrameRecovery >= this.fullFrameRecoveryInterval) {
           logger.info('ImageAnchor', 'Attempting full-frame recovery search');
           this.framesSinceFullFrameRecovery = 0;
+          const recoveryStart = this._startUpdateTiming(updateTimings);
           const recoveryResult = this.persistenceSystem.fullFrameSearch(this.cv, gray);
+          this._recordUpdateTiming(updateTimings, 'fullFrameRecoveryMs', recoveryStart);
           if (recoveryResult.success) {
             logger.info('ImageAnchor', 'Full-frame recovery succeeded:', recoveryResult);
             updateResult = recoveryResult;
@@ -898,7 +926,10 @@ export class ImageAnchorService {
 
       }
 
-      this._recordAnchorUpdateResult(updateResult, this.now() - startTime);
+      if (updateTimings) {
+        updateTimings.totalMs = performance.now() - timingStart;
+      }
+      this._recordAnchorUpdateResult(updateResult, this.now() - startTime, updateTimings);
 
       this._notifyStateChange();
       return updateResult;
@@ -907,6 +938,9 @@ export class ImageAnchorService {
       const reason = `Update exception: ${error.message}`;
       this.metrics.lastFailureReason = reason;
       this.metrics.lastFailureStage = 'update-exception';
+      if (updateTimings) {
+        updateTimings.totalMs = performance.now() - timingStart;
+      }
       this._recordAnchorUpdateResult({
         success: false,
         reason,
@@ -917,7 +951,7 @@ export class ImageAnchorService {
         method: 'update-exception',
         recoverable: false,
         state: this.anchorState,
-      }, this.now() - startTime);
+      }, this.now() - startTime, updateTimings);
       this._notifyStateChange();
       logger.error('ImageAnchor', 'Update exception:', error);
       throw error;
@@ -934,9 +968,11 @@ export class ImageAnchorService {
   /**
    * Update using keypoint tracking and homography
    */
-  _updateWithKeypoints(grayImage, timestamp, depthContext = {}) {
+  _updateWithKeypoints(grayImage, timestamp, depthContext = {}, updateTimings = null) {
     logger.debugEvery('ImageAnchor', 'track-to-frame-start', 1000, 'Keypoint tracking - starting trackToFrame');
+    let stageStart = this._startUpdateTiming(updateTimings);
     let trackingResult = this.keypointTracker.trackToFrame(this.cv, grayImage);
+    this._recordUpdateTiming(updateTimings, 'keypointTrackMs', stageStart);
 
     logger.debugEvery('ImageAnchor', 'keypoint-tracking-result', 1000, 'Keypoint tracking result:', {
       success: trackingResult.success,
@@ -947,7 +983,9 @@ export class ImageAnchorService {
     });
 
     if (!trackingResult.success) {
+      stageStart = this._startUpdateTiming(updateTimings);
       const relocalizationResult = this._attemptKeyframeRelocalization(grayImage, timestamp, trackingResult.reason);
+      this._recordUpdateTiming(updateTimings, 'relocalizationMs', stageStart);
       if (relocalizationResult.success) {
         trackingResult = relocalizationResult.trackingResult;
         logger.info('ImageAnchor', 'Recovered keypoint tracking through descriptor relocalization:', {
@@ -981,17 +1019,21 @@ export class ImageAnchorService {
 
     this.metrics.trackingSuccessRate = trackingResult.successRate || 0;
     this.metrics.keypointCount = trackingResult.activePointCount || 0;
+    stageStart = this._startUpdateTiming(updateTimings);
     this._recordLandmarkMetrics();
     this._updateObjectSurfaceMetrics({
       objectSupportMask: this._getCurrentObjectSupportMask(),
       poseResidual: trackingResult.averageError ?? null,
     });
+    this._recordUpdateTiming(updateTimings, 'landmarkMetricsMs', stageStart);
 
     const minSuccessRate = 0.45;
     const minActivePoints = 8;
 
     if (this.metrics.trackingSuccessRate < minSuccessRate || this.metrics.keypointCount < minActivePoints) {
+      stageStart = this._startUpdateTiming(updateTimings);
       const relocalizationResult = this._attemptKeyframeRelocalization(grayImage, timestamp, 'Insufficient keypoint tracking quality');
+      this._recordUpdateTiming(updateTimings, 'relocalizationMs', stageStart);
       if (relocalizationResult.success) {
         trackingResult = relocalizationResult.trackingResult;
         this.metrics.trackingSuccessRate = trackingResult.successRate || 0;
@@ -1032,7 +1074,9 @@ export class ImageAnchorService {
 
     const preliminaryAnchorPosition = this.keypointTracker.getAnchorPosition();
     if (this._shouldAttemptGeometryRelocalization(preliminaryAnchorPosition)) {
+      stageStart = this._startUpdateTiming(updateTimings);
       const relocalizationResult = this._attemptKeyframeRelocalization(grayImage, timestamp, 'Reference geometry became incoherent');
+      this._recordUpdateTiming(updateTimings, 'relocalizationMs', stageStart);
       if (relocalizationResult.success) {
         trackingResult = relocalizationResult.trackingResult;
         this.metrics.trackingSuccessRate = trackingResult.successRate || 0;
@@ -1058,15 +1102,19 @@ export class ImageAnchorService {
     this.metrics.poseSource = null;
     this.metrics.poseSourceHoldReason = null;
     this.metrics.poseModel = isReconstructionMode(this.trackingMode) ? this.trackingMode : POSE_MODEL;
+    stageStart = this._startUpdateTiming(updateTimings);
     const objectPose = this._estimateObjectPoseFromTracker();
-    const reconstructionPose = this._updateReconstructionPoseFromTracker(timestamp, grayImage, depthContext);
+    this._recordUpdateTiming(updateTimings, 'objectPoseMs', stageStart);
+    const reconstructionPose = this._updateReconstructionPoseFromTracker(timestamp, grayImage, depthContext, updateTimings);
 
+    stageStart = this._startUpdateTiming(updateTimings);
     const poseAttempt = this._estimatePoseFromTracker();
     const poseCorrespondenceOptions = poseAttempt.options;
     const correspondences = poseAttempt.correspondences;
     poseResult = poseAttempt.poseResult;
     const planarPose = this._createPlanarHomographyPose(poseResult, correspondences);
     this._updatePlanarDominance(planarPose, correspondences);
+    this._recordUpdateTiming(updateTimings, 'planarPoseMs', stageStart);
     this.metrics.poseKeypointCount = correspondences.length;
     this.metrics.posePatchRadius = poseCorrespondenceOptions.maxReferenceDistance;
     logger.debugEvery('ImageAnchor', 'pose-correspondences-check', 1000, 'Pose correspondences check:', {
@@ -1175,7 +1223,14 @@ export class ImageAnchorService {
     if (planarPoseUsableForTransform && (preferPlanarPose || usePlanarPatchTransform)) {
       newPosition = this._filterPositionCandidate(planarPose.position, timestamp, planarPose.method);
       positionMethod = planarPose.method;
-      planarTransform = this._updatePlanarTransform(planarPose.planarTransform, timestamp);
+      planarTransform = this._updatePlanarTransform(
+        this._selectPlanarAttachmentTransform({
+          planarPose,
+          trackerAnchorPosition,
+          correspondences,
+        }),
+        timestamp
+      );
       this._recordPlanarHomographyMetrics(planarPose);
       logger.debugEvery('ImageAnchor', 'positioning-choice', 1000, `Using planar homography positioning: ${positionMethod}`);
     } else if (trackerAnchorPosition &&
@@ -2402,9 +2457,11 @@ export class ImageAnchorService {
     };
   }
 
-  _updateReconstructionPoseFromTracker(timestamp, grayImage, depthContext = {}) {
+  _updateReconstructionPoseFromTracker(timestamp, grayImage, depthContext = {}, updateTimings = null) {
+    const stageStart = this._startUpdateTiming(updateTimings);
     if (!isReconstructionMode(this.trackingMode)) {
       this._recordReconstructionMetrics(this.reconstructor.getState());
+      this._recordUpdateTiming(updateTimings, 'reconstructionUpdateMs', stageStart);
       return null;
     }
 
@@ -2412,6 +2469,7 @@ export class ImageAnchorService {
       ...depthContext,
       objectSupportMask: this.currentObjectSupportMask || this.objectSupportMask,
       templateRegion: this.trackingRegion || this.templateRegion,
+      includePreview: false,
     };
     const reconstructionState = this.trackingMode === DEPTH_FUSION_POSE_MODEL
       ? this.reconstructor.addFrameFromTrackedPoints(
@@ -2424,10 +2482,11 @@ export class ImageAnchorService {
           timestamp,
           grayImage,
           reconstructionContext
-        );
+      );
     this._recordReconstructionMetrics(reconstructionState);
 
     const pose = this.reconstructor.estimatePoseFromTrackedPoints(this.keypointTracker.trackedPoints, grayImage);
+    this._recordUpdateTiming(updateTimings, 'reconstructionUpdateMs', stageStart);
     if (!pose.success) {
       this.metrics.reconstructionPoseRejectedReason = pose.reason;
       return pose;
@@ -2491,6 +2550,18 @@ export class ImageAnchorService {
       return false;
     }
 
+    if (this._hasRigidPlanarRecoveryPose(planarPose, correspondences)) {
+      return true;
+    }
+
+    return this._hasPlanarAttachmentTransform(planarPose, correspondences);
+  }
+
+  _hasPlanarAttachmentTransform(planarPose, correspondences) {
+    if (!planarPose?.success) {
+      return false;
+    }
+
     const spread = planarPose.referenceSpread || this._measureReferenceSpread(correspondences);
     const inlierRatio = planarPose.inlierRatio ?? planarPose.inlierCount / Math.max(1, correspondences.length);
     const averageResidual = planarPose.averageResidual ?? Infinity;
@@ -2516,6 +2587,47 @@ export class ImageAnchorService {
       (planarPose.confidence ?? 0) >= 0.42 &&
       averageResidual <= 2.2 &&
       spread.minAxis >= 18;
+  }
+
+  _hasRigidPlanarRecoveryPose(planarPose, correspondences) {
+    if (!planarPose?.success ||
+        !this._hasRigidPlanarTargetClass() ||
+        TEXTURED_PLANAR_RECOVERY_EXCLUSION_PATTERN.test(this.anchorTargetClass || '') ||
+        this.planarDominanceScore < RIGID_PLANAR_RECOVERY_DOMINANCE_SCORE) {
+      return false;
+    }
+
+    const activeLandmarks = this.metrics.activeLandmarkCount || this.metrics.keypointCount || correspondences.length;
+    const objectOwnedLandmarks = this.metrics.objectOwnedLandmarks ?? activeLandmarks;
+    const objectOwnedRatio = objectOwnedLandmarks / Math.max(1, activeLandmarks);
+    const silhouetteCoverage = this.metrics.silhouetteCoverage ?? 1;
+    const contourFitResidual = this.metrics.contourFitResidual ?? 0;
+    const spread = planarPose.referenceSpread || this._measureReferenceSpread(correspondences);
+    const inlierRatio = planarPose.inlierRatio ?? planarPose.inlierCount / Math.max(1, correspondences.length);
+    const averageResidual = planarPose.averageResidual ?? Infinity;
+
+    return planarPose.inlierCount >= 8 &&
+      inlierRatio >= 0.2 &&
+      (planarPose.confidence ?? 0) >= 0.32 &&
+      averageResidual <= 9.5 &&
+      spread.minAxis >= 18 &&
+      objectOwnedRatio >= 0.72 &&
+      silhouetteCoverage >= 0.5 &&
+      contourFitResidual <= 5;
+  }
+
+  _selectPlanarAttachmentTransform({ planarPose, trackerAnchorPosition, correspondences }) {
+    if (!trackerAnchorPosition || this._hasPlanarAttachmentTransform(planarPose, correspondences)) {
+      return planarPose.planarTransform;
+    }
+
+    return {
+      scale: trackerAnchorPosition.scale,
+      rotation: trackerAnchorPosition.rotation,
+      confidence: Math.min(planarPose.planarTransform?.confidence ?? planarPose.confidence ?? 0, trackerAnchorPosition.confidence ?? 0),
+      inlierCount: trackerAnchorPosition.inlierCount,
+      method: trackerAnchorPosition.method,
+    };
   }
 
   _shouldUsePlanarPatchTransform({ planarPose, reconstructionPose, correspondences }) {
@@ -2629,9 +2741,21 @@ export class ImageAnchorService {
       return false;
     }
 
-    return (reconstructionPose.inlierCount || 0) >= 12 &&
-      (reconstructionPose.averageResidual ?? Infinity) <= 4.8 &&
-      (planarPose?.inlierCount || 0) < 14;
+    const selectedInliers = reconstructionPose.inlierCount || 0;
+    const selectedResidual = reconstructionPose.averageResidual ?? Infinity;
+    const selectedConfidence = reconstructionPose.confidence ?? 0;
+    const mapConfidence = reconstructionPose.preview?.statistics?.mapConfidence ??
+      this.metrics.reconstructionMapConfidence ??
+      0;
+    const planarInliers = planarPose?.inlierCount || 0;
+    const selectedVeryStable = selectedInliers >= 24 &&
+      selectedConfidence >= 0.92 &&
+      selectedResidual <= 2.4 &&
+      mapConfidence >= 0.7 &&
+      planarInliers < 26;
+
+    return (selectedInliers >= 12 && selectedResidual <= 4.8 && planarInliers < 14) ||
+      selectedVeryStable;
   }
 
   _shouldTrustNormalPose(normalPose) {
@@ -2915,7 +3039,10 @@ export class ImageAnchorService {
 
     const residual = trackerAnchorPosition.averageResidual ?? Infinity;
     const confidence = trackerAnchorPosition.confidence ?? 0;
-    const activeLandmarks = this.metrics.activeLandmarks || this._activeTrackedPointCount();
+    const activeLandmarks = this.metrics.activeLandmarkCount ||
+      this.metrics.keypointCount ||
+      this.metrics.activeLandmarks ||
+      this._activeTrackedPointCount();
 
     return trackerAnchorPosition.method === 'reference_similarity_transform' &&
       residual >= 18 &&
@@ -3215,7 +3342,9 @@ export class ImageAnchorService {
     this.metrics.reconstructionLandmarks = reconstructionState.landmarkCount;
     this.metrics.reconstructionDepthQuality = reconstructionState.depthQuality;
     this.metrics.reconstructionFailureReason = reconstructionState.lastFailureReason;
-    this.metrics.reconstructionPreview = reconstructionState.preview || null;
+    if ('preview' in reconstructionState) {
+      this.metrics.reconstructionPreview = reconstructionState.preview || null;
+    }
     this.metrics.reconstructionMapConfidence = statistics?.mapConfidence;
     this.metrics.reconstructionAverageSupport = statistics?.averageSupport;
     this.metrics.reconstructionAverageReliability = statistics?.averageReliability;
@@ -3281,12 +3410,17 @@ export class ImageAnchorService {
     if (this.currentPlanarTransform && holdSparseMugCentroidScale) {
       boundedScale = Math.max(boundedScale, previous.scale);
     }
+    const useLowLagRigidPlanarScale = this._shouldUseLowLagRigidPlanarScale(anchorPosition);
+    if (useLowLagRigidPlanarScale) {
+      boundedScale = rawScale;
+    }
     const rawRotation = typeof anchorPosition.rotation === 'number'
       ? unwrapAngle(anchorPosition.rotation, previous.rotation)
       : previous.rotation;
+    const filteredScale = this._scaleFilterFor(anchorPosition).filter(boundedScale, timestamp);
 
     this.currentPlanarTransform = {
-      scale: this._scaleFilterFor(anchorPosition).filter(boundedScale, timestamp),
+      scale: useLowLagRigidPlanarScale ? boundedScale : filteredScale,
       rotation: this.planarRotationFilter.filter(rawRotation, timestamp),
       confidence: typeof anchorPosition.confidence === 'number' ? anchorPosition.confidence : previous.confidence,
       inlierCount: typeof anchorPosition.inlierCount === 'number' ? anchorPosition.inlierCount : previous.inlierCount,
@@ -3300,6 +3434,16 @@ export class ImageAnchorService {
     return this._hasCurvedReconstructionTarget(anchorPosition)
       ? this.curvedScaleFilter
       : this.planarScaleFilter;
+  }
+
+  _shouldUseLowLagRigidPlanarScale(anchorPosition) {
+    return anchorPosition.method === 'reference_similarity_transform' &&
+      this._hasRigidPlanarTargetClass() &&
+      this._hasPlanarDominance() &&
+      this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
+      (anchorPosition.confidence ?? 0) >= 0.52 &&
+      (anchorPosition.inlierCount ?? 0) >= 10 &&
+      (anchorPosition.averageResidual ?? 0) <= 16;
   }
 
   _filterPositionCandidate(position, timestamp, method) {
@@ -3410,7 +3554,11 @@ export class ImageAnchorService {
 
   _predictCurvedMotionPosition(timestamp) {
     const sample = this.curvedMotionSample;
-    const elapsed = clamp(timestamp - sample.timestamp, 0, CURVED_DROPOUT_MAX_PREDICTION_MS);
+    const elapsed = Math.max(0, timestamp - sample.timestamp);
+    if (elapsed > CURVED_DROPOUT_MAX_PREDICTION_MS) {
+      return null;
+    }
+
     if (elapsed <= 0) {
       return {
         x: sample.position.x,
@@ -3585,9 +3733,11 @@ export class ImageAnchorService {
       this._hasPlanarDominance() &&
       poseResult.inlierCount >= 8 &&
       averageResidual <= 3.25;
-    const minInlierRatio = isSelectedReconstruction ? 0.24 : allowPlanarRecovery ? 0.32 : 0.5;
-    const minConfidence = isSelectedReconstruction ? 0.22 : allowPlanarRecovery ? 0.24 : 0.32;
-    const minSpread = isSelectedReconstruction ? 12 : allowPlanarRecovery ? 14 : 18;
+    const allowRigidPlanarRecovery = isPlanarHomography &&
+      this._hasRigidPlanarRecoveryPose(poseResult, correspondences);
+    const minInlierRatio = isSelectedReconstruction ? 0.24 : allowRigidPlanarRecovery ? 0.2 : allowPlanarRecovery ? 0.32 : 0.5;
+    const minConfidence = isSelectedReconstruction ? 0.22 : allowRigidPlanarRecovery ? 0.32 : allowPlanarRecovery ? 0.24 : 0.32;
+    const minSpread = isSelectedReconstruction ? 12 : allowRigidPlanarRecovery ? 18 : allowPlanarRecovery ? 14 : 18;
 
     if ((poseResult.inlierRatio ?? 0) < minInlierRatio) {
       return 'Low pose inlier ratio';
@@ -3596,7 +3746,7 @@ export class ImageAnchorService {
       return 'Low pose confidence';
     }
 
-    const maxResidual = isSelectedReconstruction ? 14 : isPlanarHomography ? 5.5 : 6;
+    const maxResidual = isSelectedReconstruction ? 14 : allowRigidPlanarRecovery ? 9.5 : isPlanarHomography ? 5.5 : 6;
     if (averageResidual > maxResidual) {
       return 'High pose residual';
     }
@@ -3889,9 +4039,21 @@ export class ImageAnchorService {
     };
   }
 
-  _recordAnchorUpdateResult(result, processingTime) {
+  _startUpdateTiming(updateTimings) {
+    return updateTimings ? performance.now() : 0;
+  }
+
+  _recordUpdateTiming(updateTimings, name, startedAt) {
+    if (!updateTimings) {
+      return;
+    }
+    updateTimings[name] = (updateTimings[name] || 0) + performance.now() - startedAt;
+  }
+
+  _recordAnchorUpdateResult(result, processingTime, updateTimings = null) {
     this._recordCurvedMotionSample(result);
     this.metrics.processingTime = processingTime;
+    this.metrics.updateTimings = updateTimings;
     this.metrics.lastUpdateResult = result.success ? 'success' : 'failed';
     this.metrics.lastUpdateMethod = result.method || null;
     this.metrics.lastUpdateConfidence = typeof result.confidence === 'number' ? result.confidence : null;
@@ -3921,7 +4083,6 @@ export class ImageAnchorService {
         !this._hasCurvedReconstructionTarget()) {
       return;
     }
-
     const timestamp = this.now();
     const position = {
       x: result.position.x,

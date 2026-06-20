@@ -150,6 +150,8 @@ export class DepthEstimationService {
       this.latestFrame = {
         width: message.width,
         height: message.height,
+        sourceWidth: message.sourceWidth,
+        sourceHeight: message.sourceHeight,
         data: message.data,
         timestamp: message.timestamp,
         processingTime: message.processingTime,

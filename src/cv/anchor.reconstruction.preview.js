@@ -36,18 +36,36 @@ const convexHull = points => {
   return [...lower.slice(0, -1), ...upper.slice(0, -1)].map(point => point.id);
 };
 
-const nearestEdges = points => {
+const nearestNeighbors = (points, limit) => points.map(point => {
+  const nearest = [];
+
+  points.forEach(candidate => {
+    if (candidate.id === point.id) {
+      return;
+    }
+
+    const distance = distance3(point, candidate);
+    if (nearest.length < limit) {
+      nearest.push({ candidate, distance });
+      nearest.sort((left, right) => left.distance - right.distance);
+      return;
+    }
+
+    if (distance < nearest[nearest.length - 1].distance) {
+      nearest[nearest.length - 1] = { candidate, distance };
+      nearest.sort((left, right) => left.distance - right.distance);
+    }
+  });
+
+  return { point, nearest };
+});
+
+const nearestEdges = neighborRows => {
   const edgeKeys = new Set();
   const edges = [];
 
-  points.forEach(point => {
-    [...points]
-      .filter(candidate => candidate.id !== point.id)
-      .map(candidate => ({
-        candidate,
-        distance: distance3(point, candidate),
-      }))
-      .sort((left, right) => left.distance - right.distance)
+  neighborRows.forEach(({ point, nearest }) => {
+    nearest
       .slice(0, 3)
       .forEach(({ candidate, distance }) => {
         const from = Math.min(point.id, candidate.id);
@@ -72,25 +90,18 @@ const nearestEdges = points => {
 
 const faceKey = ids => [...ids].sort((left, right) => left - right).join(':');
 
-const nearestFaces = points => {
+const nearestFaces = neighborRows => {
   const faces = [];
   const keys = new Set();
 
-  points.forEach(point => {
-    const nearest = [...points]
-      .filter(candidate => candidate.id !== point.id)
-      .map(candidate => ({
-        candidate,
-        distance: distance3(point, candidate),
-      }))
-      .sort((left, right) => left.distance - right.distance)
-      .slice(0, 6)
+  neighborRows.forEach(({ point, nearest }) => {
+    const candidates = nearest
       .map(item => item.candidate);
 
-    for (let leftIndex = 0; leftIndex < nearest.length - 1; leftIndex++) {
-      for (let rightIndex = leftIndex + 1; rightIndex < nearest.length; rightIndex++) {
-        const left = nearest[leftIndex];
-        const right = nearest[rightIndex];
+    for (let leftIndex = 0; leftIndex < candidates.length - 1; leftIndex++) {
+      for (let rightIndex = leftIndex + 1; rightIndex < candidates.length; rightIndex++) {
+        const left = candidates[leftIndex];
+        const right = candidates[rightIndex];
         const area = Math.abs(cross2(point, left, right));
         if (area < 6) {
           continue;
@@ -111,14 +122,17 @@ const nearestFaces = points => {
     }
   });
 
-  return faces.slice(0, Math.max(0, points.length * 2));
+  return faces.slice(0, Math.max(0, neighborRows.length * 2));
 };
 
-export const createSurfacePreview = points => ({
-  hull: convexHull(points),
-  edges: nearestEdges(points),
-  faces: nearestFaces(points),
-});
+export const createSurfacePreview = points => {
+  const neighborRows = nearestNeighbors(points, 6);
+  return {
+    hull: convexHull(points),
+    edges: nearestEdges(neighborRows),
+    faces: nearestFaces(neighborRows),
+  };
+};
 
 export const emptySurfacePreview = () => ({
   hull: [],

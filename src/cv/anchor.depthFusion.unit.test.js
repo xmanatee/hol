@@ -177,6 +177,73 @@ test('depth fusion builds a dense masked surfel map and estimates pose', () => {
   assert.equal(coloredPoint.color.b, 180);
 });
 
+test('depth fusion pose reuses ranked surfel points during pose estimation', () => {
+  const engine = new DepthFusionReconstructor({
+    minFrames: 2,
+    minSurfels: 40,
+    sampleStride: 4,
+    voxelSize: 5,
+  });
+  configureCamera(engine);
+  const mask = createMask();
+  const imageData = createImageData();
+  engine.reset({
+    anchorReference: { x: 48, y: 48 },
+    templateRegion: { x: 12, y: 12, width: 72, height: 72 },
+    targetClass: 'cup',
+  });
+
+  engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+    depthFrame: createDepthFrame(),
+    depthState: { state: 'ready' },
+    objectSupportMask: mask,
+    imageData,
+  });
+  engine.addFrameFromTrackedPoints(createTrackedPoints({ tx: 4, ty: -3, scale: 1.04 }), 1040, {
+    depthFrame: createDepthFrame({ offset: 0.01 }),
+    depthState: { state: 'ready' },
+    objectSupportMask: mask,
+    imageData,
+  });
+
+  let previewCalls = 0;
+  const originalPreviewPoints = engine.surfelMap.previewPoints.bind(engine.surfelMap);
+  engine.surfelMap.previewPoints = options => {
+    previewCalls++;
+    return originalPreviewPoints(options);
+  };
+
+  const pose = engine.estimatePoseFromTrackedPoints(createTrackedPoints({ tx: 4, ty: -3, scale: 1.04 }));
+
+  assert.equal(pose.success, true);
+  assert.equal(previewCalls, 1);
+});
+
+test('depth fusion caps live preview density while retaining the dense surfel map', () => {
+  const engine = new DepthFusionReconstructor({
+    minFrames: 1,
+    minSurfels: 80,
+    sampleStride: 1,
+    voxelSize: 1,
+  });
+  configureCamera(engine);
+  engine.reset({
+    anchorReference: { x: 48, y: 48 },
+    templateRegion: { x: 12, y: 12, width: 72, height: 72 },
+    targetClass: 'cup',
+  });
+
+  const state = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+    depthFrame: createDepthFrame(),
+    depthState: { state: 'ready' },
+    objectSupportMask: createMask(),
+    imageData: createImageData(),
+  });
+
+  assert.ok(state.landmarkCount > 120);
+  assert.ok(state.preview.points.length <= 48);
+});
+
 test('depth fusion only fuses interior object-support pixels', () => {
   const engine = new DepthFusionReconstructor({
     minFrames: 1,
@@ -201,6 +268,47 @@ test('depth fusion only fuses interior object-support pixels', () => {
 
   assert.ok(state.landmarkCount > 0);
   assert.ok(state.landmarkCount < 40);
+});
+
+test('depth fusion maps compact depth frames across the full source image', () => {
+  const engine = new DepthFusionReconstructor({
+    minFrames: 1,
+    minSurfels: 40,
+    sampleStride: 2,
+    voxelSize: 4,
+  });
+  configureCamera(engine);
+  const data = new Float32Array(32 * 32);
+  for (let y = 0; y < 32; y++) {
+    for (let x = 0; x < 32; x++) {
+      data[y * 32 + x] = 0.25 + x / 32 * 0.2 + y / 32 * 0.15;
+    }
+  }
+  engine.reset({
+    anchorReference: { x: 48, y: 48 },
+    templateRegion: { x: 12, y: 12, width: 72, height: 72 },
+    targetClass: 'cup',
+  });
+
+  const state = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+    depthFrame: {
+      width: 32,
+      height: 32,
+      sourceWidth: 96,
+      sourceHeight: 96,
+      data,
+      timestamp: 1000,
+      processingTime: 4,
+      provider: 'webgpu',
+      modelUrl: '/models/depth_anything_v2_small.onnx',
+    },
+    depthState: { state: 'ready' },
+    objectSupportMask: createMask(),
+    imageData: createImageData(),
+  });
+
+  assert.ok(state.landmarkCount >= 40);
+  assert.ok(Math.max(...state.preview.points.map(point => point.x)) > 60);
 });
 
 test('depth fusion rejects temporally inconsistent depth buckets', () => {

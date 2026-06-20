@@ -146,13 +146,13 @@ const scoreAffineTransform = (observations, transform, residualThreshold) => {
   };
 };
 
-export const fitRobustSimilarity = (observations, { minInliers = 8, threshold = 10 } = {}) => {
+export const fitRobustSimilarity = (observations, { minInliers = 8, threshold = 10, maxSample = 42 } = {}) => {
   if (observations.length < minInliers) {
     return { success: false, reason: 'Insufficient observations for robust similarity fit' };
   }
 
   const sorted = [...observations].sort((left, right) => right.quality - left.quality);
-  const sample = sorted.slice(0, Math.min(sorted.length, 42));
+  const sample = sorted.slice(0, Math.min(sorted.length, maxSample));
   let best = null;
 
   for (let leftIndex = 0; leftIndex < sample.length - 1; leftIndex++) {
@@ -193,13 +193,13 @@ export const fitRobustSimilarity = (observations, { minInliers = 8, threshold = 
   };
 };
 
-export const fitRobustAffine2D = (observations, { minInliers = 8, threshold = 10 } = {}) => {
+export const fitRobustAffine2D = (observations, { minInliers = 8, threshold = 10, maxSample = 34 } = {}) => {
   if (observations.length < minInliers) {
     return { success: false, reason: 'Insufficient observations for robust affine fit' };
   }
 
   const sorted = [...observations].sort((left, right) => right.quality - left.quality);
-  const sample = sorted.slice(0, Math.min(sorted.length, 34));
+  const sample = sorted.slice(0, Math.min(sorted.length, maxSample));
   let best = null;
 
   for (let a = 0; a < sample.length - 2; a++) {
@@ -252,11 +252,11 @@ export const fitRobustAffine2D = (observations, { minInliers = 8, threshold = 10
 
 export const selectCoherentObservations = (
   observations,
-  { minInliers = 8, threshold = 10, minInlierRatio = 0.45, model = 'similarity' } = {}
+  { minInliers = 8, threshold = 10, minInlierRatio = 0.45, model = 'similarity', maxSample } = {}
 ) => {
   const fit = model === 'affine'
-    ? fitRobustAffine2D(observations, { minInliers, threshold })
-    : fitRobustSimilarity(observations, { minInliers, threshold });
+    ? fitRobustAffine2D(observations, { minInliers, threshold, maxSample })
+    : fitRobustSimilarity(observations, { minInliers, threshold, maxSample });
   if (!fit.success) {
     return {
       success: false,

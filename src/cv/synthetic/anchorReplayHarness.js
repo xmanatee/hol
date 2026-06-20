@@ -199,7 +199,7 @@ export const replayImageAnchorSequence = async ({
   setupOpenCvGlobals(cv);
 
   let replayTime = 1000;
-  const service = new ImageAnchorService({ now: () => replayTime });
+  const service = new ImageAnchorService({ now: () => replayTime, profileUpdates: true });
   service.setTrackingMode(trackingMode);
   await service.initialize(cv, getCameraParams(sequence));
 
@@ -235,6 +235,7 @@ export const replayImageAnchorSequence = async ({
     replayTime += 1000 / 30;
     const frame = sequence.frames[index];
     const depthFrame = depthFrameForFrame?.({ frame, index, sequence, timestamp: replayTime }) || null;
+    const frameStart = performance.now();
     const result = service.updateAnchor(frame.imageData, depthFrame
       ? {
           depthFrame,
@@ -244,6 +245,7 @@ export const replayImageAnchorSequence = async ({
           depthFrame: null,
           depthState: { state: 'idle' },
         });
+    const updateWallTimeMs = performance.now() - frameStart;
     const state = service.getState();
     if (useObjectSupportMask &&
         shouldRefreshSyntheticObjectSupport({
@@ -280,6 +282,10 @@ export const replayImageAnchorSequence = async ({
       normal,
       planarTransform: transform,
       groundTruth,
+      runtime: {
+        updateWallTimeMs,
+        stageTimings: state.metrics.updateTimings || null,
+      },
       metrics: state.metrics,
       anchorError: predicted
         ? Math.hypot(predicted.x - groundTruth.anchor.x, predicted.y - groundTruth.anchor.y)

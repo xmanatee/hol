@@ -5,7 +5,11 @@ import {
   transformPoint2,
 } from './anchor.reconstructionRobust.js';
 import { modelFromRegion } from './anchor.parametricGeometry.js';
-import { median } from './anchor.depthFusion.geometry.js';
+import {
+  calculateDepthNormal,
+  calculateDepthQuality,
+  median,
+} from './anchor.depthFusion.geometry.js';
 import { DepthFusionSurfelMap } from './anchor.depthFusion.surfels.js';
 
 export const DEPTH_FUSION_POSE_MODEL = 'depth-fusion';
@@ -161,8 +165,8 @@ export class DepthFusionReconstructor {
     const position = transformPoint2(this.anchorReference, fit.transform);
     const frameCount = this.frames.length;
     const points = this.surfelMap.previewPoints({ limit: this.maxSurfels, frameCount });
-    const normal = this.surfelMap.normal({ limit: this.maxSurfels, frameCount });
-    const depthQuality = this.surfelMap.quality({ limit: this.maxSurfels, frameCount });
+    const normal = calculateDepthNormal(points);
+    const depthQuality = calculateDepthQuality(points);
 
     return {
       success: true,
@@ -195,29 +199,31 @@ export class DepthFusionReconstructor {
             method: DEPTH_FUSION_POSE_MODEL,
           },
         },
+        points: points.slice(0, this.surfelMap.previewPointLimit),
       }),
     };
   }
 
   getState() {
     const stats = this._statistics();
+    const frameCount = this.frames.length;
+    const points = this.surfelMap.previewPoints({ limit: this.maxSurfels, frameCount });
     return {
       state: this.state,
       ready: this.state === 'ready',
       poseModel: DEPTH_FUSION_POSE_MODEL,
-      frameCount: this.frames.length,
+      frameCount,
       landmarkCount: this.surfelMap.size,
-      depthQuality: this.surfelMap.quality({
-        limit: this.maxSurfels,
-        frameCount: this.frames.length,
-      }),
+      depthQuality: calculateDepthQuality(points),
       statistics: stats,
       lastFailureReason: this.lastFailureReason,
       depthStatus: this.lastDepthStatus,
       depthProvider: this.lastDepthProvider,
       depthInferenceTime: this.lastDepthInferenceTime,
       depthFrameTimestamp: this.lastDepthTimestamp,
-      preview: this._createPreview(),
+      preview: this._createPreview({
+        points: points.slice(0, this.surfelMap.previewPointLimit),
+      }),
     };
   }
 
@@ -230,13 +236,14 @@ export class DepthFusionReconstructor {
     });
   }
 
-  _createPreview({ anchor = this.anchorReference, current = null } = {}) {
+  _createPreview({ anchor = this.anchorReference, current = null, points = null } = {}) {
     return this.surfelMap.createPreview({
       poseModel: DEPTH_FUSION_POSE_MODEL,
       anchor,
       current,
       frameCount: this.frames.length,
       statistics: this._statistics(),
+      points,
     });
   }
 }

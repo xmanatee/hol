@@ -13,6 +13,10 @@ dist-ssr
 .env
 *.local
 
+# Generated vision benchmark reports
+docs/vision-benchmark-runs/
+docs/vision-benchmark-full-report.html
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

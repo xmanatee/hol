@@ -37,6 +37,15 @@ const formatPercent = (value, total) => `${formatNumber(value / total * 100)}%`;
 
 const strongestMode = modes => [...modes].sort((left, right) => left.meanRiskScore - right.meanRiskScore)[0];
 
+const slowestMode = performanceSummary => performanceSummary?.byMode?.[0] || null;
+
+const topStageTiming = performanceSummary => {
+  const entry = Object.entries(performanceSummary?.aggregate?.stageTimings || {})[0];
+  return entry
+    ? `${entry[0]} (${formatNumber(entry[1].meanMs)}ms mean, ${formatNumber(entry[1].maxMs)}ms max)`
+    : 'not recorded';
+};
+
 const weakestGroupLine = (labelName, item) => (
   `- ${labelName}: ${item.name} has ${formatNumber(item.fail)} strict failures ` +
   `(${formatPercent(item.fail, item.count)}), ${formatNumber(item.severe)} severe cases, ` +
@@ -53,6 +62,9 @@ const createInsightsMarkdown = data => {
   const worstOcclusion = benchmark.weakPoints.byOcclusion[0];
   const worstBackground = benchmark.weakPoints.byBackground[0];
   const worstReplay = benchmark.worstReports[0];
+  const performance = data.performanceSummary;
+  const slowMode = slowestMode(performance);
+  const topStage = topStageTiming(performance);
 
   return `# Vision Reconstruction Feedback Loop Insights
 
@@ -66,11 +78,15 @@ const createInsightsMarkdown = data => {
 - Mean risk: ${formatNumber(benchmark.aggregate.meanRiskScore)}
 - High + severe risk: ${formatNumber((benchmark.aggregate.byRiskBand.high || 0) + (benchmark.aggregate.byRiskBand.severe || 0))}
 - Severe risk: ${formatNumber(benchmark.aggregate.byRiskBand.severe || 0)}
+- Mean replay wall time: ${performance ? `${formatNumber(performance.aggregate.meanReplayWallTimeMs)}ms` : 'not recorded'}
+- Mean frame processing time: ${performance ? `${formatNumber(performance.aggregate.meanFrameProcessingTimeMs)}ms` : 'not recorded'}
 
 ## Conclusions
 
 - Strongest mode: ${bestMode.name} with ${formatNumber(bestMode.meanRiskScore)} mean risk, ${formatNumber(bestMode.fail)} strict failures, and ${formatNumber(bestMode.severe)} severe cases.
 - Weakest mode: ${worstMode.name} with ${formatNumber(worstMode.meanRiskScore)} mean risk, ${formatNumber(worstMode.fail)} strict failures, and ${formatNumber(worstMode.severe)} severe cases.
+${slowMode ? `- Slowest mode: ${slowMode.name} with ${formatNumber(slowMode.meanReplayWallTimeMs)}ms mean replay wall time and ${formatNumber(slowMode.maxFrameProcessingTimeMs)}ms max frame processing.` : '- Slowest mode: not recorded.'}
+- Top timed stage: ${topStage}.
 ${weakestGroupLine('Weakest object', worstObject)}
 ${weakestGroupLine('Weakest motion profile', worstMotion)}
 ${weakestGroupLine('Weakest occlusion profile', worstOcclusion)}
@@ -82,8 +98,9 @@ ${weakestGroupLine('Weakest background', worstBackground)}
 1. Tracking spine: reduce ${worstReplay.risk.primaryWeakness} in the worst fast-motion and occlusion cases before adding more dense reconstruction complexity.
 2. Object ownership: inspect mask refresh, object-owned landmark promotion, and background rejection for ${worstObject.name}.
 3. Recovery: improve post-occlusion correspondence recovery for ${worstOcclusion.name} occlusion and ${worstMotion.name} motion.
-4. Reconstruction readiness: rerun targeted checks where reconstruction fails after tracking changes, because map readiness often follows anchor stability.
-5. Head attachment: only tune render gates when headAttachment is a top failed stage; current failures are mainly upstream.
+4. Runtime: profile ${slowMode ? slowMode.name : 'the slowest mode'} first when lag is reported; optimize measured hot loops before adding heavier reconstruction logic.
+5. Reconstruction readiness: rerun targeted checks where reconstruction fails after tracking changes, because map readiness often follows anchor stability.
+6. Head attachment: only tune render gates when headAttachment is a top failed stage; current failures are mainly upstream.
 
 ## Next Iteration Rule
 

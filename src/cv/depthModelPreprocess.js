@@ -107,23 +107,33 @@ export const normalizeDepthValues = values => {
   }
 
   const range = Math.max(max - min, 1e-6);
-  return Float32Array.from(values, value => (
-    Number.isFinite(value) ? (value - min) / range : 0
-  ));
+  const normalized = new Float32Array(values.length);
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index];
+    normalized[index] = Number.isFinite(value) ? (value - min) / range : 0;
+  }
+  return normalized;
 };
 
-export const postprocessDepthTensor = (tensor, preprocessInfo) => {
+export const postprocessDepthTensor = (tensor, preprocessInfo, { outputMaxSize = Math.max(preprocessInfo.originalWidth, preprocessInfo.originalHeight) } = {}) => {
   const { width: outputWidth, height: outputHeight } = outputShapeForTensor(tensor);
   const outputData = normalizeDepthValues(tensor.data);
-  const depth = new Float32Array(preprocessInfo.originalWidth * preprocessInfo.originalHeight);
+  const sourceWidth = preprocessInfo.originalWidth;
+  const sourceHeight = preprocessInfo.originalHeight;
+  const outputScale = Math.min(1, outputMaxSize / Math.max(sourceWidth, sourceHeight, 1));
+  const targetWidth = Math.max(1, Math.round(sourceWidth * outputScale));
+  const targetHeight = Math.max(1, Math.round(sourceHeight * outputScale));
+  const depth = new Float32Array(targetWidth * targetHeight);
 
-  for (let y = 0; y < preprocessInfo.originalHeight; y++) {
-    for (let x = 0; x < preprocessInfo.originalWidth; x++) {
-      const modelX = x * preprocessInfo.scale + preprocessInfo.padX;
-      const modelY = y * preprocessInfo.scale + preprocessInfo.padY;
+  for (let y = 0; y < targetHeight; y++) {
+    for (let x = 0; x < targetWidth; x++) {
+      const sourceX = targetWidth === 1 ? (sourceWidth - 1) / 2 : x / (targetWidth - 1) * (sourceWidth - 1);
+      const sourceY = targetHeight === 1 ? (sourceHeight - 1) / 2 : y / (targetHeight - 1) * (sourceHeight - 1);
+      const modelX = sourceX * preprocessInfo.scale + preprocessInfo.padX;
+      const modelY = sourceY * preprocessInfo.scale + preprocessInfo.padY;
       const outputX = modelX / Math.max(preprocessInfo.inputSize - 1, 1) * Math.max(outputWidth - 1, 1);
       const outputY = modelY / Math.max(preprocessInfo.inputSize - 1, 1) * Math.max(outputHeight - 1, 1);
-      depth[y * preprocessInfo.originalWidth + x] = sampleBilinear({
+      depth[y * targetWidth + x] = sampleBilinear({
         data: outputData,
         width: outputWidth,
         height: outputHeight,
@@ -134,8 +144,10 @@ export const postprocessDepthTensor = (tensor, preprocessInfo) => {
   }
 
   return {
-    width: preprocessInfo.originalWidth,
-    height: preprocessInfo.originalHeight,
+    width: targetWidth,
+    height: targetHeight,
+    sourceWidth,
+    sourceHeight,
     data: depth,
   };
 };

@@ -14,6 +14,7 @@ let session = null;
 let modelConfig = {
   modelUrl: DEFAULT_MODEL_URL,
   inputSize: DEPTH_MODEL_DEFAULT_INPUT_SIZE,
+  outputMaxSize: DEPTH_MODEL_DEFAULT_INPUT_SIZE,
   inputName: null,
   outputName: null,
 };
@@ -93,7 +94,9 @@ const estimateDepth = async ({ requestId, imageData, timestamp }) => {
   const inputTensor = new ort.Tensor('float32', preprocessInfo.tensor, preprocessInfo.dims);
   const output = await session.run({ [modelConfig.inputName]: inputTensor });
   const outputTensor = output[modelConfig.outputName] || Object.values(output)[0];
-  const depthMap = postprocessDepthTensor(outputTensor, preprocessInfo);
+  const depthMap = postprocessDepthTensor(outputTensor, preprocessInfo, {
+    outputMaxSize: modelConfig.outputMaxSize,
+  });
 
   postMessage({
     type: 'depth',
@@ -104,6 +107,8 @@ const estimateDepth = async ({ requestId, imageData, timestamp }) => {
     processingTime: performance.now() - startedAt,
     width: depthMap.width,
     height: depthMap.height,
+    sourceWidth: depthMap.sourceWidth,
+    sourceHeight: depthMap.sourceHeight,
     data: depthMap.data,
   }, [depthMap.data.buffer]);
 };

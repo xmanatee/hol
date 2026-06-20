@@ -84,20 +84,23 @@ export class ParametricSurfaceReconstructor {
     this.state = 'mapping';
     this.lastFailureReason = null;
     this.referencePnpTransform = null;
+    this.referenceFitCache = null;
   }
 
   updateReferenceRegion(templateRegion, targetClass = this.targetClass) {
     this.templateRegion = { ...templateRegion };
     this.targetClass = targetClass;
     this.model = modelFromRegion(templateRegion, targetClass);
+    this.referenceFitCache = null;
   }
 
-  addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now()) {
+  addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now(), optionsOrGrayImage = null, options = {}) {
+    const stateOptions = optionsOrGrayImage?.includePreview === false ? optionsOrGrayImage : options;
     const observations = toActiveObservations(trackedPoints);
 
     if (observations.length < this.minLandmarks) {
       this.lastFailureReason = 'Insufficient surface observations';
-      return this.getState();
+      return this.getState(stateOptions);
     }
 
     const consensus = this._consensusOptions();
@@ -109,7 +112,7 @@ export class ParametricSurfaceReconstructor {
     });
     if (!coherent.success) {
       this.lastFailureReason = coherent.reason;
-      return this.getState();
+      return this.getState(stateOptions);
     }
 
     this._recordStats(coherent.observations);
@@ -121,10 +124,18 @@ export class ParametricSurfaceReconstructor {
     }
     this.state = this.frames.length >= this.minFrames && this._statistics().mapConfidence >= 0.42 ? 'ready' : 'mapping';
     this.lastFailureReason = this.state === 'ready' ? null : 'Move object through more surface views';
-    return this.getState();
+    return this.getState(stateOptions);
   }
 
   estimatePoseFromTrackedPoints(trackedPoints) {
+    if (this.state !== 'ready') {
+      return {
+        success: false,
+        method: PARAMETRIC_SURFACE_POSE_MODEL,
+        reason: this.lastFailureReason || 'Move object through more surface views',
+      };
+    }
+
     const rawObservations = toActiveObservations(trackedPoints);
     const consensus = this._consensusOptions();
     const coherent = selectCoherentObservations(rawObservations, {
@@ -139,7 +150,7 @@ export class ParametricSurfaceReconstructor {
       threshold: consensus.threshold,
     });
 
-    if (!fit.success || this.state !== 'ready') {
+    if (!fit.success) {
       return {
         success: false,
         method: PARAMETRIC_SURFACE_POSE_MODEL,
@@ -196,8 +207,8 @@ export class ParametricSurfaceReconstructor {
     };
   }
 
-  getState() {
-    return {
+  getState({ includePreview = true } = {}) {
+    const state = {
       state: this.state,
       ready: this.state === 'ready',
       poseModel: PARAMETRIC_SURFACE_POSE_MODEL,
@@ -206,8 +217,11 @@ export class ParametricSurfaceReconstructor {
       depthQuality: depthQualityForSurfaceModel(this.model),
       statistics: this._statistics(),
       lastFailureReason: this.lastFailureReason,
-      preview: this._createPreview(),
     };
+    if (includePreview) {
+      state.preview = this._createPreview();
+    }
+    return state;
   }
 
   _recordStats(observations) {
@@ -237,17 +251,27 @@ export class ParametricSurfaceReconstructor {
   }
 
   _referenceScale() {
-    const stateFrame = this.frames[0];
-    if (!stateFrame) return 1;
-    const fit = this._fitAttachmentTransform(stateFrame.observations, { minInliers: 4, threshold: 6 });
+    const fit = this._referenceFit();
     return fit.success ? this._transformScale(fit) : 1;
   }
 
   _referenceRotation() {
-    const stateFrame = this.frames[0];
-    if (!stateFrame) return 0;
-    const fit = this._fitAttachmentTransform(stateFrame.observations, { minInliers: 4, threshold: 6 });
+    const fit = this._referenceFit();
     return fit.success ? this._transformRotation(fit) : 0;
+  }
+
+  _referenceFit() {
+    const stateFrame = this.frames[0];
+    if (!stateFrame) {
+      return { success: false };
+    }
+    if (this.referenceFitCache?.frame === stateFrame) {
+      return this.referenceFitCache.fit;
+    }
+
+    const fit = this._fitAttachmentTransform(stateFrame.observations, { minInliers: 4, threshold: 6 });
+    this.referenceFitCache = { frame: stateFrame, fit };
+    return fit;
   }
 
   _coherenceModel() {

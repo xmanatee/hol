@@ -34,17 +34,21 @@ const createEmptyPreview = ({ poseModel, statistics }) => ({
   statistics,
 });
 
+const DEFAULT_PREVIEW_POINT_LIMIT = 48;
+
 export class DepthFusionSurfelMap {
   constructor({
     maxSurfels,
     sampleStride,
     voxelSize,
     maxTemporalDepthJump,
+    previewPointLimit = DEFAULT_PREVIEW_POINT_LIMIT,
   }) {
     this.maxSurfels = maxSurfels;
     this.sampleStride = sampleStride;
     this.voxelSize = voxelSize;
     this.maxTemporalDepthJump = maxTemporalDepthJump;
+    this.previewPointLimit = previewPointLimit;
     this.reset();
   }
 
@@ -158,20 +162,20 @@ export class DepthFusionSurfelMap {
     return calculateDepthQuality(this.previewPoints({ limit, frameCount }));
   }
 
-  createPreview({ poseModel, anchor, current = null, frameCount, statistics }) {
-    const points = this.previewPoints({ limit: 180, frameCount });
-    if (!points.length) {
+  createPreview({ poseModel, anchor, current = null, frameCount, statistics, points = null }) {
+    const previewPoints = points || this.previewPoints({ limit: this.previewPointLimit, frameCount });
+    if (!previewPoints.length) {
       return createEmptyPreview({ poseModel, statistics });
     }
 
     const surface = {
       model: 'depth-fusion-surfels',
-      ...createSurfacePreview(points),
+      ...createSurfacePreview(previewPoints),
     };
 
     return {
       poseModel,
-      points,
+      points: previewPoints,
       anchor,
       surface,
       landmarkCount: this.size,
@@ -179,7 +183,7 @@ export class DepthFusionSurfelMap {
       current: current
         ? {
             ...current,
-            points,
+            points: previewPoints,
             surface,
           }
         : null,
@@ -189,19 +193,28 @@ export class DepthFusionSurfelMap {
   _samples({ depthFrame, objectSupportMask, imageData }) {
     const samples = [];
     const bbox = objectSupportMask.bbox;
-    const startX = clamp(Math.floor(bbox.x), 0, depthFrame.width - 1);
-    const startY = clamp(Math.floor(bbox.y), 0, depthFrame.height - 1);
-    const endX = clamp(Math.ceil(bbox.x + bbox.width), 0, depthFrame.width);
-    const endY = clamp(Math.ceil(bbox.y + bbox.height), 0, depthFrame.height);
+    const sourceWidth = depthFrame.sourceWidth || depthFrame.width;
+    const sourceHeight = depthFrame.sourceHeight || depthFrame.height;
+    const startX = clamp(Math.floor(bbox.x / Math.max(sourceWidth, 1) * depthFrame.width), 0, depthFrame.width - 1);
+    const startY = clamp(Math.floor(bbox.y / Math.max(sourceHeight, 1) * depthFrame.height), 0, depthFrame.height - 1);
+    const endX = clamp(Math.ceil((bbox.x + bbox.width) / Math.max(sourceWidth, 1) * depthFrame.width), 0, depthFrame.width);
+    const endY = clamp(Math.ceil((bbox.y + bbox.height) / Math.max(sourceHeight, 1) * depthFrame.height), 0, depthFrame.height);
 
-    for (let y = startY; y < endY; y += this.sampleStride) {
-      for (let x = startX; x < endX; x += this.sampleStride) {
-        if (!maskHasPixel(objectSupportMask, x, y, depthFrame.width, depthFrame.height) ||
-            !isMaskInterior(objectSupportMask, x, y, depthFrame.width, depthFrame.height)) {
+    for (let depthY = startY; depthY < endY; depthY += this.sampleStride) {
+      for (let depthX = startX; depthX < endX; depthX += this.sampleStride) {
+        const x = depthFrame.width === 1
+          ? (sourceWidth - 1) / 2
+          : depthX / Math.max(depthFrame.width - 1, 1) * (sourceWidth - 1);
+        const y = depthFrame.height === 1
+          ? (sourceHeight - 1) / 2
+          : depthY / Math.max(depthFrame.height - 1, 1) * (sourceHeight - 1);
+
+        if (!maskHasPixel(objectSupportMask, x, y, sourceWidth, sourceHeight) ||
+            !isMaskInterior(objectSupportMask, x, y, sourceWidth, sourceHeight)) {
           continue;
         }
 
-        const value = depthAt(depthFrame, x, y);
+        const value = depthAt(depthFrame, depthX, depthY);
         if (Number.isFinite(value) && value > 0.02 && value < 0.98) {
           samples.push({ x, y, value, color: colorAt(imageData, x, y) });
         }

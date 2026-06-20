@@ -56,6 +56,8 @@ export class DirectPhotometricReconstructor {
     this.frames = [];
     this.surfels = new Map();
     this.consistency = [];
+    this.frameObservationCache = null;
+    this.referenceFitCache = null;
     this.state = 'mapping';
     this.lastFailureReason = null;
   }
@@ -64,16 +66,15 @@ export class DirectPhotometricReconstructor {
     this.templateRegion = { ...templateRegion };
     this.targetClass = targetClass;
     this.surfaceModel = modelFromRegion(templateRegion, targetClass);
+    this.referenceFitCache = null;
   }
 
-  addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now(), grayImage = null) {
-    const observations = toActiveObservations(trackedPoints)
-      .map(observation => this._attachPhotometricData(observation, grayImage))
-      .filter(observation => observation.photometric);
+  addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now(), grayImage = null, options = {}) {
+    const observations = this._photometricObservationsFromTrackedPoints(trackedPoints, grayImage);
 
     if (observations.length < this.minSurfels) {
       this.lastFailureReason = 'Insufficient photometric surfels';
-      return this.getState();
+      return this.getState(options);
     }
 
     const consensus = this._consensusOptions();
@@ -82,10 +83,11 @@ export class DirectPhotometricReconstructor {
       threshold: consensus.threshold,
       minInlierRatio: consensus.minInlierRatio,
       model: consensus.model,
+      maxSample: consensus.maxSample,
     });
     if (!coherent.success) {
       this.lastFailureReason = coherent.reason;
-      return this.getState();
+      return this.getState(options);
     }
 
     this._recordSurfels(coherent.observations);
@@ -97,12 +99,19 @@ export class DirectPhotometricReconstructor {
     }
     this.state = this.frames.length >= this.minFrames && this._statistics().mapConfidence >= 0.45 ? 'ready' : 'mapping';
     this.lastFailureReason = this.state === 'ready' ? null : 'Move object through more photometric views';
-    return this.getState();
+    return this.getState(options);
   }
 
   estimatePoseFromTrackedPoints(trackedPoints, grayImage = null) {
-    const rawObservations = toActiveObservations(trackedPoints)
-      .map(observation => this._attachPhotometricData(observation, grayImage))
+    if (this.state !== 'ready') {
+      return {
+        success: false,
+        method: DIRECT_PHOTOMETRIC_POSE_MODEL,
+        reason: this.lastFailureReason || 'Move object through more photometric views',
+      };
+    }
+
+    const rawObservations = this._photometricObservationsFromTrackedPoints(trackedPoints, grayImage)
       .filter(observation => this._isUsableObservation(observation));
     const consensus = this._consensusOptions();
     const coherent = selectCoherentObservations(rawObservations, {
@@ -110,14 +119,16 @@ export class DirectPhotometricReconstructor {
       threshold: consensus.threshold,
       minInlierRatio: consensus.minInlierRatio,
       model: consensus.model,
+      maxSample: consensus.maxSample,
     });
     const observations = coherent.success ? coherent.observations : [];
     const fit = this._fitAttachmentTransform(observations, {
       minInliers: this.minSurfels,
       threshold: consensus.threshold,
+      maxSample: consensus.maxSample,
     });
 
-    if (!fit.success || this.state !== 'ready') {
+    if (!fit.success) {
       return {
         success: false,
         method: DIRECT_PHOTOMETRIC_POSE_MODEL,
@@ -155,8 +166,8 @@ export class DirectPhotometricReconstructor {
     };
   }
 
-  getState() {
-    return {
+  getState({ includePreview = true } = {}) {
+    const state = {
       state: this.state,
       ready: this.state === 'ready',
       poseModel: DIRECT_PHOTOMETRIC_POSE_MODEL,
@@ -165,8 +176,11 @@ export class DirectPhotometricReconstructor {
       depthQuality: 0.12,
       statistics: this._statistics(),
       lastFailureReason: this.lastFailureReason,
-      preview: this._createPreview(),
     };
+    if (includePreview) {
+      state.preview = this._createPreview();
+    }
+    return state;
   }
 
   _attachPhotometricData(observation, grayImage) {
@@ -174,6 +188,19 @@ export class DirectPhotometricReconstructor {
     return photometric
       ? { ...observation, quality: observation.quality + clamp(photometric.gradient / 36, 0, 2), photometric }
       : observation;
+  }
+
+  _photometricObservationsFromTrackedPoints(trackedPoints, grayImage) {
+    if (this.frameObservationCache?.trackedPoints === trackedPoints &&
+        this.frameObservationCache?.grayImage === grayImage) {
+      return this.frameObservationCache.observations;
+    }
+
+    const observations = toActiveObservations(trackedPoints)
+      .map(observation => this._attachPhotometricData(observation, grayImage))
+      .filter(observation => observation.photometric);
+    this.frameObservationCache = { trackedPoints, grayImage, observations };
+    return observations;
   }
 
   _recordSurfels(observations) {
@@ -212,8 +239,14 @@ export class DirectPhotometricReconstructor {
   _referenceFit() {
     const frame = this.frames[0];
     if (!frame) return null;
+    if (this.referenceFitCache?.frame === frame) {
+      return this.referenceFitCache.fit;
+    }
+
     const fit = this._fitAttachmentTransform(frame.observations, { minInliers: 4, threshold: 8 });
-    return fit.success ? fit : null;
+    const referenceFit = fit.success ? fit : null;
+    this.referenceFitCache = { frame, fit: referenceFit };
+    return referenceFit;
   }
 
   _referenceScale() {
@@ -243,7 +276,7 @@ export class DirectPhotometricReconstructor {
   _consensusOptions() {
     return this.surfaceModel === SURFACE_MODEL_PLANE
       ? { model: 'similarity', threshold: 12, minInlierRatio: 0.45 }
-      : { model: 'affine', threshold: 18, minInlierRatio: 0.36 };
+      : { model: 'affine', threshold: 18, minInlierRatio: 0.36, maxSample: 34 };
   }
 
   _fitAttachmentTransform(observations, options) {

@@ -245,6 +245,146 @@ test('known flat targets can use moderate planar attachment without passing the 
   assert.equal(readiness.faceReady, false);
 });
 
+test('rigid planar targets recover from occlusion with absolute homography support', () => {
+  const service = new ImageAnchorService();
+  service.anchorTargetClass = 'card';
+  service.planarDominanceScore = 8;
+  service.metrics.activeLandmarkCount = 36;
+  service.metrics.objectOwnedLandmarks = 33;
+  service.metrics.silhouetteCoverage = 0.72;
+  service.metrics.contourFitResidual = 0.8;
+
+  const correspondences = Array.from({ length: 36 }, (_, index) => ({
+    prev: { x: 74 + (index % 9) * 10, y: 92 + Math.floor(index / 9) * 12 },
+    curr: { x: 86 + (index % 9) * 10.7, y: 99 + Math.floor(index / 9) * 12.1 },
+  }));
+  const recoveredPlanarPose = createPlanarPose({
+    inlierCount: 9,
+    inlierRatio: 0.25,
+    confidence: 0.52,
+    averageResidual: 8.2,
+    referenceSpread: { width: 88, height: 46, minAxis: 46 },
+  });
+
+  assert.equal(service._getPoseRejectionReason(recoveredPlanarPose, correspondences), null);
+  assert.equal(service._shouldPreferPlanarHomography({
+    planarPose: recoveredPlanarPose,
+    reconstructionPose: { success: false },
+    correspondences,
+  }), true);
+});
+
+test('rigid planar recovery keeps homography position while using tracker-local transform', () => {
+  const service = new ImageAnchorService();
+  service.anchorTargetClass = 'card';
+  service.planarDominanceScore = 8;
+  service.metrics.activeLandmarkCount = 36;
+  service.metrics.objectOwnedLandmarks = 36;
+  service.metrics.silhouetteCoverage = 0.7;
+  service.metrics.contourFitResidual = 1.1;
+
+  const correspondences = Array.from({ length: 22 }, (_, index) => ({
+    prev: { x: 80 + (index % 6) * 14, y: 88 + Math.floor(index / 6) * 12 },
+    curr: { x: 86 + (index % 6) * 14.4, y: 94 + Math.floor(index / 6) * 12.1 },
+  }));
+  const recoveredPlanarPose = createPlanarPose({
+    inlierCount: 8,
+    inlierRatio: 8 / 22,
+    confidence: 0.66,
+    averageResidual: 1.1,
+    referenceSpread: { width: 82, height: 44, minAxis: 44 },
+  });
+  recoveredPlanarPose.planarTransform.scale = 1.62;
+  recoveredPlanarPose.planarTransform.rotation = 0.44;
+  const trackerAnchorPosition = {
+    scale: 0.94,
+    rotation: -0.08,
+    confidence: 0.62,
+    inlierCount: 18,
+    method: 'reference_similarity_transform',
+  };
+
+  assert.equal(service._shouldPreferPlanarHomography({
+    planarPose: recoveredPlanarPose,
+    reconstructionPose: { success: false },
+    correspondences,
+  }), true);
+
+  const transform = service._selectPlanarAttachmentTransform({
+    planarPose: recoveredPlanarPose,
+    trackerAnchorPosition,
+    correspondences,
+  });
+
+  assert.equal(transform.scale, trackerAnchorPosition.scale);
+  assert.equal(transform.rotation, trackerAnchorPosition.rotation);
+  assert.equal(transform.method, 'reference_similarity_transform');
+});
+
+test('textured book targets keep strict planar gates instead of recovery homography', () => {
+  const service = new ImageAnchorService();
+  service.anchorTargetClass = 'book';
+  service.planarDominanceScore = 8;
+  service.metrics.activeLandmarkCount = 22;
+  service.metrics.objectOwnedLandmarks = 22;
+  service.metrics.silhouetteCoverage = 0.7;
+  service.metrics.contourFitResidual = 1.1;
+
+  const correspondences = Array.from({ length: 36 }, (_, index) => ({
+    prev: { x: 80 + (index % 6) * 14, y: 88 + Math.floor(index / 6) * 12 },
+    curr: { x: 86 + (index % 6) * 14.4, y: 94 + Math.floor(index / 6) * 12.1 },
+  }));
+  const weakBookPose = createPlanarPose({
+    inlierCount: 8,
+    inlierRatio: 8 / 36,
+    confidence: 0.66,
+    averageResidual: 1.1,
+    referenceSpread: { width: 82, height: 44, minAxis: 44 },
+  });
+
+  assert.equal(service._hasRigidPlanarRecoveryPose(weakBookPose, correspondences), false);
+  assert.equal(
+    service._getPoseRejectionReason(weakBookPose, correspondences),
+    'Low pose inlier ratio'
+  );
+});
+
+test('strong planar attachment owns its own transform', () => {
+  const service = new ImageAnchorService();
+  service.anchorTargetClass = 'book';
+  service.planarDominanceScore = 8;
+  const correspondences = Array.from({ length: 28 }, (_, index) => ({
+    prev: { x: 72 + (index % 7) * 16, y: 86 + Math.floor(index / 7) * 14 },
+    curr: { x: 78 + (index % 7) * 16.8, y: 92 + Math.floor(index / 7) * 14.2 },
+  }));
+  const planarPose = createPlanarPose({
+    inlierCount: 18,
+    inlierRatio: 18 / 28,
+    confidence: 0.68,
+    averageResidual: 1.2,
+    referenceSpread: { width: 104, height: 62, minAxis: 62 },
+  });
+  planarPose.planarTransform.scale = 1.08;
+  planarPose.planarTransform.rotation = 0.12;
+  const trackerAnchorPosition = {
+    scale: 0.94,
+    rotation: -0.08,
+    confidence: 0.62,
+    inlierCount: 18,
+    method: 'reference_similarity_transform',
+  };
+
+  const transform = service._selectPlanarAttachmentTransform({
+    planarPose,
+    trackerAnchorPosition,
+    correspondences,
+  });
+
+  assert.equal(transform.scale, planarPose.planarTransform.scale);
+  assert.equal(transform.rotation, planarPose.planarTransform.rotation);
+  assert.equal(transform.method, 'planar-homography');
+});
+
 test('anchor position filters adapt quickly enough to follow real object motion', () => {
   const service = new ImageAnchorService();
 
@@ -649,6 +789,67 @@ test('small position updates are not step-limited', () => {
   );
 
   assert.deepEqual(limited, { x: 207, y: 164, z: 0 });
+});
+
+test('anchor update metrics retain stage timings for benchmark diagnostics', () => {
+  const service = new ImageAnchorService();
+  service.anchorState = 'tracking';
+  service.metrics = {
+    poseSource: null,
+    reconstructionReady: false,
+    poseInliers: 0,
+    poseConfidence: 0,
+    poseAverageResidual: 0,
+    poseForeshortening: 1,
+  };
+
+  const timings = {
+    framePrepareMs: 1.2,
+    keypointTrackMs: 2.4,
+    reconstructionUpdateMs: 3.6,
+    totalMs: 8.5,
+  };
+  service._recordAnchorUpdateResult({
+    success: true,
+    method: 'sparse-reconstruction',
+    position: { x: 10, y: 20, z: 0 },
+  }, 8.5, timings);
+
+  assert.deepEqual(service.metrics.updateTimings, timings);
+});
+
+test('image anchor service keeps update profiling disabled by default', () => {
+  const service = new ImageAnchorService();
+
+  assert.equal(service.profileUpdates, false);
+});
+
+test('reconstruction metrics preserve the previous preview when hot-path state omits preview', () => {
+  const service = new ImageAnchorService();
+  const preview = {
+    poseModel: 'direct-photometric',
+    surface: { model: 'photometric-surfels' },
+    statistics: { mapConfidence: 0.74 },
+  };
+  service.metrics.reconstructionPreview = preview;
+
+  service._recordReconstructionMetrics({
+    state: 'ready',
+    ready: true,
+    frameCount: 8,
+    landmarkCount: 28,
+    depthQuality: 0.12,
+    statistics: {
+      averageSupport: 0.8,
+      averageReliability: 0.7,
+      matureLandmarks: 24,
+      mapConfidence: 0.78,
+    },
+    lastFailureReason: null,
+  });
+
+  assert.equal(service.metrics.reconstructionPreview, preview);
+  assert.equal(service.metrics.reconstructionMapConfidence, 0.78);
 });
 
 test('records usable weak-anchor diagnostics after creation', async () => {
@@ -2365,21 +2566,26 @@ test('handled mug support correction caps follow reconstruction mode ownership',
 
   service.setTrackingMode('sparse-reconstruction');
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 10);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 12);
 
   service.setTrackingMode('depth-fusion');
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 4);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 4);
 
   service.setTrackingMode('parametric-surface');
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 12);
 
   service.setTrackingMode('direct-photometric');
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 12);
 
   service.anchorTargetClass = 'cup';
-  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 14);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 12);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 14);
 
   service.anchorTargetClass = 'bottle';
-  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 14);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 12);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 14);
 
   service.anchorTargetClass = 'can';
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 10);
@@ -2696,6 +2902,32 @@ test('planar transform smoothing dampens one-frame scale and roll jumps', () => 
   assert.ok(jumped.scale < 1.32);
   assert.ok(jumped.rotation > 0);
   assert.ok(jumped.rotation < 0.38);
+});
+
+test('rigid planar tracker scale follows measured changes without filter lag', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('sparse-reconstruction');
+  service.anchorTargetClass = 'book';
+  service.planarDominanceScore = 8;
+
+  service._updatePlanarTransform({
+    scale: 1.12,
+    rotation: 0.1,
+    confidence: 0.7,
+    averageResidual: 1.2,
+    inlierCount: 14,
+    method: 'reference_similarity_transform',
+  }, 1000);
+  const caughtUp = service._updatePlanarTransform({
+    scale: 0.96,
+    rotation: 0.08,
+    confidence: 0.66,
+    averageResidual: 1.1,
+    inlierCount: 12,
+    method: 'reference_similarity_transform',
+  }, 1016.67);
+
+  assert.equal(caughtUp.scale, 0.96);
 });
 
 test('planar roll smoothing follows the shortest path across the wrap boundary', () => {
@@ -3622,6 +3854,59 @@ test('rigid planar targets keep strong homography ownership over selected surfac
     correspondences,
     reconstructionConsistentWithTracker: true,
   }).method, 'planar-homography');
+});
+
+test('mature selected planar surface can report pose source through glare recovery', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'cell phone';
+  service.planarDominanceScore = 8;
+  service.metrics = {
+    reconstructionMapConfidence: 0.77,
+  };
+  const correspondences = Array.from({ length: 28 }, (_, index) => ({
+    prev: { x: 52 + (index % 7) * 14, y: 68 + Math.floor(index / 7) * 12 },
+    curr: { x: 58 + (index % 7) * 14.2, y: 75 + Math.floor(index / 7) * 12.1 },
+  }));
+  const planarPose = {
+    success: true,
+    method: 'planar-homography',
+    position: { x: 144, y: 136, z: 0 },
+    normal: { x: 0.03, y: -0.02, z: 0.999 },
+    planarTransform: { scale: 1.04, rotation: 0.02, confidence: 0.78, inlierCount: 18 },
+    confidence: 0.78,
+    inlierCount: 18,
+    inlierRatio: 0.64,
+    averageResidual: 0.78,
+    referenceSpread: { width: 102, height: 66, minAxis: 66 },
+  };
+  const reconstructionPose = {
+    success: true,
+    method: 'parametric-surface',
+    position: { x: 146, y: 138, z: 0 },
+    normal: { x: 0.05, y: -0.03, z: 0.998 },
+    planarTransform: { scale: 1.06, rotation: 0.04, confidence: 0.96, inlierCount: 27 },
+    confidence: 0.96,
+    inlierCount: 27,
+    inlierRatio: 1,
+    averageResidual: 1.93,
+    depthQuality: 0.02,
+    preview: {
+      statistics: {
+        mapConfidence: 0.77,
+      },
+    },
+  };
+
+  assert.equal(service._shouldPreferPlanarHomography({ planarPose, reconstructionPose, correspondences }), true);
+  assert.equal(service._selectNormalPose({
+    reconstructionPose,
+    planarPose,
+    objectPose: { success: false, confidence: 0 },
+    poseResult: null,
+    correspondences,
+    reconstructionConsistentWithTracker: true,
+  }).method, 'parametric-surface');
 });
 
 test('rigid planar reconstruction normals are not trusted external corrections', () => {
