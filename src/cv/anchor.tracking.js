@@ -1127,9 +1127,20 @@ export class KeypointTracker {
 
   getLandmarkQualityStats() {
     const points = this.trackedPoints || [];
-    const activePoints = points.filter(point => point.status === 'active');
-    const qualities = activePoints.map(point => this.getLandmarkQuality(point));
-    if (qualities.length === 0) {
+    let activeCount = 0;
+    let total = 0;
+    let highQuality = 0;
+    let poseEligible = 0;
+    for (const point of points) {
+      if (point.status !== 'active') continue;
+      const quality = this.getLandmarkQuality(point);
+      activeCount++;
+      total += quality;
+      if (quality >= 0.7) highQuality++;
+      if (quality >= 0.52) poseEligible++;
+    }
+
+    if (activeCount === 0) {
       return {
         average: 0,
         highQuality: 0,
@@ -1137,11 +1148,10 @@ export class KeypointTracker {
       };
     }
 
-    const total = qualities.reduce((sum, quality) => sum + quality, 0);
     return {
-      average: total / qualities.length,
-      highQuality: qualities.filter(quality => quality >= 0.7).length,
-      poseEligible: qualities.filter(quality => quality >= 0.52).length,
+      average: total / activeCount,
+      highQuality,
+      poseEligible,
     };
   }
 

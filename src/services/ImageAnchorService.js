@@ -1894,15 +1894,20 @@ export class ImageAnchorService {
 
   _recordLandmarkMetrics() {
     const points = this.keypointTracker?.trackedPoints || [];
-    const activePoints = points.filter(point => point.status === 'active');
     const objectSupportMask = this._getCurrentObjectSupportMask();
-    const objectOwnedLandmarks = objectSupportMask
-      ? activePoints.filter(point => isPointInsideObjectSupport(objectSupportMask, point.current)).length
-      : activePoints.length;
+    let activeLandmarks = 0;
+    let objectOwnedLandmarks = 0;
+    for (const point of points) {
+      if (point.status !== 'active') continue;
+      activeLandmarks++;
+      if (!objectSupportMask || isPointInsideObjectSupport(objectSupportMask, point.current)) {
+        objectOwnedLandmarks++;
+      }
+    }
     const qualityStats = this.keypointTracker.getLandmarkQualityStats();
 
     this.metrics.landmarkCount = points.length;
-    this.metrics.activeLandmarkCount = activePoints.length;
+    this.metrics.activeLandmarkCount = activeLandmarks;
     this.metrics.activeLandmarks = this.metrics.activeLandmarkCount;
     this.metrics.inactiveLandmarkCount = Math.max(0, this.metrics.landmarkCount - this.metrics.activeLandmarkCount);
     this.metrics.inactiveLandmarks = this.metrics.inactiveLandmarkCount;
