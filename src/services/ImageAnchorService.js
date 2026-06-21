@@ -3236,14 +3236,17 @@ export class ImageAnchorService {
     const poseInliers = reconstructionPose.inlierCount || 0;
     const trackerIncoherent = trackerResidual >= 12 || trackerConfidence <= 0.18;
     const trackerDiverged = trackerDelta >= clamp(templateSize * 0.08, 8, 16);
+    const strongPose = poseInliers >= 10 && poseResidual <= 3.6;
+    const compactPose = poseInliers >= 8 &&
+      poseResidual <= 2.25 &&
+      mapConfidence >= 0.82;
 
     return this.metrics.reconstructionReady === true &&
       mapConfidence >= 0.72 &&
       matureLandmarks >= 16 &&
-      poseInliers >= 10 &&
-      poseResidual <= 3.6 &&
       trackerIncoherent &&
-      trackerDiverged;
+      trackerDiverged &&
+      (strongPose || compactPose);
   }
 
   _shouldUseTrackedCurvedAttachmentTransform({ reconstructionPose, trackerAnchorPosition }) {

@@ -18,6 +18,18 @@ const transformedPoint = reference => ({
   y: reference.x * -0.02 + reference.y * 0.98 + 7,
 });
 
+const surfacePoints = count => Array.from({ length: count }, (_, index) => {
+  const reference = {
+    x: 16 + (index % 6) * 16,
+    y: 24 + Math.floor(index / 6) * 24,
+  };
+  return trackedPoint({
+    id: index,
+    reference,
+    current: transformedPoint(reference),
+  });
+});
+
 test('parametric surface reuses the reference fit for scale and rotation', () => {
   const reconstructor = new ParametricSurfaceReconstructor();
   reconstructor.reset({
@@ -82,6 +94,51 @@ test('parametric surface skips pose fitting while the map is still mapping', () 
   assert.equal(result.success, false);
   assert.equal(result.reason, 'Move object through more surface views');
   assert.equal(fitCount, 0);
+});
+
+test('parametric surface estimates compact mature-map poses after occlusion', () => {
+  const reconstructor = new ParametricSurfaceReconstructor({
+    minFrames: 5,
+    minLandmarks: 12,
+  });
+  reconstructor.reset({
+    anchorReference: { x: 40, y: 80 },
+    templateRegion: { x: 0, y: 0, width: 80, height: 140 },
+    targetClass: 'mug',
+  });
+  const trackedPoints = surfacePoints(18);
+
+  for (let index = 0; index < 5; index++) {
+    reconstructor.addFrameFromTrackedPoints(trackedPoints, 1000 + index);
+  }
+
+  const result = reconstructor.estimatePoseFromTrackedPoints(trackedPoints.slice(0, 8));
+
+  assert.equal(result.success, true);
+  assert.equal(result.method, 'parametric-surface');
+  assert.equal(result.inlierCount, 8);
+});
+
+test('parametric surface keeps full pose support for symmetric cups', () => {
+  const reconstructor = new ParametricSurfaceReconstructor({
+    minFrames: 5,
+    minLandmarks: 12,
+  });
+  reconstructor.reset({
+    anchorReference: { x: 40, y: 80 },
+    templateRegion: { x: 0, y: 0, width: 80, height: 140 },
+    targetClass: 'cup',
+  });
+  const trackedPoints = surfacePoints(18);
+
+  for (let index = 0; index < 5; index++) {
+    reconstructor.addFrameFromTrackedPoints(trackedPoints, 1000 + index);
+  }
+
+  const result = reconstructor.estimatePoseFromTrackedPoints(trackedPoints.slice(0, 8));
+
+  assert.equal(result.success, false);
+  assert.equal(result.method, 'parametric-surface');
 });
 
 test('parametric surface can return hot-path state without rebuilding preview geometry', () => {

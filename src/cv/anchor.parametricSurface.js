@@ -137,16 +137,16 @@ export class ParametricSurfaceReconstructor {
     }
 
     const rawObservations = toActiveObservations(trackedPoints);
-    const consensus = this._consensusOptions();
+    const consensus = this._poseConsensusOptions();
     const coherent = selectCoherentObservations(rawObservations, {
-      minInliers: this.minLandmarks,
+      minInliers: consensus.minInliers,
       threshold: consensus.threshold,
       minInlierRatio: consensus.minInlierRatio,
       model: consensus.model,
     });
     const observations = coherent.success ? coherent.observations : [];
     const fit = this._fitAttachmentTransform(observations, {
-      minInliers: this.minLandmarks,
+      minInliers: consensus.minInliers,
       threshold: consensus.threshold,
     });
 
@@ -282,6 +282,24 @@ export class ParametricSurfaceReconstructor {
     return this.model === 'plane'
       ? { model: 'similarity', threshold: 8, minInlierRatio: 0.5 }
       : { model: 'affine', threshold: 18, minInlierRatio: 0.36 };
+  }
+
+  _poseConsensusOptions() {
+    const options = this._consensusOptions();
+    const statistics = this._statistics();
+    const compactMatureSurface = this.state === 'ready' &&
+      this.model !== 'plane' &&
+      /mug/i.test(this.targetClass || '') &&
+      statistics.mapConfidence >= 0.62 &&
+      statistics.matureLandmarks >= 16;
+
+    return {
+      ...options,
+      minInliers: compactMatureSurface ? 8 : this.minLandmarks,
+      minInlierRatio: compactMatureSurface
+        ? Math.min(options.minInlierRatio, 0.3)
+        : options.minInlierRatio,
+    };
   }
 
   _fitAttachmentTransform(observations, options) {

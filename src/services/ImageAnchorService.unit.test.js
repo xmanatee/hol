@@ -4915,3 +4915,38 @@ test('mature curved reconstruction owns position when tracker transform is incoh
     trackerAnchorPosition,
   }), true);
 });
+
+test('compact mature curved reconstruction recovers position when tracker transform is incoherent', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('sparse-reconstruction');
+  service.anchorTargetClass = 'mug';
+  service.templateRegion = { width: 140, height: 118 };
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.88;
+  service.metrics.reconstructionMatureLandmarks = 36;
+  service.metrics.reconstructionTrackerDelta = 19;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  const reconstructionPose = {
+    success: true,
+    method: 'sparse-reconstruction',
+    inlierCount: 8,
+    averageResidual: 1.6,
+    confidence: 0.82,
+    preview: {
+      surface: { model: 'tapered-cylinder' },
+      statistics: { mapConfidence: 0.88 },
+    },
+  };
+  const trackerAnchorPosition = {
+    method: 'reference_similarity_transform',
+    confidence: 0.04,
+    averageResidual: 34,
+  };
+
+  assert.equal(service._hasModerateCurvedReconstructionRecovery({
+    reconstructionPose,
+    trackerAnchorPosition,
+  }), true);
+});
