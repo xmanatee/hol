@@ -102,7 +102,7 @@ export class DirectPhotometricReconstructor {
     return this.getState(options);
   }
 
-  estimatePoseFromTrackedPoints(trackedPoints, grayImage = null) {
+  estimatePoseFromTrackedPoints(trackedPoints, grayImage = null, { includePreview = true } = {}) {
     if (this.state !== 'ready') {
       return {
         success: false,
@@ -138,13 +138,7 @@ export class DirectPhotometricReconstructor {
 
     const position = this._transformReferencePoint(this.anchorReference, fit);
     const normal = this._estimateNormal(fit);
-    const preview = this._createPreview({
-      fit,
-      anchor: position,
-      normal,
-    });
-
-    return {
+    const result = {
       success: true,
       method: DIRECT_PHOTOMETRIC_POSE_MODEL,
       position: { x: position.x, y: position.y, z: 0 },
@@ -162,7 +156,19 @@ export class DirectPhotometricReconstructor {
       averageResidual: fit.averageResidual,
       depthQuality: 0.12,
       landmarkCount: this.surfels.size,
-      preview,
+    };
+
+    if (!includePreview) {
+      return result;
+    }
+
+    return {
+      ...result,
+      preview: this._createPreview({
+        fit,
+        anchor: position,
+        normal,
+      }),
     };
   }
 

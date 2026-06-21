@@ -366,6 +366,57 @@ test('sparse object reconstructor exposes a debug preview of map growth and live
   assert.ok(result.preview.current.normal.z > 0.5);
 });
 
+test('sparse object reconstructor can return hot-path state without rebuilding preview geometry', () => {
+  const { shape, reconstructor } = buildReconstructor();
+  let previewCount = 0;
+  reconstructor._createPreview = () => {
+    previewCount++;
+    return { points: [] };
+  };
+
+  const state = reconstructor.addFrameFromTrackedPoints(
+    trackedPointsForPose(shape, {
+      yaw: 0.34,
+      pitch: 0.11,
+      roll: 0.18,
+      scale: 1.24,
+      tx: 231,
+      ty: 174,
+    }),
+    1200,
+    { includePreview: false }
+  );
+
+  assert.equal('preview' in state, false);
+  assert.equal(previewCount, 0);
+});
+
+test('sparse object reconstructor can estimate hot-path pose without live preview', () => {
+  const { shape, reconstructor } = buildReconstructor();
+  const targetPose = {
+    yaw: 0.34,
+    pitch: 0.11,
+    roll: 0.18,
+    scale: 1.24,
+    tx: 231,
+    ty: 174,
+  };
+  let previewCount = 0;
+  reconstructor._createPreview = () => {
+    previewCount++;
+    return { points: [] };
+  };
+
+  const result = reconstructor.estimatePoseFromTrackedPoints(
+    trackedPointsForPose(shape, targetPose),
+    { includePreview: false }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal('preview' in result, false);
+  assert.equal(previewCount, 0);
+});
+
 test('sparse object reconstructor grows from statistically supported partial landmark tracks', () => {
   const shape = createShape();
   const reconstructor = new SparseObjectReconstructor({

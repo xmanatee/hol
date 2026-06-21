@@ -55,6 +55,8 @@ const affineRotation = transform => Math.atan2(transform.rowY[0], transform.rowX
 
 const readinessFromGeometry = consistency => clamp((consistency - 0.45) / 0.22, 0, 1);
 
+const CURVED_AFFINE_SAMPLE_WINDOW = 28;
+
 export class ParametricSurfaceReconstructor {
   constructor(config = {}) {
     this.minFrames = config.minFrames ?? 5;
@@ -127,7 +129,7 @@ export class ParametricSurfaceReconstructor {
     return this.getState(stateOptions);
   }
 
-  estimatePoseFromTrackedPoints(trackedPoints) {
+  estimatePoseFromTrackedPoints(trackedPoints, { includePreview = true } = {}) {
     if (this.state !== 'ready') {
       return {
         success: false,
@@ -177,13 +179,7 @@ export class ParametricSurfaceReconstructor {
         rotation: normalizeAngle(this._transformRotation(fit) - this._referenceRotation()),
       };
     const normal = pnpPose?.normal || this._estimateNormal(fit, fit.inliers);
-    const preview = this._createPreview({
-      fit,
-      normal,
-      anchor: anchorPosition,
-    });
-
-    return {
+    const result = {
       success: true,
       method: PARAMETRIC_SURFACE_POSE_MODEL,
       position: { x: anchorPosition.x, y: anchorPosition.y, z: 0 },
@@ -203,7 +199,19 @@ export class ParametricSurfaceReconstructor {
       landmarkCount: this.stats.size,
       pnpInlierCount: pnpPose?.inlierCount || 0,
       pnpAverageResidual: pnpPose?.averageResidual || null,
-      preview,
+    };
+
+    if (!includePreview) {
+      return result;
+    }
+
+    return {
+      ...result,
+      preview: this._createPreview({
+        fit,
+        normal,
+        anchor: anchorPosition,
+      }),
     };
   }
 
@@ -269,7 +277,11 @@ export class ParametricSurfaceReconstructor {
       return this.referenceFitCache.fit;
     }
 
-    const fit = this._fitAttachmentTransform(stateFrame.observations, { minInliers: 4, threshold: 6 });
+    const fit = this._fitAttachmentTransform(stateFrame.observations, {
+      minInliers: 4,
+      threshold: 6,
+      maxSample: this._coherenceModel() === 'affine' ? CURVED_AFFINE_SAMPLE_WINDOW : undefined,
+    });
     this.referenceFitCache = { frame: stateFrame, fit };
     return fit;
   }
@@ -281,7 +293,12 @@ export class ParametricSurfaceReconstructor {
   _consensusOptions() {
     return this.model === 'plane'
       ? { model: 'similarity', threshold: 8, minInlierRatio: 0.5 }
-      : { model: 'affine', threshold: 18, minInlierRatio: 0.36 };
+      : {
+        model: 'affine',
+        threshold: 18,
+        minInlierRatio: 0.36,
+        maxSample: CURVED_AFFINE_SAMPLE_WINDOW,
+      };
   }
 
   _poseConsensusOptions() {

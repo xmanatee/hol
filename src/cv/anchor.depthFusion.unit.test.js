@@ -130,6 +130,39 @@ test('depth fusion reports missing required fusion inputs without guessing', () 
   assert.equal(withoutIntrinsics.lastFailureReason, 'Waiting for camera intrinsics');
 });
 
+test('depth fusion can return hot-path state without sampling preview points', () => {
+  const engine = new DepthFusionReconstructor({
+    minFrames: 1,
+    minSurfels: 24,
+  });
+  configureCamera(engine);
+  engine.reset({
+    anchorReference: { x: 48, y: 48 },
+    templateRegion: { x: 12, y: 12, width: 72, height: 72 },
+    targetClass: 'cup',
+  });
+
+  let previewCalls = 0;
+  const originalPreviewPoints = engine.surfelMap.previewPoints.bind(engine.surfelMap);
+  engine.surfelMap.previewPoints = options => {
+    previewCalls++;
+    return originalPreviewPoints(options);
+  };
+
+  const state = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+    depthFrame: createDepthFrame(),
+    depthState: { state: 'ready' },
+    objectSupportMask: createMask(),
+    imageData: createImageData(),
+    includePreview: false,
+  });
+
+  assert.equal('preview' in state, false);
+  assert.equal(previewCalls, 0);
+  assert.equal(state.ready, true);
+  assert.equal(state.landmarkCount > 0, true);
+});
+
 test('depth fusion builds a dense masked surfel map and estimates pose', () => {
   const engine = new DepthFusionReconstructor({
     minFrames: 2,
@@ -217,6 +250,51 @@ test('depth fusion pose reuses ranked surfel points during pose estimation', () 
 
   assert.equal(pose.success, true);
   assert.equal(previewCalls, 1);
+});
+
+test('depth fusion can estimate hot-path pose without live preview geometry', () => {
+  const engine = new DepthFusionReconstructor({
+    minFrames: 2,
+    minSurfels: 40,
+    sampleStride: 4,
+    voxelSize: 5,
+  });
+  configureCamera(engine);
+  const mask = createMask();
+  const imageData = createImageData();
+  engine.reset({
+    anchorReference: { x: 48, y: 48 },
+    templateRegion: { x: 12, y: 12, width: 72, height: 72 },
+    targetClass: 'cup',
+  });
+
+  engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+    depthFrame: createDepthFrame(),
+    depthState: { state: 'ready' },
+    objectSupportMask: mask,
+    imageData,
+  });
+  engine.addFrameFromTrackedPoints(createTrackedPoints({ tx: 4, ty: -3, scale: 1.04 }), 1040, {
+    depthFrame: createDepthFrame({ offset: 0.01 }),
+    depthState: { state: 'ready' },
+    objectSupportMask: mask,
+    imageData,
+  });
+
+  let previewCount = 0;
+  engine._createPreview = () => {
+    previewCount++;
+    return { points: [] };
+  };
+
+  const pose = engine.estimatePoseFromTrackedPoints(
+    createTrackedPoints({ tx: 4, ty: -3, scale: 1.04 }),
+    { includePreview: false }
+  );
+
+  assert.equal(pose.success, true);
+  assert.equal('preview' in pose, false);
+  assert.equal(previewCount, 0);
 });
 
 test('depth fusion caps live preview density while retaining the dense surfel map', () => {

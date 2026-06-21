@@ -151,6 +151,84 @@ test('pose candidate arbitration uses current silhouette evidence', () => {
   assert.equal(service.metrics.poseCandidates[0].silhouetteCoverage, 0.16);
 });
 
+test('reconstruction pose update suppresses live previews on the tracking hot path', () => {
+  for (const mode of ['sparse-reconstruction', 'direct-photometric']) {
+    const service = new ImageAnchorService();
+    const grayImage = { cols: 64, rows: 64 };
+    const trackedPoints = [{
+      id: 1,
+      status: 'active',
+      original: { x: 20, y: 24 },
+      current: { x: 23, y: 26 },
+    }];
+    let addFrameArgs = null;
+    let poseArgs = null;
+
+    service.trackingMode = mode;
+    service.keypointTracker = { trackedPoints };
+    service.reconstructor = {
+      addFrameFromTrackedPoints: (...args) => {
+        addFrameArgs = args;
+        return {
+        state: 'ready',
+        ready: true,
+        frameCount: 1,
+        landmarkCount: 12,
+        depthQuality: 0.12,
+        statistics: { mapConfidence: 0.72 },
+        lastFailureReason: null,
+        };
+      },
+      estimatePoseFromTrackedPoints: (...args) => {
+        poseArgs = args;
+        return {
+          success: false,
+          method: mode,
+          reason: 'unit test pose rejected',
+        };
+      },
+    };
+
+    service._updateReconstructionPoseFromTracker(1000, grayImage);
+
+    assert.equal(addFrameArgs[0], trackedPoints);
+    assert.equal(addFrameArgs[1], 1000);
+    assert.equal(poseArgs[0], trackedPoints);
+    if (mode === 'direct-photometric') {
+      assert.equal(addFrameArgs[2], grayImage);
+      assert.deepEqual(addFrameArgs[3].includePreview, false);
+      assert.equal(poseArgs[1], grayImage);
+      assert.deepEqual(poseArgs[2], { includePreview: false });
+    } else {
+      assert.deepEqual(addFrameArgs[2].includePreview, false);
+      assert.deepEqual(poseArgs[1], { includePreview: false });
+    }
+  }
+});
+
+test('selected strong curved reconstruction can bypass planar pose estimation', () => {
+  const service = new ImageAnchorService();
+  const reconstructionPose = createObjectPose({
+    method: 'parametric-surface',
+    inlierCount: 18,
+    confidence: 0.88,
+    averageResidual: 1.4,
+  });
+  reconstructionPose.depthQuality = 0.16;
+
+  service.trackingMode = 'parametric-surface';
+  service.anchorTargetClass = 'mug';
+  service.metrics.reconstructionMapConfidence = 0.74;
+  assert.equal(service._shouldSkipPlanarPoseForSelectedReconstruction(reconstructionPose), true);
+
+  service.anchorTargetClass = 'book';
+  assert.equal(service._shouldSkipPlanarPoseForSelectedReconstruction(reconstructionPose), false);
+
+  service.anchorTargetClass = 'mug';
+  service.metrics.reconstructionMapConfidence = 0.4;
+  assert.equal(service._shouldSkipPlanarPoseForSelectedReconstruction(reconstructionPose), false);
+});
+
 test('object pose is the single anchor pose model', () => {
   const service = new ImageAnchorService();
   const metrics = service.getState().metrics;
@@ -2013,6 +2091,54 @@ test('keypoint failure recovers through descriptor keyframe relocalization befor
   assert.equal(service.metrics.relocalizationMatches, 22);
   assert.equal(service.metrics.relocalizationInliers, 16);
   assert.equal(service.metrics.activeLandmarkCount, 16);
+});
+
+test('descriptor relocalization extracts query keypoints inside the object support region', () => {
+  const service = new ImageAnchorService();
+  const width = 320;
+  const height = 240;
+  const maskData = new Uint8Array(width * height);
+  for (let y = 70; y < 135; y++) {
+    for (let x = 90; x < 165; x++) {
+      maskData[y * width + x] = 255;
+    }
+  }
+  const objectSupportMask = createObjectSupportMask({
+    width,
+    height,
+    data: maskData,
+    source: 'synthetic-object-mask',
+    confidence: 0.9,
+    referencePoint: { x: 125, y: 100 },
+    createdAtFrame: 0,
+    updatedAtFrame: 0,
+  });
+  let extractionRegion = null;
+
+  service.cv = {};
+  service.objectSupportMask = objectSupportMask;
+  service.currentPosition = { x: 125, y: 100, z: 0 };
+  service.currentPlanarTransform = null;
+  service.keypointDetector = {
+    extractKeypoints: (cv, grayImage, region) => {
+      extractionRegion = region;
+      return { keypoints: [] };
+    },
+  };
+  service.relocalizer = {
+    hasKeyframes: () => true,
+    relocalize: () => ({ success: false, reason: 'Insufficient descriptor matches: 0' }),
+  };
+
+  service._attemptKeyframeRelocalization({ cols: width, rows: height }, 1000, 'tracking failed');
+
+  assert.ok(extractionRegion.width < width);
+  assert.ok(extractionRegion.height < height);
+  assert.ok(extractionRegion.x <= objectSupportMask.bbox.x);
+  assert.ok(extractionRegion.y <= objectSupportMask.bbox.y);
+  assert.ok(extractionRegion.x + extractionRegion.width >= objectSupportMask.bbox.x + objectSupportMask.bbox.width);
+  assert.ok(extractionRegion.y + extractionRegion.height >= objectSupportMask.bbox.y + objectSupportMask.bbox.height);
+  assert.deepEqual(service.metrics.relocalizationQueryRegion, extractionRegion);
 });
 
 test('keypoint updates propagate pose normals from homography correspondences', () => {

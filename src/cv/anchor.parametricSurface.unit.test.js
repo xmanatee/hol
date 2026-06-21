@@ -119,6 +119,37 @@ test('parametric surface estimates compact mature-map poses after occlusion', ()
   assert.equal(result.inlierCount, 8);
 });
 
+test('parametric surface can estimate hot-path pose without live preview', () => {
+  const reconstructor = new ParametricSurfaceReconstructor({
+    minFrames: 5,
+    minLandmarks: 12,
+  });
+  reconstructor.reset({
+    anchorReference: { x: 40, y: 80 },
+    templateRegion: { x: 0, y: 0, width: 80, height: 140 },
+    targetClass: 'mug',
+  });
+  const trackedPoints = surfacePoints(18);
+
+  for (let index = 0; index < 5; index++) {
+    reconstructor.addFrameFromTrackedPoints(trackedPoints, 1000 + index);
+  }
+
+  let previewCount = 0;
+  reconstructor._createPreview = () => {
+    previewCount++;
+    return { points: [] };
+  };
+
+  const result = reconstructor.estimatePoseFromTrackedPoints(trackedPoints, {
+    includePreview: false,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal('preview' in result, false);
+  assert.equal(previewCount, 0);
+});
+
 test('parametric surface keeps full pose support for symmetric cups', () => {
   const reconstructor = new ParametricSurfaceReconstructor({
     minFrames: 5,
@@ -139,6 +170,19 @@ test('parametric surface keeps full pose support for symmetric cups', () => {
 
   assert.equal(result.success, false);
   assert.equal(result.method, 'parametric-surface');
+});
+
+test('parametric surface bounds curved affine consensus for the mobile hot path', () => {
+  const reconstructor = new ParametricSurfaceReconstructor();
+
+  reconstructor.reset({
+    anchorReference: { x: 40, y: 80 },
+    templateRegion: { x: 0, y: 0, width: 80, height: 140 },
+    targetClass: 'mug',
+  });
+
+  assert.equal(reconstructor._consensusOptions().maxSample, 28);
+  assert.equal(reconstructor._poseConsensusOptions().maxSample, 28);
 });
 
 test('parametric surface can return hot-path state without rebuilding preview geometry', () => {

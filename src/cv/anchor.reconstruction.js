@@ -323,7 +323,7 @@ export class SparseObjectReconstructor {
     };
   }
 
-  addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now()) {
+  addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now(), { includePreview = true } = {}) {
     const observations = trackedPoints
       .filter(point => point.status === 'active')
       .filter(point => Number.isFinite(point.current.x) && Number.isFinite(point.current.y))
@@ -339,14 +339,14 @@ export class SparseObjectReconstructor {
     if (observations.length < this.minLandmarks) {
       this.state = this.map ? 'ready' : 'mapping';
       this.lastFailureReason = 'Insufficient active landmarks for reconstruction';
-      return this.getState();
+      return this.getState({ includePreview });
     }
 
     const coherent = selectCoherentObservations(observations, this._mappingCoherenceOptions());
     if (!coherent.success) {
       this.state = this.map ? 'ready' : 'mapping';
       this.lastFailureReason = coherent.reason;
-      return this.getState();
+      return this.getState({ includePreview });
     }
 
     this._updateLandmarkStats(coherent.observations, this.frameIndex);
@@ -366,10 +366,10 @@ export class SparseObjectReconstructor {
       this.framesSinceBuild = 0;
     }
 
-    return this.getState();
+    return this.getState({ includePreview });
   }
 
-  estimatePoseFromTrackedPoints(trackedPoints) {
+  estimatePoseFromTrackedPoints(trackedPoints, { includePreview = true } = {}) {
     if (!this.map) {
       return { success: false, method: RECONSTRUCTION_POSE_MODEL, reason: '3D reconstruction map is not ready' };
     }
@@ -431,7 +431,7 @@ export class SparseObjectReconstructor {
     const coverageScore = clamp(pose.inlierCount / Math.max(this.map.landmarks.size * 0.62, this.minPoseLandmarks), 0, 1);
     const confidence = clamp(pose.inlierRatio * 0.5 + residualScore * 0.3 + coverageScore * 0.2, 0, 1);
 
-    return {
+    const result = {
       success: true,
       method: RECONSTRUCTION_POSE_MODEL,
       position: { x: attachmentAnchor.x, y: attachmentAnchor.y, z: 0 },
@@ -450,6 +450,14 @@ export class SparseObjectReconstructor {
       depthQuality: this.map.depthQuality,
       landmarkCount: this.map.landmarks.size,
       completedLandmarkCount: observations.filter(observation => observation.completed).length,
+    };
+
+    if (!includePreview) {
+      return result;
+    }
+
+    return {
+      ...result,
       preview: this._createPreview({
         rowX: pose.rowX,
         rowY: pose.rowY,
@@ -959,8 +967,8 @@ export class SparseObjectReconstructor {
     };
   }
 
-  getState() {
-    return {
+  getState({ includePreview = true } = {}) {
+    const state = {
       state: this.state,
       ready: this.state === 'ready',
       poseModel: RECONSTRUCTION_POSE_MODEL,
@@ -976,6 +984,14 @@ export class SparseObjectReconstructor {
         mappedFrames: 0,
       },
       lastFailureReason: this.lastFailureReason,
+    };
+
+    if (!includePreview) {
+      return state;
+    }
+
+    return {
+      ...state,
       preview: this._createPreview(),
     };
   }

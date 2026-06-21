@@ -121,6 +121,58 @@ test('direct photometric reuses frame descriptors between mapping and pose', () 
   assert.equal(attachCount, trackedPoints.length);
 });
 
+test('direct photometric can estimate hot-path pose without live preview', () => {
+  const reconstructor = new DirectPhotometricReconstructor({
+    minFrames: 1,
+    minSurfels: 8,
+  });
+  reconstructor.reset({
+    anchorReference: { x: 40, y: 80 },
+    templateRegion: { x: 0, y: 0, width: 80, height: 140 },
+    targetClass: 'mug',
+  });
+  reconstructor._attachPhotometricData = observation => ({
+    ...observation,
+    photometric: { values: [0.2, 0.4, 0.6], gradient: 18 },
+  });
+  const trackedPoints = [
+    { x: 0, y: 32 },
+    { x: 24, y: 32 },
+    { x: 48, y: 32 },
+    { x: 72, y: 32 },
+    { x: 0, y: 96 },
+    { x: 24, y: 96 },
+    { x: 48, y: 96 },
+    { x: 72, y: 96 },
+    { x: 0, y: 128 },
+    { x: 24, y: 128 },
+    { x: 48, y: 128 },
+    { x: 72, y: 128 },
+  ].map((reference, index) => trackedPoint({
+    id: `point-${index}`,
+    reference,
+    current: affinePoint(reference),
+    quality: 5,
+  }));
+
+  for (let index = 0; index < 3; index++) {
+    reconstructor.addFrameFromTrackedPoints(trackedPoints, 1000 + index);
+  }
+  let previewCount = 0;
+  reconstructor._createPreview = () => {
+    previewCount++;
+    return { points: [] };
+  };
+
+  const result = reconstructor.estimatePoseFromTrackedPoints(trackedPoints, null, {
+    includePreview: false,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal('preview' in result, false);
+  assert.equal(previewCount, 0);
+});
+
 test('direct photometric reuses the reference fit for scale and rotation', () => {
   const reconstructor = new DirectPhotometricReconstructor();
   reconstructor.reset({

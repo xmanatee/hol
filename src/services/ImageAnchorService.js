@@ -12,6 +12,7 @@ import { AffineParallaxPoseEstimator } from '../cv/anchor.affinePose.js';
 import {
   createReconstructionEngine,
   DEPTH_FUSION_POSE_MODEL,
+  DIRECT_PHOTOMETRIC_POSE_MODEL,
   isReconstructionMode,
   RECONSTRUCTION_MODE_IDS,
   RECONSTRUCTION_POSE_MODEL,
@@ -1108,12 +1109,21 @@ export class ImageAnchorService {
     const reconstructionPose = this._updateReconstructionPoseFromTracker(timestamp, grayImage, depthContext, updateTimings);
 
     stageStart = this._startUpdateTiming(updateTimings);
-    const poseAttempt = this._estimatePoseFromTracker();
+    const skipPlanarPose = this._shouldSkipPlanarPoseForSelectedReconstruction(reconstructionPose);
+    const poseAttempt = skipPlanarPose
+      ? {
+        options: this._getPoseCorrespondenceOptions(),
+        correspondences: reconstructionPose.correspondences || [],
+        poseResult: null,
+      }
+      : this._estimatePoseFromTracker();
     const poseCorrespondenceOptions = poseAttempt.options;
     const correspondences = poseAttempt.correspondences;
     poseResult = poseAttempt.poseResult;
-    const planarPose = this._createPlanarHomographyPose(poseResult, correspondences);
-    this._updatePlanarDominance(planarPose, correspondences);
+    const planarPose = skipPlanarPose ? null : this._createPlanarHomographyPose(poseResult, correspondences);
+    if (!skipPlanarPose) {
+      this._updatePlanarDominance(planarPose, correspondences);
+    }
     this._recordUpdateTiming(updateTimings, 'planarPoseMs', stageStart);
     this.metrics.poseKeypointCount = correspondences.length;
     this.metrics.posePatchRadius = poseCorrespondenceOptions.maxReferenceDistance;
@@ -1652,15 +1662,20 @@ export class ImageAnchorService {
       };
     }
 
+    const objectSupportMask = this._getCurrentObjectSupportMask();
+    const queryRegion = objectSupportMask
+      ? this._calculateObjectSupportTrackingRegion(objectSupportMask, null)
+      : null;
     const keypointResult = this.keypointDetector.extractKeypoints(
       this.cv,
       grayImage,
-      null,
-      this._getCurrentObjectSupportMask()
+      queryRegion,
+      objectSupportMask
     );
     const relocalizationResult = this.relocalizer.relocalize(grayImage, keypointResult.keypoints);
     this.metrics.relocalizationKeyframes = relocalizationResult.keyframeCount || this.metrics.relocalizationKeyframes || 0;
     this.metrics.relocalizationQueryKeypoints = keypointResult.keypoints.length;
+    this.metrics.relocalizationQueryRegion = queryRegion ? { ...queryRegion } : null;
     this.metrics.relocalizationMatches = relocalizationResult.matchCount || 0;
     this.metrics.relocalizationInliers = relocalizationResult.inlierCount || 0;
     this.metrics.relocalizationConfidence = relocalizationResult.confidence || 0;
@@ -2471,7 +2486,8 @@ export class ImageAnchorService {
       templateRegion: this.trackingRegion || this.templateRegion,
       includePreview: false,
     };
-    const reconstructionState = this.trackingMode === DEPTH_FUSION_POSE_MODEL
+    const reconstructionState = this.trackingMode === DEPTH_FUSION_POSE_MODEL ||
+        this.trackingMode === RECONSTRUCTION_POSE_MODEL
       ? this.reconstructor.addFrameFromTrackedPoints(
           this.keypointTracker.trackedPoints,
           timestamp,
@@ -2485,7 +2501,10 @@ export class ImageAnchorService {
       );
     this._recordReconstructionMetrics(reconstructionState);
 
-    const pose = this.reconstructor.estimatePoseFromTrackedPoints(this.keypointTracker.trackedPoints, grayImage);
+    const poseOptions = { includePreview: false };
+    const pose = this.trackingMode === DIRECT_PHOTOMETRIC_POSE_MODEL
+      ? this.reconstructor.estimatePoseFromTrackedPoints(this.keypointTracker.trackedPoints, grayImage, poseOptions)
+      : this.reconstructor.estimatePoseFromTrackedPoints(this.keypointTracker.trackedPoints, poseOptions);
     this._recordUpdateTiming(updateTimings, 'reconstructionUpdateMs', stageStart);
     if (!pose.success) {
       this.metrics.reconstructionPoseRejectedReason = pose.reason;
@@ -3335,6 +3354,15 @@ export class ImageAnchorService {
       reconstructionPose.confidence ??
       0;
     return mapConfidence >= 0.48 && (reconstructionPose.inlierCount || 0) >= 12;
+  }
+
+  _shouldSkipPlanarPoseForSelectedReconstruction(reconstructionPose) {
+    return isReconstructionMode(this.trackingMode) &&
+      this.trackingMode !== RECONSTRUCTION_POSE_MODEL &&
+      !this._hasPlanarTargetClass() &&
+      this._hasSelectedReconstructionPose(reconstructionPose) &&
+      this._hasStrongNonPlanarReconstruction(reconstructionPose) &&
+      this._hasCurvedReconstructionTarget(reconstructionPose);
   }
 
   _recordReconstructionMetrics(reconstructionState) {
