@@ -1,5 +1,7 @@
 import { clamp, normalizeAngle, solveLeastSquares } from './anchor.reconstruction.math.js';
 
+export const MOBILE_AFFINE_SAMPLE_WINDOW = 28;
+
 export const toActiveObservations = trackedPoints => trackedPoints
   .filter(point => point.status === 'active')
   .filter(point => Number.isFinite(point.original?.x))
@@ -93,6 +95,50 @@ const triangleArea = (a, b, c) => Math.abs(
   (b.reference.x - a.reference.x) * (c.reference.y - a.reference.y) -
   (b.reference.y - a.reference.y) * (c.reference.x - a.reference.x)
 ) * 0.5;
+
+const referenceDistanceSq = (left, right) => {
+  const dx = left.reference.x - right.reference.x;
+  const dy = left.reference.y - right.reference.y;
+  return dx * dx + dy * dy;
+};
+
+const selectAffineHypothesisSample = (observations, maxSample) => {
+  const sorted = [...observations].sort((left, right) => right.quality - left.quality);
+  const limit = Math.min(sorted.length, maxSample);
+  if (sorted.length <= limit) {
+    return sorted;
+  }
+
+  const qualityCount = Math.max(6, Math.floor(limit * 0.45));
+  const sample = sorted.slice(0, qualityCount);
+  const selected = new Set(sample);
+  const remaining = sorted.filter(observation => !selected.has(observation));
+  const maxQuality = Math.max(1, ...remaining.map(observation => observation.quality || 0));
+
+  while (sample.length < limit) {
+    let bestIndex = 0;
+    let bestScore = -Infinity;
+    remaining.forEach((candidate, index) => {
+      const spread = Math.sqrt(sample.reduce(
+        (distance, selectedObservation) => Math.min(distance, referenceDistanceSq(candidate, selectedObservation)),
+        Infinity
+      ));
+      const score = spread + ((candidate.quality || 0) / maxQuality) * 8;
+      if (score > bestScore) {
+        bestIndex = index;
+        bestScore = score;
+      }
+    });
+    sample.push(remaining.splice(bestIndex, 1)[0]);
+  }
+
+  return sample;
+};
+
+const selectQualityHypothesisSample = (observations, maxSample) => {
+  const sorted = [...observations].sort((left, right) => right.quality - left.quality);
+  return sorted.slice(0, Math.min(sorted.length, maxSample));
+};
 
 const fitAffine = matches => {
   const rows = matches.map(match => [match.reference.x, match.reference.y, 1]);
@@ -193,13 +239,19 @@ export const fitRobustSimilarity = (observations, { minInliers = 8, threshold = 
   };
 };
 
-export const fitRobustAffine2D = (observations, { minInliers = 8, threshold = 10, maxSample = 34 } = {}) => {
+export const fitRobustAffine2D = (observations, {
+  minInliers = 8,
+  threshold = 10,
+  maxSample = MOBILE_AFFINE_SAMPLE_WINDOW,
+  sampleCoverage = 'quality',
+} = {}) => {
   if (observations.length < minInliers) {
     return { success: false, reason: 'Insufficient observations for robust affine fit' };
   }
 
-  const sorted = [...observations].sort((left, right) => right.quality - left.quality);
-  const sample = sorted.slice(0, Math.min(sorted.length, maxSample));
+  const sample = sampleCoverage === 'spatial'
+    ? selectAffineHypothesisSample(observations, maxSample)
+    : selectQualityHypothesisSample(observations, maxSample);
   let best = null;
 
   for (let a = 0; a < sample.length - 2; a++) {
@@ -252,10 +304,10 @@ export const fitRobustAffine2D = (observations, { minInliers = 8, threshold = 10
 
 export const selectCoherentObservations = (
   observations,
-  { minInliers = 8, threshold = 10, minInlierRatio = 0.45, model = 'similarity', maxSample } = {}
+  { minInliers = 8, threshold = 10, minInlierRatio = 0.45, model = 'similarity', maxSample, sampleCoverage } = {}
 ) => {
   const fit = model === 'affine'
-    ? fitRobustAffine2D(observations, { minInliers, threshold, maxSample })
+    ? fitRobustAffine2D(observations, { minInliers, threshold, maxSample, sampleCoverage })
     : fitRobustSimilarity(observations, { minInliers, threshold, maxSample });
   if (!fit.success) {
     return {

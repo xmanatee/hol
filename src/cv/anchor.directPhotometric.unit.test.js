@@ -18,7 +18,7 @@ const trackedPoint = ({ id, reference, current, quality }) => ({
   age: 0,
 });
 
-test('direct photometric coherence uses the configured affine sample window', () => {
+test('direct photometric coherence uses the mobile affine sample window with cluttered rankings', () => {
   const reconstructor = new DirectPhotometricReconstructor({
     minFrames: 1,
     minSurfels: 10,
@@ -32,8 +32,9 @@ test('direct photometric coherence uses the configured affine sample window', ()
     ...observation,
     photometric: { values: [0.2, 0.4, 0.6], gradient: 18 },
   });
+  assert.equal(reconstructor._consensusOptions().maxSample, 28);
 
-  const outliers = Array.from({ length: 18 }, (_, index) => trackedPoint({
+  const outliers = Array.from({ length: 20 }, (_, index) => trackedPoint({
     id: `outlier-${index}`,
     reference: { x: index * 12, y: 0 },
     current: { x: 420 + index * 31, y: -260 + (index % 5) * 95 },

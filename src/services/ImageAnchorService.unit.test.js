@@ -669,6 +669,8 @@ test('selected curved surface modes use bounded motion hold for weak dropout tra
   sparseService.metrics.reconstructionMapConfidence = 0.74;
   sparseService.metrics.reconstructionMatureLandmarks = 22;
   sparseService.metrics.activeLandmarkCount = 10;
+  sparseService.metrics.poseInliers = 10;
+  sparseService.metrics.reconstructionPoseInliers = 10;
   sparseService.positionFilterX.filter(200, now);
   sparseService.positionFilterY.filter(160, now);
   sparseService.curvedMotionSample = { ...service.curvedMotionSample };
@@ -686,6 +688,55 @@ test('selected curved surface modes use bounded motion hold for weak dropout tra
   );
 
   assert.equal(sparseService.metrics.positionFilterAdjustment, null);
+});
+
+test('mature sparse curved maps use bounded motion hold during full pose dropout', () => {
+  let now = 1000;
+  const service = new ImageAnchorService({ now: () => now });
+  service.setTrackingMode('sparse-reconstruction');
+  service.anchorTargetClass = 'mug';
+  service.currentPosition = { x: 200, y: 160, z: 0 };
+  service.templateRegion = { width: 120, height: 120 };
+  service.metrics.lastUpdateResult = 'success';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.91;
+  service.metrics.reconstructionMatureLandmarks = 36;
+  service.metrics.activeLandmarkCount = 27;
+  service.metrics.objectOwnedLandmarks = 27;
+  service.metrics.poseInliers = 0;
+  service.metrics.reconstructionPoseInliers = 0;
+  service.positionFilterX.filter(200, now);
+  service.positionFilterY.filter(160, now);
+
+  service._recordCurvedMotionSample({
+    success: true,
+    method: 'sparse-reconstruction',
+    position: { x: 200, y: 160, z: 0 },
+    confidence: 0.86,
+  });
+  now = 1033.33;
+  service._recordCurvedMotionSample({
+    success: true,
+    method: 'sparse-reconstruction',
+    position: { x: 196, y: 154, z: 0 },
+    confidence: 0.86,
+  });
+
+  const held = service._filterPositionCandidate(
+    {
+      x: 228,
+      y: 190,
+      z: 0,
+      confidence: 0.82,
+      averageResidual: 3.2,
+    },
+    1066.66,
+    'reference_similarity_transform'
+  );
+
+  assert.equal(service.metrics.positionFilterAdjustment, 'curved-motion-hold');
+  assert.ok(held.x < 196);
+  assert.ok(held.y < 154);
 });
 
 test('mature sparse curved maps keep weak dropout tracking out of centroid fallback', () => {
@@ -2031,19 +2082,23 @@ test('keypoint failure recovers through descriptor keyframe relocalization befor
   service.keypointDetector = {
     extractKeypoints: () => ({ keypoints: Array.from({ length: 40 }, (_, index) => ({ pt: { x: 30 + index, y: 40 + index }, response: 1 })) }),
   };
+  let relocalizationCalls = 0;
   service.relocalizer = {
     hasKeyframes: () => true,
-    relocalize: () => ({
-      success: true,
-      method: 'patch-keyframe-relocalization',
-      transform,
-      confidence: 0.86,
-      averageResidual: 1.1,
-      matchCount: 22,
-      inlierCount: 16,
-      inlierIds: trackedPoints.map(point => point.id),
-      keyframeCount: 3,
-    }),
+    relocalize: () => {
+      relocalizationCalls++;
+      return {
+        success: true,
+        method: 'patch-keyframe-relocalization',
+        transform,
+        confidence: 0.86,
+        averageResidual: 1.1,
+        matchCount: 22,
+        inlierCount: 16,
+        inlierIds: trackedPoints.map(point => point.id),
+        keyframeCount: 3,
+      };
+    },
   };
   Object.assign(service.keypointTracker, {
     trackedPoints,
@@ -2082,11 +2137,13 @@ test('keypoint failure recovers through descriptor keyframe relocalization befor
       method: 'homography',
     }),
   };
+  service._shouldAttemptGeometryRelocalization = () => true;
 
   const result = service._updateWithKeypoints({ cols: 320, rows: 240 }, 1000);
 
   assert.equal(result.success, true);
   assert.equal(result.method, 'object-pose-affine');
+  assert.equal(relocalizationCalls, 1);
   assert.equal(service.metrics.relocalizationResult, 'success');
   assert.equal(service.metrics.relocalizationMatches, 22);
   assert.equal(service.metrics.relocalizationInliers, 16);
@@ -3640,6 +3697,118 @@ test('depth-fusion keeps tracker positioning as the anchor spine', () => {
   assert.equal(result.position.y, 174);
   assert.equal(result.poseSource, 'depth-fusion');
   assert.equal(readiness.attachmentSourceReady, true);
+});
+
+test('arbiter-selected planar pose owns position when reference similarity is weak', () => {
+  const service = new ImageAnchorService();
+  const correspondences = Array.from({ length: 18 }, (_, index) => {
+    const prev = {
+      x: 60 + (index % 6) * 18,
+      y: 70 + Math.floor(index / 6) * 22,
+    };
+    return {
+      prev,
+      curr: { x: prev.x + 14, y: prev.y + 8 },
+    };
+  });
+  const planarPose = {
+    success: true,
+    method: 'planar-homography',
+    position: { x: 154, y: 128, z: 0 },
+    normal: { x: 0.05, y: -0.02, z: 0.998 },
+    planarTransform: {
+      scale: 1.02,
+      rotation: 0.04,
+      confidence: 0.52,
+      inlierCount: 9,
+      method: 'planar-homography',
+    },
+    confidence: 0.52,
+    inlierCount: 9,
+    inlierRatio: 0.5,
+    averageResidual: 4.8,
+    referenceSpread: { width: 90, height: 44, minAxis: 44 },
+  };
+  const weakTrackerAnchor = {
+    x: 174,
+    y: 139,
+    scale: 1.05,
+    rotation: 0.08,
+    confidence: 0.22,
+    inlierCount: 9,
+    averageResidual: 13,
+    method: 'reference_similarity_transform',
+  };
+
+  service.setTrackingMode('direct-photometric');
+  service.initialized = true;
+  service.anchored = true;
+  service.anchorState = 'tracking';
+  service.anchorTargetClass = 'mug';
+  service.currentPosition = { x: 140, y: 120, z: 0 };
+  service.currentNormal = { x: 0, y: 0, z: 1 };
+  service.cv = {};
+  service._recordLandmarkMetrics = () => {
+    service.metrics.activeLandmarkCount = 18;
+    service.metrics.objectOwnedLandmarks = 18;
+  };
+  service._updateObjectSurfaceMetrics = () => {
+    service.metrics.contourFitResidual = 0;
+    service.metrics.silhouetteCoverage = 1;
+  };
+  service._estimateObjectPoseFromTracker = () => ({
+    success: false,
+    method: 'object-pose-affine',
+    reason: 'unit object pose unavailable',
+  });
+  service._updateReconstructionPoseFromTracker = () => ({
+    success: false,
+    method: 'direct-photometric',
+    reason: 'unit reconstruction mapping',
+  });
+  service._estimatePoseFromTracker = () => ({
+    options: { maxReferenceDistance: 42 },
+    correspondences,
+    poseResult: {
+      success: true,
+      method: 'homography',
+      normal: planarPose.normal,
+      confidence: planarPose.confidence,
+      inlierCount: planarPose.inlierCount,
+      inlierRatio: planarPose.inlierRatio,
+      averageResidual: planarPose.averageResidual,
+      referenceSpread: planarPose.referenceSpread,
+    },
+  });
+  service._createPlanarHomographyPose = () => planarPose;
+  service._shouldRefreshKeypoints = () => false;
+  service._storeRelocalizationKeyframe = () => null;
+  Object.assign(service.keypointTracker, {
+    trackedPoints: correspondences.map((correspondence, index) => ({
+      id: index,
+      status: 'active',
+      original: correspondence.prev,
+      current: correspondence.curr,
+      objectOwned: true,
+      response: 1,
+      age: 20,
+      stabilityScore: 0.7,
+    })),
+    trackToFrame: () => ({
+      success: true,
+      successRate: 0.9,
+      activePointCount: 18,
+      averageError: 2,
+    }),
+    getAnchorPosition: () => weakTrackerAnchor,
+    getCorrespondences: () => correspondences,
+  });
+
+  const result = service._updateWithKeypoints({ cols: 320, rows: 240 }, 1000);
+
+  assert.equal(result.method, 'planar-homography');
+  assert.equal(service.metrics.poseCandidateSource, 'planar-homography');
+  assert.equal(service.metrics.rejectedPoseCandidates.reference_similarity_transform.reason, 'weak-geometry');
 });
 
 test('curved reconstruction relaxes stale normals when pose drops out', () => {

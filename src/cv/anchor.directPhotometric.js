@@ -3,6 +3,7 @@ import {
   boundsForPoints,
   fitRobustAffine2D,
   fitRobustSimilarity,
+  MOBILE_AFFINE_SAMPLE_WINDOW,
   selectCoherentObservations,
   toActiveObservations,
   transformPoint2,
@@ -84,6 +85,7 @@ export class DirectPhotometricReconstructor {
       minInlierRatio: consensus.minInlierRatio,
       model: consensus.model,
       maxSample: consensus.maxSample,
+      sampleCoverage: consensus.sampleCoverage,
     });
     if (!coherent.success) {
       this.lastFailureReason = coherent.reason;
@@ -120,12 +122,14 @@ export class DirectPhotometricReconstructor {
       minInlierRatio: consensus.minInlierRatio,
       model: consensus.model,
       maxSample: consensus.maxSample,
+      sampleCoverage: consensus.sampleCoverage,
     });
     const observations = coherent.success ? coherent.observations : [];
     const fit = this._fitAttachmentTransform(observations, {
       minInliers: this.minSurfels,
       threshold: consensus.threshold,
       maxSample: consensus.maxSample,
+      sampleCoverage: consensus.sampleCoverage,
     });
 
     if (!fit.success) {
@@ -282,7 +286,13 @@ export class DirectPhotometricReconstructor {
   _consensusOptions() {
     return this.surfaceModel === SURFACE_MODEL_PLANE
       ? { model: 'similarity', threshold: 12, minInlierRatio: 0.45 }
-      : { model: 'affine', threshold: 18, minInlierRatio: 0.36, maxSample: 34 };
+      : {
+        model: 'affine',
+        threshold: 18,
+        minInlierRatio: 0.36,
+        maxSample: MOBILE_AFFINE_SAMPLE_WINDOW,
+        sampleCoverage: 'spatial',
+      };
   }
 
   _fitAttachmentTransform(observations, options) {

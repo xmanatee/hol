@@ -189,7 +189,7 @@ export class KeypointTracker {
       // Update tracked points with results
       let successCount = 0;
       let totalError = 0;
-      const trackingResults = [];
+      const sampleResults = [];
       
       logger.debugEvery('KeypointTracker', 'lucas-kanade-processing', 1000, 'Processing Lucas-Kanade results:', {
         attempt: this.trackingAttempts,
@@ -205,8 +205,7 @@ export class KeypointTracker {
         const point = activePoints[i];
         const trackingStatus = status.data[i];
         const trackingError = error.data32F[i];
-        
-        const result = {
+        const result = sampleResults.length < 5 ? {
           pointId: point.id,
           status: trackingStatus,
           error: trackingError,
@@ -214,7 +213,7 @@ export class KeypointTracker {
           newPos: trackingStatus === 1 && nextPoints.data32F[i * 2] !== undefined && nextPoints.data32F[i * 2 + 1] !== undefined 
             ? `(${nextPoints.data32F[i * 2].toFixed(1)}, ${nextPoints.data32F[i * 2 + 1].toFixed(1)})` 
             : 'N/A'
-        };
+        } : null;
         
         // Use hysteresis: different thresholds based on stability and current status
         const effectiveThreshold = point.isStable ? keepThreshold : loseThreshold;
@@ -249,7 +248,7 @@ export class KeypointTracker {
           
           successCount++;
           totalError += trackingError;
-          result.outcome = 'SUCCESS';
+          if (result) result.outcome = 'SUCCESS';
         } else {
           // Tracking failed or invalid coordinates
           point.status = 'lost';
@@ -263,15 +262,15 @@ export class KeypointTracker {
           this.updateLandmarkQuality(point);
           
           if (trackingStatus === 0) {
-            result.outcome = 'TRACKING_FAILED';
+            if (result) result.outcome = 'TRACKING_FAILED';
           } else if (nextPoints.data32F[i * 2] === undefined || nextPoints.data32F[i * 2 + 1] === undefined) {
-            result.outcome = 'UNDEFINED_COORDS';
+            if (result) result.outcome = 'UNDEFINED_COORDS';
           } else {
-            result.outcome = 'ERROR_TOO_HIGH';
+            if (result) result.outcome = 'ERROR_TOO_HIGH';
           }
         }
 
-        trackingResults.push(result);
+        if (result) sampleResults.push(result);
 
         // Limit error history
         if (point.errorHistory.length > 10) {
@@ -289,7 +288,7 @@ export class KeypointTracker {
         totalPoints: activePoints.length,
         successRate: `${(successCount / activePoints.length * 100).toFixed(1)}%`,
         avgError: successCount > 0 ? (totalError / successCount).toFixed(2) : 'N/A',
-        sampleResults: trackingResults.slice(0, 5)
+        sampleResults
       });
 
       // Cleanup OpenCV matrices

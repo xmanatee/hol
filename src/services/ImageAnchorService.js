@@ -971,6 +971,22 @@ export class ImageAnchorService {
    */
   _updateWithKeypoints(grayImage, timestamp, depthContext = {}, updateTimings = null) {
     logger.debugEvery('ImageAnchor', 'track-to-frame-start', 1000, 'Keypoint tracking - starting trackToFrame');
+    let relocalizationAttempted = false;
+    const attemptRelocalization = reason => {
+      if (relocalizationAttempted) {
+        return {
+          success: false,
+          reason: 'Descriptor relocalization already attempted during this update',
+        };
+      }
+
+      relocalizationAttempted = true;
+      const relocalizationStart = this._startUpdateTiming(updateTimings);
+      const result = this._attemptKeyframeRelocalization(grayImage, timestamp, reason);
+      this._recordUpdateTiming(updateTimings, 'relocalizationMs', relocalizationStart);
+      return result;
+    };
+
     let stageStart = this._startUpdateTiming(updateTimings);
     let trackingResult = this.keypointTracker.trackToFrame(this.cv, grayImage);
     this._recordUpdateTiming(updateTimings, 'keypointTrackMs', stageStart);
@@ -984,9 +1000,7 @@ export class ImageAnchorService {
     });
 
     if (!trackingResult.success) {
-      stageStart = this._startUpdateTiming(updateTimings);
-      const relocalizationResult = this._attemptKeyframeRelocalization(grayImage, timestamp, trackingResult.reason);
-      this._recordUpdateTiming(updateTimings, 'relocalizationMs', stageStart);
+      const relocalizationResult = attemptRelocalization(trackingResult.reason);
       if (relocalizationResult.success) {
         trackingResult = relocalizationResult.trackingResult;
         logger.info('ImageAnchor', 'Recovered keypoint tracking through descriptor relocalization:', {
@@ -1032,9 +1046,7 @@ export class ImageAnchorService {
     const minActivePoints = 8;
 
     if (this.metrics.trackingSuccessRate < minSuccessRate || this.metrics.keypointCount < minActivePoints) {
-      stageStart = this._startUpdateTiming(updateTimings);
-      const relocalizationResult = this._attemptKeyframeRelocalization(grayImage, timestamp, 'Insufficient keypoint tracking quality');
-      this._recordUpdateTiming(updateTimings, 'relocalizationMs', stageStart);
+      const relocalizationResult = attemptRelocalization('Insufficient keypoint tracking quality');
       if (relocalizationResult.success) {
         trackingResult = relocalizationResult.trackingResult;
         this.metrics.trackingSuccessRate = trackingResult.successRate || 0;
@@ -1075,9 +1087,7 @@ export class ImageAnchorService {
 
     const preliminaryAnchorPosition = this.keypointTracker.getAnchorPosition();
     if (this._shouldAttemptGeometryRelocalization(preliminaryAnchorPosition)) {
-      stageStart = this._startUpdateTiming(updateTimings);
-      const relocalizationResult = this._attemptKeyframeRelocalization(grayImage, timestamp, 'Reference geometry became incoherent');
-      this._recordUpdateTiming(updateTimings, 'relocalizationMs', stageStart);
+      const relocalizationResult = attemptRelocalization('Reference geometry became incoherent');
       if (relocalizationResult.success) {
         trackingResult = relocalizationResult.trackingResult;
         this.metrics.trackingSuccessRate = trackingResult.successRate || 0;
@@ -1224,13 +1234,18 @@ export class ImageAnchorService {
       reconstructionConsistentWithTracker,
     });
     const rejectedReconstruction = poseArbitration.rejected[reconstructionPose?.method]?.reason || null;
+    const useArbiterPlanarPosition = this._shouldUseArbiterPlanarPosition({
+      poseArbitration,
+      planarPose,
+      trackerAnchorPosition,
+    });
     const reconstructionCandidateAllowed = !rejectedReconstruction ||
       ['low-confidence'].includes(rejectedReconstruction) ||
       selectedReconstructionReady ||
       useStrongCurvedReconstructionPosition ||
       useModerateCurvedReconstructionRecovery;
 
-    if (planarPoseUsableForTransform && (preferPlanarPose || usePlanarPatchTransform)) {
+    if (planarPoseUsableForTransform && (preferPlanarPose || usePlanarPatchTransform || useArbiterPlanarPosition)) {
       newPosition = this._filterPositionCandidate(planarPose.position, timestamp, planarPose.method);
       positionMethod = planarPose.method;
       planarTransform = this._updatePlanarTransform(
@@ -2036,6 +2051,15 @@ export class ImageAnchorService {
     this.metrics.rejectedPoseCandidates = result.rejected;
 
     return result;
+  }
+
+  _shouldUseArbiterPlanarPosition({ poseArbitration, planarPose, trackerAnchorPosition }) {
+    if (poseArbitration.selected?.source !== planarPose?.method ||
+        trackerAnchorPosition?.method !== 'reference_similarity_transform') {
+      return false;
+    }
+
+    return poseArbitration.rejected.reference_similarity_transform?.reason === 'weak-geometry';
   }
 
   _rejectTrackedPointsOutsideObjectSupport() {
@@ -3563,8 +3587,15 @@ export class ImageAnchorService {
     if (method !== 'reference_similarity_transform' ||
         !this.curvedMotionSample ||
         !this._hasCurvedReconstructionTarget() ||
-        this.trackingMode === RECONSTRUCTION_POSE_MODEL ||
         this.metrics.reconstructionReady !== true) {
+      return false;
+    }
+
+    if (this._shouldUseSparseCurvedMotionPrediction()) {
+      return true;
+    }
+
+    if (this.trackingMode === RECONSTRUCTION_POSE_MODEL) {
       return false;
     }
 
@@ -3578,6 +3609,23 @@ export class ImageAnchorService {
       matureLandmarks >= 16 &&
       mapConfidence >= 0.6 &&
       (confidence <= 0.32 || residual >= 9);
+  }
+
+  _shouldUseSparseCurvedMotionPrediction() {
+    if (this.trackingMode !== RECONSTRUCTION_POSE_MODEL ||
+        !this._hasMatureSparseCurvedMap()) {
+      return false;
+    }
+
+    const activeLandmarks = this.metrics.activeLandmarkCount || this.metrics.keypointCount || 0;
+    const objectOwnedLandmarks = this.metrics.objectOwnedLandmarks ?? activeLandmarks;
+    const ownedRatio = objectOwnedLandmarks / Math.max(1, activeLandmarks);
+
+    return activeLandmarks >= 24 &&
+      activeLandmarks <= 32 &&
+      ownedRatio >= 0.75 &&
+      (this.metrics.poseInliers || 0) === 0 &&
+      (this.metrics.reconstructionPoseInliers || 0) === 0;
   }
 
   _hasMatureSparseCurvedMap() {

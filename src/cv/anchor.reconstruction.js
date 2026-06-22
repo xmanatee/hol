@@ -12,6 +12,7 @@ import {
 } from './anchor.reconstruction.math.js';
 import { createSurfacePreview, emptySurfacePreview } from './anchor.reconstruction.preview.js';
 import {
+  MOBILE_AFFINE_SAMPLE_WINDOW,
   fitRobustSimilarity,
   selectCoherentObservations,
   transformPoint2,
@@ -320,6 +321,7 @@ export class SparseObjectReconstructor {
       threshold: this._usesTargetSurfacePrior() ? 12 : 10,
       minInlierRatio: this._usesTargetSurfacePrior() ? 0.42 : 0.56,
       model: 'affine',
+      maxSample: MOBILE_AFFINE_SAMPLE_WINDOW,
     };
   }
 
@@ -529,6 +531,7 @@ export class SparseObjectReconstructor {
           threshold: 10,
           minInlierRatio: 0.42,
           model: 'affine',
+          maxSample: MOBILE_AFFINE_SAMPLE_WINDOW,
         }
       );
 
@@ -569,6 +572,7 @@ export class SparseObjectReconstructor {
         threshold: 10,
         minInlierRatio: 0.5,
         model: 'affine',
+        maxSample: MOBILE_AFFINE_SAMPLE_WINDOW,
       }
     );
 

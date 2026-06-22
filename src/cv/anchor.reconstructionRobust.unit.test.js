@@ -42,6 +42,60 @@ test('robust affine fit keeps the dominant transform with capped hypotheses', ()
   assert.ok(fit.averageResidual < 1);
 });
 
+test('robust affine fit keeps quality sampling by default and supports spatial coverage when requested', () => {
+  const clutter = Array.from({ length: 24 }, (_, index) => ({
+    id: `clutter-${index}`,
+    reference: { x: index * 12, y: 0 },
+    current: { x: 420 + index * 31, y: -260 + (index % 5) * 95 },
+    quality: 10,
+  }));
+  const highRankedLineInliers = [0, 24, 48, 72].map((x, index) => {
+    const reference = { x, y: 96 };
+    return {
+      id: `line-inlier-${index}`,
+      reference,
+      current: affinePoint(reference),
+      quality: 9,
+    };
+  });
+  const lowerRankedSurfaceInliers = [
+    { x: 0, y: 32 },
+    { x: 24, y: 32 },
+    { x: 48, y: 32 },
+    { x: 72, y: 32 },
+    { x: 0, y: 128 },
+    { x: 24, y: 128 },
+    { x: 48, y: 128 },
+    { x: 72, y: 128 },
+  ].map((reference, index) => ({
+    id: `surface-inlier-${index}`,
+    reference,
+    current: affinePoint(reference),
+    quality: 1,
+  }));
+
+  const observations = [
+    ...clutter,
+    ...highRankedLineInliers,
+    ...lowerRankedSurfaceInliers,
+  ];
+  const qualityFit = fitRobustAffine2D(observations, {
+    minInliers: 10,
+    threshold: 4,
+    maxSample: 28,
+  });
+  const spatialFit = fitRobustAffine2D(observations, {
+    minInliers: 10,
+    threshold: 4,
+    maxSample: 28,
+    sampleCoverage: 'spatial',
+  });
+
+  assert.equal(qualityFit.success, false);
+  assert.equal(spatialFit.success, true);
+  assert.ok(spatialFit.inlierCount >= 12);
+});
+
 test('robust similarity fit respects explicit sample caps', () => {
   const observations = Array.from({ length: 18 }, (_, index) => {
     const reference = {

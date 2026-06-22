@@ -727,3 +727,15 @@ test('sparse object reconstructor rejects cup-like sliding tracks that do not pr
   assert.ok(state.statistics.mapConfidence < 0.4, `map confidence ${state.statistics.mapConfidence.toFixed(3)}`);
   assert.equal(result.success, false);
 });
+
+test('sparse reconstruction bounds affine consensus for the mobile hot path', () => {
+  const reconstructor = new SparseObjectReconstructor();
+
+  reconstructor.reset({
+    anchorReference: { x: 200, y: 180 },
+    templateRegion: { x: 130, y: 80, width: 140, height: 220 },
+    targetClass: 'cup',
+  });
+
+  assert.equal(reconstructor._mappingCoherenceOptions().maxSample, 28);
+});

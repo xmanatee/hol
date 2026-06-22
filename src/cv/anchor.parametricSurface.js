@@ -3,6 +3,7 @@ import {
   boundsForPoints,
   fitRobustAffine2D,
   fitRobustSimilarity,
+  MOBILE_AFFINE_SAMPLE_WINDOW,
   selectCoherentObservations,
   toActiveObservations,
   transformPoint2,
@@ -54,8 +55,6 @@ const affineVerticalScale = transform => Math.hypot(transform.rowX[1], transform
 const affineRotation = transform => Math.atan2(transform.rowY[0], transform.rowX[0]);
 
 const readinessFromGeometry = consistency => clamp((consistency - 0.45) / 0.22, 0, 1);
-
-const CURVED_AFFINE_SAMPLE_WINDOW = 28;
 
 export class ParametricSurfaceReconstructor {
   constructor(config = {}) {
@@ -280,7 +279,7 @@ export class ParametricSurfaceReconstructor {
     const fit = this._fitAttachmentTransform(stateFrame.observations, {
       minInliers: 4,
       threshold: 6,
-      maxSample: this._coherenceModel() === 'affine' ? CURVED_AFFINE_SAMPLE_WINDOW : undefined,
+      maxSample: this._coherenceModel() === 'affine' ? MOBILE_AFFINE_SAMPLE_WINDOW : undefined,
     });
     this.referenceFitCache = { frame: stateFrame, fit };
     return fit;
@@ -297,7 +296,7 @@ export class ParametricSurfaceReconstructor {
         model: 'affine',
         threshold: 18,
         minInlierRatio: 0.36,
-        maxSample: CURVED_AFFINE_SAMPLE_WINDOW,
+        maxSample: MOBILE_AFFINE_SAMPLE_WINDOW,
       };
   }
 
