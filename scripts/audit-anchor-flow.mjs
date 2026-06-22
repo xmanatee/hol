@@ -23,6 +23,14 @@ const IMPORTANT_OPTIONS = new Set([
   'radius',
   'reason',
 ]);
+const STRICT_OPTIONS_WITHOUT_DEFAULTS = new Set([
+  'imageData',
+  'objectSupportMask',
+  'position',
+  'referencePoint',
+  'tapPosition',
+  'trackingMode',
+]);
 const ALLOWED_OMISSIONS = [
   {
     callFile: 'src/services/AnchorManager.js',
@@ -97,6 +105,7 @@ const walkFiles = dir => {
 ROOTS.forEach(walkFiles);
 
 const functionOptions = new Map();
+const defaultedImportantOptions = [];
 const calls = [];
 
 const nodeLocation = (node, file) => `${file}:${node.loc?.start?.line || '?'}`;
@@ -125,6 +134,19 @@ const objectPatternKeys = pattern => {
     .map(prop => prop.type === 'ObjectProperty' ? keyName(prop.key) : null)
     .filter(Boolean);
 };
+const recordDefaultedImportantOptions = (pattern, file) => {
+  if (pattern?.type !== 'ObjectPattern') return;
+  for (const prop of pattern.properties) {
+    if (prop.type !== 'ObjectProperty' || prop.value?.type !== 'AssignmentPattern') continue;
+    const name = keyName(prop.key);
+    if (STRICT_OPTIONS_WITHOUT_DEFAULTS.has(name)) {
+      defaultedImportantOptions.push({
+        option: name,
+        loc: nodeLocation(prop, file),
+      });
+    }
+  }
+};
 const objectExpressionKeys = node => {
   if (node?.type !== 'ObjectExpression') return null;
   return node.properties
@@ -136,6 +158,7 @@ const recordFunction = (name, node, file) => {
   if (!name) return;
   node.params?.forEach((param, index) => {
     const target = param.type === 'AssignmentPattern' ? param.left : param;
+    recordDefaultedImportantOptions(target, file);
     const keys = objectPatternKeys(target);
     const relevant = keys.filter(key => IMPORTANT_OPTIONS.has(key));
     if (!relevant.length) return;
@@ -203,13 +226,14 @@ for (const call of calls) {
 const diagnosticsSource = fs.readFileSync('src/utils/anchorDiagnostics.js', 'utf8');
 const missingDiagnostics = REQUIRED_DIAGNOSTICS.filter(field => !diagnosticsSource.includes(`metrics.${field}`));
 
-if (optionOmissions.length || missingDiagnostics.length) {
-  console.error(JSON.stringify({ optionOmissions, missingDiagnostics }, null, 2));
+if (optionOmissions.length || defaultedImportantOptions.length || missingDiagnostics.length) {
+  console.error(JSON.stringify({ optionOmissions, defaultedImportantOptions, missingDiagnostics }, null, 2));
   process.exit(1);
 }
 
 console.log(JSON.stringify({
   checkedFiles: files.length,
   optionOmissions: 0,
+  defaultedImportantOptions: 0,
   missingDiagnostics: 0,
 }, null, 2));

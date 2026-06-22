@@ -83,7 +83,7 @@ const pointInPolygon = (point, polygon) => {
 const createSyntheticObjectSupportMask = ({
   sequence,
   frame,
-  referencePoint = sequence.tap,
+  referencePoint,
   updatedAtFrame = 0,
 }) => {
   if (frame.objectMask) {
@@ -190,7 +190,7 @@ const settle = promise => promise.then(
 export const replayImageAnchorSequence = async ({
   cv,
   sequence,
-  trackingMode = 'sparse-reconstruction',
+  trackingMode,
   useObjectSupportMask = true,
   depthFrameForFrame = null,
   refreshObjectSupportMask = false,
@@ -205,7 +205,7 @@ export const replayImageAnchorSequence = async ({
 
   const firstFrame = sequence.frames[0];
   const objectSupportMask = useObjectSupportMask
-    ? createSyntheticObjectSupportMask({ sequence, frame: firstFrame })
+    ? createSyntheticObjectSupportMask({ sequence, frame: firstFrame, referencePoint: sequence.tap })
     : null;
   const createAttempt = await settle(service.createAnchor(
     firstFrame.imageData,
