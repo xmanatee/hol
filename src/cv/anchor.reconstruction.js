@@ -25,8 +25,9 @@ import {
   pointForSurfaceModel,
   surfaceMeshForModel,
 } from './anchor.parametricGeometry.js';
+import { RECONSTRUCTION_POSE_MODEL } from './anchor.reconstructionModes.js';
 
-export const RECONSTRUCTION_POSE_MODEL = 'sparse-reconstruction';
+export { RECONSTRUCTION_POSE_MODEL };
 
 const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 

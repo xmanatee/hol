@@ -12,7 +12,13 @@ import { describeAnchorState } from '../utils/anchorDiagnostics.js';
 import { collectRuntimeReadiness } from '../utils/runtimeReadiness.js';
 import { RECONSTRUCTION_POSE_MODEL, isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
 import { shouldAutoStartObjectVoice } from '../audio/objectVoicePolicy.js';
-import { shouldRenderAnchorOverlay } from '../utils/overlayVisibility.js';
+import { getRenderableAnchorOverlay, shouldMountOverlayScene } from '../utils/overlayVisibility.js';
+import {
+  ANCHOR_TRACKING_INTERVAL_MS,
+  SEGMENTATION_REFRESH_CHECK_INTERVAL_MS,
+  TAP_FRAME_SNAPSHOT_INTERVAL_MS,
+  shouldRunTimedStep,
+} from '../utils/cvScheduling.js';
 
 const OverlayScene = lazy(() => import('../scenes/OverlayScene.jsx'));
 
@@ -94,6 +100,10 @@ const CameraView = () => {
   const anchorFeedbackTimeoutRef = useRef(null);
   const autoVoiceRequestRef = useRef(0);
   const mapReadyAnchorRef = useRef(null);
+  const lastAnchorUpdateAtRef = useRef(0);
+  const lastSegmentationRefreshCheckAtRef = useRef(0);
+  const latestTapFrameRef = useRef(null);
+  const lastTapFrameSnapshotAtRef = useRef(0);
 
   const [showStats, setShowStats] = useState(false);
   const [discoveredMeshes, setDiscoveredMeshes] = useState([]);
@@ -128,7 +138,6 @@ const CameraView = () => {
     anchorSystemState,
     personalityData,
     ttsData,
-    cvLoaded,
     services,
     startCamera,
     resumeCamera,
@@ -154,6 +163,15 @@ const CameraView = () => {
     anchorSystemState
   }), [cameraState, anchorSystemState]);
   const cameraViewportStyle = useMemo(() => ({}), []);
+  const renderableAnchor = useMemo(() => getRenderableAnchorOverlay({
+    activeAnchor: anchorSystemState.activeAnchor,
+    anchorState: anchorSystemState.anchorState
+  }), [anchorSystemState.activeAnchor, anchorSystemState.anchorState]);
+  const overlaySceneEnabled = shouldMountOverlayScene({
+    cameraState,
+    activeAnchor: anchorSystemState.activeAnchor,
+    anchorState: anchorSystemState.anchorState
+  });
 
   useEffect(() => () => {
     if (anchorFeedbackTimeoutRef.current) {
@@ -316,7 +334,7 @@ const CameraView = () => {
 
   // Handle canvas tap for anchor creation or clearing
   const handleCanvasTap = useCallback(async (event, canvas) => {
-    if (!canvas || !cvLoaded || !anchorSystemState.initialized) {
+    if (!canvas || cameraState !== 'active') {
       return;
     }
 
@@ -333,8 +351,11 @@ const CameraView = () => {
     if (anchorSystemState.mode === 'detection') {
       const detection = findDetectionAtPosition(position);
       try {
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const imageData = latestTapFrameRef.current;
+        if (!imageData) {
+          showAnchorFeedback('Preparing camera frame...', 'warn');
+          return;
+        }
 
         logger.info('CameraView', `Creating tap-local anchor at (${position.x.toFixed(1)}, ${position.y.toFixed(1)})`, {
           detection: detection
@@ -348,9 +369,15 @@ const CameraView = () => {
           canvasSize: `${canvas.width}x${canvas.height}`
         });
 
+        if (!anchorSystemState.initialized) {
+          showAnchorFeedback('Preparing vision tracking...', 'warn');
+        }
+
         const result = await createAnchorFromTap(position, imageData);
 
         if (result.success) {
+          lastAnchorUpdateAtRef.current = 0;
+          lastSegmentationRefreshCheckAtRef.current = 0;
           logger.info('CameraView', 'Anchor created successfully:', {
             keypoints: result.keypoints,
             quality: result.quality?.toFixed(3),
@@ -386,10 +413,14 @@ const CameraView = () => {
       logger.info('CameraView', 'Clearing anchor to return to detection mode');
       autoVoiceRequestRef.current++;
       mapReadyAnchorRef.current = null;
+      lastAnchorUpdateAtRef.current = 0;
+      lastSegmentationRefreshCheckAtRef.current = 0;
+      latestTapFrameRef.current = null;
+      lastTapFrameSnapshotAtRef.current = 0;
       clearAnchor();
       showAnchorFeedback('Anchor cleared. Tap any object to anchor again.', 'good');
     }
-  }, [cvLoaded, anchorSystemState, findDetectionAtPosition, createAnchorFromTap, clearAnchor, updateMetric, showAnchorFeedback, generateAndSpeakForAnchor]);
+  }, [cameraState, anchorSystemState, findDetectionAtPosition, createAnchorFromTap, clearAnchor, updateMetric, showAnchorFeedback, generateAndSpeakForAnchor]);
 
   useEffect(() => {
     const activeAnchor = anchorSystemState.activeAnchor;
@@ -452,10 +483,21 @@ const CameraView = () => {
           && detectionState.lastDetections !== lastProcessedDetectionsRef.current;
 
         if (anchorSystemState.mode === 'detection') {
+          const now = performance.now();
           const shouldDetect = services.detection.shouldDetectFrame(frameIndex);
-          const imageData = shouldDetect || hasUnprocessedDetections
+          const shouldRefreshTapFrame = shouldRunTimedStep({
+            now,
+            lastRunAt: lastTapFrameSnapshotAtRef.current,
+            intervalMs: TAP_FRAME_SNAPSHOT_INTERVAL_MS,
+          });
+          const imageData = shouldDetect || hasUnprocessedDetections || shouldRefreshTapFrame
             ? ctx.getImageData(0, 0, canvas.width, canvas.height)
             : null;
+
+          if (shouldRefreshTapFrame && imageData) {
+            latestTapFrameRef.current = imageData;
+            lastTapFrameSnapshotAtRef.current = now;
+          }
 
           if (shouldDetect) {
             detectObjects(imageData, { frameIndex });
@@ -466,11 +508,32 @@ const CameraView = () => {
             lastProcessedDetectionsRef.current = detectionState.lastDetections;
           }
         } else if (anchorSystemState.mode === 'anchor') {
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          latestTapFrameRef.current = null;
+          lastTapFrameSnapshotAtRef.current = 0;
+          const now = performance.now();
+          const shouldUpdateAnchor = shouldRunTimedStep({
+            now,
+            lastRunAt: lastAnchorUpdateAtRef.current,
+            intervalMs: ANCHOR_TRACKING_INTERVAL_MS,
+          });
+          const shouldCheckSegmentationRefresh = shouldRunTimedStep({
+            now,
+            lastRunAt: lastSegmentationRefreshCheckAtRef.current,
+            intervalMs: SEGMENTATION_REFRESH_CHECK_INTERVAL_MS,
+          });
 
-          try {
-            const updateResult = updateAnchor(imageData);
-            refreshAnchorSegmentation(imageData);
+          if (shouldUpdateAnchor || shouldCheckSegmentationRefresh) {
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const updateResult = shouldUpdateAnchor ? updateAnchor(imageData) : null;
+
+            if (shouldUpdateAnchor) {
+              lastAnchorUpdateAtRef.current = now;
+            }
+
+            if (shouldCheckSegmentationRefresh) {
+              refreshAnchorSegmentation(imageData);
+              lastSegmentationRefreshCheckAtRef.current = now;
+            }
 
             if (frameIndex % 30 === 0) {
               logger.debug('CameraView', 'Anchor tracking update:', {
@@ -483,9 +546,6 @@ const CameraView = () => {
                 activeAnchor: !!anchorSystemState.activeAnchor
               });
             }
-          } catch (error) {
-            logger.error('CameraView', 'Anchor update failed:', error);
-            updateMetric('Anchor update', error.message);
           }
         }
 
@@ -590,8 +650,8 @@ const CameraView = () => {
 
   return (
     <div className="camera-view fixed top-0 left-0 w-screen h-screen" style={{ overflow: 'visible' }}>
-      {/* Video element - hidden when active since canvas shows the processed image */}
-      <CameraVideo ref={videoRef} isVisible={cameraState === 'idle' || cameraState === 'blocked'} />
+      {/* Video source for camera playback; the canvas presents active frames. */}
+      <CameraVideo ref={videoRef} isVisible={cameraState !== 'active'} />
       
       {/* Canvas for CV processing and detection overlay */}
       <DetectionCanvas
@@ -603,7 +663,7 @@ const CameraView = () => {
       <AnchorFeedback feedback={anchorFeedback} />
 
       {/* WebGL Overlay Scene */}
-      {cameraState === 'active' && (
+      {overlaySceneEnabled && (
         <Suspense fallback={null}>
           <OverlayScene
             width={videoDimensions?.width || 1280}
@@ -623,10 +683,7 @@ const CameraView = () => {
             microphoneDebugMode={microphoneDebugMode}
             microphoneBaselineResetToken={microphoneBaselineResetToken}
             style={cameraViewportStyle}
-            activeAnchor={shouldRenderAnchorOverlay({
-              activeAnchor: anchorSystemState.activeAnchor,
-              anchorState: anchorSystemState.anchorState
-            }) ? anchorSystemState.activeAnchor : null}
+            activeAnchor={renderableAnchor}
             anchorState={anchorSystemState.anchorState}
           />
         </Suspense>

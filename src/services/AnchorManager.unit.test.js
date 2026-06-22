@@ -525,6 +525,7 @@ test('pose dropout requests immediate segmentation refresh and accepts overlappi
   manager.activeAnchor = {
     position: { x: 126, y: 60, z: 0 },
     sourceDetection: {
+      class: 'mug',
       objectSupportMask: {
         bbox: { x: 58, y: 44, width: 64, height: 45 },
       },
@@ -554,6 +555,180 @@ test('pose dropout requests immediate segmentation refresh and accepts overlappi
 
   assert.deepEqual(receivedTap, { x: 126, y: 60, z: 0 });
   assert.equal(updateReason, 'pose-dropout-recovery');
+});
+
+test('curved motion hold requests recovery segmentation before interval elapses', async () => {
+  const refreshedMask = createObjectSupportMask({
+    width: 180,
+    height: 140,
+    data: new Uint8Array(180 * 140),
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 96, y: 58 },
+    createdAtFrame: 8,
+  });
+  for (let y = 46; y <= 86; y++) {
+    for (let x = 52; x <= 112; x++) {
+      refreshedMask.data[y * refreshedMask.width + x] = 255;
+    }
+  }
+  refreshedMask.bbox = { x: 52, y: 46, width: 61, height: 41 };
+
+  let updateReason = null;
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      updateObjectSupportMask: (mask, { reason }) => {
+        assert.equal(mask, refreshedMask);
+        updateReason = reason;
+        return true;
+      },
+    },
+    interactiveSegmenterService: {
+      segmentTap: async () => refreshedMask,
+    },
+  });
+  manager.initialized = true;
+  manager.mode = 'anchor';
+  manager.lastSegmentationRefreshAt = performance.now();
+  manager.activeAnchor = {
+    position: { x: 126, y: 60, z: 0 },
+    sourceDetection: {
+      class: 'mug',
+      objectSupportMask: {
+        bbox: { x: 58, y: 44, width: 64, height: 45 },
+      },
+    },
+  };
+  manager.anchorState = {
+    state: 'tracking',
+    position: { x: 126, y: 60, z: 0 },
+    metrics: {
+      activeLandmarkCount: 24,
+      objectOwnedLandmarks: 24,
+      poseInliers: 12,
+      poseSource: 'parametric-surface',
+      trackingSuccessRate: 0.94,
+      reconstructionReady: true,
+      reconstructionMapConfidence: 0.62,
+      reconstructionMatureLandmarks: 36,
+      positionFilterAdjustment: 'curved-motion-hold',
+      currentObjectSupportMaskBounds: { x: 58, y: 44, width: 64, height: 45 },
+    },
+  };
+
+  assert.equal(manager.refreshSegmentationIfNeeded({
+    width: 180,
+    height: 140,
+    data: new Uint8ClampedArray(180 * 140 * 4),
+  }), true);
+
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(updateReason, 'curved-object-recovery');
+});
+
+test('curved motion hold does not request mug recovery for textured cups', () => {
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      updateObjectSupportMask: () => {
+        throw new Error('cup support refresh should not run mug-specific recovery');
+      },
+    },
+    interactiveSegmenterService: {
+      segmentTap: async () => {
+        throw new Error('cup support refresh should not run mug-specific recovery');
+      },
+    },
+  });
+  manager.initialized = true;
+  manager.mode = 'anchor';
+  manager.lastSegmentationRefreshAt = performance.now();
+  manager.activeAnchor = {
+    position: { x: 126, y: 60, z: 0 },
+    sourceDetection: {
+      class: 'cup',
+      objectSupportMask: {
+        bbox: { x: 58, y: 44, width: 64, height: 45 },
+      },
+    },
+  };
+  manager.anchorState = {
+    state: 'tracking',
+    position: { x: 126, y: 60, z: 0 },
+    metrics: {
+      activeLandmarkCount: 24,
+      objectOwnedLandmarks: 24,
+      poseInliers: 12,
+      poseSource: 'parametric-surface',
+      trackingSuccessRate: 0.94,
+      reconstructionReady: true,
+      reconstructionMapConfidence: 0.62,
+      reconstructionMatureLandmarks: 36,
+      positionFilterAdjustment: 'curved-motion-hold',
+      currentObjectSupportMaskBounds: { x: 58, y: 44, width: 64, height: 45 },
+    },
+  };
+
+  assert.equal(manager.refreshSegmentationIfNeeded({
+    width: 180,
+    height: 140,
+    data: new Uint8ClampedArray(180 * 140 * 4),
+  }), false);
+});
+
+test('sparse mug pose dropout skips support refresh when tracker and reconstruction agree', () => {
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      updateObjectSupportMask: () => {
+        throw new Error('low-delta sparse mug dropout should not refresh support');
+      },
+    },
+    interactiveSegmenterService: {
+      segmentTap: async () => {
+        throw new Error('low-delta sparse mug dropout should not refresh support');
+      },
+    },
+  });
+  manager.initialized = true;
+  manager.mode = 'anchor';
+  manager.lastSegmentationRefreshAt = 0;
+  manager.trackingMode = 'sparse-reconstruction';
+  manager.activeAnchor = {
+    position: { x: 126, y: 60, z: 0 },
+    trackingMode: 'sparse-reconstruction',
+    sourceDetection: {
+      class: 'mug',
+      objectSupportMask: {
+        bbox: { x: 58, y: 44, width: 64, height: 45 },
+      },
+    },
+  };
+  manager.anchorState = {
+    state: 'tracking',
+    position: { x: 126, y: 60, z: 0 },
+    metrics: {
+      activeLandmarkCount: 18,
+      objectOwnedLandmarks: 18,
+      poseInliers: 0,
+      poseSource: null,
+      trackingMode: 'sparse-reconstruction',
+      trackingSuccessRate: 0.94,
+      reconstructionReady: true,
+      reconstructionMapConfidence: 0.91,
+      reconstructionMatureLandmarks: 39,
+      reconstructionTrackerDelta: 0.02,
+      currentObjectSupportMaskBounds: { x: 58, y: 44, width: 64, height: 45 },
+    },
+  };
+
+  assert.equal(manager.refreshSegmentationIfNeeded({
+    width: 180,
+    height: 140,
+    data: new Uint8ClampedArray(180 * 140 * 4),
+  }), false);
 });
 
 test('segmentation refresh radius starts local and grows with object evidence', () => {

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   RECONSTRUCTION_MODES,
-  createReconstructionEngine,
 } from './anchor.reconstructionModes.js';
+import { createReconstructionEngine } from './anchor.reconstructionEngineFactory.js';
 import {
   modelFromRegion,
   normalForSurfaceModel,

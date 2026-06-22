@@ -20,8 +20,9 @@ import {
   pointForSurfaceModel as pointForModel,
   surfaceMeshForModel as surfaceMesh,
 } from './anchor.parametricGeometry.js';
+import { PARAMETRIC_SURFACE_POSE_MODEL } from './anchor.reconstructionModes.js';
 
-export const PARAMETRIC_SURFACE_POSE_MODEL = 'parametric-surface';
+export { PARAMETRIC_SURFACE_POSE_MODEL };
 
 const rotateNormal = (rotation, normal) => {
   const rotated = {

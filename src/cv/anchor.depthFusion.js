@@ -11,8 +11,9 @@ import {
   median,
 } from './anchor.depthFusion.geometry.js';
 import { DepthFusionSurfelMap } from './anchor.depthFusion.surfels.js';
+import { DEPTH_FUSION_POSE_MODEL } from './anchor.reconstructionModes.js';
 
-export const DEPTH_FUSION_POSE_MODEL = 'depth-fusion';
+export { DEPTH_FUSION_POSE_MODEL };
 
 const depthQualityFromSurfels = surfels => {
   if (surfels.size < 3) return 0;

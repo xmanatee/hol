@@ -10,18 +10,18 @@ import { PatchKeyframeRelocalizer } from '../cv/anchor.relocalization.js';
 import { HomographyEstimator } from '../cv/anchor.homography.js';
 import { AffineParallaxPoseEstimator } from '../cv/anchor.affinePose.js';
 import {
-  createReconstructionEngine,
   DEPTH_FUSION_POSE_MODEL,
   DIRECT_PHOTOMETRIC_POSE_MODEL,
   isReconstructionMode,
   RECONSTRUCTION_MODE_IDS,
   RECONSTRUCTION_POSE_MODEL,
 } from '../cv/anchor.reconstructionModes.js';
+import { createReconstructionEngine } from '../cv/anchor.reconstructionEngineFactory.js';
 import { ObjectSurfaceModel } from '../cv/objectSurfaceModel.js';
 import { scorePoseCandidates } from '../cv/poseCandidateArbiter.js';
 import { AnchorPersistenceSystem } from '../cv/anchor.persistence.js';
 import { OneEuroFilter } from '../cv/oneEuroFilter.js';
-import { checkCriticalFeatures } from '../cv/opencv.features.test.js';
+import { checkCriticalFeatures } from '../cv/opencv.features.js';
 import {
   calculateTapLocalRadius,
   createTapLocalObjectSupportMask,
@@ -33,6 +33,7 @@ import {
 import { calculateTapLocalTemplateRegion, calculateTemplateRegion } from '../utils/templateRegion.js';
 import { SurfaceNormalStabilizer } from '../utils/normalStabilizer.js';
 import { logger } from '../utils/logger.js';
+import { CURVED_OBJECT_RECOVERY_REASON } from '../cv/curvedObjectRecovery.js';
 
 const POSE_MODEL = 'object-pose';
 const TRACKING_MODES = new Set([POSE_MODEL, ...RECONSTRUCTION_MODE_IDS]);
@@ -55,6 +56,7 @@ const MIN_RECONSTRUCTION_ATTACHMENT_FORESHORTENING = 0.22;
 const OBJECT_SUPPORT_TRACKING_PADDING_RATIO = 0.18;
 const OBJECT_SUPPORT_TRACKING_MIN_PADDING = 12;
 const OBJECT_SUPPORT_TRACKING_MAX_PADDING = 48;
+const MAX_INITIAL_TRACKING_KEYPOINTS = 64;
 
 const createPositionFilter = () => new OneEuroFilter(60, 2.4, 0.075, 1.0);
 const createPlanarScaleFilter = () => new OneEuroFilter(60, 1.2, 0.08, 1.0);
@@ -69,10 +71,31 @@ const OBJECT_SUPPORT_RECOVERY_REASON_PATTERN = /dropout|recovery/i;
 const PLANAR_POSE_POSITION_BLEND = 0.85;
 const MIN_LOW_LAG_TRACKER_CONFIDENCE = 0.55;
 const MAX_LOW_LAG_TRACKER_RESIDUAL = 7;
+const MIN_CURVED_REFERENCE_BLEND_CONFIDENCE = 0.25;
+const MAX_CURVED_REFERENCE_BLEND_RESIDUAL = 12;
+const MIN_CURVED_REFERENCE_BLEND_INLIERS = 8;
+const MAX_SEVERE_CURVED_REFERENCE_CONFIDENCE = 0.08;
+const MIN_SEVERE_CURVED_REFERENCE_RESIDUAL = 24;
+const MIN_SEVERE_CURVED_REFERENCE_TRACKER_DELTA = 24;
+const MAX_SEVERE_CURVED_REFERENCE_LANDMARKS = 32;
+const MAX_REVERSING_PARAMETRIC_MOTION_MAP_CONFIDENCE = 0.7;
+const MAX_REVERSING_PARAMETRIC_MOTION_INLIERS = 17;
+const MIN_REVERSING_PARAMETRIC_MOTION_DELTA = 6;
+const MIN_COHERENT_PARAMETRIC_RELEASE_ACTIVE_LANDMARKS = 18;
+const MIN_COHERENT_PARAMETRIC_RELEASE_MAP_CONFIDENCE = 0.6;
+const MAX_COHERENT_PARAMETRIC_RELEASE_TRACKER_DELTA = 2;
 const CURVED_DROPOUT_MAX_PREDICTION_MS = 220;
 const CURVED_DROPOUT_MAX_STEP = 18;
 const SPARSE_CURVED_REFERENCE_MAX_STEP = 8;
 const OBJECT_SUPPORT_POSITION_CORRECTION_MIN_DELTA = 4;
+const MOTION_HELD_SUPPORT_RECOVERY_MIN_RATIO = 0.16;
+const IMMATURE_MUG_SUPPORT_RECOVERY_LANDMARKS = 16;
+const IMMATURE_MUG_HIGH_ACTIVE_LANDMARKS = 20;
+const IMMATURE_MUG_SUPPORT_RECOVERY_MAX_STEP = 6;
+const SPARSE_CUP_SUPPORT_RECOVERY_MAX_STEP = 6;
+const DEPTH_CUP_COHERENT_SUPPORT_RECOVERY_MAX_STEP = 12;
+const MAX_DEPTH_CUP_COHERENT_SUPPORT_RECOVERY_TRACKER_DELTA = 6;
+const SPARSE_MUG_MOTION_HOLD_MAX_ACTIVE_LANDMARKS = 44;
 const PLANAR_POSE_POSITION_METHODS = new Set([
   RECONSTRUCTION_POSE_MODEL,
   'planar-homography',
@@ -252,7 +275,7 @@ export class ImageAnchorService {
 
     logger.info('ImageAnchor', 'Initializing...');
 
-    const criticalCheck = checkCriticalFeatures();
+    const criticalCheck = checkCriticalFeatures(cv);
     if (!criticalCheck.allAvailable) {
       const missingFeatures = criticalCheck.missing.join(', ');
       const error = criticalCheck.error || `Missing critical OpenCV features: ${missingFeatures}`;
@@ -392,6 +415,9 @@ export class ImageAnchorService {
         isReconstructionMode(this.trackingMode) ? this.trackingMode : RECONSTRUCTION_POSE_MODEL
       );
       this.reconstructor.reset({ anchorReference: tapPosition, templateRegion: reconstructionRegion, targetClass });
+      if (this.reconstructor.ready) {
+        await this.reconstructor.ready;
+      }
       const keyframeResult = trackingKeypoints.length > 0
         ? this.relocalizer.storeKeyframeFromTrackedPoints(
           gray,
@@ -643,16 +669,29 @@ export class ImageAnchorService {
   }
 
   _applyObjectSupportPositionCorrection(objectSupportMask, reason) {
-    const candidate = this._objectSupportAnchorPosition(objectSupportMask);
+    let candidate = this._objectSupportAnchorPosition(objectSupportMask);
     if (!candidate || !this.currentPosition || objectSupportMask.source === 'warped-mask') {
       this.metrics.objectSupportPositionCorrection = null;
       this.metrics.objectSupportPositionSource = null;
       return null;
     }
 
+    if (this._shouldKeepTrackerPositionDuringSupportRecovery(reason)) {
+      this.metrics.objectSupportPositionCorrection = null;
+      this.metrics.objectSupportPositionSource = null;
+      return null;
+    }
+
+    candidate = this._adjustObjectSupportCorrectionCandidate(candidate, reason);
     const deltaX = candidate.x - this.currentPosition.x;
     const deltaY = candidate.y - this.currentPosition.y;
     const distance = Math.hypot(deltaX, deltaY);
+    if (this._shouldIgnoreMotionHeldSupportCorrection(objectSupportMask, distance, reason)) {
+      this.metrics.objectSupportPositionCorrection = null;
+      this.metrics.objectSupportPositionSource = null;
+      return null;
+    }
+
     const maxStep = this._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, reason);
     if (distance < OBJECT_SUPPORT_POSITION_CORRECTION_MIN_DELTA || maxStep <= 0) {
       this.metrics.objectSupportPositionCorrection = null;
@@ -681,6 +720,55 @@ export class ImageAnchorService {
     return corrected;
   }
 
+  _adjustObjectSupportCorrectionCandidate(candidate, reason) {
+    if (this.trackingMode === 'parametric-surface' &&
+        /mug/i.test(this.anchorTargetClass || '') &&
+        OBJECT_SUPPORT_RECOVERY_REASON_PATTERN.test(reason)) {
+      return {
+        ...candidate,
+        y: this.currentPosition.y,
+      };
+    }
+
+    return candidate;
+  }
+
+  _shouldKeepTrackerPositionDuringSupportRecovery(reason) {
+    const active = this.metrics.activeLandmarkCount ?? this.metrics.activeLandmarks ?? 0;
+    return this._hasImmatureHandledMugPoseDropoutRecovery(reason) &&
+      active >= IMMATURE_MUG_HIGH_ACTIVE_LANDMARKS;
+  }
+
+  _hasImmatureHandledMugPoseDropoutRecovery(reason) {
+    return this.trackingMode === 'parametric-surface' &&
+      /mug/i.test(this.anchorTargetClass || '') &&
+      reason === 'pose-dropout-recovery' &&
+      (this.metrics.reconstructionMatureLandmarks ?? 0) < IMMATURE_MUG_SUPPORT_RECOVERY_LANDMARKS;
+  }
+
+  _shouldIgnoreMotionHeldSupportCorrection(objectSupportMask, distance, reason) {
+    if (!this._hasCurvedReconstructionTarget() ||
+        this.metrics.positionFilterAdjustment !== 'curved-motion-hold') {
+      return false;
+    }
+
+    if (!OBJECT_SUPPORT_RECOVERY_REASON_PATTERN.test(reason)) {
+      return true;
+    }
+
+    const maxExtent = Math.max(objectSupportMask.bbox.width, objectSupportMask.bbox.height);
+    const stalePredictionDistance = this._hasHandledMugCurvedObjectRecovery(reason)
+      ? clamp(maxExtent * 0.06, 6, 14)
+      : clamp(maxExtent * MOTION_HELD_SUPPORT_RECOVERY_MIN_RATIO, 24, 42);
+    return distance < stalePredictionDistance;
+  }
+
+  _hasHandledMugCurvedObjectRecovery(reason) {
+    return this.trackingMode === 'parametric-surface' &&
+      /mug/i.test(this.anchorTargetClass || '') &&
+      reason === CURVED_OBJECT_RECOVERY_REASON;
+  }
+
   _getObjectSupportPositionCorrectionMaxStep(objectSupportMask, reason = 'segmentation-refresh') {
     if (this._hasRigidPlanarTargetClass()) {
       return 0;
@@ -694,14 +782,35 @@ export class ImageAnchorService {
     const curved = this._hasCurvedReconstructionTarget();
     const ratio = curved ? 0.24 : 0.3;
     const recoveryCorrection = OBJECT_SUPPORT_RECOVERY_REASON_PATTERN.test(reason);
+    if (curved && !recoveryCorrection) {
+      return 0;
+    }
     if (mugLike && this.trackingMode === DEPTH_FUSION_POSE_MODEL) {
       return 4;
+    }
+    if (mugLike && this.trackingMode === DIRECT_PHOTOMETRIC_POSE_MODEL) {
+      return 2;
     }
     if (mugLike && this.trackingMode === RECONSTRUCTION_POSE_MODEL) {
       return clamp(maxExtent * ratio, 8, recoveryCorrection ? 12 : 10);
     }
     if (mugLike && this.trackingMode === 'parametric-surface') {
-      return recoveryCorrection ? clamp(maxExtent * ratio, 8, 12) : 0;
+      const maxStep = recoveryCorrection ? clamp(maxExtent * ratio, 8, 12) : 0;
+      return this._hasImmatureHandledMugPoseDropoutRecovery(reason)
+        ? Math.min(maxStep, IMMATURE_MUG_SUPPORT_RECOVERY_MAX_STEP)
+        : maxStep;
+    }
+    if (cupLike && this.trackingMode === RECONSTRUCTION_POSE_MODEL && recoveryCorrection) {
+      return Math.min(clamp(maxExtent * ratio, 8, 14), SPARSE_CUP_SUPPORT_RECOVERY_MAX_STEP);
+    }
+    if (cupLike &&
+        this.trackingMode === DEPTH_FUSION_POSE_MODEL &&
+        recoveryCorrection &&
+        (this.metrics.reconstructionTrackerDelta ?? Infinity) <= MAX_DEPTH_CUP_COHERENT_SUPPORT_RECOVERY_TRACKER_DELTA) {
+      return Math.min(
+        clamp(maxExtent * ratio, 8, 14),
+        DEPTH_CUP_COHERENT_SUPPORT_RECOVERY_MAX_STEP
+      );
     }
     let hardMax = curved ? 10 : 16;
     if (bottleLike || cupLike) {
@@ -733,6 +842,7 @@ export class ImageAnchorService {
     const timingStart = this._startUpdateTiming(updateTimings);
     const timestamp = startTime;
     this.frameIndex++;
+    this._resetFrameObjectSupportCorrectionMetrics();
 
     logger.debugEvery('ImageAnchor', 'anchor-update-start', 1000, 'Starting anchor update:', {
       anchorState: this.anchorState,
@@ -1474,6 +1584,9 @@ export class ImageAnchorService {
       normal: this.currentNormal,
       planarTransform,
       confidence: overallQuality,
+      positionConfidence: newPosition.confidence ?? null,
+      positionAverageResidual: newPosition.averageResidual ?? null,
+      positionInlierCount: newPosition.inlierCount ?? null,
       method: positionMethod,
       inliers: poseInliers,
       poseSource: this.metrics.poseSource,
@@ -2261,6 +2374,10 @@ export class ImageAnchorService {
     const merged = [];
 
     for (const keypoint of candidates) {
+      if (merged.length >= MAX_INITIAL_TRACKING_KEYPOINTS) {
+        break;
+      }
+
       const overlaps = merged.some(existing => (
         Math.hypot(existing.pt.x - keypoint.pt.x, existing.pt.y - keypoint.pt.y) < minDistance
       ));
@@ -3066,6 +3183,10 @@ export class ImageAnchorService {
       return false;
     }
 
+    if (/mug/i.test(this.anchorTargetClass || '')) {
+      return false;
+    }
+
     const matureCurvedMap = this.metrics.reconstructionReady === true &&
       (this.metrics.reconstructionMapConfidence ?? 0) >= 0.65 &&
       (this.metrics.reconstructionMatureLandmarks ?? 0) >= 16;
@@ -3237,15 +3358,18 @@ export class ImageAnchorService {
     const averageResidual = reconstructionPose.averageResidual ?? Infinity;
     const moderateTrackerDivergence = trackerDelta >= clamp(templateSize * 0.1, 10, 18);
     const severeTrackerDivergence = trackerDelta >= clamp(templateSize * 0.28, 32, 48);
+    if (severeTrackerDivergence) {
+      return mapConfidence >= 0.82 &&
+        inliers >= 20 &&
+        averageResidual <= 5.2;
+    }
+
     const matureCurvedRecovery = moderateTrackerDivergence &&
       mapConfidence >= 0.72 &&
       inliers >= 18 &&
       averageResidual <= 10.5;
 
-    return matureCurvedRecovery ||
-      (severeTrackerDivergence &&
-        inliers >= 16 &&
-        averageResidual <= 10);
+    return matureCurvedRecovery;
   }
 
   _hasModerateCurvedReconstructionRecovery({ reconstructionPose, trackerAnchorPosition }) {
@@ -3452,11 +3576,15 @@ export class ImageAnchorService {
     const holdSparseMugCentroidScale = anchorPosition.method === 'curved-centroid-position' &&
       this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
       /mug/i.test(this.anchorTargetClass || '');
+    const holdSelectedCurvedReferenceScale = this._shouldHoldSelectedCurvedReferenceScale(anchorPosition);
     if (this.currentPlanarTransform && holdSparseMugReferenceScale) {
       boundedScale = Math.max(boundedScale, previous.scale * 0.985);
     }
     if (this.currentPlanarTransform && holdSparseMugCentroidScale) {
       boundedScale = Math.max(boundedScale, previous.scale);
+    }
+    if (this.currentPlanarTransform && holdSelectedCurvedReferenceScale) {
+      boundedScale = previous.scale;
     }
     const useLowLagRigidPlanarScale = this._shouldUseLowLagRigidPlanarScale(anchorPosition);
     if (useLowLagRigidPlanarScale) {
@@ -3494,16 +3622,58 @@ export class ImageAnchorService {
       (anchorPosition.averageResidual ?? 0) <= 16;
   }
 
+  _shouldHoldSelectedCurvedReferenceScale(anchorPosition) {
+    const targetClass = this.anchorTargetClass || '';
+    if (anchorPosition.method !== 'reference_similarity_transform' ||
+        this.trackingMode === RECONSTRUCTION_POSE_MODEL ||
+        !isReconstructionMode(this.trackingMode) ||
+        !this._hasCurvedReconstructionTarget(anchorPosition) ||
+        !/cup|mug|vase/i.test(targetClass) ||
+        this.metrics.reconstructionReady !== true ||
+        (this.metrics.reconstructionMapConfidence ?? 0) < 0.66 ||
+        (this.metrics.reconstructionMatureLandmarks || 0) < 16 ||
+        (this.metrics.reconstructionPoseInliers || 0) > 0) {
+      return false;
+    }
+
+    return (anchorPosition.confidence ?? 0) <= 0.24 ||
+      (anchorPosition.averageResidual ?? Infinity) >= 12;
+  }
+
   _filterPositionCandidate(position, timestamp, method) {
-    if (this._shouldUseCurvedMotionPrediction(position, method)) {
+    if (this._shouldHoldReversingWeakParametricPosition(position, method)) {
       const predicted = this._predictCurvedMotionPosition(timestamp);
       if (predicted) {
         this.metrics.positionFilterAdjustment = 'curved-motion-hold';
         return this._limitPositionStep({
           ...predicted,
-          confidence: Math.min(position.confidence ?? 0, predicted.confidence),
-          averageResidual: position.averageResidual,
+          confidence: predicted.confidence,
         }, method);
+      }
+    }
+
+    if (this._shouldUseCurvedMotionPrediction(position, method)) {
+      const predicted = this._predictCurvedMotionPosition(timestamp);
+      if (predicted) {
+        const rawWeight = this._curvedReferencePredictionBlendWeight(position, method);
+        if (rawWeight > 0 || this._shouldUseCurvedMotionHoldTarget()) {
+          const adjusted = rawWeight > 0
+            ? {
+              x: predicted.x + (position.x - predicted.x) * rawWeight,
+              y: predicted.y + (position.y - predicted.y) * rawWeight,
+              z: 0,
+            }
+            : predicted;
+          this.metrics.positionFilterAdjustment = rawWeight > 0
+            ? 'curved-reference-prediction-blend'
+            : 'curved-motion-hold';
+          return this._limitPositionStep({
+            ...adjusted,
+            confidence: Math.min(position.confidence ?? 0, predicted.confidence),
+            averageResidual: position.averageResidual,
+            inlierCount: position.inlierCount,
+          }, method);
+        }
       }
     }
 
@@ -3515,6 +3685,7 @@ export class ImageAnchorService {
         z: position.z ?? 0,
         confidence: position.confidence,
         averageResidual: position.averageResidual,
+        inlierCount: position.inlierCount,
       }, method);
     }
 
@@ -3541,6 +3712,7 @@ export class ImageAnchorService {
         z: 0,
         confidence: position.confidence,
         averageResidual: position.averageResidual,
+        inlierCount: position.inlierCount,
       };
       adjustment = 'post-hold-reference-recovery-step';
     } else if (this._shouldUseMatureCurvedRecoveryStep(method)) {
@@ -3571,11 +3743,48 @@ export class ImageAnchorService {
       (position.averageResidual ?? Infinity) <= MAX_LOW_LAG_TRACKER_RESIDUAL;
   }
 
+  _shouldUseCurvedMotionHoldTarget() {
+    return !/bottle/i.test(this.anchorTargetClass || '');
+  }
+
+  _shouldHoldReversingWeakParametricPosition(position, method) {
+    return method === 'parametric-surface' &&
+      this.trackingMode === 'parametric-surface' &&
+      this._isReversingWeakParametricMotion(position);
+  }
+
+  _curvedReferencePredictionBlendWeight(position, method) {
+    if (method !== 'reference_similarity_transform' ||
+        this.trackingMode === RECONSTRUCTION_POSE_MODEL ||
+        !isReconstructionMode(this.trackingMode)) {
+      return 0;
+    }
+
+    const confidence = position.confidence ?? 0;
+    const residual = position.averageResidual ?? Infinity;
+    const inliers = position.inlierCount || 0;
+    if (confidence < MIN_CURVED_REFERENCE_BLEND_CONFIDENCE ||
+        residual > MAX_CURVED_REFERENCE_BLEND_RESIDUAL ||
+        inliers < MIN_CURVED_REFERENCE_BLEND_INLIERS) {
+      return 0;
+    }
+
+    return clamp(
+      0.42 + confidence * 0.45 + (MAX_CURVED_REFERENCE_BLEND_RESIDUAL - residual) * 0.025,
+      0.42,
+      0.68
+    );
+  }
+
   _shouldUseCurvedMotionPrediction(position, method) {
     if (method !== 'reference_similarity_transform' ||
         !this.curvedMotionSample ||
         !this._hasCurvedReconstructionTarget() ||
         this.metrics.reconstructionReady !== true) {
+      return false;
+    }
+
+    if (this._hasCoherentSelectedParametricPose()) {
       return false;
     }
 
@@ -3592,11 +3801,17 @@ export class ImageAnchorService {
     const mapConfidence = this.metrics.reconstructionMapConfidence ?? 0;
     const confidence = position.confidence ?? 0;
     const residual = position.averageResidual ?? Infinity;
+    const severeSelectedModeDrift = activeLandmarks <= MAX_SEVERE_CURVED_REFERENCE_LANDMARKS &&
+      confidence <= MAX_SEVERE_CURVED_REFERENCE_CONFIDENCE &&
+      residual >= MIN_SEVERE_CURVED_REFERENCE_RESIDUAL &&
+      (this.metrics.reconstructionTrackerDelta || 0) >= MIN_SEVERE_CURVED_REFERENCE_TRACKER_DELTA;
 
-    return activeLandmarks <= 20 &&
-      matureLandmarks >= 16 &&
+    return matureLandmarks >= 16 &&
       mapConfidence >= 0.6 &&
-      (confidence <= 0.32 || residual >= 9);
+      (
+        severeSelectedModeDrift ||
+        (activeLandmarks <= 20 && (confidence <= 0.32 || residual >= 9))
+      );
   }
 
   _shouldUseSparseCurvedMotionPrediction() {
@@ -3608,12 +3823,16 @@ export class ImageAnchorService {
     const activeLandmarks = this.metrics.activeLandmarkCount || this.metrics.keypointCount || 0;
     const objectOwnedLandmarks = this.metrics.objectOwnedLandmarks ?? activeLandmarks;
     const ownedRatio = objectOwnedLandmarks / Math.max(1, activeLandmarks);
-
-    return activeLandmarks >= 24 &&
-      activeLandmarks <= 32 &&
-      ownedRatio >= 0.75 &&
-      (this.metrics.poseInliers || 0) === 0 &&
+    const poseDroppedOut = (this.metrics.poseInliers || 0) === 0 &&
       (this.metrics.reconstructionPoseInliers || 0) === 0;
+    const handledMug = /mug/i.test(this.anchorTargetClass || '');
+    const activeLandmarkRange = handledMug
+      ? activeLandmarks >= 8 && activeLandmarks <= SPARSE_MUG_MOTION_HOLD_MAX_ACTIVE_LANDMARKS
+      : activeLandmarks >= 24 && activeLandmarks <= 32;
+
+    return activeLandmarkRange &&
+      ownedRatio >= 0.75 &&
+      poseDroppedOut;
   }
 
   _hasMatureSparseCurvedMap() {
@@ -3716,6 +3935,7 @@ export class ImageAnchorService {
 
     const scale = maxStep / distance;
     return {
+      ...position,
       x: this.currentPosition.x + deltaX * scale,
       y: this.currentPosition.y + deltaY * scale,
       z: position.z ?? 0
@@ -4147,12 +4367,17 @@ export class ImageAnchorService {
     }
   }
 
+  _resetFrameObjectSupportCorrectionMetrics() {
+    this.metrics.objectSupportPositionCorrection = null;
+    this.metrics.objectSupportPositionSource = null;
+    this.metrics.objectSupportPositionDelta = null;
+    this.metrics.objectSupportPositionStep = null;
+    this.metrics.segmentationRefreshReason = null;
+    this.metrics.segmentationRefreshFrame = null;
+  }
+
   _recordCurvedMotionSample(result) {
-    if (!result.success ||
-        !result.position ||
-        result.method !== this.trackingMode ||
-        !isReconstructionMode(result.method) ||
-        !this._hasCurvedReconstructionTarget()) {
+    if (!this._shouldRecordCurvedMotionSample(result)) {
       return;
     }
     const timestamp = this.now();
@@ -4179,8 +4404,70 @@ export class ImageAnchorService {
       position,
       velocity,
       timestamp,
-      confidence: result.confidence ?? this.metrics.poseConfidence ?? 0.5,
+      confidence: result.positionConfidence ?? result.position?.confidence ?? result.confidence ?? this.metrics.poseConfidence ?? 0.5,
     };
+  }
+
+  _shouldRecordCurvedMotionSample(result) {
+    if (!result.success ||
+        !result.position ||
+        !this._hasCurvedReconstructionTarget()) {
+      return false;
+    }
+
+    if (result.method === this.trackingMode && isReconstructionMode(result.method)) {
+      return !this._isReversingWeakParametricMotionSample(result);
+    }
+
+    if (result.method !== 'reference_similarity_transform' ||
+        this.trackingMode === RECONSTRUCTION_POSE_MODEL ||
+        !isReconstructionMode(this.trackingMode)) {
+      return false;
+    }
+
+    const confidence = result.positionConfidence ?? result.position?.confidence ?? result.confidence ?? 0;
+    const residual = result.positionAverageResidual ?? result.position?.averageResidual ?? result.averageResidual ?? Infinity;
+    const inliers = result.positionInlierCount ?? result.position?.inlierCount ?? result.inlierCount ?? 0;
+
+    return confidence >= MIN_LOW_LAG_TRACKER_CONFIDENCE &&
+      residual <= MAX_LOW_LAG_TRACKER_RESIDUAL &&
+      inliers >= MIN_CURVED_REFERENCE_BLEND_INLIERS;
+  }
+
+  _isReversingWeakParametricMotionSample(result) {
+    if (this.trackingMode !== 'parametric-surface' ||
+        (result.inliers || 0) > MAX_REVERSING_PARAMETRIC_MOTION_INLIERS) {
+      return false;
+    }
+
+    return this._isReversingWeakParametricMotion(result.position);
+  }
+
+  _isReversingWeakParametricMotion(position) {
+    if (!this.curvedMotionSample ||
+        !this._hasCurvedReconstructionTarget() ||
+        (this.metrics.reconstructionMapConfidence ?? 0) > MAX_REVERSING_PARAMETRIC_MOTION_MAP_CONFIDENCE) {
+      return false;
+    }
+
+    if (this._hasCoherentSelectedParametricPose()) {
+      return false;
+    }
+
+    const deltaX = position.x - this.curvedMotionSample.position.x;
+    const deltaY = position.y - this.curvedMotionSample.position.y;
+    const distance = Math.hypot(deltaX, deltaY);
+    const velocityDot = deltaX * this.curvedMotionSample.velocity.x +
+      deltaY * this.curvedMotionSample.velocity.y;
+
+    return distance >= MIN_REVERSING_PARAMETRIC_MOTION_DELTA && velocityDot < 0;
+  }
+
+  _hasCoherentSelectedParametricPose() {
+    return this.trackingMode === 'parametric-surface' &&
+      (this.metrics.activeLandmarkCount ?? 0) >= MIN_COHERENT_PARAMETRIC_RELEASE_ACTIVE_LANDMARKS &&
+      (this.metrics.reconstructionMapConfidence ?? 0) >= MIN_COHERENT_PARAMETRIC_RELEASE_MAP_CONFIDENCE &&
+      (this.metrics.reconstructionTrackerDelta ?? Infinity) <= MAX_COHERENT_PARAMETRIC_RELEASE_TRACKER_DELTA;
   }
 
   /**

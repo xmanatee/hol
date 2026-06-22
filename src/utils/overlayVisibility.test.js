@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldRenderAnchorOverlay } from './overlayVisibility.js';
+import {
+  getRenderableAnchorOverlay,
+  shouldMountOverlayScene,
+  shouldRenderAnchorOverlay,
+} from './overlayVisibility.js';
 
 test('renders sparse reconstruction overlay when planar homography is the active pose source', () => {
   assert.equal(shouldRenderAnchorOverlay({
@@ -122,4 +126,35 @@ test('hides any reconstruction overlay while selected map has no stable pose sou
       }
     }), false, poseModel);
   }
+});
+
+test('keeps the overlay scene unmounted until the camera and anchor are render-ready', () => {
+  const activeAnchor = { id: 'anchor' };
+  const anchorState = {
+    metrics: {
+      poseModel: 'sparse-reconstruction',
+      reconstructionReady: false,
+      poseSource: 'planar-homography',
+    }
+  };
+
+  assert.equal(shouldMountOverlayScene({
+    cameraState: 'idle',
+    activeAnchor,
+    anchorState,
+  }), false);
+  assert.equal(shouldMountOverlayScene({
+    cameraState: 'active',
+    activeAnchor: null,
+    anchorState,
+  }), false);
+  assert.equal(shouldMountOverlayScene({
+    cameraState: 'active',
+    activeAnchor,
+    anchorState,
+  }), true);
+  assert.equal(getRenderableAnchorOverlay({
+    activeAnchor,
+    anchorState,
+  }), activeAnchor);
 });

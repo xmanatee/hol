@@ -16,8 +16,9 @@ import {
 import { descriptorDistance, samplePatchDescriptor } from './anchor.photometricDescriptors.js';
 import { createSurfacePreview } from './anchor.reconstruction.preview.js';
 import { modelFromRegion, SURFACE_MODEL_PLANE } from './anchor.parametricGeometry.js';
+import { DIRECT_PHOTOMETRIC_POSE_MODEL } from './anchor.reconstructionModes.js';
 
-export const DIRECT_PHOTOMETRIC_POSE_MODEL = 'direct-photometric';
+export { DIRECT_PHOTOMETRIC_POSE_MODEL };
 
 const SIMILARITY_RECOVERY_MIN_INLIERS = 8;
 const SIMILARITY_RECOVERY_MIN_INLIER_RATIO = 0.62;

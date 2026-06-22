@@ -1,27 +1,39 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { CameraService } from '../services/CameraService.js';
 import { DetectionService } from '../services/DetectionService.js';
-import { AnchorManager } from '../services/AnchorManager.js';
+import { createAnchorRuntimeService } from '../services/AnchorRuntimeService.js';
 import { PersonalityService } from '../services/PersonalityService.js';
-import { DepthEstimationService } from '../services/DepthEstimationService.js';
-import { loadOpenCVRuntime } from '../services/OpenCVRuntimeService.js';
 import { LazyTTSClient } from '../audio/lazyTTSClient.js';
 import { logger } from '../utils/logger.js';
 
 const DEPTH_FUSION_MODE = 'depth-fusion';
+const createIdleDepthState = () => ({
+  state: 'idle',
+  provider: null,
+  error: null,
+  processingTime: 0,
+  lastFrameAt: 0,
+});
+
+export const shouldInitializeDepthForTrackingMode = mode => mode === DEPTH_FUSION_MODE;
+export const shouldLoadVisionRuntime = ({ cameraState, visionRequested, initialized }) => (
+  cameraState === 'active' && visionRequested && !initialized
+);
 
 export const useCameraSystem = (config = {}) => {
   const cameraServiceRef = useRef(new CameraService());
   const detectionServiceRef = useRef(new DetectionService());
-  const anchorManagerRef = useRef(new AnchorManager());
+  const anchorManagerRef = useRef(createAnchorRuntimeService());
   const personalityServiceRef = useRef(new PersonalityService(config.personality));
-  const depthServiceRef = useRef(new DepthEstimationService(config.depth));
+  const depthServiceRef = useRef(null);
+  const depthServicePromiseRef = useRef(null);
+  const removeDepthListenerRef = useRef(null);
   const ttsClientRef = useRef(new LazyTTSClient(config.tts));
   const currentCanvasRef = useRef(null);
   const latestDepthFrameRef = useRef(null);
+  const visionInitializationRef = useRef(null);
   const metricUpdateRef = useRef(config.onMetricUpdate || null);
-  const [_initialized, setInitialized] = useState(false);
-  const [cvLoaded, setCvLoaded] = useState(false);
+  const [visionRequested, setVisionRequested] = useState(false);
 
   const [cameraState, setCameraState] = useState('idle');
   const [cameraError, setCameraError] = useState(null);
@@ -42,7 +54,7 @@ export const useCameraSystem = (config = {}) => {
     trackingMode: 'sparse-reconstruction',
     initialized: false
   });
-  const [depthState, setDepthState] = useState(depthServiceRef.current.getState());
+  const [depthState, setDepthState] = useState(createIdleDepthState);
   
   const [personalityData, setPersonalityData] = useState({
     isProcessing: false,
@@ -68,88 +80,91 @@ export const useCameraSystem = (config = {}) => {
     metricUpdateRef.current?.(name, value);
   }, []);
 
-  useEffect(() => {
-    let isMounted = true;
+  const bindDepthService = useCallback((depthService) => {
+    if (removeDepthListenerRef.current) {
+      return;
+    }
 
-    loadOpenCVRuntime().then(
-      () => {
-        if (isMounted) {
-          logger.info('CameraSystem', 'OpenCV.js loaded');
-          setCvLoaded(true);
-        }
-      },
-      error => {
-        if (isMounted) {
-          logger.error('CameraSystem', 'Failed to load OpenCV.js:', error);
-          setCvLoaded(false);
-          setDetectionState(prev => ({ ...prev, error: error.message }));
-        }
-      }
-    );
+    removeDepthListenerRef.current = depthService.addListener((state) => {
+      setDepthState(state);
+      updateMetric('Depth model state', state.state);
+      updateMetric('Depth provider', state.provider || 'None');
+      updateMetric('Depth inference', state.processingTime ?? 0);
+      updateMetric('Depth error', state.error || 'None');
+    });
+  }, [updateMetric]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+  const getDepthService = useCallback(() => {
+    if (depthServiceRef.current) {
+      return Promise.resolve(depthServiceRef.current);
+    }
 
-  useEffect(() => {
-    if (!cvLoaded) return;
+    if (!depthServicePromiseRef.current) {
+      depthServicePromiseRef.current = import('../services/DepthEstimationService.js')
+        .then(({ DepthEstimationService }) => {
+          const depthService = new DepthEstimationService(config.depth);
+          depthServiceRef.current = depthService;
+          bindDepthService(depthService);
+          setDepthState(depthService.getState());
+          return depthService;
+        })
+        .catch(error => {
+          depthServicePromiseRef.current = null;
+          throw error;
+        });
+    }
 
-    let isMounted = true;
+    return depthServicePromiseRef.current;
+  }, [bindDepthService, config.depth]);
 
-    const initializeServices = async () => {
-      try {
-        const detectionService = detectionServiceRef.current;
-        const anchorManager = anchorManagerRef.current;
+  const initializeVisionServices = useCallback(() => {
+    if (cameraState !== 'active') {
+      return Promise.reject(new Error('Vision services require an active camera'));
+    }
+
+    if (anchorManagerRef.current.initialized) {
+      setAnchorSystemState(prev => ({ ...prev, initialized: true }));
+      return Promise.resolve(true);
+    }
+
+    if (visionInitializationRef.current) {
+      return visionInitializationRef.current;
+    }
+
+    visionInitializationRef.current = Promise.resolve()
+      .then(async () => {
         const { width, height } = videoDimensions;
-        
-        if (!detectionService.isInitialized) {
-          await detectionService.initialize();
-          if (!isMounted) return;
-        }
-        
-        if (!detectionService.isModelLoaded) {
-          await detectionService.loadModel();
-          if (!isMounted) return;
-        }
+        await anchorManagerRef.current.initialize(null, width, height);
+        await ttsClientRef.current.initialize();
 
-        if (!anchorManager.initialized) {
-          await anchorManager.initialize(window.cv, width, height);
-          if (!isMounted) return;
-        }
-
-        const ttsClient = ttsClientRef.current;
-        await ttsClient.initialize();
-
-        if (isMounted) {
-          logger.info('CameraSystem', 'All services initialized successfully');
-          setDetectionState(prev => ({ 
-            ...prev, 
-            isInitialized: true, 
-            isModelLoaded: detectionService.isModelLoaded,
-            detectionEnabled: detectionService.isDetectionEnabled()
-          }));
-          setAnchorSystemState(prev => ({ ...prev, initialized: true }));
-          setInitialized(true);
-        }
-      } catch (error) {
-        logger.error('CameraSystem', 'Service initialization failed:', error);
+        logger.info('CameraSystem', 'Vision anchor services initialized successfully');
+        setAnchorSystemState(prev => ({ ...prev, initialized: true }));
+        return true;
+      })
+      .catch(error => {
+        visionInitializationRef.current = null;
+        logger.error('CameraSystem', 'Vision service initialization failed:', error);
         setDetectionState(prev => ({ ...prev, error: error.message }));
-      }
-    };
+        throw error;
+      });
 
-    initializeServices();
+    return visionInitializationRef.current;
+  }, [cameraState, videoDimensions]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, [cvLoaded, videoDimensions]);
+  useEffect(() => {
+    if (shouldLoadVisionRuntime({
+      cameraState,
+      visionRequested,
+      initialized: anchorManagerRef.current.initialized,
+    })) {
+      initializeVisionServices();
+    }
+  }, [cameraState, visionRequested, initializeVisionServices]);
 
   useEffect(() => {
     const cameraService = cameraServiceRef.current;
     const detectionService = detectionServiceRef.current;
     const anchorManager = anchorManagerRef.current;
-    const depthService = depthServiceRef.current;
 
     const removeCameraListener = cameraService.addListener({
       onStateChange: (newState, oldState, data) => {
@@ -244,14 +259,6 @@ export const useCameraSystem = (config = {}) => {
       }
     });
 
-    const removeDepthListener = depthService.addListener((state) => {
-      setDepthState(state);
-      updateMetric('Depth model state', state.state);
-      updateMetric('Depth provider', state.provider || 'None');
-      updateMetric('Depth inference', state.processingTime ?? 0);
-      updateMetric('Depth error', state.error || 'None');
-    });
-
     const personalityService = personalityServiceRef.current;
     const removePersonalityListener = personalityService.addListener({
       onPersonalityStart: ({ requestId }) => {
@@ -337,18 +344,29 @@ export const useCameraSystem = (config = {}) => {
       removeCameraListener();
       removeDetectionListener();
       removeAnchorListener();
-      removeDepthListener();
+      removeDepthListenerRef.current?.();
+      removeDepthListenerRef.current = null;
       removePersonalityListener();
       removeTTSListener();
     };
   }, [updateMetric]);
 
+  const initializeDepthForActiveMode = useCallback(() => {
+    getDepthService()
+      .then(depthService => {
+        if (depthService.getState().state !== 'idle') {
+          return;
+        }
+
+        return depthService.initialize();
+      })
+      .catch(error => {
+        logger.warn('CameraSystem', `Depth model initialization failed: ${error.message}`);
+      });
+  }, [getDepthService]);
+
   const startCamera = useCallback(async (videoElement) => {
-    const result = await cameraServiceRef.current.start(videoElement);
-    depthServiceRef.current.initialize().catch(error => {
-      logger.warn('CameraSystem', `Depth model preload failed: ${error.message}`);
-    });
-    return result;
+    return await cameraServiceRef.current.start(videoElement);
   }, []);
 
   const resumeCamera = useCallback(async () => {
@@ -357,8 +375,13 @@ export const useCameraSystem = (config = {}) => {
 
   const stopCamera = useCallback(() => {
     cameraServiceRef.current.stop();
-    depthServiceRef.current.dispose();
+    depthServiceRef.current?.dispose();
+    depthServiceRef.current = null;
+    depthServicePromiseRef.current = null;
+    removeDepthListenerRef.current?.();
+    removeDepthListenerRef.current = null;
     latestDepthFrameRef.current = null;
+    setDepthState(createIdleDepthState());
   }, []);
 
   const detectObjects = useCallback((imageData, options) => {
@@ -374,15 +397,19 @@ export const useCameraSystem = (config = {}) => {
 
   const updateAnchor = useCallback((imageData) => {
     if (anchorSystemState.mode === 'anchor') {
-      if (anchorSystemState.trackingMode === DEPTH_FUSION_MODE) {
+      if (shouldInitializeDepthForTrackingMode(anchorSystemState.trackingMode)) {
+        initializeDepthForActiveMode();
         const timestamp = performance.now();
-        depthServiceRef.current.estimate(imageData, { timestamp }).then(depthFrame => {
-          if (depthFrame) {
-            latestDepthFrameRef.current = depthFrame;
-          }
-        }).catch(error => {
-          logger.warn('CameraSystem', `Depth inference failed: ${error.message}`);
-        });
+        getDepthService()
+          .then(depthService => depthService.estimate(imageData, { timestamp }))
+          .then(depthFrame => {
+            if (depthFrame) {
+              latestDepthFrameRef.current = depthFrame;
+            }
+          })
+          .catch(error => {
+            logger.warn('CameraSystem', `Depth inference failed: ${error.message}`);
+          });
       }
 
       return anchorManagerRef.current.updateAnchor(imageData, {
@@ -391,7 +418,7 @@ export const useCameraSystem = (config = {}) => {
       });
     }
     return { success: false, reason: 'Not in anchor mode' };
-  }, [anchorSystemState.mode, anchorSystemState.trackingMode, depthState]);
+  }, [anchorSystemState.mode, anchorSystemState.trackingMode, depthState, getDepthService, initializeDepthForActiveMode]);
 
   const refreshAnchorSegmentation = useCallback((imageData) => {
     if (anchorSystemState.mode === 'anchor') {
@@ -401,6 +428,9 @@ export const useCameraSystem = (config = {}) => {
   }, [anchorSystemState.mode]);
 
   const createAnchorFromTap = useCallback(async (tapPosition, imageData) => {
+    setVisionRequested(true);
+    await initializeVisionServices();
+
     const result = await anchorManagerRef.current.createAnchorFromTap(tapPosition, imageData);
     
     if (result.success) {
@@ -411,7 +441,7 @@ export const useCameraSystem = (config = {}) => {
     }
     
     return result;
-  }, [updateMetric]);
+  }, [initializeVisionServices, updateMetric]);
 
   const clearAnchor = useCallback(() => {
     anchorManagerRef.current.clearAnchor();
@@ -420,17 +450,57 @@ export const useCameraSystem = (config = {}) => {
     updateMetric('Anchor cleared', 'Returned to detection mode');
   }, [updateMetric]);
 
+  const initializeDetectionModel = useCallback(() => {
+    const detectionService = detectionServiceRef.current;
+    setVisionRequested(true);
+    initializeVisionServices()
+      .then(async () => {
+        if (!detectionService.isInitialized) {
+          await detectionService.initialize();
+        }
+
+        if (!detectionService.isModelLoaded) {
+          await detectionService.loadModel();
+        }
+
+        setDetectionState(prev => ({
+          ...prev,
+          isInitialized: true,
+          isModelLoaded: true,
+          detectionEnabled: detectionService.isDetectionEnabled(),
+          error: null,
+        }));
+      })
+      .catch(error => {
+        logger.error('CameraSystem', 'Detection model initialization failed:', error);
+        setDetectionState(prev => ({ ...prev, error: error.message }));
+      });
+  }, [initializeVisionServices]);
+
   const setDetectionEnabled = useCallback((enabled) => {
     detectionServiceRef.current.setDetectionEnabled(enabled);
     setDetectionState(prev => ({ ...prev, detectionEnabled: enabled }));
+    if (enabled) {
+      initializeDetectionModel();
+    }
     updateMetric('Detection debug overlay', enabled ? 'Enabled' : 'Disabled');
-  }, [updateMetric]);
+  }, [initializeDetectionModel, updateMetric]);
 
   const setAnchorTrackingMode = useCallback((mode) => {
     latestDepthFrameRef.current = null;
     anchorManagerRef.current.setTrackingMode(mode);
+    if (shouldInitializeDepthForTrackingMode(mode)) {
+      initializeDepthForActiveMode();
+    } else {
+      depthServiceRef.current?.dispose();
+      depthServiceRef.current = null;
+      depthServicePromiseRef.current = null;
+      removeDepthListenerRef.current?.();
+      removeDepthListenerRef.current = null;
+      setDepthState(createIdleDepthState());
+    }
     updateMetric('Anchor tracking mode', mode);
-  }, [updateMetric]);
+  }, [initializeDepthForActiveMode, updateMetric]);
 
   const findDetectionAtPosition = useCallback((position) => {
     if (anchorSystemState.mode === 'detection') {
@@ -488,7 +558,6 @@ export const useCameraSystem = (config = {}) => {
     anchorSystemState,
     personalityData,
     ttsData,
-    cvLoaded,
 
     services: {
       camera: cameraServiceRef.current,

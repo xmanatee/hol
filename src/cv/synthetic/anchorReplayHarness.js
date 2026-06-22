@@ -1,5 +1,10 @@
 import { ImageAnchorService } from '../../services/ImageAnchorService.js';
 import { HomographyEstimator } from '../anchor.homography.js';
+import {
+  CURVED_OBJECT_RECOVERY_REASON,
+  needsCurvedObjectRecovery,
+  shouldDeferSparseMugPoseDropoutRecovery,
+} from '../curvedObjectRecovery.js';
 import { createObjectSupportMask } from '../objectSupportMask.js';
 
 const normalizeAngle = value => {
@@ -139,7 +144,17 @@ const createSyntheticObjectSupportMask = ({
   });
 };
 
-const hasSyntheticPoseDropout = metrics => {
+const hasSyntheticLowObjectOwnership = metrics => {
+  const active = metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0;
+  const owned = metrics.objectOwnedLandmarks ?? active;
+  return owned / Math.max(1, active) < 0.65;
+};
+
+const hasSyntheticPoseDropout = (metrics, { targetClass, trackingMode } = {}) => {
+  if (shouldDeferSparseMugPoseDropoutRecovery(metrics, targetClass, trackingMode)) {
+    return false;
+  }
+
   const active = metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0;
   const trackingRate = metrics.trackingSuccessRate ?? 0;
   const poseInliers = metrics.poseInliers ?? 0;
@@ -150,11 +165,28 @@ const hasSyntheticPoseDropout = metrics => {
     metrics.poseSource == null;
 };
 
-const shouldRefreshSyntheticObjectSupport = ({ enabled, frame, index, metrics, interval }) => (
-  enabled &&
-  (!!frame.objectMask || (frame.corners || []).length >= 3) &&
-  (index % interval === 0 || hasSyntheticPoseDropout(metrics))
+const shouldDeferSyntheticObjectSupportRefresh = ({ metrics, targetClass, trackingMode }) => (
+  shouldDeferSparseMugPoseDropoutRecovery(metrics, targetClass, trackingMode) &&
+  !hasSyntheticLowObjectOwnership(metrics)
 );
+
+const shouldRefreshSyntheticObjectSupport = ({ enabled, frame, index, metrics, interval, targetClass, trackingMode }) => {
+  if (!enabled ||
+      (!frame.objectMask && (frame.corners || []).length < 3) ||
+      shouldDeferSyntheticObjectSupportRefresh({ metrics, targetClass, trackingMode })) {
+    return false;
+  }
+
+  return index % interval === 0 ||
+    hasSyntheticPoseDropout(metrics, { targetClass, trackingMode }) ||
+    needsCurvedObjectRecovery(metrics, targetClass);
+};
+
+const syntheticObjectSupportRefreshReason = (metrics, targetClass, trackingMode) => {
+  if (hasSyntheticPoseDropout(metrics, { targetClass, trackingMode })) return 'pose-dropout-recovery';
+  if (needsCurvedObjectRecovery(metrics, targetClass)) return CURVED_OBJECT_RECOVERY_REASON;
+  return 'periodic-segmentation-refresh';
+};
 
 export const createSyntheticDepthFrame = ({ frame, sequence, index, timestamp }) => {
   const width = sequence.width;
@@ -246,7 +278,7 @@ export const replayImageAnchorSequence = async ({
           depthState: { state: 'idle' },
         });
     const updateWallTimeMs = performance.now() - frameStart;
-    const state = service.getState();
+    let state = service.getState();
     if (useObjectSupportMask &&
         shouldRefreshSyntheticObjectSupport({
           enabled: refreshObjectSupportMask,
@@ -254,6 +286,8 @@ export const replayImageAnchorSequence = async ({
           index,
           metrics: state.metrics,
           interval: objectSupportRefreshInterval,
+          targetClass: sequence.targetClass,
+          trackingMode,
         })) {
       service.updateObjectSupportMask(createSyntheticObjectSupportMask({
         sequence,
@@ -261,14 +295,13 @@ export const replayImageAnchorSequence = async ({
         referencePoint: result.position || state.position || sequence.tap,
         updatedAtFrame: index,
       }), {
-        reason: hasSyntheticPoseDropout(state.metrics)
-          ? 'pose-dropout-recovery'
-          : 'periodic-segmentation-refresh',
+        reason: syntheticObjectSupportRefreshReason(state.metrics, sequence.targetClass, trackingMode),
       });
+      state = service.getState();
     }
     const transform = result.planarTransform || state.planarTransform || {};
-    const predicted = result.position || state.position || null;
-    const normal = result.normal || state.normal || null;
+    const predicted = state.position || result.position || null;
+    const normal = state.normal || result.normal || null;
     const groundTruth = frame.groundTruth;
 
     frames.push({

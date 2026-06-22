@@ -142,7 +142,7 @@ const HeadAnchor = ({
 
   // Load GLTF model
   useEffect(() => {
-    if (isLoaded) return
+    if (isLoaded || !visible) return
 
     const loader = new GLTFLoader()
 
@@ -191,7 +191,7 @@ const HeadAnchor = ({
     }, undefined, (error) => {
       logger.error('HeadAnchor', 'GLTF loading error:', error)
     })
-  }, [isLoaded, onMeshNamesDiscovered])
+  }, [isLoaded, onMeshNamesDiscovered, visible])
 
   // Apply mesh visibility when hiddenMeshes changes
   useEffect(() => {

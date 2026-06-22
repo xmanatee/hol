@@ -37,3 +37,11 @@ export const shouldRenderAnchorOverlay = ({ activeAnchor, anchorState }) => {
     selectedReconstructionPose ||
     metrics.poseSource === 'planar-homography';
 };
+
+export const getRenderableAnchorOverlay = ({ activeAnchor, anchorState }) => (
+  shouldRenderAnchorOverlay({ activeAnchor, anchorState }) ? activeAnchor : null
+);
+
+export const shouldMountOverlayScene = ({ cameraState, activeAnchor, anchorState }) => (
+  cameraState === 'active' && !!getRenderableAnchorOverlay({ activeAnchor, anchorState })
+);

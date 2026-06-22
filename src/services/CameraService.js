@@ -1,15 +1,18 @@
 import { logger } from '../utils/logger.js';
 
+const VIDEO_READY_EVENTS = ['loadedmetadata', 'loadeddata', 'canplay'];
+const HAVE_METADATA = 1;
+
 export class CameraService {
   constructor() {
     this.stream = null;
     this.videoElement = null;
-    this.state = 'idle'; // idle, requesting, active, blocked, error
+    this.state = 'idle';
     this.constraints = {
       video: {
         facingMode: 'environment',
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        width: { ideal: 960, max: 1280 },
+        height: { ideal: 540, max: 720 },
         frameRate: { ideal: 30 }
       },
       audio: false
@@ -54,39 +57,27 @@ export class CameraService {
       this._prepareVideoElement(videoElement);
 
       this.stream = await this._requestCameraStream();
+      const videoReady = this._waitForVideoReady(videoElement);
       videoElement.srcObject = this.stream;
-
-      return new Promise((resolve) => {
-        const onLoadedMetadata = () => {
-          videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
-          
-          videoElement.play()
-            .then(() => {
-              this._notifyStateChange('active', {
-                width: videoElement.videoWidth,
-                height: videoElement.videoHeight
-              });
-              resolve(true);
-            })
-            .catch((playError) => {
-              this._notifyStateChange('blocked', { error: playError.message });
-              resolve(false);
-            });
-        };
-
-        videoElement.addEventListener('loadedmetadata', onLoadedMetadata);
-        
-        setTimeout(() => {
-          if (this.state === 'requesting') {
-            videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
-            this._stopStream();
-            videoElement.srcObject = null;
-            this._notifyStateChange('error', { error: 'Camera start timeout' });
-            resolve(false);
-          }
-        }, this.timeoutMs);
+      const playback = videoElement.play().then(
+        () => true,
+        playError => ({ blocked: true, error: playError.message })
+      );
+      const [, playbackResult] = await Promise.all([videoReady, playback]);
+      if (playbackResult.blocked) {
+        this._notifyStateChange('blocked', { error: playbackResult.error });
+        return false;
+      }
+      this._notifyStateChange('active', {
+        width: videoElement.videoWidth,
+        height: videoElement.videoHeight
       });
+      return true;
     } catch (err) {
+      this._stopStream();
+      if (this.videoElement) {
+        this.videoElement.srcObject = null;
+      }
       this._notifyStateChange('error', { error: err.message });
       return false;
     }
@@ -115,6 +106,33 @@ export class CameraService {
         }, this.timeoutMs);
       })
     ]);
+  }
+
+  _waitForVideoReady(videoElement) {
+    if (videoElement.readyState >= HAVE_METADATA && videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        globalThis.clearTimeout(timeoutId);
+        VIDEO_READY_EVENTS.forEach(eventName => {
+          videoElement.removeEventListener(eventName, onReady);
+        });
+      };
+      const onReady = () => {
+        cleanup();
+        resolve();
+      };
+      const timeoutId = globalThis.setTimeout(() => {
+        cleanup();
+        reject(new Error('Camera start timeout'));
+      }, this.timeoutMs);
+
+      VIDEO_READY_EVENTS.forEach(eventName => {
+        videoElement.addEventListener(eventName, onReady);
+      });
+    });
   }
 
   _getStartBlocker(env = {}) {

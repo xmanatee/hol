@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ImageAnchorService } from './ImageAnchorService.js';
 import { createObjectSupportMask, isPointInsideObjectSupport } from '../cv/objectSupportMask.js';
+import { CURVED_OBJECT_RECOVERY_REASON } from '../cv/curvedObjectRecovery.js';
 
 const createObjectPose = ({
   x = 140,
@@ -690,6 +691,306 @@ test('selected curved surface modes use bounded motion hold for weak dropout tra
   assert.equal(sparseService.metrics.positionFilterAdjustment, null);
 });
 
+test('selected curved surface modes blend coherent weak reference motion into prediction', () => {
+  let now = 1000;
+  const service = new ImageAnchorService({ now: () => now });
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'can';
+  service.currentPosition = { x: 194, y: 154, z: 0 };
+  service.templateRegion = { width: 120, height: 120 };
+  service.metrics.lastUpdateResult = 'success';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.74;
+  service.metrics.reconstructionMatureLandmarks = 22;
+  service.metrics.activeLandmarkCount = 16;
+  service.positionFilterX.filter(194, now);
+  service.positionFilterY.filter(154, now);
+
+  service._recordCurvedMotionSample({
+    success: true,
+    method: 'parametric-surface',
+    position: { x: 200, y: 160, z: 0 },
+    confidence: 0.82,
+  });
+  now = 1033.33;
+  service._recordCurvedMotionSample({
+    success: true,
+    method: 'parametric-surface',
+    position: { x: 194, y: 154, z: 0 },
+    confidence: 0.82,
+  });
+
+  const blended = service._filterPositionCandidate(
+    {
+      x: 170,
+      y: 154,
+      z: 0,
+      confidence: 0.32,
+      averageResidual: 10.2,
+      inlierCount: 8,
+    },
+    1066.66,
+    'reference_similarity_transform'
+  );
+
+  assert.equal(service.metrics.positionFilterAdjustment, 'curved-reference-prediction-blend');
+  assert.ok(blended.x < 190);
+  assert.ok(blended.x > 181);
+  assert.ok(Math.abs(blended.y - 154) < 1);
+});
+
+test('selected curved modes hold severe zero-confidence reference drift to recent motion', () => {
+  let now = 1000;
+  const service = new ImageAnchorService({ now: () => now });
+  service.setTrackingMode('direct-photometric');
+  service.anchorTargetClass = 'cup';
+  service.currentPosition = { x: 288, y: 224, z: 0 };
+  service.templateRegion = { width: 118, height: 118 };
+  service.metrics.lastUpdateResult = 'success';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.81;
+  service.metrics.reconstructionMatureLandmarks = 28;
+  service.metrics.activeLandmarkCount = 25;
+  service.metrics.reconstructionTrackerDelta = 34;
+  service.positionFilterX.filter(288, now);
+  service.positionFilterY.filter(224, now);
+
+  now = 1033.33;
+  service.curvedMotionSample = {
+    position: { x: 288, y: 224 },
+    velocity: { x: -0.27, y: -0.06 },
+    timestamp: now,
+    confidence: 0.57,
+  };
+
+  const held = service._filterPositionCandidate(
+    {
+      x: 297,
+      y: 221,
+      z: 0,
+      confidence: 0,
+      averageResidual: 36,
+      inlierCount: 25,
+    },
+    1066.66,
+    'reference_similarity_transform'
+  );
+
+  assert.equal(service.metrics.positionFilterAdjustment, 'curved-motion-hold');
+  assert.ok(held.x < 283);
+  assert.ok(held.x > 276);
+  assert.ok(held.y < 224);
+});
+
+test('selected curved modes refresh motion samples from coherent reference transforms', () => {
+  let now = 1000;
+  const service = new ImageAnchorService({ now: () => now });
+  service.setTrackingMode('direct-photometric');
+  service.anchorTargetClass = 'cup';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.82;
+  service.metrics.reconstructionMatureLandmarks = 24;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+
+  service._recordCurvedMotionSample({
+    success: true,
+    method: 'direct-photometric',
+    position: { x: 310, y: 230, z: 0 },
+    confidence: 0.82,
+  });
+  now = 1033.33;
+  service._recordCurvedMotionSample({
+    success: true,
+    method: 'reference_similarity_transform',
+    position: { x: 301, y: 227, z: 0 },
+    confidence: 0.58,
+    averageResidual: 5.6,
+    inlierCount: 13,
+  });
+
+  assert.deepEqual(service.curvedMotionSample.position, { x: 301, y: 227 });
+  assert.ok(service.curvedMotionSample.velocity.x < -0.14);
+  assert.ok(service.curvedMotionSample.velocity.y < -0.04);
+});
+
+test('selected parametric poses do not reverse mature curved motion samples when map support is weak', () => {
+  let now = 1000;
+  const service = new ImageAnchorService({ now: () => now });
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'cup';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.65;
+  service.metrics.reconstructionMatureLandmarks = 24;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  service.curvedMotionSample = {
+    position: { x: 288, y: 225 },
+    velocity: { x: -0.21, y: -0.07 },
+    timestamp: now,
+    confidence: 0.95,
+  };
+
+  now = 1033.33;
+  service._recordCurvedMotionSample({
+    success: true,
+    method: 'parametric-surface',
+    position: { x: 298, y: 224, z: 0 },
+    confidence: 0.78,
+    inliers: 17,
+  });
+
+  assert.deepEqual(service.curvedMotionSample.position, { x: 288, y: 225 });
+  assert.deepEqual(service.curvedMotionSample.velocity, { x: -0.21, y: -0.07 });
+});
+
+test('selected parametric position filter holds reversed weak curved poses to mature motion', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'cup';
+  service.currentPosition = { x: 288, y: 225, z: 0 };
+  service.metrics.lastUpdateResult = 'success';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.65;
+  service.metrics.reconstructionMatureLandmarks = 24;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  service.curvedMotionSample = {
+    position: { x: 288, y: 225 },
+    velocity: { x: -0.21, y: -0.07 },
+    timestamp: 1000,
+    confidence: 0.95,
+  };
+
+  const filtered = service._filterPositionCandidate(
+    { x: 331, y: 218, z: 0 },
+    1033.33,
+    'parametric-surface'
+  );
+
+  assert.equal(service.metrics.positionFilterAdjustment, 'curved-motion-hold');
+  assert.ok(filtered.x < 285);
+  assert.ok(filtered.y < 224);
+});
+
+test('selected parametric position filter releases reversed motion when surface and tracker agree', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'cup';
+  service.currentPosition = { x: 276, y: 217, z: 0 };
+  service.metrics.lastUpdateResult = 'success';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.68;
+  service.metrics.reconstructionMatureLandmarks = 31;
+  service.metrics.reconstructionPoseInliers = 16;
+  service.metrics.reconstructionTrackerDelta = 0.83;
+  service.metrics.activeLandmarkCount = 20;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  service.positionFilterX.filter(276, 1000);
+  service.positionFilterY.filter(217, 1000);
+  service.curvedMotionSample = {
+    position: { x: 276, y: 217 },
+    velocity: { x: -0.06, y: -0.04 },
+    timestamp: 1000,
+    confidence: 0.95,
+  };
+
+  const filtered = service._filterPositionCandidate(
+    { x: 298, y: 228, z: 0 },
+    1033.33,
+    'parametric-surface'
+  );
+
+  assert.notEqual(service.metrics.positionFilterAdjustment, 'curved-motion-hold');
+  assert.ok(filtered.x > 280);
+  assert.ok(filtered.y > 219);
+});
+
+test('selected curved motion prediction releases weak references when surface and tracker agree', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'cup';
+  service.currentPosition = { x: 276, y: 217, z: 0 };
+  service.metrics.lastUpdateResult = 'success';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.68;
+  service.metrics.reconstructionMatureLandmarks = 31;
+  service.metrics.reconstructionPoseInliers = 16;
+  service.metrics.reconstructionTrackerDelta = 0.83;
+  service.metrics.activeLandmarkCount = 20;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  service.positionFilterX.filter(276, 1000);
+  service.positionFilterY.filter(217, 1000);
+  service.curvedMotionSample = {
+    position: { x: 276, y: 217 },
+    velocity: { x: -0.06, y: -0.04 },
+    timestamp: 1000,
+    confidence: 0.95,
+  };
+
+  const filtered = service._filterPositionCandidate(
+    {
+      x: 298,
+      y: 228,
+      z: 0,
+      confidence: 0,
+      averageResidual: 24,
+      inlierCount: 10,
+    },
+    1033.33,
+    'reference_similarity_transform'
+  );
+
+  assert.notEqual(service.metrics.positionFilterAdjustment, 'curved-motion-hold');
+  assert.ok(filtered.x > 280);
+  assert.ok(filtered.y > 219);
+});
+
+test('selected bottle targets do not use cup-style curved motion hold', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('direct-photometric');
+  service.anchorTargetClass = 'bottle';
+  service.currentPosition = { x: 320, y: 220, z: 0 };
+  service.metrics.lastUpdateResult = 'success';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.82;
+  service.metrics.reconstructionMatureLandmarks = 24;
+  service.metrics.activeLandmarkCount = 12;
+  service.metrics.reconstructionTrackerDelta = 28;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'cylinder' },
+  };
+  service.curvedMotionSample = {
+    position: { x: 320, y: 220 },
+    velocity: { x: -0.22, y: -0.08 },
+    timestamp: 1000,
+    confidence: 0.58,
+  };
+
+  const filtered = service._filterPositionCandidate(
+    {
+      x: 338,
+      y: 231,
+      z: 0,
+      confidence: 0,
+      averageResidual: 28,
+      inlierCount: 9,
+    },
+    1033.33,
+    'reference_similarity_transform'
+  );
+
+  assert.notEqual(service.metrics.positionFilterAdjustment, 'curved-motion-hold');
+  assert.ok(filtered.x > 320);
+});
+
 test('mature sparse curved maps use bounded motion hold during full pose dropout', () => {
   let now = 1000;
   const service = new ImageAnchorService({ now: () => now });
@@ -877,6 +1178,39 @@ test('mature curved reconstruction can take a larger bounded recovery step', () 
   assert.ok(filtered.x > 211);
   assert.ok(filtered.x < 213);
   assert.equal(service.metrics.positionFilterAdjustment, 'curved-recovery-step-position');
+});
+
+test('selected curved pose dropout holds weak reference scale', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('direct-photometric');
+  service.anchorTargetClass = 'cup';
+  service.currentPlanarTransform = {
+    scale: 1.02,
+    rotation: 0,
+    confidence: 0.7,
+    inlierCount: 18,
+    method: 'direct-photometric',
+  };
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.82;
+  service.metrics.reconstructionMatureLandmarks = 24;
+  service.metrics.reconstructionPoseInliers = 0;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  service.curvedScaleFilter.filter(1.02, 1000);
+
+  const transform = service._updatePlanarTransform({
+    scale: 0.72,
+    rotation: -0.08,
+    confidence: 0.12,
+    inlierCount: 9,
+    averageResidual: 18,
+    method: 'reference_similarity_transform',
+  }, 1033.33);
+
+  assert.ok(transform.scale >= 1.019);
+  assert.equal(transform.method, 'reference_similarity_transform');
 });
 
 test('selected curved modes can catch up from a held pose with strong reference tracking', () => {
@@ -2705,6 +3039,121 @@ test('refreshed object support recenters a drifted anchor at the original mask-r
   assert.equal(service.metrics.objectSupportPositionSource, 'interactive-segmenter');
 });
 
+test('periodic curved support refresh updates mask without recentering anchor', () => {
+  const service = new ImageAnchorService({ now: () => 1040 });
+  const data = new Uint8Array(120 * 90);
+  for (let y = 28; y < 78; y++) {
+    for (let x = 14; x < 74; x++) {
+      data[y * 120 + x] = 255;
+    }
+  }
+  const refreshedMask = createObjectSupportMask({
+    width: 120,
+    height: 90,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.92,
+    referencePoint: { x: 44, y: 53 },
+    createdAtFrame: 4,
+  });
+
+  service.currentPosition = { x: 92, y: 30, z: 0 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 1, inlierCount: 20, method: 'created' };
+  service.templateRegion = { x: 30, y: 20, width: 60, height: 50 };
+  service.trackingRegion = { x: 24, y: 14, width: 72, height: 62 };
+  service.anchorTargetClass = 'cup';
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  service.objectSupportAnchorUv = { u: 0.5, v: 0.5 };
+
+  const applied = service.updateObjectSupportMask(refreshedMask, { reason: 'periodic-segmentation-refresh' });
+
+  assert.equal(applied, true);
+  assert.deepEqual(service.currentPosition, { x: 92, y: 30, z: 0 });
+  assert.equal(service.metrics.objectSupportPositionCorrection, null);
+  assert.equal(service.metrics.objectSupportPositionSource, null);
+  assert.equal(service.metrics.objectSupportMaskSource, 'interactive-segmenter');
+});
+
+test('curved support recovery does not override a motion-held anchor', () => {
+  const service = new ImageAnchorService({ now: () => 1040 });
+  const data = new Uint8Array(120 * 90);
+  for (let y = 28; y < 78; y++) {
+    for (let x = 14; x < 74; x++) {
+      data[y * 120 + x] = 255;
+    }
+  }
+  const refreshedMask = createObjectSupportMask({
+    width: 120,
+    height: 90,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.92,
+    referencePoint: { x: 44, y: 53 },
+    createdAtFrame: 4,
+  });
+
+  service.currentPosition = { x: 50, y: 56, z: 0 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 1, inlierCount: 20, method: 'created' };
+  service.templateRegion = { x: 30, y: 20, width: 60, height: 50 };
+  service.trackingRegion = { x: 24, y: 14, width: 72, height: 62 };
+  service.anchorTargetClass = 'cup';
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  service.metrics.positionFilterAdjustment = 'curved-motion-hold';
+  service.objectSupportAnchorUv = { u: 0.5, v: 0.5 };
+
+  const applied = service.updateObjectSupportMask(refreshedMask, { reason: 'pose-dropout-recovery' });
+
+  assert.equal(applied, true);
+  assert.deepEqual(service.currentPosition, { x: 50, y: 56, z: 0 });
+  assert.equal(service.metrics.objectSupportPositionCorrection, null);
+  assert.equal(service.metrics.objectSupportPositionSource, null);
+  assert.equal(service.metrics.objectSupportMaskSource, 'interactive-segmenter');
+});
+
+test('curved support recovery corrects a stale motion hold when support disagreement is large', () => {
+  const service = new ImageAnchorService({ now: () => 1040 });
+  const data = new Uint8Array(120 * 90);
+  for (let y = 28; y < 78; y++) {
+    for (let x = 14; x < 74; x++) {
+      data[y * 120 + x] = 255;
+    }
+  }
+  const refreshedMask = createObjectSupportMask({
+    width: 120,
+    height: 90,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.92,
+    referencePoint: { x: 44, y: 53 },
+    createdAtFrame: 4,
+  });
+
+  service.currentPosition = { x: 92, y: 30, z: 0 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 1, inlierCount: 20, method: 'created' };
+  service.templateRegion = { x: 30, y: 20, width: 60, height: 50 };
+  service.trackingRegion = { x: 24, y: 14, width: 72, height: 62 };
+  service.anchorTargetClass = 'cup';
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  service.metrics.positionFilterAdjustment = 'curved-motion-hold';
+  service.objectSupportAnchorUv = { u: 0.5, v: 0.5 };
+
+  const applied = service.updateObjectSupportMask(refreshedMask, { reason: 'pose-dropout-recovery' });
+
+  assert.equal(applied, true);
+  assert.equal(service.metrics.objectSupportPositionCorrection, 'pose-dropout-recovery');
+  assert.equal(service.metrics.objectSupportPositionSource, 'interactive-segmenter');
+  assert.ok(Math.abs(service.metrics.objectSupportPositionStep - 14) < 1e-6);
+  assert.ok(service.currentPosition.x < 80);
+  assert.ok(service.currentPosition.x > 77);
+  assert.ok(service.currentPosition.y > 36);
+});
+
 test('rigid planar support refresh does not recenter homography-owned anchors', () => {
   const service = new ImageAnchorService({ now: () => 1040 });
   const data = new Uint8Array(120 * 90);
@@ -2739,6 +3188,144 @@ test('rigid planar support refresh does not recenter homography-owned anchors', 
   assert.equal(service.metrics.objectSupportMaskSource, 'interactive-segmenter');
 });
 
+test('handled mug parametric recovery uses support correction only for lateral recentering', () => {
+  const service = new ImageAnchorService({ now: () => 1040 });
+  const data = new Uint8Array(200 * 160);
+  for (let y = 40; y < 130; y++) {
+    for (let x = 70; x < 170; x++) {
+      data[y * 200 + x] = 255;
+    }
+  }
+  const refreshedMask = createObjectSupportMask({
+    width: 200,
+    height: 160,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.92,
+    referencePoint: { x: 120, y: 85 },
+    createdAtFrame: 4,
+  });
+
+  service.setTrackingMode('parametric-surface');
+  service.currentPosition = { x: 96, y: 108, z: 0 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 1, inlierCount: 20, method: 'created' };
+  service.templateRegion = { x: 40, y: 40, width: 100, height: 90 };
+  service.trackingRegion = { x: 32, y: 32, width: 120, height: 110 };
+  service.anchorTargetClass = 'mug';
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  service.metrics.positionFilterAdjustment = 'curved-motion-hold';
+  service.objectSupportAnchorUv = { u: 0.72, v: 0.72 };
+
+  const applied = service.updateObjectSupportMask(refreshedMask, { reason: CURVED_OBJECT_RECOVERY_REASON });
+
+  assert.equal(applied, true);
+  assert.equal(service.metrics.objectSupportPositionCorrection, CURVED_OBJECT_RECOVERY_REASON);
+  assert.ok(service.currentPosition.x > 107);
+  assert.equal(service.currentPosition.y, 108);
+});
+
+test('immature handled mug recovery keeps high-active tracker position while refreshing support', () => {
+  const service = new ImageAnchorService({ now: () => 1040 });
+  const data = new Uint8Array(200 * 160);
+  for (let y = 40; y < 130; y++) {
+    for (let x = 70; x < 170; x++) {
+      data[y * 200 + x] = 255;
+    }
+  }
+  const refreshedMask = createObjectSupportMask({
+    width: 200,
+    height: 160,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.92,
+    referencePoint: { x: 120, y: 85 },
+    createdAtFrame: 4,
+  });
+
+  service.setTrackingMode('parametric-surface');
+  service.currentPosition = { x: 160, y: 108, z: 0 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 1, inlierCount: 20, method: 'created' };
+  service.templateRegion = { x: 40, y: 40, width: 100, height: 90 };
+  service.trackingRegion = { x: 32, y: 32, width: 120, height: 110 };
+  service.anchorTargetClass = 'mug';
+  service.metrics.reconstructionMatureLandmarks = 0;
+  service.metrics.activeLandmarkCount = 29;
+  service.objectSupportAnchorUv = { u: 0.32, v: 0.72 };
+
+  const applied = service.updateObjectSupportMask(refreshedMask, { reason: 'pose-dropout-recovery' });
+
+  assert.equal(applied, true);
+  assert.deepEqual(service.currentPosition, { x: 160, y: 108, z: 0 });
+  assert.equal(service.metrics.objectSupportPositionCorrection, null);
+  assert.equal(service.metrics.objectSupportMaskSource, 'interactive-segmenter');
+});
+
+test('immature handled mug recovery caps low-active support recentering', () => {
+  const service = new ImageAnchorService({ now: () => 1040 });
+  const data = new Uint8Array(200 * 160);
+  for (let y = 40; y < 130; y++) {
+    for (let x = 70; x < 170; x++) {
+      data[y * 200 + x] = 255;
+    }
+  }
+  const refreshedMask = createObjectSupportMask({
+    width: 200,
+    height: 160,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.92,
+    referencePoint: { x: 120, y: 85 },
+    createdAtFrame: 4,
+  });
+
+  service.setTrackingMode('parametric-surface');
+  service.currentPosition = { x: 160, y: 108, z: 0 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 1, inlierCount: 20, method: 'created' };
+  service.templateRegion = { x: 40, y: 40, width: 100, height: 90 };
+  service.trackingRegion = { x: 32, y: 32, width: 120, height: 110 };
+  service.anchorTargetClass = 'mug';
+  service.metrics.reconstructionMatureLandmarks = 0;
+  service.metrics.activeLandmarkCount = 14;
+  service.objectSupportAnchorUv = { u: 0.32, v: 0.72 };
+
+  const applied = service.updateObjectSupportMask(refreshedMask, { reason: 'pose-dropout-recovery' });
+
+  assert.equal(applied, true);
+  assert.equal(service.metrics.objectSupportPositionCorrection, 'pose-dropout-recovery');
+  assert.ok(Math.abs(service.metrics.objectSupportPositionStep - 6) < 1e-6);
+  assert.equal(service.currentPosition.y, 108);
+});
+
+test('sparse cup recovery uses a conservative support recentering cap', () => {
+  const service = new ImageAnchorService();
+  const objectSupportMask = {
+    bbox: { x: 12, y: 16, width: 80, height: 72 },
+  };
+
+  service.anchorTargetClass = 'cup';
+  service.setTrackingMode('sparse-reconstruction');
+
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 6);
+});
+
+test('coherent depth cup recovery limits support recentering impulses', () => {
+  const service = new ImageAnchorService();
+  const objectSupportMask = {
+    bbox: { x: 12, y: 16, width: 80, height: 72 },
+  };
+
+  service.anchorTargetClass = 'cup';
+  service.setTrackingMode('depth-fusion');
+  service.metrics.reconstructionTrackerDelta = 4;
+
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 12);
+
+  service.metrics.reconstructionTrackerDelta = 18;
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 14);
+});
+
 test('handled mug support correction caps follow reconstruction mode ownership', () => {
   const service = new ImageAnchorService();
   const objectSupportMask = {
@@ -2748,30 +3335,32 @@ test('handled mug support correction caps follow reconstruction mode ownership',
   service.anchorTargetClass = 'mug';
 
   service.setTrackingMode('sparse-reconstruction');
-  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 10);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 12);
 
   service.setTrackingMode('depth-fusion');
-  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 4);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 4);
 
   service.setTrackingMode('parametric-surface');
+  service.metrics.reconstructionMatureLandmarks = 16;
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 12);
 
   service.setTrackingMode('direct-photometric');
-  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 12);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 2);
 
   service.anchorTargetClass = 'cup';
-  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 12);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 14);
 
   service.anchorTargetClass = 'bottle';
-  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 12);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 14);
 
   service.anchorTargetClass = 'can';
-  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 10);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
 
   service.anchorTargetClass = 'bag';
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 16);
@@ -5244,4 +5833,42 @@ test('compact mature curved reconstruction recovers position when tracker transf
     reconstructionPose,
     trackerAnchorPosition,
   }), true);
+});
+
+test('selected curved recovery rejects severe divergent high-residual photometric poses', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('direct-photometric');
+  service.anchorTargetClass = 'cup';
+  service.templateRegion = { width: 118, height: 118 };
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.81;
+  service.metrics.reconstructionMatureLandmarks = 28;
+  service.metrics.reconstructionTrackerDelta = 34.5;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  const reconstructionPose = {
+    success: true,
+    method: 'direct-photometric',
+    position: { x: 331, y: 218, z: 0 },
+    inlierCount: 16,
+    averageResidual: 7.8,
+    confidence: 0.79,
+    depthQuality: 0.12,
+    preview: {
+      surface: { model: 'tapered-cylinder' },
+      statistics: { mapConfidence: 0.81 },
+    },
+  };
+  const trackerAnchorPosition = {
+    method: 'reference_similarity_transform',
+    confidence: 0,
+    averageResidual: 36,
+  };
+
+  assert.equal(service._hasStrongCurvedReconstructionPosition(reconstructionPose), false);
+  assert.equal(service._hasModerateCurvedReconstructionRecovery({
+    reconstructionPose,
+    trackerAnchorPosition,
+  }), false);
 });

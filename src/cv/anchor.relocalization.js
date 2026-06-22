@@ -15,23 +15,44 @@ const DEFAULT_CONFIG = {
 };
 
 const normalizeDescriptor = values => {
-  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const centered = values.map(value => value - mean);
-  const variance = centered.reduce((sum, value) => sum + value * value, 0) / centered.length;
+  let mean = 0;
+  for (let index = 0; index < values.length; index++) {
+    mean += values[index];
+  }
+  mean /= values.length;
+
+  const centered = new Array(values.length);
+  let variance = 0;
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index] - mean;
+    centered[index] = value;
+    variance += value * value;
+  }
+  variance /= values.length;
   const scale = Math.sqrt(variance) || 1;
-  const normalized = centered.map(value => value / scale);
-  const norm = Math.hypot(...normalized) || 1;
-  return normalized.map(value => value / norm);
+  const normalized = new Array(values.length);
+  let normSquared = 0;
+  for (let index = 0; index < values.length; index++) {
+    const value = centered[index] / scale;
+    normalized[index] = value;
+    normSquared += value * value;
+  }
+
+  const norm = Math.sqrt(normSquared) || 1;
+  for (let index = 0; index < normalized.length; index++) {
+    normalized[index] /= norm;
+  }
+  return normalized;
 };
 
-const descriptorDistance = (left, right) => {
+const descriptorDistanceSquared = (left, right) => {
   let sum = 0;
   const length = Math.min(left.length, right.length);
   for (let index = 0; index < length; index++) {
     const delta = left[index] - right[index];
     sum += delta * delta;
   }
-  return Math.sqrt(sum);
+  return sum;
 };
 
 const transformPoint = (point, transform) => {
@@ -110,19 +131,24 @@ const fitSimilarityTransform = matches => {
 };
 
 const scoreTransform = (matches, transform, threshold) => {
-  const residuals = matches.map(match => {
-    const projected = transformPoint(match.reference, transform);
-    return {
-      match,
-      residual: Math.hypot(projected.x - match.point.x, projected.y - match.point.y),
-    };
-  });
-  const inliers = residuals.filter(item => item.residual <= threshold);
-  const averageResidual = inliers.length > 0
-    ? inliers.reduce((sum, item) => sum + item.residual, 0) / inliers.length
-    : Infinity;
+  const thresholdSquared = threshold * threshold;
+  const inliers = [];
+  let residualSum = 0;
 
-  return { inliers: inliers.map(item => item.match), averageResidual };
+  for (const match of matches) {
+    const projected = transformPoint(match.reference, transform);
+    const dx = projected.x - match.point.x;
+    const dy = projected.y - match.point.y;
+    const residualSquared = dx * dx + dy * dy;
+    if (residualSquared <= thresholdSquared) {
+      inliers.push(match);
+      residualSum += Math.sqrt(residualSquared);
+    }
+  }
+
+  const averageResidual = inliers.length > 0 ? residualSum / inliers.length : Infinity;
+
+  return { inliers, averageResidual };
 };
 
 export class PatchKeyframeRelocalizer {
@@ -131,6 +157,7 @@ export class PatchKeyframeRelocalizer {
     this.keyframes = [];
     this.nextKeyframeId = 0;
     this.lastResult = null;
+    this.referenceEntriesCache = null;
   }
 
   hasKeyframes() {
@@ -141,6 +168,7 @@ export class PatchKeyframeRelocalizer {
     this.keyframes = [];
     this.nextKeyframeId = 0;
     this.lastResult = null;
+    this.referenceEntriesCache = null;
   }
 
   setKeyframeEntries(entries) {
@@ -155,6 +183,7 @@ export class PatchKeyframeRelocalizer {
         response: entry.response || 1,
       })),
     }];
+    this.referenceEntriesCache = null;
   }
 
   storeKeyframeFromTrackedPoints(grayImage, trackedPoints, timestamp = performance.now()) {
@@ -194,6 +223,7 @@ export class PatchKeyframeRelocalizer {
     if (this.keyframes.length > this.config.maxKeyframes) {
       this.keyframes = this.keyframes.slice(-this.config.maxKeyframes);
     }
+    this.referenceEntriesCache = null;
 
     this.lastResult = {
       success: true,
@@ -272,28 +302,31 @@ export class PatchKeyframeRelocalizer {
   _matchEntries(queryEntries) {
     const references = this._referenceEntries();
     const candidateMatches = [];
+    const maxDistanceSquared = this.config.maxDescriptorDistance * this.config.maxDescriptorDistance;
+    const ratioThresholdSquared = this.config.ratioThreshold * this.config.ratioThreshold;
 
     for (const query of queryEntries) {
       let best = null;
       let secondBest = null;
 
       for (const reference of references) {
-        const distance = descriptorDistance(reference.descriptor, query.descriptor);
-        if (!best || distance < best.distance) {
+        const distanceSquared = descriptorDistanceSquared(reference.descriptor, query.descriptor);
+        if (!best || distanceSquared < best.distanceSquared) {
           secondBest = best;
-          best = { reference, query, distance };
-        } else if (!secondBest || distance < secondBest.distance) {
-          secondBest = { reference, query, distance };
+          best = { reference, query, distanceSquared };
+        } else if (!secondBest || distanceSquared < secondBest.distanceSquared) {
+          secondBest = { reference, query, distanceSquared };
         }
       }
 
-      const ratio = secondBest ? best.distance / Math.max(secondBest.distance, 1e-9) : Infinity;
-      if (best && best.distance <= this.config.maxDescriptorDistance && ratio <= this.config.ratioThreshold) {
+      const ratioPass = secondBest &&
+        best.distanceSquared / Math.max(secondBest.distanceSquared, 1e-18) <= ratioThresholdSquared;
+      if (best && best.distanceSquared <= maxDistanceSquared && ratioPass) {
         candidateMatches.push({
           id: best.reference.id,
           reference: best.reference.reference,
           point: query.point,
-          distance: best.distance,
+          distance: Math.sqrt(best.distanceSquared),
           response: query.response,
           keyframeId: best.reference.keyframeId,
         });
@@ -375,12 +408,26 @@ export class PatchKeyframeRelocalizer {
   }
 
   _referenceEntries() {
-    return this.keyframes
-      .flatMap(keyframe => keyframe.entries.map(entry => ({
-        ...entry,
-        keyframeId: keyframe.id,
-      })))
-      .slice(-this.config.maxReferenceEntries);
+    if (this.referenceEntriesCache) {
+      return this.referenceEntriesCache;
+    }
+
+    const entries = [];
+    for (const keyframe of this.keyframes) {
+      for (const entry of keyframe.entries) {
+        entries.push({
+          id: entry.id,
+          reference: entry.reference,
+          point: entry.point,
+          descriptor: entry.descriptor,
+          response: entry.response,
+          keyframeId: keyframe.id,
+        });
+      }
+    }
+
+    this.referenceEntriesCache = entries.slice(-this.config.maxReferenceEntries);
+    return this.referenceEntriesCache;
   }
 
   _pointQuality(point) {

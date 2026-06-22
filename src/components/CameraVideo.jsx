@@ -5,9 +5,10 @@ const CameraVideo = forwardRef(({ isVisible = true, style = {}, ...props }, ref)
     <video
       ref={ref}
       className={`camera-video fixed top-0 left-0 w-screen h-screen object-cover z-10 ${
-        isVisible ? 'block' : 'hidden'
+        isVisible ? 'opacity-100' : 'opacity-0'
       }`}
       style={style}
+      aria-hidden={!isVisible}
       playsInline
       webkit-playsinline=""
       muted

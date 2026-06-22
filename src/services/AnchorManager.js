@@ -7,6 +7,11 @@ import {
   createTapLocalObjectSupportMask,
   isPointInsideObjectSupport,
 } from '../cv/objectSupportMask.js';
+import {
+  CURVED_OBJECT_RECOVERY_REASON,
+  needsCurvedObjectRecovery,
+  shouldDeferSparseMugPoseDropoutRecovery,
+} from '../cv/curvedObjectRecovery.js';
 import { logger } from '../utils/logger.js';
 
 const createActiveAnchorDiagnostics = (metrics, readiness) => ({
@@ -67,9 +72,9 @@ export class AnchorManager {
     this.cameraParams = null;
     this.segmentationRefreshInFlight = false;
     this.lastSegmentationRefreshAt = 0;
-    this.lastPoseDropoutRefreshAt = 0;
+    this.lastRecoveryRefreshAt = 0;
     this.segmentationRefreshIntervalMs = 500;
-    this.poseDropoutRefreshIntervalMs = 180;
+    this.recoveryRefreshIntervalMs = 180;
   }
 
   async initialize(cv, viewportWidth, viewportHeight, fov = 63) {
@@ -207,12 +212,18 @@ export class AnchorManager {
 
     const now = performance.now();
     const lowObjectOwnership = this._hasLowObjectOwnership();
+    if (this._shouldDeferObjectSupportRefresh() && !lowObjectOwnership) {
+      return false;
+    }
+
     const poseDropout = this._hasPoseDropout();
+    const curvedObjectRecovery = this._needsCurvedObjectRecovery();
+    const recovery = poseDropout || curvedObjectRecovery;
     const due = now - this.lastSegmentationRefreshAt >= this.segmentationRefreshIntervalMs;
-    const poseDropoutDue = this.lastPoseDropoutRefreshAt === 0 ||
-      now - this.lastPoseDropoutRefreshAt >= this.poseDropoutRefreshIntervalMs;
+    const recoveryDue = this.lastRecoveryRefreshAt === 0 ||
+      now - this.lastRecoveryRefreshAt >= this.recoveryRefreshIntervalMs;
     const stableEnough = ['mapping', 'tracking', 'stable', 'degraded'].includes(this.anchorState.state);
-    if (!stableEnough || (!due && !lowObjectOwnership && !(poseDropout && poseDropoutDue))) {
+    if (!stableEnough || (!due && !lowObjectOwnership && !(recovery && recoveryDue))) {
       return false;
     }
 
@@ -236,7 +247,13 @@ export class AnchorManager {
       }
 
       const reason = acceptedMask === objectSupportMask
-        ? poseDropout ? 'pose-dropout-recovery' : lowObjectOwnership ? 'object-ownership-recovery' : 'periodic-segmentation-refresh'
+        ? poseDropout
+          ? 'pose-dropout-recovery'
+          : curvedObjectRecovery
+            ? CURVED_OBJECT_RECOVERY_REASON
+            : lowObjectOwnership
+              ? 'object-ownership-recovery'
+              : 'periodic-segmentation-refresh'
         : 'tap-local-support-growth';
       const applied = this.imageAnchorService.updateObjectSupportMask(acceptedMask, { reason });
       if (applied && this.activeAnchor) {
@@ -251,8 +268,8 @@ export class AnchorManager {
       this.segmentationRefreshInFlight = false;
     });
 
-    if (poseDropout) {
-      this.lastPoseDropoutRefreshAt = now;
+    if (recovery) {
+      this.lastRecoveryRefreshAt = now;
     }
 
     return true;
@@ -306,7 +323,9 @@ export class AnchorManager {
 
     const frameArea = imageData.width * imageData.height;
     const maskArea = objectSupportMask.bbox.width * objectSupportMask.bbox.height;
-    return maskArea >= 16 && maskArea <= frameArea * 0.72;
+    const oversizedAxis = objectSupportMask.bbox.width > imageData.width * 0.95 ||
+      objectSupportMask.bbox.height > imageData.height * 0.95;
+    return maskArea >= 16 && maskArea <= frameArea * 0.72 && !oversizedAxis;
   }
 
   _hasLowObjectOwnership() {
@@ -322,6 +341,10 @@ export class AnchorManager {
 
   _hasPoseDropout() {
     const metrics = this.anchorState?.metrics || {};
+    if (this._shouldDeferSparseMugPoseDropoutRecovery(metrics)) {
+      return false;
+    }
+
     const active = metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0;
     const trackingRate = metrics.trackingSuccessRate ?? 0;
     const poseInliers = metrics.poseInliers ?? 0;
@@ -330,6 +353,23 @@ export class AnchorManager {
       trackingRate >= 0.55 &&
       poseInliers < 8 &&
       metrics.poseSource == null;
+  }
+
+  _needsCurvedObjectRecovery() {
+    const metrics = this.anchorState?.metrics || {};
+    const targetClass = this.activeAnchor?.sourceDetection?.class || metrics.targetClass;
+    return needsCurvedObjectRecovery(metrics, targetClass);
+  }
+
+  _shouldDeferObjectSupportRefresh() {
+    const metrics = this.anchorState?.metrics || {};
+    return this._shouldDeferSparseMugPoseDropoutRecovery(metrics);
+  }
+
+  _shouldDeferSparseMugPoseDropoutRecovery(metrics) {
+    const targetClass = this.activeAnchor?.sourceDetection?.class || metrics.targetClass;
+    const trackingMode = this.activeAnchor?.trackingMode || this.trackingMode || metrics.trackingMode;
+    return shouldDeferSparseMugPoseDropoutRecovery(metrics, targetClass, trackingMode);
   }
 
   _getSegmentationRefreshRadius(imageData) {

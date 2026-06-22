@@ -19,6 +19,7 @@ import {
   replayImageAnchorSequence,
   summarizeReplay,
 } from './synthetic/anchorReplayHarness.js';
+import { createVisionBenchmarkMatrix } from './synthetic/visionBenchmarkMatrix.js';
 import { scoreHeadPoseReplay } from './synthetic/headPoseReplayHarness.js';
 import { realisticReplayScenarios, stressReplayScenarios } from './synthetic/visionReplayScenarios.js';
 import { RECONSTRUCTION_MODES } from './anchor.reconstructionModes.js';
@@ -809,4 +810,131 @@ test('segmentation-owned replay keeps landmarks on weak objects despite detailed
       );
     }
   }
+});
+
+test('replay records object support correction on the corrected frame', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = createVisionBenchmarkMatrix({ size: 'quick' })
+    .find(item => item.name === 'textured-cup / window / fast / early');
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'direct-photometric',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+  });
+  const correctedFrames = replay.frames.filter(frame => (
+    frame.metrics.objectSupportPositionCorrection === 'pose-dropout-recovery'
+  ));
+  const firstCorrected = correctedFrames[0];
+
+  assert.ok(correctedFrames.length >= 1);
+  assert.ok(
+    firstCorrected.anchorError <= 12,
+    `first corrected frame should record corrected position, got ${firstCorrected.anchorError.toFixed(2)}px`
+  );
+});
+
+test('replay keeps direct curved motion stable through repeated cup occlusion', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = createVisionBenchmarkMatrix({ size: 'quick' })
+    .find(item => item.name === 'textured-cup / kitchen / fast / repeated');
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'direct-photometric',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+  });
+  const heldFrames = replay.frames.filter(frame => frame.metrics.positionFilterAdjustment === 'curved-motion-hold');
+  const recoveryCorrections = replay.frames.filter(frame => frame.metrics.objectSupportPositionCorrection === 'pose-dropout-recovery');
+  const maxAnchorError = Math.max(...replay.frames.map(frame => frame.anchorError));
+
+  assert.ok(heldFrames.length >= 4);
+  assert.ok(recoveryCorrections.length <= 1);
+  assert.ok(maxAnchorError <= 19, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
+});
+
+test('replay corrects stale depth-fusion cup motion before dropout error runs away', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = createVisionBenchmarkMatrix({ size: 'quick' })
+    .find(item => item.name === 'textured-cup / kitchen / fast / repeated');
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'depth-fusion',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+    depthFrameForFrame: createSyntheticDepthFrame,
+  });
+  const heldCorrections = replay.frames.filter(frame => (
+    frame.metrics.positionFilterAdjustment === 'curved-motion-hold' &&
+    frame.metrics.objectSupportPositionCorrection === 'pose-dropout-recovery'
+  ));
+  const maxAnchorError = Math.max(...replay.frames.map(frame => frame.anchorError));
+
+  assert.ok(heldCorrections.length >= 3);
+  assert.ok(maxAnchorError <= 20, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
+});
+
+test('replay refreshes support when mature mug motion hold becomes stale', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = createVisionBenchmarkMatrix({ size: 'quick' })
+    .find(item => item.name === 'handled-mug / shelf / fast / repeated');
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'parametric-surface',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+  });
+  const heldCorrections = replay.frames.filter(frame => (
+    frame.metrics.positionFilterAdjustment === 'curved-motion-hold' &&
+    frame.metrics.objectSupportPositionCorrection === 'curved-object-recovery'
+  ));
+  const maxAnchorError = Math.max(...replay.frames.map(frame => frame.anchorError));
+  const meanAnchorError = replay.frames.reduce((sum, frame) => sum + frame.anchorError, 0) /
+    Math.max(1, replay.frames.length);
+
+  assert.ok(heldCorrections.length >= 2);
+  assert.ok(maxAnchorError <= 32, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
+  assert.ok(meanAnchorError <= 9, `mean anchor error should stay bounded, got ${meanAnchorError.toFixed(2)}px`);
+});
+
+test('replay leaves textured cup motion holds on pose-dropout recovery path', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = createVisionBenchmarkMatrix({ size: 'quick' })
+    .find(item => item.name === 'textured-cup / window / fast / early');
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'parametric-surface',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+  });
+  const mugRecoveryCorrections = replay.frames.filter(frame => (
+    frame.metrics.objectSupportPositionCorrection === 'curved-object-recovery'
+  ));
+
+  assert.equal(mugRecoveryCorrections.length, 0);
+});
+
+test('replay skips sparse mug support refresh when tracker and reconstruction agree', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = createVisionBenchmarkMatrix({ size: 'quick' })
+    .find(item => item.name === 'handled-mug / shelf / fast / repeated');
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'sparse-reconstruction',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+  });
+  const supportCorrections = replay.frames.filter(frame => (
+    frame.metrics.objectSupportPositionCorrection === 'pose-dropout-recovery'
+  ));
+  const maxAnchorError = Math.max(...replay.frames.map(frame => frame.anchorError));
+
+  assert.ok(supportCorrections.length <= 1);
+  assert.ok(maxAnchorError <= 26, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
 });

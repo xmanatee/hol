@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { DepthEstimationService } from './DepthEstimationService.js';
+import { shouldInitializeDepthForTrackingMode } from '../hooks/useCameraSystem.js';
 
 class FakeDepthWorker {
   constructor() {
@@ -28,6 +29,14 @@ const createImageData = () => ({
   width: 4,
   height: 4,
   data: new Uint8ClampedArray(4 * 4 * 4),
+});
+
+test('depth initialization is reserved for the depth fusion tracking mode', () => {
+  assert.equal(shouldInitializeDepthForTrackingMode('sparse-reconstruction'), false);
+  assert.equal(shouldInitializeDepthForTrackingMode('parametric-surface'), false);
+  assert.equal(shouldInitializeDepthForTrackingMode('direct-photometric'), false);
+  assert.equal(shouldInitializeDepthForTrackingMode('object-pose'), false);
+  assert.equal(shouldInitializeDepthForTrackingMode('depth-fusion'), true);
 });
 
 test('depth estimation service retries initialization after worker model errors', async () => {
