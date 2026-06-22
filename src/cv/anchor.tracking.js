@@ -88,11 +88,7 @@ export class KeypointTracker {
       this.anchorOriginalPosition = { ...this.keypointCentroid };
     }
 
-    // Store reference frame
-    if (this.previousGray) {
-      this.previousGray.delete();
-    }
-    this.previousGray = grayImage.clone();
+    this._replacePreviousGray(grayImage);
     
     // Reset adaptive tracking state
     this.trackingAttempts = 0;
@@ -101,6 +97,14 @@ export class KeypointTracker {
     logger.info('KeypointTracker', `Initialized tracking with ${this.trackedPoints.length} keypoints`);
     logger.info('KeypointTracker', `Keypoint centroid: (${this.keypointCentroid.x.toFixed(1)}, ${this.keypointCentroid.y.toFixed(1)})`);
     logger.info('KeypointTracker', `Tap offset: (${this.tapOffset.x.toFixed(1)}, ${this.tapOffset.y.toFixed(1)})`);
+  }
+
+  _replacePreviousGray(grayImage) {
+    const nextGray = grayImage.clone();
+    if (this.previousGray) {
+      this.previousGray.delete();
+    }
+    this.previousGray = nextGray;
   }
 
   /**
@@ -144,25 +148,28 @@ export class KeypointTracker {
       };
     }
 
+    let prevPoints = null;
+    let nextPoints = null;
+    let status = null;
+    let flowError = null;
+
     try {
-      // Prepare point vectors for OpenCV
-      const prevPoints = new cv.Mat(activePoints.length, 1, cv.CV_32FC2);
+      prevPoints = new cv.Mat(activePoints.length, 1, cv.CV_32FC2);
       for (let i = 0; i < activePoints.length; i++) {
         const pt = activePoints[i];
         prevPoints.data32F[i * 2] = pt.current.x;
         prevPoints.data32F[i * 2 + 1] = pt.current.y;
       }
 
-      // Properly initialize output matrices with correct size and type
-      const nextPoints = new cv.Mat(activePoints.length, 1, cv.CV_32FC2);
-      const status = new cv.Mat(activePoints.length, 1, cv.CV_8UC1);
-      const error = new cv.Mat(activePoints.length, 1, cv.CV_32FC1);
+      nextPoints = new cv.Mat(activePoints.length, 1, cv.CV_32FC2);
+      status = new cv.Mat(activePoints.length, 1, cv.CV_8UC1);
+      flowError = new cv.Mat(activePoints.length, 1, cv.CV_32FC1);
       
       logger.debugEvery('KeypointTracker', 'matrix-initialization', 1000, 'Matrix initialization:', {
         prevPointsSize: `${prevPoints.rows}x${prevPoints.cols}`,
         nextPointsSize: `${nextPoints.rows}x${nextPoints.cols}`,
         statusSize: `${status.rows}x${status.cols}`,
-        errorSize: `${error.rows}x${error.cols}`
+        errorSize: `${flowError.rows}x${flowError.cols}`
       });
 
       // Perform Lucas-Kanade tracking
@@ -172,7 +179,7 @@ export class KeypointTracker {
         prevPoints,
         nextPoints,
         status,
-        error,
+        flowError,
         this.lkParams.winSize,
         this.lkParams.maxLevel,
         this.lkParams.criteria
@@ -204,7 +211,7 @@ export class KeypointTracker {
       for (let i = 0; i < activePoints.length; i++) {
         const point = activePoints[i];
         const trackingStatus = status.data[i];
-        const trackingError = error.data32F[i];
+        const trackingError = flowError.data32F[i];
         const result = sampleResults.length < 5 ? {
           pointId: point.id,
           status: trackingStatus,
@@ -291,12 +298,6 @@ export class KeypointTracker {
         sampleResults
       });
 
-      // Cleanup OpenCV matrices
-      prevPoints.delete();
-      nextPoints.delete();
-      status.delete();
-      error.delete();
-
       // Filter outliers using RANSAC-style consensus (skip during initial tracking)
       if (!isInitialTracking) {
         this._filterOutliers(cv);
@@ -304,9 +305,7 @@ export class KeypointTracker {
         logger.debugEvery('KeypointTracker', 'outlier-filter-initial-skip', 1000, 'Skipping outlier filtering during initial tracking phase');
       }
 
-      // Update previous frame
-      this.previousGray.delete();
-      this.previousGray = currentGray.clone();
+      this._replacePreviousGray(currentGray);
 
       // Calculate success metrics
       const successRate = successCount / activePoints.length;
@@ -346,6 +345,19 @@ export class KeypointTracker {
     } catch (error) {
       logger.error('KeypointTracker', 'Tracking error:', error);
       return { success: false, reason: 'Tracking exception: ' + error.message };
+    } finally {
+      if (prevPoints) {
+        prevPoints.delete();
+      }
+      if (nextPoints) {
+        nextPoints.delete();
+      }
+      if (status) {
+        status.delete();
+      }
+      if (flowError) {
+        flowError.delete();
+      }
     }
   }
 
@@ -819,45 +831,60 @@ export class KeypointTracker {
       dstPoints.push(point.current.x, point.current.y);
     });
 
-    const srcMat = cv.matFromArray(activePoints.length, 1, cv.CV_32FC2, srcPoints);
-    const dstMat = cv.matFromArray(activePoints.length, 1, cv.CV_32FC2, dstPoints);
-    const mask = new cv.Mat();
-    seedHomographyRansac(cv);
-    const homography = cv.findHomography(srcMat, dstMat, cv.RANSAC, 3, mask, 1000, 0.99);
+    let srcMat = null;
+    let dstMat = null;
+    let mask = null;
+    let homography = null;
 
-    let inlierCount = 0;
-    for (let index = 0; index < mask.rows; index++) {
-      if (mask.data[index] === 1) inlierCount++;
+    try {
+      srcMat = cv.matFromArray(activePoints.length, 1, cv.CV_32FC2, srcPoints);
+      dstMat = cv.matFromArray(activePoints.length, 1, cv.CV_32FC2, dstPoints);
+      mask = new cv.Mat();
+      seedHomographyRansac(cv);
+      homography = cv.findHomography(srcMat, dstMat, cv.RANSAC, 3, mask, 1000, 0.99);
+
+      let inlierCount = 0;
+      for (let index = 0; index < mask.rows; index++) {
+        if (mask.data[index] === 1) inlierCount++;
+      }
+
+      const matrix = homography.empty() ? null : Array.from(homography.data64F);
+      const inverseMatrix = matrix ? this._invertHomographyMatrix(matrix) : null;
+
+      if (!matrix || !inverseMatrix || inlierCount < 8 || inlierCount / activePoints.length < 0.5) {
+        return null;
+      }
+
+      const residuals = activePoints.map(point => {
+        const projected = this._transformHomographyPoint(point.original, matrix);
+        return Math.hypot(projected.x - point.current.x, projected.y - point.current.y);
+      });
+      const averageResidual = residuals.reduce((sum, residual) => sum + residual, 0) / residuals.length;
+
+      return {
+        type: 'homography',
+        matrix,
+        inverseMatrix,
+        scale: 1,
+        rotation: 0,
+        confidence: Math.max(0, Math.min(1, (inlierCount / activePoints.length) * (1 - Math.min(1, averageResidual / 12)))),
+        inlierCount,
+        averageResidual,
+      };
+    } finally {
+      if (srcMat) {
+        srcMat.delete();
+      }
+      if (dstMat) {
+        dstMat.delete();
+      }
+      if (mask) {
+        mask.delete();
+      }
+      if (homography) {
+        homography.delete();
+      }
     }
-
-    const matrix = homography.empty() ? null : Array.from(homography.data64F);
-    const inverseMatrix = matrix ? this._invertHomographyMatrix(matrix) : null;
-
-    srcMat.delete();
-    dstMat.delete();
-    mask.delete();
-    if (!homography.empty()) homography.delete();
-
-    if (!matrix || !inverseMatrix || inlierCount < 8 || inlierCount / activePoints.length < 0.5) {
-      return null;
-    }
-
-    const residuals = activePoints.map(point => {
-      const projected = this._transformHomographyPoint(point.original, matrix);
-      return Math.hypot(projected.x - point.current.x, projected.y - point.current.y);
-    });
-    const averageResidual = residuals.reduce((sum, residual) => sum + residual, 0) / residuals.length;
-
-    return {
-      type: 'homography',
-      matrix,
-      inverseMatrix,
-      scale: 1,
-      rotation: 0,
-      confidence: Math.max(0, Math.min(1, (inlierCount / activePoints.length) * (1 - Math.min(1, averageResidual / 12)))),
-      inlierCount,
-      averageResidual,
-    };
   }
 
   _replaceTrackingPointsPreservingReference(keypoints, currentGray, transformation) {
@@ -896,10 +923,7 @@ export class KeypointTracker {
       y: this.anchorOriginalPosition.y - this.keypointCentroid.y
     };
 
-    if (this.previousGray) {
-      this.previousGray.delete();
-    }
-    this.previousGray = currentGray.clone();
+    this._replacePreviousGray(currentGray);
     this.trackingAttempts = 0;
     this.nextPointId = this.trackedPoints.length;
   }
@@ -950,10 +974,7 @@ export class KeypointTracker {
     this._pruneLandmarkMap(maxTrackedPoints);
     this._recalculateReferenceCentroid();
 
-    if (this.previousGray) {
-      this.previousGray.delete();
-    }
-    this.previousGray = currentGray.clone();
+    this._replacePreviousGray(currentGray);
     this.trackingAttempts = 0;
     this.lastRefreshStats = {
       added,
@@ -994,10 +1015,7 @@ export class KeypointTracker {
     this._pruneLandmarkMap(96);
     this._recalculateReferenceCentroid();
 
-    if (this.previousGray) {
-      this.previousGray.delete();
-    }
-    this.previousGray = currentGray.clone();
+    this._replacePreviousGray(currentGray);
     this.trackingAttempts = 0;
     this.lastRefreshStats = {
       restored,

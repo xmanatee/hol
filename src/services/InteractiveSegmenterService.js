@@ -72,7 +72,7 @@ export class InteractiveSegmenterService {
 
     this.worker = new WorkerClass();
     this.worker.onmessage = event => this._handleMessage(event.data);
-    this.worker.onerror = error => this._rejectAll(error.message);
+    this.worker.onerror = error => this._handleWorkerError(error.message || 'Interactive segmenter worker failed');
     return this.worker;
   }
 
@@ -89,6 +89,16 @@ export class InteractiveSegmenterService {
     } else {
       request.reject(new Error(message.reason));
     }
+  }
+
+  _handleWorkerError(reason) {
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+    this.workerGeneration++;
+    this.workerPromise = null;
+    this._rejectAll(reason);
   }
 
   _rejectAll(reason) {

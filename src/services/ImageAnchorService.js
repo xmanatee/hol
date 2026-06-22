@@ -785,9 +785,9 @@ export class ImageAnchorService {
           if (this.keypointFailureCount >= this.maxKeypointFailures) {
             logger.info('ImageAnchor', `Max keypoint failures reached (${this.keypointFailureCount}), degrading to template matching`);
             this.anchorState = 'degraded';
-            const fallbackStart = this._startUpdateTiming(updateTimings);
+            const templateStart = this._startUpdateTiming(updateTimings);
             updateResult = this._updateWithTemplate(gray);
-            this._recordUpdateTiming(updateTimings, 'templateUpdateMs', fallbackStart);
+            this._recordUpdateTiming(updateTimings, 'templateUpdateMs', templateStart);
             if (!updateResult.success) {
               updateResult = this._createDegradedHoldResult(updateResult.reason);
             }
@@ -828,18 +828,18 @@ export class ImageAnchorService {
             updateResult = recoveryResult;
           } else {
             logger.debugEvery('ImageAnchor', 'keypoint-recovery-template', 1000, 'Keypoint recovery failed; switching to template matching');
-            const fallbackStart = this._startUpdateTiming(updateTimings);
+            const templateStart = this._startUpdateTiming(updateTimings);
             updateResult = this._updateWithTemplate(gray);
-            this._recordUpdateTiming(updateTimings, 'templateUpdateMs', fallbackStart);
+            this._recordUpdateTiming(updateTimings, 'templateUpdateMs', templateStart);
             if (!updateResult.success) {
               updateResult = this._createDegradedHoldResult(updateResult.reason);
             }
           }
         } else {
           logger.debugEvery('ImageAnchor', 'attempting-template-recovery', 1000, 'Attempting template matching recovery');
-          const fallbackStart = this._startUpdateTiming(updateTimings);
+          const templateStart = this._startUpdateTiming(updateTimings);
           updateResult = this._updateWithTemplate(gray);
-          this._recordUpdateTiming(updateTimings, 'templateUpdateMs', fallbackStart);
+          this._recordUpdateTiming(updateTimings, 'templateUpdateMs', templateStart);
           if (!updateResult.success) {
             updateResult = this._createDegradedHoldResult(updateResult.reason);
           }
@@ -2939,59 +2939,47 @@ export class ImageAnchorService {
   _selectTrackerAnchorPosition({ trackerAnchorPosition, reconstructionPose }) {
     this.metrics.trackerAnchorAdjustment = null;
     if (this._shouldUseObjectOwnedCentroidPosition({ trackerAnchorPosition, reconstructionPose })) {
-      const centroidPosition = this.keypointTracker.getCentroidAnchorPosition(this._objectOwnedActivePoints());
-
-      if (centroidPosition) {
-        this.metrics.trackerAnchorAdjustment = 'object-owned-centroid-position';
-        this.metrics.trackerAnchorRawResidual = trackerAnchorPosition.averageResidual ?? null;
-
-        return {
-          ...trackerAnchorPosition,
-          x: centroidPosition.x,
-          y: centroidPosition.y,
-          confidence: Math.min(
-            trackerAnchorPosition.confidence ?? centroidPosition.confidence ?? 0,
-            centroidPosition.confidence ?? trackerAnchorPosition.confidence ?? 0
-          ),
-          inlierCount: centroidPosition.inlierCount ?? trackerAnchorPosition.inlierCount,
-          method: 'object-owned-centroid-position',
-          transformMethod: trackerAnchorPosition.method,
-        };
-      }
+      const centroidPosition = this._objectOwnedCentroidTrackerPosition({
+        trackerAnchorPosition,
+        method: 'object-owned-centroid-position',
+        adjustment: 'object-owned-centroid-position',
+      });
+      if (centroidPosition) return centroidPosition;
     }
 
     if (!this._shouldUseCurvedDropoutCentroidPosition({ trackerAnchorPosition, reconstructionPose })) {
       if (this._shouldUseMatureReconstructionDropoutCentroid({ trackerAnchorPosition, reconstructionPose })) {
-        const centroidPosition = this.keypointTracker.getCentroidAnchorPosition(this._objectOwnedActivePoints());
-
-        if (centroidPosition) {
-          this.metrics.trackerAnchorAdjustment = 'mature-reconstruction-dropout-centroid';
-          this.metrics.trackerAnchorRawResidual = trackerAnchorPosition.averageResidual ?? null;
-
-          return {
-            ...trackerAnchorPosition,
-            x: centroidPosition.x,
-            y: centroidPosition.y,
-            confidence: Math.min(
-              trackerAnchorPosition.confidence ?? centroidPosition.confidence ?? 0,
-              centroidPosition.confidence ?? trackerAnchorPosition.confidence ?? 0
-            ),
-            inlierCount: centroidPosition.inlierCount ?? trackerAnchorPosition.inlierCount,
-            method: 'object-owned-centroid-position',
-            transformMethod: trackerAnchorPosition.method,
-          };
-        }
+        const centroidPosition = this._objectOwnedCentroidTrackerPosition({
+          trackerAnchorPosition,
+          method: 'object-owned-centroid-position',
+          adjustment: 'mature-reconstruction-dropout-centroid',
+        });
+        if (centroidPosition) return centroidPosition;
       }
+
       return trackerAnchorPosition;
     }
 
-    const centroidPosition = this.keypointTracker.getCentroidAnchorPosition(this._objectOwnedActivePoints());
+    const centroidPosition = this._objectOwnedCentroidTrackerPosition({
+      trackerAnchorPosition,
+      method: 'curved-centroid-position',
+      adjustment: 'curved-dropout-centroid-position',
+    });
 
     if (!centroidPosition) {
       return trackerAnchorPosition;
     }
 
-    this.metrics.trackerAnchorAdjustment = 'curved-dropout-centroid-position';
+    return centroidPosition;
+  }
+
+  _objectOwnedCentroidTrackerPosition({ trackerAnchorPosition, method, adjustment }) {
+    const centroidPosition = this.keypointTracker.getCentroidAnchorPosition(this._objectOwnedActivePoints());
+    if (!centroidPosition) {
+      return null;
+    }
+
+    this.metrics.trackerAnchorAdjustment = adjustment;
     this.metrics.trackerAnchorRawResidual = trackerAnchorPosition.averageResidual ?? null;
 
     return {
@@ -3003,7 +2991,7 @@ export class ImageAnchorService {
         centroidPosition.confidence ?? trackerAnchorPosition.confidence ?? 0
       ),
       inlierCount: centroidPosition.inlierCount ?? trackerAnchorPosition.inlierCount,
-      method: 'curved-centroid-position',
+      method,
       transformMethod: trackerAnchorPosition.method,
     };
   }

@@ -137,3 +137,45 @@ test('interactive segmenter service does not create a worker after dispose wins 
   await assert.rejects(pending, /Interactive segmenter disposed/);
   assert.equal(DeferredWorker.instances.length, 0);
 });
+
+test('interactive segmenter service clears failed workers before retrying', async () => {
+  DeferredWorker.instances = [];
+  const service = new InteractiveSegmenterService({ WorkerClass: DeferredWorker });
+  const imageData = {
+    width: 2,
+    height: 2,
+    data: new Uint8ClampedArray(2 * 2 * 4),
+  };
+
+  const failed = service.segmentTap({
+    imageData,
+    tapPosition: { x: 1, y: 1 },
+    createdAtFrame: 6,
+  });
+
+  await Promise.resolve();
+  DeferredWorker.instances[0].onerror({ message: 'worker crashed' });
+
+  await assert.rejects(failed, /worker crashed/);
+  assert.equal(DeferredWorker.instances[0].terminated, true);
+
+  const retry = service.segmentTap({
+    imageData,
+    tapPosition: { x: 1, y: 1 },
+    createdAtFrame: 7,
+  });
+
+  await Promise.resolve();
+  assert.equal(DeferredWorker.instances.length, 2);
+
+  DeferredWorker.instances[1].onmessage({
+    data: {
+      type: 'segment-result',
+      requestId: 2,
+      objectSupportMask: { source: 'interactive-segmenter', data: new Uint8Array([255]) },
+    },
+  });
+
+  const result = await retry;
+  assert.equal(result.source, 'interactive-segmenter');
+});

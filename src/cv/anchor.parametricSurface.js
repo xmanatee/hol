@@ -1,11 +1,16 @@
 import { clamp, normalizeAngle } from './anchor.reconstruction.math.js';
 import {
+  EMPTY_RECONSTRUCTION_STATS,
+  affineRotation,
+  affineVerticalScale,
   boundsForPoints,
   fitRobustAffine2D,
   fitRobustSimilarity,
   MOBILE_AFFINE_SAMPLE_WINDOW,
+  readinessFromGeometry,
   selectCoherentObservations,
   toActiveObservations,
+  transformPointAffine2,
   transformPoint2,
 } from './anchor.reconstructionRobust.js';
 import {
@@ -17,15 +22,6 @@ import {
 } from './anchor.parametricGeometry.js';
 
 export const PARAMETRIC_SURFACE_POSE_MODEL = 'parametric-surface';
-
-const emptyStats = {
-  averageSupport: 0,
-  averageReliability: 0,
-  matureLandmarks: 0,
-  geometricConsistency: 0,
-  mapConfidence: 0,
-  mappedFrames: 0,
-};
 
 const rotateNormal = (rotation, normal) => {
   const rotated = {
@@ -44,17 +40,6 @@ const rotateNormal = (rotation, normal) => {
     ? normalized
     : { x: -normalized.x, y: -normalized.y, z: -normalized.z };
 };
-
-const transformPointAffine2 = (point, transform) => ({
-  x: transform.rowX[0] * point.x + transform.rowX[1] * point.y + transform.rowX[2],
-  y: transform.rowY[0] * point.x + transform.rowY[1] * point.y + transform.rowY[2],
-});
-
-const affineVerticalScale = transform => Math.hypot(transform.rowX[1], transform.rowY[1]);
-
-const affineRotation = transform => Math.atan2(transform.rowY[0], transform.rowX[0]);
-
-const readinessFromGeometry = consistency => clamp((consistency - 0.45) / 0.22, 0, 1);
 
 export class ParametricSurfaceReconstructor {
   constructor(config = {}) {
@@ -417,35 +402,48 @@ export class ParametricSurfaceReconstructor {
     });
 
     const cv = this.cv;
-    const objectMat = cv.matFromArray(observations.length, 1, cv.CV_32FC3, objectPoints);
-    const imageMat = cv.matFromArray(observations.length, 1, cv.CV_32FC2, imagePoints);
-    const cameraMat = cv.matFromArray(3, 3, cv.CV_64F, [
-      this.cameraParams.fx, 0, this.cameraParams.cx,
-      0, this.cameraParams.fy, this.cameraParams.cy,
-      0, 0, 1,
-    ]);
-    const distCoeffs = cv.Mat.zeros(4, 1, cv.CV_64F);
-    const rvec = new cv.Mat();
-    const tvec = new cv.Mat();
-    const inliers = new cv.Mat();
-    const rotationMat = new cv.Mat();
-    const solved = cv.solvePnPRansac(
-      objectMat,
-      imageMat,
-      cameraMat,
-      distCoeffs,
-      rvec,
-      tvec,
-      false,
-      100,
-      5,
-      0.98,
-      inliers,
-      cv.SOLVEPNP_ITERATIVE
-    );
-    let result = null;
+    let objectMat = null;
+    let imageMat = null;
+    let cameraMat = null;
+    let distCoeffs = null;
+    let rvec = null;
+    let tvec = null;
+    let inliers = null;
+    let rotationMat = null;
 
-    if (solved && inliers.rows >= Math.max(10, Math.ceil(observations.length * 0.45))) {
+    try {
+      objectMat = cv.matFromArray(observations.length, 1, cv.CV_32FC3, objectPoints);
+      imageMat = cv.matFromArray(observations.length, 1, cv.CV_32FC2, imagePoints);
+      cameraMat = cv.matFromArray(3, 3, cv.CV_64F, [
+        this.cameraParams.fx, 0, this.cameraParams.cx,
+        0, this.cameraParams.fy, this.cameraParams.cy,
+        0, 0, 1,
+      ]);
+      distCoeffs = cv.Mat.zeros(4, 1, cv.CV_64F);
+      rvec = new cv.Mat();
+      tvec = new cv.Mat();
+      inliers = new cv.Mat();
+      rotationMat = new cv.Mat();
+
+      const solved = cv.solvePnPRansac(
+        objectMat,
+        imageMat,
+        cameraMat,
+        distCoeffs,
+        rvec,
+        tvec,
+        false,
+        100,
+        5,
+        0.98,
+        inliers,
+        cv.SOLVEPNP_ITERATIVE
+      );
+
+      if (!solved || inliers.rows < Math.max(10, Math.ceil(observations.length * 0.45))) {
+        return null;
+      }
+
       cv.Rodrigues(rvec, rotationMat);
       const rotation = Array.from(rotationMat.data64F);
       const translation = Array.from(tvec.data64F);
@@ -456,26 +454,24 @@ export class ParametricSurfaceReconstructor {
         imagePoints,
       });
 
-      if (averageResidual <= 7) {
-        result = {
+      return averageResidual <= 7
+        ? {
           inlierCount: inliers.rows,
           averageResidual,
           rotation,
           translation,
-        };
-      }
+        }
+        : null;
+    } finally {
+      if (objectMat) objectMat.delete();
+      if (imageMat) imageMat.delete();
+      if (cameraMat) cameraMat.delete();
+      if (distCoeffs) distCoeffs.delete();
+      if (rvec) rvec.delete();
+      if (tvec) tvec.delete();
+      if (inliers) inliers.delete();
+      if (rotationMat) rotationMat.delete();
     }
-
-    objectMat.delete();
-    imageMat.delete();
-    cameraMat.delete();
-    distCoeffs.delete();
-    rvec.delete();
-    tvec.delete();
-    inliers.delete();
-    rotationMat.delete();
-
-    return result;
   }
 
   _referencePnPTransform(bounds, observations) {
@@ -614,7 +610,7 @@ export class ParametricSurfaceReconstructor {
 
   _statistics() {
     const stats = [...this.stats.values()];
-    if (!stats.length) return emptyStats;
+    if (!stats.length) return EMPTY_RECONSTRUCTION_STATS;
     const averageSupport = stats.reduce((sum, item) => sum + item.observations / Math.max(this.frames.length, 1), 0) / stats.length;
     const averageReliability = stats.reduce((sum, item) => sum + clamp(item.quality / Math.max(item.observations, 1) / 3, 0, 1), 0) / stats.length;
     const matureLandmarks = stats.filter(item => item.observations >= this.minFrames).length;

@@ -4,13 +4,13 @@ import { DetectionService } from '../services/DetectionService.js';
 import { AnchorManager } from '../services/AnchorManager.js';
 import { PersonalityService } from '../services/PersonalityService.js';
 import { DepthEstimationService } from '../services/DepthEstimationService.js';
+import { loadOpenCVRuntime } from '../services/OpenCVRuntimeService.js';
 import { LazyTTSClient } from '../audio/lazyTTSClient.js';
 import { logger } from '../utils/logger.js';
 
 const DEPTH_FUSION_MODE = 'depth-fusion';
 
 export const useCameraSystem = (config = {}) => {
-  // Services
   const cameraServiceRef = useRef(new CameraService());
   const detectionServiceRef = useRef(new DetectionService());
   const anchorManagerRef = useRef(new AnchorManager());
@@ -23,7 +23,6 @@ export const useCameraSystem = (config = {}) => {
   const [_initialized, setInitialized] = useState(false);
   const [cvLoaded, setCvLoaded] = useState(false);
 
-  // State
   const [cameraState, setCameraState] = useState('idle');
   const [cameraError, setCameraError] = useState(null);
   const [videoDimensions, setVideoDimensions] = useState({ width: 1280, height: 720 });
@@ -36,7 +35,7 @@ export const useCameraSystem = (config = {}) => {
     lastDetections: null
   });
   const [anchorSystemState, setAnchorSystemState] = useState({
-    mode: 'detection', // 'detection' or 'anchor'
+    mode: 'detection',
     detections: [],
     activeAnchor: null,
     anchorState: null,
@@ -69,105 +68,30 @@ export const useCameraSystem = (config = {}) => {
     metricUpdateRef.current?.(name, value);
   }, []);
 
-  // Load OpenCV.js (singleton pattern to prevent double loading)
   useEffect(() => {
-    const loadOpenCV = async () => {
-      try {
-        // Check if OpenCV is already loaded
-        if (typeof window.cv !== 'undefined' && window.cv.Mat) {
-          logger.info('CameraSystem', 'OpenCV.js already loaded');
+    let isMounted = true;
+
+    loadOpenCVRuntime().then(
+      () => {
+        if (isMounted) {
+          logger.info('CameraSystem', 'OpenCV.js loaded');
           setCvLoaded(true);
-          return;
         }
-
-        // Check if already loading (prevent double loading)
-        if (window.__opencv_loading) {
-          logger.info('CameraSystem', 'OpenCV.js already loading, waiting...');
-          const waitForCV = () => {
-            if (typeof window.cv !== 'undefined' && window.cv.Mat) {
-              logger.info('CameraSystem', 'OpenCV.js loaded by another component');
-              setCvLoaded(true);
-            } else if (!window.__opencv_loading) {
-              // Loading failed, retry
-              loadOpenCV();
-            } else {
-              setTimeout(waitForCV, 100);
-            }
-          };
-          waitForCV();
-          return;
-        }
-
-        // Check if script already exists in DOM
-        const existingScript = document.querySelector('script[src="/opencv.js"]');
-        if (existingScript) {
-          logger.info('CameraSystem', 'OpenCV.js script already in DOM, waiting for load...');
-          const waitForCV = () => {
-            if (typeof window.cv !== 'undefined' && window.cv.Mat) {
-              logger.info('CameraSystem', 'OpenCV.js finished loading');
-              setCvLoaded(true);
-            } else {
-              setTimeout(waitForCV, 100);
-            }
-          };
-          waitForCV();
-          return;
-        }
-
-        logger.info('CameraSystem', 'Loading OpenCV.js');
-        window.__opencv_loading = true;
-        
-        // Load OpenCV.js via script tag
-        const script = document.createElement('script');
-        script.src = '/opencv.js';
-        script.async = true;
-        
-        script.onload = () => {
-          // Wait for cv to be available on window
-          let waitAttempts = 0;
-          const maxWaitAttempts = 100; // 10 seconds max
-          
-          const waitForCV = () => {
-            waitAttempts++;
-            if (typeof window.cv !== 'undefined' && window.cv.Mat) {
-              logger.info('CameraSystem', 'OpenCV.js loaded successfully');
-              window.__opencv_loading = false;
-              setCvLoaded(true);
-            } else if (waitAttempts < maxWaitAttempts) {
-              setTimeout(waitForCV, 100);
-            } else {
-              logger.error('CameraSystem', 'OpenCV.js failed to initialize - timeout after 10 seconds');
-              window.__opencv_loading = false;
-              setCvLoaded(false);
-            }
-          };
-          waitForCV();
-        };
-        
-        script.onerror = (error) => {
-          logger.error('CameraSystem', 'Failed to load OpenCV.js script:', error);
-          window.__opencv_loading = false;
+      },
+      error => {
+        if (isMounted) {
+          logger.error('CameraSystem', 'Failed to load OpenCV.js:', error);
           setCvLoaded(false);
-        };
-        
-        document.head.appendChild(script);
-        
-      } catch (error) {
-        logger.error('CameraSystem', 'Failed to load OpenCV.js:', error);
-        window.__opencv_loading = false;
+          setDetectionState(prev => ({ ...prev, error: error.message }));
+        }
       }
-    };
+    );
 
-    loadOpenCV();
-
-    // Cleanup on unmount
     return () => {
-      // Don't remove script or cv object as it may be used by other components
-      // Just mark this component as no longer needing OpenCV
+      isMounted = false;
     };
   }, []);
 
-  // Initialize services after OpenCV is loaded
   useEffect(() => {
     if (!cvLoaded) return;
 
@@ -179,7 +103,6 @@ export const useCameraSystem = (config = {}) => {
         const anchorManager = anchorManagerRef.current;
         const { width, height } = videoDimensions;
         
-        // Initialize detection service
         if (!detectionService.isInitialized) {
           await detectionService.initialize();
           if (!isMounted) return;
@@ -190,13 +113,11 @@ export const useCameraSystem = (config = {}) => {
           if (!isMounted) return;
         }
 
-        // Initialize anchor manager with OpenCV and camera parameters
         if (!anchorManager.initialized) {
           await anchorManager.initialize(window.cv, width, height);
           if (!isMounted) return;
         }
 
-        // Initialize TTS client
         const ttsClient = ttsClientRef.current;
         await ttsClient.initialize();
 
@@ -224,14 +145,12 @@ export const useCameraSystem = (config = {}) => {
     };
   }, [cvLoaded, videoDimensions]);
 
-  // Set up service listeners
   useEffect(() => {
     const cameraService = cameraServiceRef.current;
     const detectionService = detectionServiceRef.current;
     const anchorManager = anchorManagerRef.current;
     const depthService = depthServiceRef.current;
 
-    // Camera service listeners
     const removeCameraListener = cameraService.addListener({
       onStateChange: (newState, oldState, data) => {
         setCameraState(newState);
@@ -242,7 +161,6 @@ export const useCameraSystem = (config = {}) => {
       }
     });
 
-    // Detection service listeners
     const removeDetectionListener = detectionService.addListener({
       onInitialized: () => {
         logger.info('CameraSystem', 'Detection service initialized');
@@ -269,12 +187,10 @@ export const useCameraSystem = (config = {}) => {
       }
     });
 
-    // Anchor manager listeners
     const removeAnchorListener = anchorManager.addListener({
       onAnchorUpdate: (state) => {
         setAnchorSystemState(state);
         
-        // Update metrics based on anchor state
         if (state.anchorState) {
           const { metrics } = state.anchorState;
           if (metrics) {
@@ -312,7 +228,6 @@ export const useCameraSystem = (config = {}) => {
             updateMetric('Anchor last failure', metrics.lastFailureReason || 'None');
           }
           
-          // Update anchor stability metrics
           if (state.anchorState.normal) {
             updateMetric('Surface normal', `[${state.anchorState.normal.x.toFixed(2)}, ${state.anchorState.normal.y.toFixed(2)}, ${state.anchorState.normal.z.toFixed(2)}]`);
           }
@@ -337,7 +252,6 @@ export const useCameraSystem = (config = {}) => {
       updateMetric('Depth error', state.error || 'None');
     });
 
-    // Personality service listeners
     const personalityService = personalityServiceRef.current;
     const removePersonalityListener = personalityService.addListener({
       onPersonalityStart: ({ requestId }) => {
@@ -357,7 +271,6 @@ export const useCameraSystem = (config = {}) => {
       }
     });
 
-    // TTS client listeners
     const ttsClient = ttsClientRef.current;
     const removeTTSListener = ttsClient.addListener({
       onSynthesisStart: ({ text, voiceStyle, emotionalDelivery, requestId }) => {
@@ -430,7 +343,6 @@ export const useCameraSystem = (config = {}) => {
     };
   }, [updateMetric]);
 
-  // Camera controls
   const startCamera = useCallback(async (videoElement) => {
     const result = await cameraServiceRef.current.start(videoElement);
     depthServiceRef.current.initialize().catch(error => {
@@ -449,12 +361,10 @@ export const useCameraSystem = (config = {}) => {
     latestDepthFrameRef.current = null;
   }, []);
 
-  // Detection controls
-  const detectObjects = useCallback((imageData) => {
-    return detectionServiceRef.current.detectObjects(imageData);
+  const detectObjects = useCallback((imageData, options) => {
+    return detectionServiceRef.current.detectObjects(imageData, options);
   }, []);
 
-  // Anchor system controls
   const processDetections = useCallback((detections, imageData) => {
     if (anchorSystemState.mode === 'detection') {
       return anchorManagerRef.current.processDetections(detections, imageData);
@@ -529,12 +439,10 @@ export const useCameraSystem = (config = {}) => {
     return null;
   }, [anchorSystemState.mode]);
 
-  // Personality generation
   const generatePersonality = useCallback((imageData, bbox) => {
     return personalityServiceRef.current.generatePersonality(imageData, bbox);
   }, []);
 
-  // TTS controls
   const synthesizeSpeech = useCallback((text, voiceStyle, emotionalDelivery) => {
     return ttsClientRef.current.synthesizeSpeech(text, voiceStyle, emotionalDelivery);
   }, []);
@@ -556,14 +464,10 @@ export const useCameraSystem = (config = {}) => {
     }
   }, [personalityData.currentPersona, synthesizeSpeech]);
 
-
-  // Set current canvas for detection processing
   const setCurrentCanvas = useCallback((canvas) => {
     currentCanvasRef.current = canvas;
   }, []);
 
-
-  // Compute camera matrix utility
   const getCameraMatrix = useCallback((width, height) => {
     const fov = 60 * Math.PI / 180;
     const focalLength = width / (2 * Math.tan(fov / 2));
@@ -576,18 +480,16 @@ export const useCameraSystem = (config = {}) => {
   }, []);
 
   return {
-    // State
     cameraState,
     cameraError,
     videoDimensions,
     detectionState,
     depthState,
-    anchorSystemState, // New unified anchor system state
+    anchorSystemState,
     personalityData,
     ttsData,
-    cvLoaded, // OpenCV loading state
+    cvLoaded,
 
-    // Services refs for direct access if needed
     services: {
       camera: cameraServiceRef.current,
       detection: detectionServiceRef.current,
@@ -597,15 +499,12 @@ export const useCameraSystem = (config = {}) => {
       tts: ttsClientRef.current
     },
 
-    // Camera controls
     startCamera,
     resumeCamera,
     stopCamera,
 
-    // Detection controls
     detectObjects,
 
-    // New image-based anchor controls
     processDetections,
     updateAnchor,
     refreshAnchorSegmentation,
@@ -615,15 +514,12 @@ export const useCameraSystem = (config = {}) => {
     setAnchorTrackingMode,
     setDetectionEnabled,
 
-    // Personality generation
     generatePersonality,
 
-    // TTS controls
     synthesizeSpeech,
     stopTTS,
     speakGreeting,
 
-    // Utilities
     getCameraMatrix,
     setCurrentCanvas
   };

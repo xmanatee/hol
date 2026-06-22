@@ -74,31 +74,47 @@ export const estimatePlanarPnPPose = ({ cv, correspondences, anchorReference, ca
   }
 
   const { objectPoints, imagePoints } = createPointArrays(correspondences, anchorReference);
-  const objectMat = cv.matFromArray(correspondences.length, 1, cv.CV_32FC3, objectPoints);
-  const imageMat = cv.matFromArray(correspondences.length, 1, cv.CV_32FC2, imagePoints);
-  const cameraMat = cv.matFromArray(3, 3, cv.CV_64F, [
-    cameraParams.fx, 0, cameraParams.cx,
-    0, cameraParams.fy, cameraParams.cy,
-    0, 0, 1,
-  ]);
-  const distCoeffs = cv.Mat.zeros(4, 1, cv.CV_64F);
-  const rvec = new cv.Mat();
-  const tvec = new cv.Mat();
-  const rotationMat = new cv.Mat();
+  let objectMat = null;
+  let imageMat = null;
+  let cameraMat = null;
+  let distCoeffs = null;
+  let rvec = null;
+  let tvec = null;
+  let rotationMat = null;
 
-  const solved = cv.solvePnP(
-    objectMat,
-    imageMat,
-    cameraMat,
-    distCoeffs,
-    rvec,
-    tvec,
-    false,
-    cv.SOLVEPNP_ITERATIVE
-  );
+  try {
+    objectMat = cv.matFromArray(correspondences.length, 1, cv.CV_32FC3, objectPoints);
+    imageMat = cv.matFromArray(correspondences.length, 1, cv.CV_32FC2, imagePoints);
+    cameraMat = cv.matFromArray(3, 3, cv.CV_64F, [
+      cameraParams.fx, 0, cameraParams.cx,
+      0, cameraParams.fy, cameraParams.cy,
+      0, 0, 1,
+    ]);
+    distCoeffs = cv.Mat.zeros(4, 1, cv.CV_64F);
+    rvec = new cv.Mat();
+    tvec = new cv.Mat();
+    rotationMat = new cv.Mat();
 
-  let result;
-  if (solved) {
+    const solved = cv.solvePnP(
+      objectMat,
+      imageMat,
+      cameraMat,
+      distCoeffs,
+      rvec,
+      tvec,
+      false,
+      cv.SOLVEPNP_ITERATIVE
+    );
+
+    if (!solved) {
+      return {
+        success: false,
+        method: 'planar-pnp',
+        reason: 'Planar PnP solve failed',
+        inlierCount: correspondences.length,
+      };
+    }
+
     cv.Rodrigues(rvec, rotationMat);
     const rotation = Array.from(rotationMat.data64F);
     const translation = Array.from(tvec.data64F);
@@ -118,7 +134,7 @@ export const estimatePlanarPnPPose = ({ cv, correspondences, anchorReference, ca
     const residualScore = clamp(1 - averageResidual / 4, 0, 1);
     const spreadScore = clamp(referenceSpread.minAxis / 52, 0, 1);
 
-    result = {
+    return {
       success: true,
       method: 'planar-pnp',
       normal,
@@ -131,22 +147,13 @@ export const estimatePlanarPnPPose = ({ cv, correspondences, anchorReference, ca
       foreshortening: normal.z,
       referenceSpread,
     };
-  } else {
-    result = {
-      success: false,
-      method: 'planar-pnp',
-      reason: 'Planar PnP solve failed',
-      inlierCount: correspondences.length,
-    };
+  } finally {
+    if (objectMat) objectMat.delete();
+    if (imageMat) imageMat.delete();
+    if (cameraMat) cameraMat.delete();
+    if (distCoeffs) distCoeffs.delete();
+    if (rvec) rvec.delete();
+    if (tvec) tvec.delete();
+    if (rotationMat) rotationMat.delete();
   }
-
-  objectMat.delete();
-  imageMat.delete();
-  cameraMat.delete();
-  distCoeffs.delete();
-  rvec.delete();
-  tvec.delete();
-  rotationMat.delete();
-
-  return result;
 };

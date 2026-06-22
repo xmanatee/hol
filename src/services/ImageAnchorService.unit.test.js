@@ -170,13 +170,13 @@ test('reconstruction pose update suppresses live previews on the tracking hot pa
       addFrameFromTrackedPoints: (...args) => {
         addFrameArgs = args;
         return {
-        state: 'ready',
-        ready: true,
-        frameCount: 1,
-        landmarkCount: 12,
-        depthQuality: 0.12,
-        statistics: { mapConfidence: 0.72 },
-        lastFailureReason: null,
+          state: 'ready',
+          ready: true,
+          frameCount: 1,
+          landmarkCount: 12,
+          depthQuality: 0.12,
+          statistics: { mapConfidence: 0.72 },
+          lastFailureReason: null,
         };
       },
       estimatePoseFromTrackedPoints: (...args) => {

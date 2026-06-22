@@ -1,3 +1,5 @@
+import { logger } from '../utils/logger.js';
+
 export class CameraService {
   constructor() {
     this.stream = null;
@@ -74,7 +76,6 @@ export class CameraService {
 
         videoElement.addEventListener('loadedmetadata', onLoadedMetadata);
         
-        // Fallback timeout
         setTimeout(() => {
           if (this.state === 'requesting') {
             videoElement.removeEventListener('loadedmetadata', onLoadedMetadata);
@@ -99,7 +100,11 @@ export class CameraService {
       if (timedOut) {
         stream.getTracks().forEach(track => track.stop());
       }
-    }, () => {});
+    }, (error) => {
+      if (timedOut) {
+        logger.warn('CameraService', `Camera stream request rejected after timeout: ${error.message}`);
+      }
+    });
 
     return await Promise.race([
       streamRequest,

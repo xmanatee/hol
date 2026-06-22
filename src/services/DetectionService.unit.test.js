@@ -53,6 +53,28 @@ test('detection frames are packaged as transferable typed arrays', () => {
   assert.deepEqual(transferList, [message.imageData.data.buffer]);
 });
 
+test('detection scheduler uses the configured interval once', () => {
+  const service = new DetectionService();
+  const worker = new FakeWorker();
+  service.worker = worker;
+  service.isModelLoaded = true;
+  service.setDetectionEnabled(true);
+  service.setDetectionInterval(4);
+
+  assert.equal(service.shouldDetectFrame(1), false);
+  assert.equal(service.shouldDetectFrame(4), true);
+
+  const imageData = {
+    width: 1,
+    height: 1,
+    data: new Uint8ClampedArray([1, 2, 3, 255])
+  };
+
+  assert.equal(service.detectObjects(imageData, { frameIndex: 1 }), false);
+  assert.equal(service.detectObjects(imageData, { frameIndex: 4 }), true);
+  assert.deepEqual(worker.messages.map(message => message.type), ['detect']);
+});
+
 test('detection initialization resolves from the worker protocol without public listeners', async t => {
   const OriginalWorker = globalThis.Worker;
   FakeWorker.instances = [];

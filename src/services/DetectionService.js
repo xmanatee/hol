@@ -202,14 +202,18 @@ export class DetectionService {
     this.isModelLoaded = false;
   }
 
-  detectObjects(imageData, forceDetection = false) {
+  shouldDetectFrame(frameIndex, { force = false } = {}) {
     if (!this.isModelLoaded || !this.worker || !this.detectionEnabled) {
       return false;
     }
 
-    this.frameCounter++;
-    
-    if (!forceDetection && this.frameCounter % this.detectionInterval !== 0) {
+    return force || frameIndex % this.detectionInterval === 0;
+  }
+
+  detectObjects(imageData, { frameIndex = this.frameCounter + 1, force = false } = {}) {
+    this.frameCounter = frameIndex;
+
+    if (!this.shouldDetectFrame(frameIndex, { force })) {
       return false;
     }
 

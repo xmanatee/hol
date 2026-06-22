@@ -38,27 +38,29 @@ const segmentFrame = async message => {
       y: message.tapPosition.y / message.imageData.height,
     },
   });
-  const confidenceMask = result.confidenceMasks[0];
-  const confidenceData = confidenceMask.getAsFloat32Array();
-  const objectSupportMask = createInteractiveObjectSupportMask({
-    confidenceData,
-    maskWidth: confidenceMask.width,
-    maskHeight: confidenceMask.height,
-    frameWidth: message.imageData.width,
-    frameHeight: message.imageData.height,
-    threshold: MASK_THRESHOLD,
-    referencePoint: message.tapPosition,
-    createdAtFrame: message.createdAtFrame,
-    maxRadius: message.maxRadius,
-  });
+  try {
+    const confidenceMask = result.confidenceMasks[0];
+    const confidenceData = confidenceMask.getAsFloat32Array();
+    const objectSupportMask = createInteractiveObjectSupportMask({
+      confidenceData,
+      maskWidth: confidenceMask.width,
+      maskHeight: confidenceMask.height,
+      frameWidth: message.imageData.width,
+      frameHeight: message.imageData.height,
+      threshold: MASK_THRESHOLD,
+      referencePoint: message.tapPosition,
+      createdAtFrame: message.createdAtFrame,
+      maxRadius: message.maxRadius,
+    });
 
-  result.close();
-
-  self.postMessage({
-    type: 'segment-result',
-    requestId: message.requestId,
-    objectSupportMask,
-  }, [objectSupportMask.data.buffer]);
+    self.postMessage({
+      type: 'segment-result',
+      requestId: message.requestId,
+      objectSupportMask,
+    }, [objectSupportMask.data.buffer]);
+  } finally {
+    result.close();
+  }
 };
 
 self.onmessage = event => {

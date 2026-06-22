@@ -2,6 +2,26 @@ import { clamp, normalizeAngle, solveLeastSquares } from './anchor.reconstructio
 
 export const MOBILE_AFFINE_SAMPLE_WINDOW = 28;
 
+export const EMPTY_RECONSTRUCTION_STATS = {
+  averageSupport: 0,
+  averageReliability: 0,
+  matureLandmarks: 0,
+  geometricConsistency: 0,
+  mapConfidence: 0,
+  mappedFrames: 0,
+};
+
+export const transformPointAffine2 = (point, transform) => ({
+  x: transform.rowX[0] * point.x + transform.rowX[1] * point.y + transform.rowX[2],
+  y: transform.rowY[0] * point.x + transform.rowY[1] * point.y + transform.rowY[2],
+});
+
+export const affineVerticalScale = transform => Math.hypot(transform.rowX[1], transform.rowY[1]);
+
+export const affineRotation = transform => Math.atan2(transform.rowY[0], transform.rowX[0]);
+
+export const readinessFromGeometry = consistency => clamp((consistency - 0.45) / 0.22, 0, 1);
+
 export const toActiveObservations = trackedPoints => trackedPoints
   .filter(point => point.status === 'active')
   .filter(point => Number.isFinite(point.original?.x))

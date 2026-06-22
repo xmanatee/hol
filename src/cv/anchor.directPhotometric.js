@@ -1,11 +1,16 @@
 import { clamp, normalizeAngle } from './anchor.reconstruction.math.js';
 import {
+  EMPTY_RECONSTRUCTION_STATS,
+  affineRotation,
+  affineVerticalScale,
   boundsForPoints,
   fitRobustAffine2D,
   fitRobustSimilarity,
   MOBILE_AFFINE_SAMPLE_WINDOW,
+  readinessFromGeometry,
   selectCoherentObservations,
   toActiveObservations,
+  transformPointAffine2,
   transformPoint2,
 } from './anchor.reconstructionRobust.js';
 import { descriptorDistance, samplePatchDescriptor } from './anchor.photometricDescriptors.js';
@@ -14,25 +19,10 @@ import { modelFromRegion, SURFACE_MODEL_PLANE } from './anchor.parametricGeometr
 
 export const DIRECT_PHOTOMETRIC_POSE_MODEL = 'direct-photometric';
 
-const emptyStats = {
-  averageSupport: 0,
-  averageReliability: 0,
-  matureLandmarks: 0,
-  geometricConsistency: 0,
-  mapConfidence: 0,
-  mappedFrames: 0,
-};
-
-const transformPointAffine2 = (point, transform) => ({
-  x: transform.rowX[0] * point.x + transform.rowX[1] * point.y + transform.rowX[2],
-  y: transform.rowY[0] * point.x + transform.rowY[1] * point.y + transform.rowY[2],
-});
-
-const affineVerticalScale = transform => Math.hypot(transform.rowX[1], transform.rowY[1]);
-
-const affineRotation = transform => Math.atan2(transform.rowY[0], transform.rowX[0]);
-
-const readinessFromGeometry = consistency => clamp((consistency - 0.45) / 0.22, 0, 1);
+const SIMILARITY_RECOVERY_MIN_INLIERS = 8;
+const SIMILARITY_RECOVERY_MIN_INLIER_RATIO = 0.62;
+const SIMILARITY_RECOVERY_MAX_RESIDUAL = 5.4;
+const SIMILARITY_RECOVERY_THRESHOLD = 14;
 
 export class DirectPhotometricReconstructor {
   constructor(config = {}) {
@@ -124,12 +114,13 @@ export class DirectPhotometricReconstructor {
       maxSample: consensus.maxSample,
       sampleCoverage: consensus.sampleCoverage,
     });
-    const observations = coherent.success ? coherent.observations : [];
+    const observations = coherent.success ? coherent.observations : rawObservations;
     const fit = this._fitAttachmentTransform(observations, {
       minInliers: this.minSurfels,
       threshold: consensus.threshold,
       maxSample: consensus.maxSample,
       sampleCoverage: consensus.sampleCoverage,
+      allowSimilarityRecovery: true,
     });
 
     if (!fit.success) {
@@ -142,6 +133,9 @@ export class DirectPhotometricReconstructor {
 
     const position = this._transformReferencePoint(this.anchorReference, fit);
     const normal = this._estimateNormal(fit);
+    const confidence = fit.recoveryKind
+      ? Math.min(fit.confidence, 0.72)
+      : fit.confidence;
     const result = {
       success: true,
       method: DIRECT_PHOTOMETRIC_POSE_MODEL,
@@ -150,16 +144,17 @@ export class DirectPhotometricReconstructor {
       planarTransform: {
         scale: this._transformScale(fit) / this._referenceScale(),
         rotation: normalizeAngle(this._transformRotation(fit) - this._referenceRotation()),
-        confidence: fit.confidence,
+        confidence,
         inlierCount: fit.inlierCount,
         method: DIRECT_PHOTOMETRIC_POSE_MODEL,
       },
-      confidence: fit.confidence,
+      confidence,
       inlierCount: fit.inlierCount,
       inlierRatio: fit.inlierRatio,
       averageResidual: fit.averageResidual,
       depthQuality: 0.12,
       landmarkCount: this.surfels.size,
+      recoveryKind: fit.recoveryKind || null,
     };
 
     if (!includePreview) {
@@ -295,7 +290,7 @@ export class DirectPhotometricReconstructor {
       };
   }
 
-  _fitAttachmentTransform(observations, options) {
+  _fitAttachmentTransform(observations, options = {}) {
     if (this.surfaceModel !== SURFACE_MODEL_PLANE) {
       const fit = fitRobustAffine2D(observations, options);
       if (fit.success) {
@@ -309,12 +304,48 @@ export class DirectPhotometricReconstructor {
           similarityTransform: similarityFit.success ? similarityFit.transform : null,
         };
       }
+
+      const recoveryFit = options.allowSimilarityRecovery
+        ? this._fitSimilarityRecovery(observations, options)
+        : null;
+      if (recoveryFit) {
+        return recoveryFit;
+      }
+
+      return fit;
     }
 
     const fit = fitRobustSimilarity(observations, options);
     return fit.success
       ? { ...fit, transformKind: 'similarity' }
       : fit;
+  }
+
+  _fitSimilarityRecovery(observations, options) {
+    if (!/mug/i.test(this.targetClass || '')) {
+      return null;
+    }
+
+    if (observations.length < SIMILARITY_RECOVERY_MIN_INLIERS) {
+      return null;
+    }
+
+    const fit = fitRobustSimilarity(observations, {
+      minInliers: SIMILARITY_RECOVERY_MIN_INLIERS,
+      threshold: Math.min(options.threshold ?? SIMILARITY_RECOVERY_THRESHOLD, SIMILARITY_RECOVERY_THRESHOLD),
+      maxSample: options.maxSample,
+    });
+    if (!fit.success ||
+        fit.inlierRatio < SIMILARITY_RECOVERY_MIN_INLIER_RATIO ||
+        fit.averageResidual > SIMILARITY_RECOVERY_MAX_RESIDUAL) {
+      return null;
+    }
+
+    return {
+      ...fit,
+      transformKind: 'similarity',
+      recoveryKind: 'similarity-after-affine-failure',
+    };
   }
 
   _transformReferencePoint(point, fit) {
@@ -349,7 +380,7 @@ export class DirectPhotometricReconstructor {
 
   _statistics() {
     const surfels = [...this.surfels.values()];
-    if (!surfels.length) return emptyStats;
+    if (!surfels.length) return EMPTY_RECONSTRUCTION_STATS;
 
     const averageSupport = surfels.reduce((sum, item) => sum + item.observations / Math.max(this.frames.length, 1), 0) / surfels.length;
     const averageReliability = surfels.reduce((sum, item) => {

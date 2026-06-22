@@ -1,9 +1,9 @@
 import { PERSONA_RESPONSE_FORMAT } from './openaiSchemas.js';
 import { OpenAIChatClient, readViteEnv } from './openaiChatClient.js';
 
-const parseNumberEnv = (key, fallback) => {
+const parseNumberEnv = (key, defaultValue) => {
   const parsed = Number.parseFloat(readViteEnv(key) || '');
-  return Number.isFinite(parsed) ? parsed : fallback;
+  return Number.isFinite(parsed) ? parsed : defaultValue;
 };
 
 export class LLMClient {

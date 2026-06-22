@@ -8,6 +8,17 @@ const affinePoint = point => ({
   y: point.x * -0.03 + point.y * 0.92 + 9,
 });
 
+const similarityPoint = point => {
+  const scale = 1.06;
+  const rotation = 0.18;
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  return {
+    x: 18 + scale * (cos * point.x - sin * point.y),
+    y: -7 + scale * (sin * point.x + cos * point.y),
+  };
+};
+
 const trackedPoint = ({ id, reference, current, quality }) => ({
   id,
   status: 'active',
@@ -172,6 +183,96 @@ test('direct photometric can estimate hot-path pose without live preview', () =>
   assert.equal(result.success, true);
   assert.equal('preview' in result, false);
   assert.equal(previewCount, 0);
+});
+
+test('direct photometric recovers strict similarity pose when affine consensus degenerates', () => {
+  const reconstructor = new DirectPhotometricReconstructor({
+    minFrames: 5,
+    minSurfels: 12,
+  });
+  reconstructor.reset({
+    anchorReference: { x: 72, y: 96 },
+    templateRegion: { x: 0, y: 0, width: 120, height: 160 },
+    targetClass: 'mug',
+  });
+  reconstructor.state = 'ready';
+
+  const observations = Array.from({ length: 12 }, (_, index) => {
+    const reference = { x: 12 + index * 10, y: 96 };
+    return {
+      id: `line-${index}`,
+      reference,
+      current: similarityPoint(reference),
+      quality: 4,
+      photometric: { values: [0.2, 0.4, 0.6], gradient: 18 },
+    };
+  });
+  observations.forEach(observation => {
+    reconstructor.surfels.set(observation.id, {
+      id: observation.id,
+      reference: observation.reference,
+      observations: 5,
+      descriptor: observation.photometric.values,
+      gradient: 18,
+      residualMean: 0,
+      quality: 4,
+    });
+  });
+  reconstructor._photometricObservationsFromTrackedPoints = () => observations;
+
+  const result = reconstructor.estimatePoseFromTrackedPoints([], null, {
+    includePreview: false,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.recoveryKind, 'similarity-after-affine-failure');
+  assert.equal(result.inlierCount, 12);
+  assert.ok(result.averageResidual < 0.001);
+  assert.ok(Math.abs(result.position.x - similarityPoint({ x: 72, y: 96 }).x) < 0.001);
+  assert.ok(Math.abs(result.position.y - similarityPoint({ x: 72, y: 96 }).y) < 0.001);
+});
+
+test('direct photometric keeps similarity recovery out of unhandled cup targets', () => {
+  const reconstructor = new DirectPhotometricReconstructor({
+    minFrames: 5,
+    minSurfels: 12,
+  });
+  reconstructor.reset({
+    anchorReference: { x: 72, y: 96 },
+    templateRegion: { x: 0, y: 0, width: 120, height: 160 },
+    targetClass: 'cup',
+  });
+  reconstructor.state = 'ready';
+
+  const observations = Array.from({ length: 12 }, (_, index) => {
+    const reference = { x: 12 + index * 10, y: 96 };
+    return {
+      id: `line-${index}`,
+      reference,
+      current: similarityPoint(reference),
+      quality: 4,
+      photometric: { values: [0.2, 0.4, 0.6], gradient: 18 },
+    };
+  });
+  observations.forEach(observation => {
+    reconstructor.surfels.set(observation.id, {
+      id: observation.id,
+      reference: observation.reference,
+      observations: 5,
+      descriptor: observation.photometric.values,
+      gradient: 18,
+      residualMean: 0,
+      quality: 4,
+    });
+  });
+  reconstructor._photometricObservationsFromTrackedPoints = () => observations;
+
+  const result = reconstructor.estimatePoseFromTrackedPoints([], null, {
+    includePreview: false,
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.reason, 'No robust affine consensus');
 });
 
 test('direct photometric reuses the reference fit for scale and rotation', () => {

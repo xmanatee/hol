@@ -1,8 +1,3 @@
-/**
- * Template Matching and Anchor Persistence System
- * Handles template recovery when keypoint tracking loses the selected object
- */
-
 import { logger } from '../utils/logger.js';
 
 export class AnchorPersistenceSystem {
@@ -12,10 +7,8 @@ export class AnchorPersistenceSystem {
     this.templateRegion = null;
     this.lastKnownPosition = null;
     this.anchorOffset = { x: 0, y: 0 };
-    this.searchRegion = null;
     this.correlationThreshold = 0.7;
     this.maxSearchRadius = 100;
-    this.recoveryAttempts = 0;
   }
 
   async initialize(cv) {
@@ -46,7 +39,6 @@ export class AnchorPersistenceSystem {
         x: position.x - templateCenter.x,
         y: position.y - templateCenter.y
       };
-      this.searchRegion = this._calculateSearchRegion(position, grayImage.cols, grayImage.rows);
       
       logger.info('AnchorPersistenceSystem', `Stored template ${region.width}x${region.height} at (${position.x}, ${position.y})`);
       return true;
@@ -57,31 +49,21 @@ export class AnchorPersistenceSystem {
     }
   }
 
-  /**
-   * Attempt to recover anchor using template matching
-   * @param {cv.Mat} currentGray - Current grayscale frame
-   * @param {Object} searchCenter - Optional search center, defaults to last known position
-   * @returns {Object} Recovery result
-   */
   attemptRecovery(cv, currentGray, searchCenter = null) {
     if (!this.initialized || !this.template) {
       return { success: false, reason: 'No template available' };
     }
 
-    this.recoveryAttempts++;
-
+    let searchRoi = null;
     try {
       const center = searchCenter || this.lastKnownPosition;
-      const searchRoi = this._extractSearchROI(cv, currentGray, center);
+      searchRoi = this._extractSearchROI(cv, currentGray, center);
       
       if (!searchRoi.roi) {
         return { success: false, reason: 'Invalid search region' };
       }
 
-      // Multi-scale template matching
       const matchResults = this._multiScaleTemplateMatch(cv, searchRoi.roi, this.template);
-      
-      searchRoi.roi.delete();
 
       if (matchResults.success) {
         const globalMatch = {
@@ -94,14 +76,10 @@ export class AnchorPersistenceSystem {
           scale: matchResults.scale
         };
 
-        // Update last known position
         this.lastKnownPosition = {
           x: globalMatch.x,
           y: globalMatch.y
         };
-
-        // Reset recovery attempts on success
-        this.recoveryAttempts = 0;
 
         logger.info('AnchorPersistenceSystem', `Recovery successful at (${globalMatch.x.toFixed(1)}, ${globalMatch.y.toFixed(1)}) confidence: ${matchResults.confidence.toFixed(3)}`);
 
@@ -119,23 +97,21 @@ export class AnchorPersistenceSystem {
     } catch (error) {
       logger.error('AnchorPersistenceSystem', 'Recovery error:', error);
       return { success: false, reason: 'Recovery exception: ' + error.message };
+    } finally {
+      if (searchRoi?.roi) {
+        searchRoi.roi.delete();
+      }
     }
   }
 
-  /**
-   * Perform multi-scale template matching
-   * @param {cv.Mat} searchImage - Image to search in
-   * @param {cv.Mat} template - Template to find
-   * @returns {Object} Match result
-   */
   _multiScaleTemplateMatch(cv, searchImage, template, options = {}) {
     const scales = this._getTemplateScales(options);
     let bestMatch = { confidence: 0, location: null, scale: 1.0 };
 
     for (const scale of scales) {
+      const scaledTemplate = new cv.Mat();
+      let result = null;
       try {
-        // Scale template
-        const scaledTemplate = new cv.Mat();
         const newSize = new cv.Size(
           Math.round(template.cols * scale),
           Math.round(template.rows * scale)
@@ -143,17 +119,13 @@ export class AnchorPersistenceSystem {
         
         cv.resize(template, scaledTemplate, newSize, 0, 0, cv.INTER_LINEAR);
 
-        // Skip if scaled template is larger than search image
         if (scaledTemplate.cols > searchImage.cols || scaledTemplate.rows > searchImage.rows) {
-          scaledTemplate.delete();
           continue;
         }
 
-        // Perform template matching
-        const result = new cv.Mat();
+        result = new cv.Mat();
         cv.matchTemplate(searchImage, scaledTemplate, result, cv.TM_CCOEFF_NORMED);
 
-        // Find best match
         const minMaxLoc = cv.minMaxLoc(result);
         const confidence = minMaxLoc.maxVal;
 
@@ -164,13 +136,11 @@ export class AnchorPersistenceSystem {
             scale: scale
           };
         }
-
-        // Cleanup
+      } finally {
         scaledTemplate.delete();
-        result.delete();
-
-      } catch (error) {
-        logger.warn('AnchorPersistenceSystem', `Error at scale ${scale}:`, error);
+        if (result) {
+          result.delete();
+        }
       }
     }
 
@@ -186,12 +156,6 @@ export class AnchorPersistenceSystem {
       : [0.8, 0.9, 1.0, 1.1, 1.2];
   }
 
-  /**
-   * Extract region of interest for searching
-   * @param {cv.Mat} image - Full image
-   * @param {Object} center - Search center {x, y}
-   * @returns {Object} - {roi: cv.Mat, offset: {x, y}}
-   */
   _extractSearchROI(cv, image, center) {
     const searchRadius = Math.min(this.maxSearchRadius, 
       Math.max(this.templateRegion.width, this.templateRegion.height) * 2);
@@ -222,19 +186,6 @@ export class AnchorPersistenceSystem {
     }
   }
 
-  /**
-   * Calculate initial search region based on anchor position
-   */
-  _calculateSearchRegion(position, imageWidth, imageHeight) {
-    const margin = 50;
-    return {
-      x: Math.max(0, position.x - margin),
-      y: Math.max(0, position.y - margin),
-      width: Math.min(imageWidth - Math.max(0, position.x - margin), margin * 2),
-      height: Math.min(imageHeight - Math.max(0, position.y - margin), margin * 2)
-    };
-  }
-
   _getTemplateCenter(region) {
     return {
       x: region.x + region.width / 2,
@@ -254,53 +205,6 @@ export class AnchorPersistenceSystem {
     };
   }
 
-  /**
-   * Update template with new successful match
-   * @param {cv.Mat} grayImage - Current frame
-   * @param {Object} position - New anchor position
-   * @param {Object} region - New template region
-   */
-  updateTemplate(cv, grayImage, position, region) {
-    try {
-      // Only update if we have a good quality match
-      const rect = new cv.Rect(region.x, region.y, region.width, region.height);
-      const newTemplateRoi = grayImage.roi(rect);
-      
-      // Calculate correlation with current template for quality check
-      if (this.template) {
-        const result = new cv.Mat();
-        cv.matchTemplate(newTemplateRoi, this.template, result, cv.TM_CCOEFF_NORMED);
-        const minMaxLoc = cv.minMaxLoc(result);
-        const correlation = minMaxLoc.maxVal;
-        result.delete();
-        
-        // Only update if correlation is reasonable (not too different)
-        if (correlation > 0.6) {
-          this.template.delete();
-          this.template = newTemplateRoi.clone();
-          this.templateRegion = { ...region };
-          this.lastKnownPosition = { ...position };
-          const templateCenter = this._getTemplateCenter(region);
-          this.anchorOffset = {
-            x: position.x - templateCenter.x,
-            y: position.y - templateCenter.y
-          };
-          logger.info('AnchorPersistenceSystem', `Template updated with correlation ${correlation.toFixed(3)}`);
-        }
-      }
-      
-      newTemplateRoi.delete();
-      
-    } catch (error) {
-      logger.error('AnchorPersistenceSystem', 'Error updating template:', error);
-    }
-  }
-
-  /**
-   * Perform full-frame search when anchor is completely lost
-   * @param {cv.Mat} currentGray - Current frame
-   * @returns {Object} Search result
-   */
   fullFrameSearch(cv, currentGray) {
     if (!this.template) {
       return { success: false, reason: 'No template available' };
@@ -319,7 +223,6 @@ export class AnchorPersistenceSystem {
         );
 
         this.lastKnownPosition = matchCenter;
-        this.recoveryAttempts = 0;
 
         logger.info('AnchorPersistenceSystem', `Full-frame search successful at (${matchCenter.x.toFixed(1)}, ${matchCenter.y.toFixed(1)})`);
 
@@ -340,41 +243,6 @@ export class AnchorPersistenceSystem {
     }
   }
 
-  /**
-   * Reset recovery state
-   */
-  resetRecovery() {
-    this.recoveryAttempts = 0;
-    logger.info('AnchorPersistenceSystem', 'Recovery state reset');
-  }
-
-  /**
-   * Check if template is still valid
-   */
-  hasValidTemplate() {
-    return this.template !== null && !this.template.empty();
-  }
-
-  /**
-   * Get template information
-   */
-  getTemplateInfo() {
-    if (!this.hasValidTemplate()) {
-      return null;
-    }
-
-    return {
-      size: {
-        width: this.templateRegion.width,
-        height: this.templateRegion.height
-      },
-      lastPosition: this.lastKnownPosition,
-      anchorOffset: this.anchorOffset,
-      recoveryAttempts: this.recoveryAttempts,
-      correlationThreshold: this.correlationThreshold
-    };
-  }
-
   dispose() {
     if (this.template) {
       this.template.delete();
@@ -384,8 +252,6 @@ export class AnchorPersistenceSystem {
     this.templateRegion = null;
     this.lastKnownPosition = null;
     this.anchorOffset = { x: 0, y: 0 };
-    this.searchRegion = null;
-    this.recoveryAttempts = 0;
     this.initialized = false;
     
     logger.info('AnchorPersistenceSystem', 'Disposed');

@@ -90,12 +90,12 @@ const CameraView = () => {
   const canvasRef = useRef(null);
   const frameCountRef = useRef(0);
   const ctxRef = useRef(null);
+  const lastProcessedDetectionsRef = useRef(null);
   const anchorFeedbackTimeoutRef = useRef(null);
   const autoVoiceRequestRef = useRef(0);
   const mapReadyAnchorRef = useRef(null);
 
   const [showStats, setShowStats] = useState(false);
-  const [lastProcessedDetections, setLastProcessedDetections] = useState(null);
   const [discoveredMeshes, setDiscoveredMeshes] = useState([]);
   const [hiddenMeshes, setHiddenMeshes] = useState(new Set());
   const [manualRotation, setManualRotation] = useState({ x: 0, y: 0, z: 0 });
@@ -429,48 +429,50 @@ const CameraView = () => {
         const video = videoRef.current;
         const canvas = canvasRef.current;
         
-        // Get or cache the context with willReadFrequently
         if (!ctxRef.current) {
           ctxRef.current = canvas.getContext('2d', { willReadFrequently: true });
         }
-        const ctx = ctxRef.current;
+        let ctx = ctxRef.current;
 
-        // Match canvas size to video dimensions
         if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
-          // Context is invalidated when canvas size changes, so we need to get it again
           ctxRef.current = canvas.getContext('2d', { willReadFrequently: true });
+          ctx = ctxRef.current;
         }
 
-        // Draw current video frame to canvas with horizontal mirroring
         ctx.save();
         ctx.scale(-1, 1);
         ctx.translate(-canvas.width, 0);
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         ctx.restore();
 
-        // Get current frame data
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const frameIndex = ++frameCountRef.current;
+        const hasUnprocessedDetections = detectionState.lastDetections
+          && detectionState.lastDetections !== lastProcessedDetectionsRef.current;
 
         if (anchorSystemState.mode === 'detection') {
-          frameCountRef.current++;
-          const shouldDetect = frameCountRef.current % 4 === 0 && detectionState.isModelLoaded && detectionState.detectionEnabled;
+          const shouldDetect = services.detection.shouldDetectFrame(frameIndex);
+          const imageData = shouldDetect || hasUnprocessedDetections
+            ? ctx.getImageData(0, 0, canvas.width, canvas.height)
+            : null;
 
           if (shouldDetect) {
-            detectObjects(imageData);
+            detectObjects(imageData, { frameIndex });
           }
           
-          if (detectionState.lastDetections && detectionState.lastDetections !== lastProcessedDetections) {
+          if (hasUnprocessedDetections) {
             processDetections(detectionState.lastDetections, imageData);
-            setLastProcessedDetections(detectionState.lastDetections);
+            lastProcessedDetectionsRef.current = detectionState.lastDetections;
           }
         } else if (anchorSystemState.mode === 'anchor') {
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
           try {
             const updateResult = updateAnchor(imageData);
             refreshAnchorSegmentation(imageData);
 
-            if (frameCountRef.current % 30 === 0) {
+            if (frameIndex % 30 === 0) {
               logger.debug('CameraView', 'Anchor tracking update:', {
                 success: updateResult?.success,
                 reason: updateResult?.reason,

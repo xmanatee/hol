@@ -8,6 +8,7 @@ const LogLevel = {
 export const KNOWN_LOG_TAGS = Object.freeze([
   'AnchorManager',
   'AnchorPersistenceSystem',
+  'CameraService',
   'CameraSystem',
   'CameraView',
   'Detection',
@@ -30,7 +31,7 @@ export const LOG_TAG_PRESETS = Object.freeze({
   },
   core: {
     label: 'Core',
-    tags: ['CameraSystem', 'CameraView', 'AnchorManager', 'ImageAnchor', 'Detection'],
+    tags: ['CameraService', 'CameraSystem', 'CameraView', 'AnchorManager', 'ImageAnchor', 'Detection'],
   },
   vision: {
     label: 'Vision',

@@ -51,8 +51,13 @@ export class HomographyEstimator {
       };
     }
 
+    let srcMat = null;
+    let dstMat = null;
+    let mask = null;
+    let homography = null;
+    let keepHomography = false;
+
     try {
-      // Prepare point arrays for OpenCV
       const srcPoints = [];
       const dstPoints = [];
       
@@ -61,12 +66,12 @@ export class HomographyEstimator {
         dstPoints.push(corr.curr.x, corr.curr.y);
       }
 
-      const srcMat = cv.matFromArray(correspondences.length, 1, cv.CV_32FC2, srcPoints);
-      const dstMat = cv.matFromArray(correspondences.length, 1, cv.CV_32FC2, dstPoints);
-      const mask = new cv.Mat();
+      srcMat = cv.matFromArray(correspondences.length, 1, cv.CV_32FC2, srcPoints);
+      dstMat = cv.matFromArray(correspondences.length, 1, cv.CV_32FC2, dstPoints);
+      mask = new cv.Mat();
 
       seedHomographyRansac(cv);
-      const homography = cv.findHomography(
+      homography = cv.findHomography(
         srcMat,
         dstMat,
         cv.RANSAC,
@@ -86,12 +91,7 @@ export class HomographyEstimator {
         }
       }
 
-      srcMat.delete();
-      dstMat.delete();
-      mask.delete();
-
       if (inlierCount < 8 || homography.empty()) {
-        if (!homography.empty()) homography.delete();
         return {
           success: false,
           reason: 'Insufficient inliers',
@@ -99,7 +99,6 @@ export class HomographyEstimator {
         };
       }
 
-      // Store homography in history
       const homographyData = new Float64Array(homography.data64F);
       const residuals = correspondences.map((corr, index) => {
         const denominator = homographyData[6] * corr.prev.x + homographyData[7] * corr.prev.y + homographyData[8];
@@ -127,6 +126,7 @@ export class HomographyEstimator {
         this.homographyHistory = this.homographyHistory.slice(-this.maxHistory);
       }
 
+      keepHomography = true;
       const result = {
         success: true,
         homography: homography,
@@ -148,6 +148,19 @@ export class HomographyEstimator {
         reason: 'Estimation error: ' + error.message,
         inlierCount: 0
       };
+    } finally {
+      if (srcMat) {
+        srcMat.delete();
+      }
+      if (dstMat) {
+        dstMat.delete();
+      }
+      if (mask) {
+        mask.delete();
+      }
+      if (homography && !keepHomography) {
+        homography.delete();
+      }
     }
   }
 
@@ -197,22 +210,18 @@ export class HomographyEstimator {
       return null;
     }
 
-    try {
-      // Create point matrix for transformation
-      const srcPoint = cv.matFromArray(1, 1, cv.CV_32FC2, [templateCenter.x, templateCenter.y]);
-      const dstPoint = new cv.Mat();
+    let srcPoint = null;
+    let dstPoint = null;
 
-      // Apply homography transformation
+    try {
+      srcPoint = cv.matFromArray(1, 1, cv.CV_32FC2, [templateCenter.x, templateCenter.y]);
+      dstPoint = new cv.Mat();
+
       cv.perspectiveTransform(srcPoint, dstPoint, homography);
 
       const transformedX = dstPoint.data32F[0];
       const transformedY = dstPoint.data32F[1];
 
-      // Cleanup
-      srcPoint.delete();
-      dstPoint.delete();
-
-      // Validate transformed coordinates
       if (isFinite(transformedX) && isFinite(transformedY)) {
         return {
           x: transformedX,
@@ -225,6 +234,13 @@ export class HomographyEstimator {
     } catch (error) {
       logger.error('HomographyEstimator', 'Error transforming template center:', error);
       return null;
+    } finally {
+      if (srcPoint) {
+        srcPoint.delete();
+      }
+      if (dstPoint) {
+        dstPoint.delete();
+      }
     }
   }
 

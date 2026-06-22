@@ -16,7 +16,7 @@ test('template recovery preserves the tapped anchor offset from the matched temp
   assert.deepEqual(position, { x: 100, y: 130 });
 });
 
-test('template recovery keeps searching after many missed attempts', () => {
+test('template recovery searches whenever a template is available', () => {
   const persistence = new AnchorPersistenceSystem();
   let searches = 0;
 
@@ -25,7 +25,6 @@ test('template recovery keeps searching after many missed attempts', () => {
   persistence.templateRegion = { x: 0, y: 0, width: 80, height: 80 };
   persistence.lastKnownPosition = { x: 120, y: 140 };
   persistence.anchorOffset = { x: 0, y: 0 };
-  persistence.recoveryAttempts = 12;
   persistence._extractSearchROI = () => ({
     roi: { delete() {} },
     offset: { x: 80, y: 100 },
@@ -45,7 +44,6 @@ test('template recovery keeps searching after many missed attempts', () => {
   assert.equal(result.success, false);
   assert.equal(result.reason, 'Template match below threshold');
   assert.equal(searches, 1);
-  assert.equal(persistence.recoveryAttempts, 13);
 });
 
 test('full-frame recovery uses multi-scale matching so moved objects can be reacquired', () => {
