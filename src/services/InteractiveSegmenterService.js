@@ -1,6 +1,7 @@
 export class InteractiveSegmenterService {
-  constructor({ WorkerClass = null } = {}) {
+  constructor({ WorkerClass = null, requestTimeoutMs = 6000 } = {}) {
     this.WorkerClass = WorkerClass;
+    this.requestTimeoutMs = requestTimeoutMs;
     this.worker = null;
     this.workerPromise = null;
     this.workerGeneration = 0;
@@ -8,7 +9,7 @@ export class InteractiveSegmenterService {
     this.nextRequestId = 1;
   }
 
-  segmentTap({ imageData, tapPosition, createdAtFrame, maxRadius = null }) {
+  segmentTap({ imageData, tapPosition, createdAtFrame, maxRadius = null, timeoutMs = this.requestTimeoutMs }) {
     const requestId = this.nextRequestId++;
     const copiedImageData = {
       width: imageData.width,
@@ -17,7 +18,14 @@ export class InteractiveSegmenterService {
     };
 
     return new Promise((resolve, reject) => {
-      this.pendingRequests.set(requestId, { resolve, reject });
+      const timeoutId = setTimeout(() => {
+        if (!this.pendingRequests.has(requestId)) {
+          return;
+        }
+
+        this._handleWorkerError(`Interactive segmenter request timed out after ${timeoutMs}ms`);
+      }, timeoutMs);
+      this.pendingRequests.set(requestId, { resolve, reject, timeoutId });
       this._getWorker().then(worker => {
         if (!this.pendingRequests.has(requestId)) {
           return;
@@ -33,8 +41,7 @@ export class InteractiveSegmenterService {
         }, [copiedImageData.data.buffer]);
       }, error => {
         if (this.pendingRequests.has(requestId)) {
-          this.pendingRequests.delete(requestId);
-          reject(error);
+          this._rejectRequest(requestId, error);
         }
       });
     });
@@ -83,6 +90,7 @@ export class InteractiveSegmenterService {
     }
 
     this.pendingRequests.delete(message.requestId);
+    clearTimeout(request.timeoutId);
 
     if (message.type === 'segment-result') {
       request.resolve(message.objectSupportMask);
@@ -103,8 +111,20 @@ export class InteractiveSegmenterService {
 
   _rejectAll(reason) {
     for (const request of this.pendingRequests.values()) {
+      clearTimeout(request.timeoutId);
       request.reject(new Error(reason));
     }
     this.pendingRequests.clear();
+  }
+
+  _rejectRequest(requestId, error) {
+    const request = this.pendingRequests.get(requestId);
+    if (!request) {
+      return;
+    }
+
+    this.pendingRequests.delete(requestId);
+    clearTimeout(request.timeoutId);
+    request.reject(error);
   }
 }

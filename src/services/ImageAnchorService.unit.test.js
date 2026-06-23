@@ -258,6 +258,44 @@ test('flat paper-like targets use planar pose ownership', () => {
   }
 });
 
+test('generic free-tap targets infer pose ownership from support geometry', () => {
+  const service = new ImageAnchorService();
+  service.anchorTargetClass = 'segmented-object';
+
+  service.currentObjectSupportMask = {
+    bbox: { x: 220, y: 120, width: 84, height: 190 },
+  };
+  service.metrics.reconstructionPreview = { surface: { model: 'plane' } };
+  assert.equal(service._targetSurfaceModel(), 'cylinder');
+  assert.equal(service._hasCurvedReconstructionTarget(), true);
+  assert.equal(service._hasPlanarTargetClass(), false);
+  assert.equal(service._hasRigidPlanarTargetClass(), false);
+
+  service.currentObjectSupportMask = {
+    bbox: { x: 160, y: 180, width: 220, height: 120 },
+  };
+  assert.equal(service._targetSurfaceModel(), 'plane');
+  assert.equal(service._hasCurvedReconstructionTarget(), false);
+  assert.equal(service._hasPlanarTargetClass(), true);
+  assert.equal(service._hasRigidPlanarTargetClass(), true);
+
+  service.currentObjectSupportMask = {
+    bbox: { x: 220, y: 90, width: 120, height: 260 },
+    pixelCount: 120 * 260 * 0.45,
+  };
+  assert.equal(service._targetSurfaceModel(), null);
+  assert.equal(service._hasCurvedReconstructionTarget(), false);
+
+  for (const targetClass of ['person', 'face', 'head']) {
+    service.anchorTargetClass = targetClass;
+    service.currentObjectSupportMask = {
+      bbox: { x: 220, y: 90, width: 110, height: 250 },
+    };
+    assert.equal(service._targetSurfaceModel(), null, targetClass);
+    assert.equal(service._hasCurvedReconstructionTarget(), false, targetClass);
+  }
+});
+
 test('planar dominance does not let weak homography own the tapped attachment', () => {
   const service = new ImageAnchorService();
   service.anchorTargetClass = 'card';
@@ -846,7 +884,7 @@ test('selected parametric poses do not reverse mature curved motion samples when
   assert.deepEqual(service.curvedMotionSample.velocity, { x: -0.21, y: -0.07 });
 });
 
-test('selected parametric position filter holds reversed weak curved poses to mature motion', () => {
+test('selected parametric position filter does not hold reversed poses to stale motion', () => {
   const service = new ImageAnchorService();
   service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'cup';
@@ -871,9 +909,8 @@ test('selected parametric position filter holds reversed weak curved poses to ma
     'parametric-surface'
   );
 
-  assert.equal(service.metrics.positionFilterAdjustment, 'curved-motion-hold');
-  assert.ok(filtered.x < 285);
-  assert.ok(filtered.y < 224);
+  assert.notEqual(service.metrics.positionFilterAdjustment, 'curved-motion-hold');
+  assert.ok(filtered.x > 288);
 });
 
 test('selected parametric position filter releases reversed motion when surface and tracker agree', () => {
@@ -991,6 +1028,46 @@ test('selected bottle targets do not use cup-style curved motion hold', () => {
   assert.ok(filtered.x > 320);
 });
 
+test('depth-fusion disables curved reference hold for tapered cups but keeps it for cans', () => {
+  const createService = targetClass => {
+    const service = new ImageAnchorService();
+    service.setTrackingMode('depth-fusion');
+    service.anchorTargetClass = targetClass;
+    service.currentPosition = { x: 320, y: 220, z: 0 };
+    service.metrics.lastUpdateResult = 'success';
+    service.metrics.reconstructionReady = true;
+    service.metrics.reconstructionMapConfidence = 0.82;
+    service.metrics.reconstructionMatureLandmarks = 24;
+    service.metrics.activeLandmarkCount = 16;
+    service.metrics.reconstructionTrackerDelta = 24;
+    service.metrics.reconstructionPreview = {
+      surface: { model: targetClass === 'cup' ? 'tapered-cylinder' : 'cylinder' },
+    };
+    service.curvedMotionSample = {
+      position: { x: 320, y: 220 },
+      velocity: { x: -0.2, y: -0.05 },
+      timestamp: 1000,
+      confidence: 0.58,
+    };
+    return service;
+  };
+  const candidate = {
+    x: 348,
+    y: 235,
+    z: 0,
+    confidence: 0,
+    averageResidual: 24,
+    inlierCount: 9,
+  };
+  const cup = createService('cup');
+  cup._filterPositionCandidate(candidate, 1033.33, 'reference_similarity_transform');
+  assert.notEqual(cup.metrics.positionFilterAdjustment, 'curved-motion-hold');
+
+  const can = createService('can');
+  can._filterPositionCandidate(candidate, 1033.33, 'reference_similarity_transform');
+  assert.equal(can.metrics.positionFilterAdjustment, 'curved-motion-hold');
+});
+
 test('mature sparse curved maps use bounded motion hold during full pose dropout', () => {
   let now = 1000;
   const service = new ImageAnchorService({ now: () => now });
@@ -1038,6 +1115,86 @@ test('mature sparse curved maps use bounded motion hold during full pose dropout
   assert.equal(service.metrics.positionFilterAdjustment, 'curved-motion-hold');
   assert.ok(held.x < 196);
   assert.ok(held.y < 154);
+});
+
+test('curved motion hold predictions do not extend the motion sample', () => {
+  let now = 1033.33;
+  const service = new ImageAnchorService({ now: () => now });
+  service.setTrackingMode('sparse-reconstruction');
+  service.anchorTargetClass = 'mug';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.91;
+  service.metrics.reconstructionMatureLandmarks = 36;
+  service.metrics.positionFilterAdjustment = 'curved-motion-hold';
+  service.curvedMotionSample = {
+    position: { x: 196, y: 154 },
+    velocity: { x: -0.12, y: -0.18 },
+    timestamp: 1000,
+    confidence: 0.86,
+  };
+
+  service._recordCurvedMotionSample({
+    success: true,
+    method: 'sparse-reconstruction',
+    position: { x: 192, y: 148, z: 0 },
+    confidence: 0.86,
+  });
+
+  assert.deepEqual(service.curvedMotionSample, {
+    position: { x: 196, y: 154 },
+    velocity: { x: -0.12, y: -0.18 },
+    timestamp: 1000,
+    confidence: 0.86,
+  });
+});
+
+test('mature sparse mug maps release motion hold when many landmarks still track', () => {
+  let now = 1000;
+  const service = new ImageAnchorService({ now: () => now });
+  service.setTrackingMode('sparse-reconstruction');
+  service.anchorTargetClass = 'mug';
+  service.currentPosition = { x: 200, y: 160, z: 0 };
+  service.templateRegion = { width: 120, height: 120 };
+  service.metrics.lastUpdateResult = 'success';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.91;
+  service.metrics.reconstructionMatureLandmarks = 36;
+  service.metrics.activeLandmarkCount = 34;
+  service.metrics.objectOwnedLandmarks = 34;
+  service.metrics.poseInliers = 0;
+  service.metrics.reconstructionPoseInliers = 0;
+  service.positionFilterX.filter(200, now);
+  service.positionFilterY.filter(160, now);
+
+  service._recordCurvedMotionSample({
+    success: true,
+    method: 'sparse-reconstruction',
+    position: { x: 200, y: 160, z: 0 },
+    confidence: 0.86,
+  });
+  now = 1033.33;
+  service._recordCurvedMotionSample({
+    success: true,
+    method: 'sparse-reconstruction',
+    position: { x: 196, y: 154, z: 0 },
+    confidence: 0.86,
+  });
+
+  const filtered = service._filterPositionCandidate(
+    {
+      x: 208,
+      y: 168,
+      z: 0,
+      confidence: 0.82,
+      averageResidual: 3.2,
+    },
+    1066.66,
+    'reference_similarity_transform'
+  );
+
+  assert.equal(service.metrics.positionFilterAdjustment, null);
+  assert.ok(filtered.x > 196);
+  assert.ok(filtered.y > 154);
 });
 
 test('mature sparse curved maps keep weak dropout tracking out of centroid fallback', () => {
@@ -1770,6 +1927,17 @@ test('overlay readiness fails when object-owned landmark ratio is too low', () =
   assert.equal(readiness.objectOwnershipReady, false);
   assert.equal(readiness.attachmentReady, false);
   assert.equal(readiness.faceReady, false);
+});
+
+test('reconstruction pose recovery does not downgrade healthy 2D tracking state', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('depth-fusion');
+  service.metrics.reconstructionReady = true;
+
+  assert.equal(service._selectTrackingState({
+    overallQuality: 0.72,
+    poseInliers: 0,
+  }), 'tracking');
 });
 
 test('reconstruction face readiness requires a current usable pose source', () => {
@@ -3154,6 +3322,41 @@ test('curved support recovery corrects a stale motion hold when support disagree
   assert.ok(service.currentPosition.y > 36);
 });
 
+test('dense generic depth-fusion support recovery can rebuild collapsed reference landmarks', () => {
+  const service = new ImageAnchorService();
+  const data = new Uint8Array(80 * 140).fill(255);
+  const objectSupportMask = createObjectSupportMask({
+    width: 80,
+    height: 140,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.93,
+    referencePoint: { x: 40, y: 70 },
+    createdAtFrame: 0,
+  });
+
+  service.setTrackingMode('depth-fusion');
+  service.anchorTargetClass = 'segmented-object';
+  service.objectSupportMask = objectSupportMask;
+  service.currentObjectSupportMask = objectSupportMask;
+  service.frameIndex = 12;
+  service.lastKeypointReinitializationFrame = -20;
+  service.metrics.landmarkRefreshReason = 'support-recovery';
+  service.metrics.landmarkRefreshFailureReason = 'no-reference-transform';
+  service.metrics.activeLandmarkCount = 14;
+  service.metrics.objectOwnedLandmarks = 13;
+  service.metrics.poseInliers = 7;
+  service.metrics.trackingSuccessRate = 1;
+
+  assert.equal(service._shouldReinitializeAfterFailedSupportRefresh(), true);
+
+  service.anchorTargetClass = 'can';
+  assert.equal(service._shouldReinitializeAfterFailedSupportRefresh(), true);
+
+  service.anchorTargetClass = 'cup';
+  assert.equal(service._shouldReinitializeAfterFailedSupportRefresh(), false);
+});
+
 test('rigid planar support refresh does not recenter homography-owned anchors', () => {
   const service = new ImageAnchorService({ now: () => 1040 });
   const data = new Uint8Array(120 * 90);
@@ -3336,7 +3539,7 @@ test('handled mug support correction caps follow reconstruction mode ownership',
 
   service.setTrackingMode('sparse-reconstruction');
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
-  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 12);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 4);
 
   service.setTrackingMode('depth-fusion');
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
@@ -3479,6 +3682,153 @@ test('recent support growth refreshes landmarks before pose geometry is ready', 
     poseInliers: 0,
   }), true);
   assert.equal(service.metrics.landmarkRefreshReason, 'support-growth');
+});
+
+test('recent pose-dropout support refresh grows landmarks even with a mature map', () => {
+  const service = createRefreshDecisionService({
+    keypointCount: 14,
+    activeLandmarkCount: 14,
+    objectOwnedLandmarks: 14,
+    reconstructionReady: true,
+    reconstructionMapConfidence: 0.82,
+    reconstructionMatureLandmarks: 20,
+    segmentationRefreshReason: 'pose-dropout-recovery',
+    segmentationRefreshFrame: 18,
+  });
+  service.frameIndex = 19;
+
+  assert.equal(service._shouldRefreshKeypoints({
+    overallQuality: 0.4,
+    poseInliers: 0,
+  }), true);
+  assert.equal(service.metrics.landmarkRefreshReason, 'support-recovery');
+});
+
+test('failed support refresh reinitialization is limited to cylindrical support-owned targets', () => {
+  const metrics = {
+    keypointCount: 13,
+    activeLandmarkCount: 13,
+    objectOwnedLandmarks: 13,
+    poseInliers: 0,
+    landmarkRefreshReason: 'support-recovery',
+    landmarkRefreshFailureReason: 'no-reference-transform',
+  };
+  const eligible = createRefreshDecisionService(metrics);
+  eligible.trackingMode = 'sparse-reconstruction';
+  eligible.anchorTargetClass = 'can';
+  eligible.frameIndex = 24;
+
+  assert.equal(eligible._shouldReinitializeAfterFailedSupportRefresh(), true);
+
+  const generic = createRefreshDecisionService(metrics);
+  generic.trackingMode = 'sparse-reconstruction';
+  generic.anchorTargetClass = 'segmented-object';
+  generic.objectSupportMask = createObjectSupportMask({
+    width: 120,
+    height: 240,
+    data: new Uint8Array(120 * 240).fill(255),
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 60, y: 120 },
+    createdAtFrame: 0,
+  });
+  generic.frameIndex = 24;
+  assert.equal(generic._shouldReinitializeAfterFailedSupportRefresh(), true);
+
+  const sparseGeneric = createRefreshDecisionService(metrics);
+  sparseGeneric.trackingMode = 'sparse-reconstruction';
+  sparseGeneric.anchorTargetClass = 'segmented-object';
+  sparseGeneric.objectSupportMask = createObjectSupportMask({
+    width: 120,
+    height: 240,
+    data: (() => {
+      const data = new Uint8Array(120 * 240);
+      for (let y = 0; y < 240; y++) {
+        data[y * 120 + 20] = 255;
+        data[y * 120 + 100] = 255;
+      }
+      return data;
+    })(),
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 60, y: 120 },
+    createdAtFrame: 0,
+  });
+  sparseGeneric.frameIndex = 24;
+  assert.equal(sparseGeneric._shouldReinitializeAfterFailedSupportRefresh(), false);
+
+  const dense = createRefreshDecisionService(metrics);
+  dense.trackingMode = 'depth-fusion';
+  dense.anchorTargetClass = 'can';
+  dense.frameIndex = 24;
+  assert.equal(dense._shouldReinitializeAfterFailedSupportRefresh(), true);
+
+  const denseActiveCan = createRefreshDecisionService({
+    ...metrics,
+    keypointCount: 22,
+    activeLandmarkCount: 22,
+    objectOwnedLandmarks: 21,
+  });
+  denseActiveCan.trackingMode = 'depth-fusion';
+  denseActiveCan.anchorTargetClass = 'can';
+  denseActiveCan.frameIndex = 24;
+  assert.equal(denseActiveCan._shouldReinitializeAfterFailedSupportRefresh(), true);
+
+  const sparseActiveCan = createRefreshDecisionService({
+    ...metrics,
+    keypointCount: 22,
+    activeLandmarkCount: 22,
+    objectOwnedLandmarks: 21,
+  });
+  sparseActiveCan.trackingMode = 'sparse-reconstruction';
+  sparseActiveCan.anchorTargetClass = 'can';
+  sparseActiveCan.frameIndex = 24;
+  assert.equal(sparseActiveCan._shouldReinitializeAfterFailedSupportRefresh(), false);
+
+  const depthCup = createRefreshDecisionService(metrics);
+  depthCup.trackingMode = 'depth-fusion';
+  depthCup.anchorTargetClass = 'cup';
+  depthCup.frameIndex = 24;
+  assert.equal(depthCup._shouldReinitializeAfterFailedSupportRefresh(), false);
+
+  const direct = createRefreshDecisionService(metrics);
+  direct.trackingMode = 'direct-photometric';
+  direct.anchorTargetClass = 'can';
+  direct.frameIndex = 24;
+  assert.equal(direct._shouldReinitializeAfterFailedSupportRefresh(), true);
+
+  const mug = createRefreshDecisionService(metrics);
+  mug.trackingMode = 'sparse-reconstruction';
+  mug.anchorTargetClass = 'mug';
+  mug.frameIndex = 24;
+  assert.equal(mug._shouldReinitializeAfterFailedSupportRefresh(), false);
+
+  const person = createRefreshDecisionService(metrics);
+  person.trackingMode = 'sparse-reconstruction';
+  person.anchorTargetClass = 'person';
+  person.frameIndex = 24;
+  assert.equal(person._shouldReinitializeAfterFailedSupportRefresh(), false);
+
+  eligible.lastKeypointReinitializationFrame = 20;
+  assert.equal(eligible._shouldReinitializeAfterFailedSupportRefresh(), false);
+});
+
+test('segmentation refresh markers survive the next frame for async recovery', () => {
+  const service = new ImageAnchorService();
+  service.metrics.segmentationRefreshReason = 'pose-dropout-recovery';
+  service.metrics.segmentationRefreshFrame = 8;
+  service.metrics.keypointReinitializationResult = 'reinitialized';
+  service.frameIndex = 9;
+
+  service._resetFrameObjectSupportCorrectionMetrics();
+  assert.equal(service.metrics.segmentationRefreshReason, 'pose-dropout-recovery');
+  assert.equal(service.metrics.segmentationRefreshFrame, 8);
+  assert.equal(service.metrics.keypointReinitializationResult, null);
+
+  service.frameIndex = 11;
+  service._resetFrameObjectSupportCorrectionMetrics();
+  assert.equal(service.metrics.segmentationRefreshReason, null);
+  assert.equal(service.metrics.segmentationRefreshFrame, null);
 });
 
 test('mature reconstruction map blocks sparse support recovery refresh', () => {
@@ -4286,6 +4636,72 @@ test('depth-fusion keeps tracker positioning as the anchor spine', () => {
   assert.equal(result.position.y, 174);
   assert.equal(result.poseSource, 'depth-fusion');
   assert.equal(readiness.attachmentSourceReady, true);
+});
+
+test('mature depth-fusion can pose can own position when reference geometry is weak', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('depth-fusion');
+  service.anchorTargetClass = 'can';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.9;
+  service.metrics.reconstructionMatureLandmarks = 1400;
+
+  const reconstructionPose = {
+    success: true,
+    method: 'depth-fusion',
+    confidence: 0.57,
+    inlierCount: 14,
+    averageResidual: 5.5,
+    preview: {
+      surface: { model: 'depth-fusion-surfels' },
+      statistics: {
+        mapConfidence: 0.9,
+        matureLandmarks: 1400,
+      },
+    },
+  };
+  const trackerAnchorPosition = {
+    method: 'reference_similarity_transform',
+    confidence: 0,
+    averageResidual: 22,
+  };
+  const poseArbitration = {
+    selected: { source: 'depth-fusion' },
+    rejected: {
+      reference_similarity_transform: { reason: 'weak-geometry' },
+    },
+  };
+  const useArbiterReconstructionPosition = service._shouldUseArbiterReconstructionPosition({
+    poseArbitration,
+    reconstructionPose,
+    trackerAnchorPosition,
+  });
+
+  assert.equal(useArbiterReconstructionPosition, true);
+  assert.equal(service._shouldHoldTrackerPositionForDepthFusion({
+    trackerAnchorPosition,
+    reconstructionPose,
+    useArbiterReconstructionPosition,
+  }), false);
+
+  service.anchorTargetClass = 'cup';
+  assert.equal(service._shouldUseArbiterReconstructionPosition({
+    poseArbitration,
+    reconstructionPose,
+    trackerAnchorPosition,
+  }), false);
+
+  service.anchorTargetClass = 'mug';
+  assert.equal(service._shouldUseArbiterReconstructionPosition({
+    poseArbitration,
+    reconstructionPose,
+    trackerAnchorPosition,
+  }), false);
+  assert.equal(service._shouldHoldTrackerPositionForDepthFusion({
+    trackerAnchorPosition,
+    reconstructionPose,
+    useArbiterReconstructionPosition: true,
+  }), true);
 });
 
 test('arbiter-selected planar pose owns position when reference similarity is weak', () => {

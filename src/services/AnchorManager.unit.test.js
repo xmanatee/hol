@@ -38,9 +38,10 @@ test('anchor manager attaches tap-time segmenter mask before creating image anch
     },
   };
   const interactiveSegmenterService = {
-    segmentTap: async ({ tapPosition, maxRadius }) => {
+    segmentTap: async ({ tapPosition, maxRadius, timeoutMs }) => {
       assert.deepEqual(tapPosition, { x: 50, y: 40 });
       assert.equal(maxRadius, undefined);
+      assert.equal(timeoutMs, 6000);
       return objectSupportMask;
     },
   };
@@ -513,8 +514,9 @@ test('pose dropout requests immediate segmentation refresh and accepts overlappi
       },
     },
     interactiveSegmenterService: {
-      segmentTap: async ({ tapPosition }) => {
+      segmentTap: async ({ tapPosition, timeoutMs }) => {
         receivedTap = tapPosition;
+        assert.equal(timeoutMs, 1400);
         return refreshedMask;
       },
     },
@@ -555,6 +557,57 @@ test('pose dropout requests immediate segmentation refresh and accepts overlappi
 
   assert.deepEqual(receivedTap, { x: 126, y: 60, z: 0 });
   assert.equal(updateReason, 'pose-dropout-recovery');
+});
+
+test('failed recovery segmentation clears the in-flight latch for later attempts', async () => {
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      updateObjectSupportMask: () => {
+        throw new Error('refresh should not apply after segmentation failure');
+      },
+    },
+    interactiveSegmenterService: {
+      segmentTap: async ({ timeoutMs }) => {
+        assert.equal(timeoutMs, 1400);
+        throw new Error('Interactive segmenter request timed out after 1400ms');
+      },
+    },
+  });
+  manager.initialized = true;
+  manager.mode = 'anchor';
+  manager.activeAnchor = {
+    position: { x: 126, y: 60, z: 0 },
+    sourceDetection: {
+      class: 'can',
+      objectSupportMask: {
+        bbox: { x: 58, y: 44, width: 64, height: 45 },
+      },
+    },
+  };
+  manager.anchorState = {
+    state: 'tracking',
+    position: { x: 126, y: 60, z: 0 },
+    metrics: {
+      activeLandmarkCount: 18,
+      objectOwnedLandmarks: 18,
+      poseInliers: 0,
+      poseSource: null,
+      trackingSuccessRate: 0.9,
+      currentObjectSupportMaskBounds: { x: 58, y: 44, width: 64, height: 45 },
+    },
+  };
+
+  assert.equal(manager.refreshSegmentationIfNeeded({
+    width: 180,
+    height: 140,
+    data: new Uint8ClampedArray(180 * 140 * 4),
+  }), true);
+  assert.equal(manager.segmentationRefreshInFlight, true);
+
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(manager.segmentationRefreshInFlight, false);
 });
 
 test('curved motion hold requests recovery segmentation before interval elapses', async () => {

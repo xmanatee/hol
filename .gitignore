@@ -17,6 +17,12 @@ dist-ssr
 docs/vision-benchmark-runs/
 docs/vision-benchmark-full-report.html
 
+# Local debug captures
+.playwright-mcp/
+console-*.txt
+network-*.txt
+synthetic-anchor-readiness.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

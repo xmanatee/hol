@@ -1,5 +1,7 @@
 import { isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
 
+const POSE_RECOVERY_REASON = 'Recovering object pose before showing the face';
+
 const collectAnchorDetails = (anchorState) => {
   const metrics = anchorState?.metrics || {};
 
@@ -136,6 +138,19 @@ export const describeAnchorState = ({
       severity: 'idle',
       message: 'Scanning for selectable objects',
       recommendation: 'Point at the object, then tap its visible surface if no outline appears.',
+      details
+    };
+  }
+
+  if (isReconstructionMode(details.poseModel) &&
+      details.readiness?.reason === POSE_RECOVERY_REASON) {
+    return {
+      status: 'recovering',
+      severity: 'warn',
+      message: 'Recovering object pose',
+      recommendation: details.poseRejectedReason ||
+        details.reconstructionPoseRejectedReason ||
+        'Keep the object visible and move slower until pose support is rebuilt.',
       details
     };
   }

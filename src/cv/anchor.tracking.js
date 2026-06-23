@@ -1288,63 +1288,91 @@ export class KeypointTracker {
     minNewKeypoints = 15,
     adaptive = false,
   } = {}) {
-    try {
-      // Validate inputs
-      if (!cv || !currentGray || !keypointDetector || !region) {
-        logger.warn('KeypointTracker', 'Invalid inputs for refreshKeypoints');
-        return false;
-      }
-
-      // Check if image is valid
-      if (currentGray.empty() || currentGray.cols === 0 || currentGray.rows === 0) {
-        logger.warn('KeypointTracker', 'Invalid image for keypoint refresh');
-        return false;
-      }
-
-      // Validate region bounds
-      if (region.x < 0 || region.y < 0 || 
-          region.x + region.width > currentGray.cols || 
-          region.y + region.height > currentGray.rows) {
-        logger.warn('KeypointTracker', 'Region out of bounds for keypoint refresh');
-        return false;
-      }
-
-      const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
-      const referenceTransformation = this._selectRefreshReferenceTransformation(cv, activePoints);
-      const newKeypoints = adaptive
-        ? keypointDetector.extractAdaptiveKeypoints(cv, currentGray, region, objectSupportMask, {
-            minKeypoints: minNewKeypoints,
-          })
-        : keypointDetector.extractKeypoints(cv, currentGray, region, objectSupportMask);
-      
-      if (newKeypoints.keypoints.length >= minNewKeypoints) {
-        if (referenceTransformation) {
-          this._mergeTrackingPointsPreservingReference(
-            newKeypoints.keypoints,
-            currentGray,
-            referenceTransformation,
-            objectSupportMask
-          );
-        } else {
-          this.lastRefreshStats = {
-            added: 0,
-            total: this.trackedPoints.length,
-            active: activePoints.length,
-            rejected: true,
-          };
-          return false;
-        }
-        logger.info('KeypointTracker', `Refreshed tracking with ${this.trackedPoints.length} current-frame keypoints`);
-        return true;
-      } else {
-        logger.debug('KeypointTracker', `Insufficient new keypoints for refresh: ${newKeypoints.keypoints.length}`);
-      }
-    } catch (error) {
-      const errorMessage = typeof error === 'number' ? `OpenCV error code: ${error}` : error.message || 'Unknown error';
-      logger.error('KeypointTracker', 'Failed to refresh keypoints:', errorMessage);
+    this.lastRefreshStats = null;
+    if (!cv || !currentGray || !keypointDetector || !region) {
+      this.lastRefreshStats = {
+        added: 0,
+        total: this.trackedPoints.length,
+        active: this.trackedPoints.filter(pt => pt.status === 'active').length,
+        reason: 'invalid-input',
+      };
+      logger.warn('KeypointTracker', 'Invalid inputs for refreshKeypoints');
+      return false;
     }
-    
-    return false;
+
+    if (currentGray.empty() || currentGray.cols === 0 || currentGray.rows === 0) {
+      this.lastRefreshStats = {
+        added: 0,
+        total: this.trackedPoints.length,
+        active: this.trackedPoints.filter(pt => pt.status === 'active').length,
+        reason: 'invalid-image',
+      };
+      logger.warn('KeypointTracker', 'Invalid image for keypoint refresh');
+      return false;
+    }
+
+    if (region.x < 0 ||
+        region.y < 0 ||
+        region.x + region.width > currentGray.cols ||
+        region.y + region.height > currentGray.rows) {
+      this.lastRefreshStats = {
+        added: 0,
+        total: this.trackedPoints.length,
+        active: this.trackedPoints.filter(pt => pt.status === 'active').length,
+        reason: 'region-out-of-bounds',
+      };
+      logger.warn('KeypointTracker', 'Region out of bounds for keypoint refresh');
+      return false;
+    }
+
+    const activePoints = this.trackedPoints.filter(pt => pt.status === 'active');
+    const referenceTransformation = this._selectRefreshReferenceTransformation(cv, activePoints);
+    const newKeypoints = adaptive
+      ? keypointDetector.extractAdaptiveKeypoints(cv, currentGray, region, objectSupportMask, {
+          minKeypoints: minNewKeypoints,
+        })
+      : keypointDetector.extractKeypoints(cv, currentGray, region, objectSupportMask);
+    const candidateCount = newKeypoints.keypoints.length;
+
+    if (candidateCount < minNewKeypoints) {
+      this.lastRefreshStats = {
+        added: 0,
+        total: this.trackedPoints.length,
+        active: activePoints.length,
+        candidateCount,
+        minNewKeypoints,
+        reason: 'insufficient-candidates',
+      };
+      logger.debug('KeypointTracker', `Insufficient new keypoints for refresh: ${candidateCount}`);
+      return false;
+    }
+
+    if (!referenceTransformation) {
+      this.lastRefreshStats = {
+        added: 0,
+        total: this.trackedPoints.length,
+        active: activePoints.length,
+        candidateCount,
+        minNewKeypoints,
+        reason: 'no-reference-transform',
+      };
+      return false;
+    }
+
+    this._mergeTrackingPointsPreservingReference(
+      newKeypoints.keypoints,
+      currentGray,
+      referenceTransformation,
+      objectSupportMask
+    );
+    this.lastRefreshStats = {
+      ...this.lastRefreshStats,
+      candidateCount,
+      minNewKeypoints,
+      reason: null,
+    };
+    logger.info('KeypointTracker', `Refreshed tracking with ${this.trackedPoints.length} current-frame keypoints`);
+    return true;
   }
 
   _selectRefreshReferenceTransformation(cv, activePoints) {

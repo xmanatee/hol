@@ -388,6 +388,32 @@ const canTexture = (u, v) => {
   return [166 + speckle, 28 + speckle * 0.15, 36 + speckle * 0.12, 255];
 };
 
+const glossyCanTexture = (u, v, frameIndex = 0) => {
+  const base = canTexture(u, v);
+  const sweep = 0.16 + 0.68 * (0.5 + 0.5 * Math.sin(frameIndex * 0.33));
+  const counterSweep = 0.82 - 0.5 * (0.5 + 0.5 * Math.sin(frameIndex * 0.21 + 1.7));
+  const broadHighlight = Math.max(0, 1 - Math.abs(u - sweep) / 0.14);
+  const sharpHighlight = Math.max(0, 1 - Math.abs(u - (sweep + 0.09 * Math.sin(frameIndex * 0.19))) / 0.038);
+  const mirrorShadow = Math.max(0, 1 - Math.abs(u - counterSweep) / 0.09);
+  const rimHighlight = v < 0.11 || v > 0.88 ? 0.38 : 0;
+  const reflectionBand = Math.max(0, 1 - Math.abs(v - (0.2 + 0.14 * Math.sin(frameIndex * 0.27))) / 0.07);
+  const movingWindow = Math.max(broadHighlight * 0.82, sharpHighlight, reflectionBand * 0.74, rimHighlight);
+  const shadow = Math.max(mirrorShadow * 0.78, Math.max(0, 1 - Math.abs(v - 0.72) / 0.08) * 0.28);
+  const labelSuppression = clamp(movingWindow * 0.72 + shadow * 0.48, 0, 0.86);
+  const muted = [
+    base[0] * (1 - labelSuppression) + 122 * labelSuppression,
+    base[1] * (1 - labelSuppression) + 130 * labelSuppression,
+    base[2] * (1 - labelSuppression) + 138 * labelSuppression,
+  ];
+
+  return [
+    clamp(muted[0] + movingWindow * 124 - shadow * 92, 0, 255),
+    clamp(muted[1] + movingWindow * 136 - shadow * 76, 0, 255),
+    clamp(muted[2] + movingWindow * 148 - shadow * 58, 0, 255),
+    255,
+  ];
+};
+
 const cupTexture = (u, v) => {
   const ceramicNoise = (noise(u * 86, v * 74, 31) - 0.5) * 22;
   const verticalRib = Math.floor(u * 42) % 6 === 0;
@@ -1189,6 +1215,8 @@ const drawCylinderFrame = ({
   anchorPoint,
   basisXPoint,
   basisYPoint,
+  texture = canTexture,
+  kind = 'cylindrical-can',
 }) => {
   const width = DEFAULT_WIDTH;
   const height = DEFAULT_HEIGHT;
@@ -1211,11 +1239,11 @@ const drawCylinderFrame = ({
     const quad = [p0, p1, p2, p3].map(point => project3(point, pose, camera));
     projected.push(...quad);
     const shade = clamp(0.42 + Math.cos((a0 + a1) * 0.5) * 0.35 + projectNormal(pose).z * 0.16, 0.28, 1);
-    drawQuad(imageData, quad, (u, v) => canTexture((strip + u) / strips, v), shade);
+    drawQuad(imageData, quad, (u, v) => texture((strip + u) / strips, v, frameIndex), shade);
   }
 
   const boundingBox = bboxFor(projected);
-  if (occluded) drawOcclusion(imageData, boundingBox, frameIndex, 'cylindrical-can');
+  if (occluded) drawOcclusion(imageData, boundingBox, frameIndex, kind);
   const groundTruth = createLocalSurfaceGroundTruth({
     pose,
     camera,
@@ -1241,6 +1269,9 @@ export const createCylindricalCanSequence = ({
   anchorPoint = { x: 0, y: 0, z: 0 },
   basisXPoint = { x: 42, y: 0, z: 0 },
   basisYPoint = { x: 0, y: 42, z: 0 },
+  kind = 'cylindrical-can',
+  texture = canTexture,
+  hasSpecularHighlights = false,
 } = {}) => {
   const occlusionSet = new Set(occlusionFrames);
   const reference = createLocalSurfaceGroundTruth({
@@ -1260,10 +1291,12 @@ export const createCylindricalCanSequence = ({
     anchorPoint,
     basisXPoint,
     basisYPoint,
+    texture,
+    kind,
   }));
 
   return {
-    kind: 'cylindrical-can',
+    kind,
     width: DEFAULT_WIDTH,
     height: DEFAULT_HEIGHT,
     tap: frames[0].groundTruth.anchor,
@@ -1276,6 +1309,7 @@ export const createCylindricalCanSequence = ({
       hasDarkRegions: true,
       hasFineTexture: true,
       hasLightingVariation: true,
+      hasSpecularHighlights,
       hasOcclusion: occlusionFrames.length > 0,
       hasMovingBackground: true,
       backgroundVariant,
@@ -1284,6 +1318,15 @@ export const createCylindricalCanSequence = ({
     },
   };
 };
+
+export const createGlossyCanSequence = options => createCylindricalCanSequence({
+  kind: 'glossy-can',
+  backgroundVariant: 'kitchen',
+  backgroundSeed: 137,
+  texture: glossyCanTexture,
+  hasSpecularHighlights: true,
+  ...options,
+});
 
 const cupPoseAt = (index, count) => {
   const t = index / Math.max(1, count - 1);

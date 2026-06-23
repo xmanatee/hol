@@ -1,7 +1,9 @@
 import {
   createCylindricalCanSequence,
+  createGlossyCanSequence,
   createGlossyPhoneSequence,
   createHandledMugSequence,
+  createHumanSilhouetteSequence,
   createLabelBottleSequence,
   createLaminatedCardSequence,
   createPlanarBookSequence,
@@ -57,6 +59,12 @@ export const BENCHMARK_OBJECT_CASES = [
     create: options => createCylindricalCanSequence(options),
   },
   {
+    id: 'glossy-can',
+    targetClass: 'can',
+    geometry: 'cylindrical-specular',
+    create: options => createGlossyCanSequence(options),
+  },
+  {
     id: 'label-bottle',
     targetClass: 'bottle',
     geometry: 'curved-label',
@@ -85,6 +93,19 @@ export const BENCHMARK_OBJECT_CASES = [
     targetClass: 'box',
     geometry: 'multi-plane',
     create: options => createRigidBoxSequence(options),
+  },
+  {
+    id: 'generic-free-tap-can',
+    targetClass: 'segmented-object',
+    targetClassOverride: 'segmented-object',
+    geometry: 'cylindrical-free-tap',
+    create: options => createCylindricalCanSequence(options),
+  },
+  {
+    id: 'human-silhouette',
+    targetClass: 'person',
+    geometry: 'non-convex-human',
+    create: options => createHumanSilhouetteSequence(options),
   },
 ];
 
@@ -153,6 +174,7 @@ const createScenario = ({ objectCase, objectIndex, profile, profileIndex, backgr
   const axes = {
     object: objectCase.id,
     targetClass: objectCase.targetClass,
+    targetClassOverride: objectCase.targetClassOverride || null,
     geometry: objectCase.geometry,
     background,
     lighting: lightingForBackground(background),
@@ -176,6 +198,7 @@ const createScenario = ({ objectCase, objectIndex, profile, profileIndex, backgr
       backgroundVariant: background,
       backgroundSeed: axes.backgroundSeed,
     }),
+    targetClassOverride: objectCase.targetClassOverride || null,
   };
 };
 
@@ -183,7 +206,10 @@ export const createVisionBenchmarkMatrix = ({ size = 'representative' } = {}) =>
   const objectCases = size === 'quick'
     ? BENCHMARK_OBJECT_CASES.filter(objectCase => (
         objectCase.id === 'planar-book' ||
+        objectCase.id === 'generic-free-tap-can' ||
+        objectCase.id === 'glossy-can' ||
         objectCase.id === 'textured-cup' ||
+        objectCase.id === 'human-silhouette' ||
         objectCase.id === 'handled-mug' ||
         objectCase.id === 'rigid-box'
       ))

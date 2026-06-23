@@ -14,6 +14,11 @@ import {
 } from '../cv/curvedObjectRecovery.js';
 import { logger } from '../utils/logger.js';
 
+const MAX_POSE_DROPOUT_INLIERS = 12;
+const BASE_POSE_DROPOUT_INLIERS = 8;
+const TAP_SEGMENTATION_TIMEOUT_MS = 6000;
+const RECOVERY_SEGMENTATION_TIMEOUT_MS = 1400;
+
 const createActiveAnchorDiagnostics = (metrics, readiness) => ({
   readiness,
   qualityState: metrics.qualityState ?? null,
@@ -158,6 +163,7 @@ export class AnchorManager {
       imageData,
       tapPosition,
       createdAtFrame: 0,
+      timeoutMs: TAP_SEGMENTATION_TIMEOUT_MS,
     });
 
     const objectSupportMask = this._selectTapObjectSupportMask({
@@ -238,6 +244,7 @@ export class AnchorManager {
       tapPosition: position,
       maxRadius: refreshRadius,
       createdAtFrame: this.anchorState.metrics?.segmentationRefreshFrame || 0,
+      timeoutMs: RECOVERY_SEGMENTATION_TIMEOUT_MS,
     }).then(objectSupportMask => {
       const acceptedMask = objectSupportMask && this._isAcceptableSegmentationRefresh(objectSupportMask, position, refreshRadius)
         ? objectSupportMask
@@ -275,13 +282,14 @@ export class AnchorManager {
     return true;
   }
 
-  async _segmentTapObject({ imageData, tapPosition, maxRadius, createdAtFrame }) {
+  async _segmentTapObject({ imageData, tapPosition, maxRadius, createdAtFrame, timeoutMs }) {
     try {
       const objectSupportMask = await this.interactiveSegmenterService.segmentTap({
         imageData,
         tapPosition,
         maxRadius,
         createdAtFrame,
+        timeoutMs,
       });
 
       if (this._hasUsableObjectSupportMask(objectSupportMask)) {
@@ -348,10 +356,14 @@ export class AnchorManager {
     const active = metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0;
     const trackingRate = metrics.trackingSuccessRate ?? 0;
     const poseInliers = metrics.poseInliers ?? 0;
+    const targetClass = this.activeAnchor?.sourceDetection?.class || metrics.targetClass || '';
+    const dropoutInlierLimit = metrics.trackingMode === 'depth-fusion' && !/mug/i.test(targetClass)
+      ? MAX_POSE_DROPOUT_INLIERS
+      : BASE_POSE_DROPOUT_INLIERS;
 
     return active >= 8 &&
       trackingRate >= 0.55 &&
-      poseInliers < 8 &&
+      poseInliers < dropoutInlierLimit &&
       metrics.poseSource == null;
   }
 

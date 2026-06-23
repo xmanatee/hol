@@ -179,3 +179,46 @@ test('interactive segmenter service clears failed workers before retrying', asyn
   const result = await retry;
   assert.equal(result.source, 'interactive-segmenter');
 });
+
+test('interactive segmenter service times out stalled workers and retries with a fresh worker', async () => {
+  DeferredWorker.instances = [];
+  const service = new InteractiveSegmenterService({
+    WorkerClass: DeferredWorker,
+    requestTimeoutMs: 5,
+  });
+  const imageData = {
+    width: 2,
+    height: 2,
+    data: new Uint8ClampedArray(2 * 2 * 4),
+  };
+
+  const stalled = service.segmentTap({
+    imageData,
+    tapPosition: { x: 1, y: 1 },
+    createdAtFrame: 8,
+  });
+
+  await assert.rejects(stalled, /timed out/);
+  assert.equal(DeferredWorker.instances[0].terminated, true);
+  assert.equal(service.pendingRequests.size, 0);
+
+  const retry = service.segmentTap({
+    imageData,
+    tapPosition: { x: 1, y: 1 },
+    createdAtFrame: 9,
+    timeoutMs: 50,
+  });
+
+  await Promise.resolve();
+  assert.equal(DeferredWorker.instances.length, 2);
+  DeferredWorker.instances[1].onmessage({
+    data: {
+      type: 'segment-result',
+      requestId: 2,
+      objectSupportMask: { source: 'interactive-segmenter', data: new Uint8Array([255]) },
+    },
+  });
+
+  const result = await retry;
+  assert.equal(result.source, 'interactive-segmenter');
+});

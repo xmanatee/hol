@@ -12,7 +12,7 @@ test('benchmark matrix keeps explicit object, background, motion, and occlusion 
   const scenarios = createVisionBenchmarkMatrix({ size: 'quick' });
   const axes = scenarios.map(scenario => scenario.axes);
 
-  assert.equal(scenarios.length, 12);
+  assert.equal(scenarios.length, 21);
   assert.ok(new Set(axes.map(axis => axis.object)).size >= 4);
   assert.ok(new Set(axes.map(axis => axis.background)).size >= 3);
   assert.deepEqual(
@@ -25,6 +25,18 @@ test('benchmark matrix keeps explicit object, background, motion, and occlusion 
   );
   assert.ok(axes.every(axis => Number.isInteger(axis.backgroundSeed)));
   assert.ok(axes.every(axis => BENCHMARK_BACKGROUND_VARIANTS.includes(axis.background)));
+  assert.ok(axes.some(axis => (
+    axis.object === 'generic-free-tap-can' &&
+    axis.targetClassOverride === 'segmented-object'
+  )));
+  assert.ok(axes.some(axis => (
+    axis.object === 'glossy-can' &&
+    axis.geometry === 'cylindrical-specular'
+  )));
+  assert.ok(axes.some(axis => (
+    axis.object === 'human-silhouette' &&
+    axis.targetClass === 'person'
+  )));
 });
 
 test('representative benchmark covers every object case and motion profile once', () => {
@@ -57,4 +69,12 @@ test('benchmark scenarios create real synthetic replay sequences with matching a
   assert.equal(occludedSequence.frames.length, occludedScenario.axes.frameCount);
   assert.equal(occludedSequence.metadata.backgroundVariant, occludedScenario.axes.background);
   assert.equal(occludedSequence.metadata.hasOcclusion, true);
+
+  const freeTapCan = scenarios.find(scenario => scenario.axes.object === 'generic-free-tap-can');
+  assert.equal(freeTapCan.create().kind, 'cylindrical-can');
+  assert.equal(freeTapCan.targetClassOverride, 'segmented-object');
+
+  const glossyCan = scenarios.find(scenario => scenario.axes.object === 'glossy-can');
+  assert.equal(glossyCan.create().kind, 'glossy-can');
+  assert.equal(glossyCan.create().metadata.hasSpecularHighlights, true);
 });

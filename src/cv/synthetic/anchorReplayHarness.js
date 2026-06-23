@@ -7,6 +7,9 @@ import {
 } from '../curvedObjectRecovery.js';
 import { createObjectSupportMask } from '../objectSupportMask.js';
 
+const MAX_SYNTHETIC_POSE_DROPOUT_INLIERS = 12;
+const BASE_SYNTHETIC_POSE_DROPOUT_INLIERS = 8;
+
 const normalizeAngle = value => {
   let angle = value;
   while (angle > Math.PI) angle -= Math.PI * 2;
@@ -158,10 +161,13 @@ const hasSyntheticPoseDropout = (metrics, { targetClass, trackingMode } = {}) =>
   const active = metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0;
   const trackingRate = metrics.trackingSuccessRate ?? 0;
   const poseInliers = metrics.poseInliers ?? 0;
+  const dropoutInlierLimit = trackingMode === 'depth-fusion' && !/mug/i.test(targetClass || '')
+    ? MAX_SYNTHETIC_POSE_DROPOUT_INLIERS
+    : BASE_SYNTHETIC_POSE_DROPOUT_INLIERS;
 
   return active >= 8 &&
     trackingRate >= 0.55 &&
-    poseInliers < 8 &&
+    poseInliers < dropoutInlierLimit &&
     metrics.poseSource == null;
 };
 
@@ -223,6 +229,7 @@ export const replayImageAnchorSequence = async ({
   cv,
   sequence,
   trackingMode,
+  targetClassOverride = null,
   useObjectSupportMask = true,
   depthFrameForFrame = null,
   refreshObjectSupportMask = false,
@@ -239,6 +246,7 @@ export const replayImageAnchorSequence = async ({
   const objectSupportMask = useObjectSupportMask
     ? createSyntheticObjectSupportMask({ sequence, frame: firstFrame, referencePoint: sequence.tap })
     : null;
+  const targetClass = targetClassOverride || sequence.targetClass;
   const createAttempt = await settle(service.createAnchor(
     firstFrame.imageData,
     sequence.tap,
@@ -247,7 +255,7 @@ export const replayImageAnchorSequence = async ({
       y1: sequence.boundingBox.y1,
       x2: sequence.boundingBox.x2,
       y2: sequence.boundingBox.y2,
-      class: sequence.targetClass,
+      class: targetClass,
       objectSupportMask,
     }
   ));
@@ -286,7 +294,7 @@ export const replayImageAnchorSequence = async ({
           index,
           metrics: state.metrics,
           interval: objectSupportRefreshInterval,
-          targetClass: sequence.targetClass,
+          targetClass,
           trackingMode,
         })) {
       service.updateObjectSupportMask(createSyntheticObjectSupportMask({
@@ -295,7 +303,7 @@ export const replayImageAnchorSequence = async ({
         referencePoint: result.position || state.position || sequence.tap,
         updatedAtFrame: index,
       }), {
-        reason: syntheticObjectSupportRefreshReason(state.metrics, sequence.targetClass, trackingMode),
+        reason: syntheticObjectSupportRefreshReason(state.metrics, targetClass, trackingMode),
       });
       state = service.getState();
     }

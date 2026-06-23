@@ -772,6 +772,45 @@ test('keypoint refresh rejects textured background candidates outside the object
   assert.ok(tracker.trackedPoints.every(point => point.current.x < 170));
 });
 
+test('keypoint refresh reports collapsed reference transform failures', () => {
+  const tracker = new KeypointTracker();
+  tracker.initialized = true;
+  tracker.previousGray = { delete() {} };
+  tracker.trackedPoints = [
+    createTrackedPoint(0, { x: 80, y: 80 }, { tx: 0, ty: 0, scale: 1, rotation: 0 }),
+    createTrackedPoint(1, { x: 92, y: 82 }, { tx: 0, ty: 0, scale: 1, rotation: 0 }),
+  ];
+
+  const currentGray = {
+    cols: 220,
+    rows: 180,
+    empty: () => false,
+    clone: () => ({ delete() {} }),
+  };
+  const detector = {
+    extractKeypoints: () => ({
+      keypoints: Array.from({ length: 10 }, (_, index) => ({
+        pt: { x: 70 + index * 8, y: 90 },
+        response: 1,
+      })),
+    }),
+  };
+
+  const refreshed = tracker.refreshKeypoints({}, currentGray, detector, {
+    x: 0,
+    y: 0,
+    width: 180,
+    height: 140,
+  }, null, {
+    minNewKeypoints: 8,
+  });
+
+  assert.equal(refreshed, false);
+  assert.equal(tracker.lastRefreshStats.reason, 'no-reference-transform');
+  assert.equal(tracker.lastRefreshStats.candidateCount, 10);
+  assert.equal(tracker.lastRefreshStats.active, 2);
+});
+
 test('tracker restores lost landmarks from a descriptor relocalization transform', () => {
   const tracker = new KeypointTracker();
   const transform = {

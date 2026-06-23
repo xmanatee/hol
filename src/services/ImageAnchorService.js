@@ -19,6 +19,13 @@ import {
 import { createReconstructionEngine } from '../cv/anchor.reconstructionEngineFactory.js';
 import { ObjectSurfaceModel } from '../cv/objectSurfaceModel.js';
 import { scorePoseCandidates } from '../cv/poseCandidateArbiter.js';
+import {
+  modelFromRegion,
+  SURFACE_MODEL_CYLINDER,
+  SURFACE_MODEL_ELLIPSOID,
+  SURFACE_MODEL_PLANE,
+  SURFACE_MODEL_TAPERED_CYLINDER,
+} from '../cv/anchor.parametricGeometry.js';
 import { AnchorPersistenceSystem } from '../cv/anchor.persistence.js';
 import { OneEuroFilter } from '../cv/oneEuroFilter.js';
 import { checkCriticalFeatures } from '../cv/opencv.features.js';
@@ -39,6 +46,10 @@ const POSE_MODEL = 'object-pose';
 const TRACKING_MODES = new Set([POSE_MODEL, ...RECONSTRUCTION_MODE_IDS]);
 const PLANAR_TARGET_CLASS_PATTERN = /book|notebook|paper|document|poster|photo|picture|painting|card|ticket|label|badge|laptop|keyboard|cell phone|smartphone|phone|tablet|tv|screen|sign|whiteboard|bag/i;
 const RIGID_PLANAR_TARGET_CLASS_PATTERN = /book|notebook|paper|document|poster|photo|picture|painting|card|ticket|label|badge|laptop|keyboard|cell phone|smartphone|phone|tablet|tv|screen|sign|whiteboard/i;
+const GENERIC_TARGET_CLASS_PATTERN = /^(segmented-object|object|unknown)$/i;
+const NON_PRIMITIVE_TARGET_CLASS_PATTERN = /person|human|body|face|head|portrait|mask/i;
+const SURFACE_CLASS_HINT_PATTERN = /shelf|shelves|bookcase|cabinet|drawer|rack|wardrobe|closet|box|package|crate|face|head|portrait|mask|book|notebook|paper|document|poster|photo|picture|painting|card|ticket|label|badge|laptop|keyboard|cell phone|smartphone|phone|tablet|tv|screen|sign|whiteboard|cup|mug|vase|ball|sphere|round|can|bottle|jar|container/i;
+const MIN_GENERIC_PRIMITIVE_MASK_FILL_RATIO = 0.58;
 const TEXTURED_PLANAR_RECOVERY_EXCLUSION_PATTERN = /book|notebook/i;
 const CANDIDATE_MIN_TRACKABLE_POINTS = 8;
 const CANDIDATE_REFRESH_INTERVAL = 3;
@@ -68,6 +79,15 @@ const RIGID_PLANAR_POSITION_STEP_RATIO = 0.1;
 const RIGID_PLANAR_BOOK_POSITION_STEP_RATIO = 0.083;
 const RIGID_PLANAR_RECOVERY_DOMINANCE_SCORE = 3.4;
 const OBJECT_SUPPORT_RECOVERY_REASON_PATTERN = /dropout|recovery/i;
+const RECOVERY_SEGMENTATION_REFRESH_REASONS = new Set([
+  'pose-dropout-recovery',
+  CURVED_OBJECT_RECOVERY_REASON,
+]);
+const PERSISTENT_SEGMENTATION_REFRESH_REASONS = new Set([
+  ...RECOVERY_SEGMENTATION_REFRESH_REASONS,
+  'tap-local-support-growth',
+  'object-ownership-recovery',
+]);
 const PLANAR_POSE_POSITION_BLEND = 0.85;
 const MIN_LOW_LAG_TRACKER_CONFIDENCE = 0.55;
 const MAX_LOW_LAG_TRACKER_RESIDUAL = 7;
@@ -95,7 +115,8 @@ const IMMATURE_MUG_SUPPORT_RECOVERY_MAX_STEP = 6;
 const SPARSE_CUP_SUPPORT_RECOVERY_MAX_STEP = 6;
 const DEPTH_CUP_COHERENT_SUPPORT_RECOVERY_MAX_STEP = 12;
 const MAX_DEPTH_CUP_COHERENT_SUPPORT_RECOVERY_TRACKER_DELTA = 6;
-const SPARSE_MUG_MOTION_HOLD_MAX_ACTIVE_LANDMARKS = 44;
+const SPARSE_MUG_MOTION_HOLD_MAX_ACTIVE_LANDMARKS = 27;
+const SPARSE_CYLINDER_MOTION_HOLD_MAX_ACTIVE_LANDMARKS = 44;
 const PLANAR_POSE_POSITION_METHODS = new Set([
   RECONSTRUCTION_POSE_MODEL,
   'planar-homography',
@@ -107,6 +128,11 @@ const TRACKER_SPINE_POSITION_METHODS = new Set([
   'object-owned-centroid-position',
   'curved-centroid-position',
   'keypoint_centroid_only',
+]);
+const CURVED_SURFACE_MODELS = new Set([
+  SURFACE_MODEL_CYLINDER,
+  SURFACE_MODEL_TAPERED_CYLINDER,
+  SURFACE_MODEL_ELLIPSOID,
 ]);
 
 const transformHomographyPoint = (matrix, point) => {
@@ -180,6 +206,7 @@ export class ImageAnchorService {
     this.fullFrameRecoveryInterval = 6;
     this.framesSinceFullFrameRecovery = this.fullFrameRecoveryInterval;
     this.frameIndex = 0;
+    this.lastKeypointReinitializationFrame = -Infinity;
 
     // Resilience counters
     this.keypointFailureCount = 0;
@@ -775,10 +802,9 @@ export class ImageAnchorService {
     }
 
     const maxExtent = Math.max(objectSupportMask.bbox.width, objectSupportMask.bbox.height);
-    const targetClass = this.anchorTargetClass || '';
-    const mugLike = /mug/i.test(targetClass);
-    const bottleLike = /bottle/i.test(targetClass);
-    const cupLike = /cup/i.test(targetClass);
+    const mugLike = this._hasMugLikeTarget();
+    const bottleLike = this._hasCylinderLikeTarget();
+    const cupLike = this._hasTaperedCylinderLikeTarget();
     const curved = this._hasCurvedReconstructionTarget();
     const ratio = curved ? 0.24 : 0.3;
     const recoveryCorrection = OBJECT_SUPPORT_RECOVERY_REASON_PATTERN.test(reason);
@@ -792,7 +818,7 @@ export class ImageAnchorService {
       return 2;
     }
     if (mugLike && this.trackingMode === RECONSTRUCTION_POSE_MODEL) {
-      return clamp(maxExtent * ratio, 8, recoveryCorrection ? 12 : 10);
+      return recoveryCorrection ? 4 : 0;
     }
     if (mugLike && this.trackingMode === 'parametric-surface') {
       const maxStep = recoveryCorrection ? clamp(maxExtent * ratio, 8, 12) : 0;
@@ -1302,10 +1328,6 @@ export class ImageAnchorService {
       reconstructionPose,
       trackerAnchorPosition,
     });
-    const holdDepthFusionTrackerPosition = this._shouldHoldTrackerPositionForDepthFusion({
-      trackerAnchorPosition,
-      reconstructionPose,
-    });
     const selectedReconstructionReady = this._hasSelectedReconstructionPose(reconstructionPose);
     const suppressReconstructionForPlanarTarget = this._hasPlanarDominance() &&
       !selectedReconstructionReady &&
@@ -1349,11 +1371,22 @@ export class ImageAnchorService {
       planarPose,
       trackerAnchorPosition,
     });
+    const useArbiterReconstructionPosition = this._shouldUseArbiterReconstructionPosition({
+      poseArbitration,
+      reconstructionPose,
+      trackerAnchorPosition,
+    });
+    const holdDepthFusionTrackerPosition = this._shouldHoldTrackerPositionForDepthFusion({
+      trackerAnchorPosition,
+      reconstructionPose,
+      useArbiterReconstructionPosition,
+    });
     const reconstructionCandidateAllowed = !rejectedReconstruction ||
       ['low-confidence'].includes(rejectedReconstruction) ||
       selectedReconstructionReady ||
       useStrongCurvedReconstructionPosition ||
-      useModerateCurvedReconstructionRecovery;
+      useModerateCurvedReconstructionRecovery ||
+      useArbiterReconstructionPosition;
 
     if (planarPoseUsableForTransform && (preferPlanarPose || usePlanarPatchTransform || useArbiterPlanarPosition)) {
       newPosition = this._filterPositionCandidate(planarPose.position, timestamp, planarPose.method);
@@ -1394,7 +1427,8 @@ export class ImageAnchorService {
         reconstructionCandidateAllowed &&
         !reconstructionConsistentWithTracker &&
         !useStrongCurvedReconstructionPosition &&
-        !useModerateCurvedReconstructionRecovery) {
+        !useModerateCurvedReconstructionRecovery &&
+        !useArbiterReconstructionPosition) {
       newPosition = this._filterPositionCandidate(trackerAnchorPosition, timestamp, trackerAnchorPosition.method);
       positionMethod = trackerAnchorPosition.method;
       planarTransform = this._updatePlanarTransform(
@@ -1412,8 +1446,13 @@ export class ImageAnchorService {
         ((!suppressImmatureSparsePlanarMap &&
           !suppressReconstructionForPlanarTarget) ||
           useStrongCurvedReconstructionPosition ||
-          useModerateCurvedReconstructionRecovery)) {
-      newPosition = this._filterPositionCandidate(reconstructionPose.position, timestamp, reconstructionPose.method);
+          useModerateCurvedReconstructionRecovery ||
+          useArbiterReconstructionPosition)) {
+      newPosition = this._filterPositionCandidate(
+        this._posePositionCandidate(reconstructionPose),
+        timestamp,
+        reconstructionPose.method
+      );
       positionMethod = reconstructionPose.method;
       const selectedReconstructionTransform = this._adjustSelectedCurvedPlanarTransform(
         reconstructionPose.planarTransform,
@@ -1542,16 +1581,7 @@ export class ImageAnchorService {
     const poseInliers = this.metrics.poseInliers || 0;
     const overallQuality = (this.metrics.trackingSuccessRate + Math.min(1.0, poseInliers / 30)) / 2;
     const prevState = this.anchorState;
-
-    if (overallQuality >= 0.8 && poseInliers >= 25) {
-      this.anchorState = 'stable';
-    } else if (overallQuality >= 0.6 && poseInliers >= 15) {
-      this.anchorState = 'tracking';
-    } else if (overallQuality >= 0.4) {
-      this.anchorState = 'tracking';
-    } else {
-      this.anchorState = 'degraded';
-    }
+    this.anchorState = this._selectTrackingState({ overallQuality, poseInliers });
 
     if (prevState !== this.anchorState) {
       logger.info('ImageAnchor', `Anchor state updated: ${prevState} -> ${this.anchorState} (quality: ${overallQuality.toFixed(2)})`);
@@ -1560,12 +1590,34 @@ export class ImageAnchorService {
     // Periodic keypoint refresh grows the persistent landmark map while tracking is usable.
     this.framesSinceRefresh++;
     if (this._shouldRefreshKeypoints({ overallQuality, poseInliers })) {
-      const adaptiveRefresh = ['object-support-recovery', 'mapping-growth', 'support-growth'].includes(this.metrics.landmarkRefreshReason);
-      this._refreshKeypoints(grayImage, {
+      const adaptiveRefresh = [
+        'object-support-recovery',
+        'mapping-growth',
+        'support-growth',
+        'support-recovery',
+      ].includes(this.metrics.landmarkRefreshReason);
+      const refreshed = this._refreshKeypoints(grayImage, {
         adaptive: adaptiveRefresh,
         minNewKeypoints: adaptiveRefresh ? CANDIDATE_MIN_TRACKABLE_POINTS : 15,
       });
-      this.framesSinceRefresh = 0;
+      const reinitialized = !refreshed &&
+        adaptiveRefresh &&
+        this._shouldReinitializeAfterFailedSupportRefresh();
+      if (reinitialized) {
+        const supportMask = this.objectSupportMask;
+        this._reinitializeKeypoints(grayImage, {
+          minKeypoints: CANDIDATE_MIN_TRACKABLE_POINTS,
+          objectSupportMask: supportMask,
+          region: supportMask
+            ? this._calculateObjectSupportTrackingRegion(supportMask, null)
+            : null,
+          resetReconstruction: true,
+          reason: 'support-recovery-reference-collapse',
+        });
+      }
+      if (refreshed || reinitialized) {
+        this.framesSinceRefresh = 0;
+      }
       logger.debug('ImageAnchor', 'Refreshed keypoints for landmark map growth');
     }
     this._storeRelocalizationKeyframe(grayImage, { overallQuality, poseInliers });
@@ -1895,35 +1947,91 @@ export class ImageAnchorService {
    * Refresh keypoints in current region
    */
   _refreshKeypoints(grayImage, { adaptive = false, minNewKeypoints = 15 } = {}) {
-    if (!this.currentPosition) return;
+    if (!this.currentPosition) return false;
 
+    const objectSupportMask = this._getCurrentObjectSupportMask();
+    const region = this._getAnchoredTrackingRegion(grayImage, { allowExpansion: this._shouldUseExpandedTrackingRegion() });
     const refreshResult = this.keypointTracker.refreshKeypoints(
       this.cv,
       grayImage,
       this.keypointDetector,
-      this._getAnchoredTrackingRegion(grayImage, { allowExpansion: this._shouldUseExpandedTrackingRegion() }),
-      this._getCurrentObjectSupportMask(),
+      region,
+      objectSupportMask,
       {
         adaptive,
         minNewKeypoints,
       }
     );
 
+    const refreshStats = this.keypointTracker.lastRefreshStats;
+    if (refreshStats) {
+      this.metrics.landmarkRefreshAdded = refreshStats.added ?? 0;
+      this.metrics.landmarkRefreshTotal = refreshStats.total;
+      this.metrics.landmarkRefreshActive = refreshStats.active;
+      this.metrics.landmarkRefreshRejectedByMask = refreshStats.rejectedByMask || 0;
+      this.metrics.landmarkRefreshCandidateCount = refreshStats.candidateCount ?? null;
+      this.metrics.landmarkRefreshFailureReason = refreshStats.reason || null;
+    }
+
     if (refreshResult) {
       this._recordLandmarkMetrics();
-      const refreshStats = this.keypointTracker.lastRefreshStats;
-      if (refreshStats) {
-        this.metrics.landmarkRefreshAdded = refreshStats.added;
-        this.metrics.landmarkRefreshTotal = refreshStats.total;
-        this.metrics.landmarkRefreshRejectedByMask = refreshStats.rejectedByMask || 0;
-      }
       this._storeRelocalizationKeyframe(grayImage, {
         force: true,
         overallQuality: this.metrics.trackingSuccessRate || 1,
         poseInliers: this.metrics.poseInliers || 0
       });
       logger.info('ImageAnchor', 'Keypoints refreshed successfully');
+      return true;
     }
+
+    return false;
+  }
+
+  _shouldReinitializeAfterFailedSupportRefresh() {
+    if (this.metrics.landmarkRefreshReason !== 'support-recovery' ||
+        this.metrics.landmarkRefreshFailureReason !== 'no-reference-transform' ||
+        !this.objectSupportMask ||
+        !isReconstructionMode(this.trackingMode) ||
+        this._hasMugLikeTarget() ||
+        (!this._hasCylinderLikeTarget() && !this._hasTaperedCylinderLikeTarget()) ||
+        this.frameIndex - this.lastKeypointReinitializationFrame < 8) {
+      return false;
+    }
+
+    const genericPrimitive = this._hasGenericTargetClass() && this._hasDenseGenericPrimitiveSupport();
+    const knownCylinder = this._hasCylinderLikeTarget() && !this._hasTaperedCylinderLikeTarget();
+    if (this.trackingMode === DEPTH_FUSION_POSE_MODEL && !genericPrimitive && !knownCylinder) {
+      return false;
+    }
+
+    if (this._hasGenericTargetClass() && !genericPrimitive) {
+      return false;
+    }
+
+    const active = this.metrics.activeLandmarkCount ?? this.metrics.keypointCount ?? 0;
+    const owned = this.metrics.objectOwnedLandmarks ?? active;
+    const ownedRatio = owned / Math.max(1, active);
+    const maxActiveLandmarks = this.trackingMode === DEPTH_FUSION_POSE_MODEL &&
+      this._hasKnownDepthCylinderTargetClass()
+      ? 24
+      : 16;
+    return active >= CANDIDATE_MIN_TRACKABLE_POINTS &&
+      active <= maxActiveLandmarks &&
+      owned >= 8 &&
+      ownedRatio >= 0.65 &&
+      (this.metrics.poseInliers ?? 0) < MIN_ATTACHMENT_POSE_INLIERS &&
+      (this.metrics.trackingSuccessRate ?? 0) >= 0.55;
+  }
+
+  _hasDenseGenericPrimitiveSupport() {
+    if (!this._hasGenericTargetClass() ||
+        !this.objectSupportMask ||
+        this._hasSparseGenericSupportMask(this.objectSupportMask)) {
+      return false;
+    }
+
+    return this._targetSurfaceModel() === SURFACE_MODEL_CYLINDER ||
+      this._targetSurfaceModel() === SURFACE_MODEL_TAPERED_CYLINDER;
   }
 
   _shouldRefreshKeypoints({ overallQuality, poseInliers }) {
@@ -1948,10 +2056,20 @@ export class ImageAnchorService {
     const matureReconstructionReady = this.metrics.reconstructionReady === true &&
       (this.metrics.reconstructionMapConfidence ?? 0) >= 0.55 &&
       (this.metrics.reconstructionMatureLandmarks ?? 0) >= 16;
+    const supportRefreshFrame = this.metrics.segmentationRefreshFrame;
+    const recentSupportRefresh = Number.isFinite(supportRefreshFrame) &&
+      this.frameIndex - supportRefreshFrame <= 2;
+    const recoverySupportJustRefreshed = recentSupportRefresh &&
+      RECOVERY_SEGMENTATION_REFRESH_REASONS.has(this.metrics.segmentationRefreshReason) &&
+      poseInliers < MIN_ATTACHMENT_POSE_INLIERS &&
+      this.metrics.trackingSuccessRate >= 0.45 &&
+      this.metrics.keypointCount >= 6 &&
+      this.metrics.keypointCount <= 24 &&
+      objectOwnedLandmarks >= 6 &&
+      objectOwnedRatio >= 0.65;
     const supportJustExpanded = !matureReconstructionReady &&
       ['tap-local-support-growth', 'periodic-segmentation-refresh', 'object-ownership-recovery'].includes(this.metrics.segmentationRefreshReason) &&
-      Number.isFinite(this.metrics.segmentationRefreshFrame) &&
-      this.frameIndex - this.metrics.segmentationRefreshFrame <= 2 &&
+      recentSupportRefresh &&
       this.metrics.trackingSuccessRate >= 0.45 &&
       this.metrics.keypointCount >= 6 &&
       objectOwnedLandmarks >= 6;
@@ -1968,8 +2086,14 @@ export class ImageAnchorService {
     if (this.framesSinceRefresh < this.refreshInterval &&
         !needsOcclusionSupport &&
         !needsObjectSupportRecovery &&
-        !supportJustExpanded) {
+        !supportJustExpanded &&
+        !recoverySupportJustRefreshed) {
       return false;
+    }
+
+    if (recoverySupportJustRefreshed) {
+      this.metrics.landmarkRefreshReason = 'support-recovery';
+      return true;
     }
 
     if (supportJustExpanded) {
@@ -2104,6 +2228,15 @@ export class ImageAnchorService {
     };
   }
 
+  _posePositionCandidate(pose) {
+    return {
+      ...pose.position,
+      confidence: pose.confidence,
+      averageResidual: pose.averageResidual,
+      inlierCount: pose.inlierCount,
+    };
+  }
+
   _recordPoseCandidates({
     reconstructionPose,
     planarPose,
@@ -2175,6 +2308,45 @@ export class ImageAnchorService {
     return poseArbitration.rejected.reference_similarity_transform?.reason === 'weak-geometry';
   }
 
+  _shouldUseArbiterReconstructionPosition({ poseArbitration, reconstructionPose, trackerAnchorPosition }) {
+    if (poseArbitration.selected?.source !== reconstructionPose?.method ||
+        reconstructionPose?.method !== this.trackingMode ||
+        !this._hasCurvedReconstructionTarget(reconstructionPose) ||
+        trackerAnchorPosition?.method !== 'reference_similarity_transform') {
+      return false;
+    }
+
+    const mapConfidence = reconstructionPose.preview?.statistics?.mapConfidence ??
+      this.metrics.reconstructionMapConfidence ??
+      reconstructionPose.confidence ??
+      0;
+    const matureLandmarks = reconstructionPose.preview?.statistics?.matureLandmarks ??
+      this.metrics.reconstructionMatureLandmarks ??
+      0;
+    const matureCurvedMap = this.metrics.reconstructionReady === true &&
+      mapConfidence >= 0.6 &&
+      matureLandmarks >= 16;
+    const trackerRejected = poseArbitration.rejected.reference_similarity_transform?.reason === 'weak-geometry';
+
+    if (this.trackingMode === RECONSTRUCTION_POSE_MODEL) {
+      return trackerRejected && matureCurvedMap;
+    }
+
+    if (this.trackingMode === DEPTH_FUSION_POSE_MODEL &&
+        this._hasKnownDepthCylinderTargetClass()) {
+      return trackerRejected &&
+        matureCurvedMap &&
+        (reconstructionPose.inlierCount || 0) >= 12 &&
+        (reconstructionPose.averageResidual ?? Infinity) <= 6.2 &&
+        (reconstructionPose.confidence ?? 0) >= 0.5;
+    }
+
+    return trackerRejected &&
+      matureCurvedMap &&
+      (reconstructionPose.inlierCount || 0) >= 10 &&
+      (reconstructionPose.averageResidual ?? Infinity) <= 3.6;
+  }
+
   _rejectTrackedPointsOutsideObjectSupport() {
     const objectSupportMask = this._getCurrentObjectSupportMask();
     if (!objectSupportMask) {
@@ -2213,28 +2385,73 @@ export class ImageAnchorService {
   /**
    * Attempt to reinitialize keypoint tracking after recovery
    */
-  _reinitializeKeypoints(grayImage) {
+  _reinitializeKeypoints(grayImage, {
+    minKeypoints = 15,
+    objectSupportMask = null,
+    region = null,
+    anchorPosition = null,
+    resetReconstruction = false,
+    reason = 'keypoint-reinitialization',
+  } = {}) {
     if (!this.currentPosition) return;
 
-    try {
-      const keypointResult = this.keypointDetector.extractKeypoints(
-        this.cv,
-        grayImage,
-        this._getAnchoredTrackingRegion(grayImage, { allowExpansion: this._shouldUseExpandedTrackingRegion() }),
-        this._getCurrentObjectSupportMask()
-      );
+    const supportMask = objectSupportMask ?? this._getCurrentObjectSupportMask();
+    const extractionRegion = region ??
+      this._getAnchoredTrackingRegion(grayImage, { allowExpansion: this._shouldUseExpandedTrackingRegion() });
+    const keypointResult = this._extractObjectKeypoints(
+      grayImage,
+      extractionRegion,
+      supportMask,
+      { minKeypoints }
+    );
 
-      if (keypointResult.keypoints.length >= 15) {
-        this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, grayImage, this.currentPosition);
-        this.anchorState = 'tracking';
-        logger.info('ImageAnchor', 'Keypoint tracking reinitialized after recovery');
-      }
-    } catch (error) {
-      this.metrics.lastFailureReason = `Keypoint reinitialization failed: ${error.message}`;
-      this.metrics.lastFailureStage = 'keypoint-reinitialization';
-      logger.error('ImageAnchor', 'Keypoint reinitialization failed:', error);
-      throw error;
+    this.metrics.keypointReinitializationCandidateCount = keypointResult.keypoints.length;
+    this.metrics.keypointReinitializationReason = reason;
+    if (keypointResult.keypoints.length < minKeypoints) {
+      this.metrics.keypointReinitializationResult = 'insufficient-candidates';
+      return;
     }
+
+    const nextAnchorPosition = anchorPosition || this.currentPosition;
+    const anchorDelta = Math.hypot(
+      nextAnchorPosition.x - this.currentPosition.x,
+      nextAnchorPosition.y - this.currentPosition.y
+    );
+    this.currentPosition = {
+      x: nextAnchorPosition.x,
+      y: nextAnchorPosition.y,
+      z: nextAnchorPosition.z ?? 0,
+    };
+    this.positionFilterX = createPositionFilter();
+    this.positionFilterY = createPositionFilter();
+    this.positionFilterX.filter(this.currentPosition.x, this.now());
+    this.positionFilterY.filter(this.currentPosition.y, this.now());
+    this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, grayImage, this.currentPosition);
+    this.anchorState = 'tracking';
+    this._recordLandmarkMetrics();
+    this.metrics.keypointReinitializationResult = 'reinitialized';
+    this.metrics.keypointReinitializationLandmarks = keypointResult.keypoints.length;
+    this.metrics.keypointReinitializationAnchorDelta = anchorDelta;
+    this.lastKeypointReinitializationFrame = this.frameIndex;
+    if (resetReconstruction) {
+      this._resetReconstructionAfterKeypointReinitialization(extractionRegion);
+    }
+    logger.info('ImageAnchor', 'Keypoint tracking reinitialized after recovery');
+  }
+
+  _resetReconstructionAfterKeypointReinitialization(region) {
+    this.reconstructor.reset({
+      anchorReference: this.currentPosition,
+      templateRegion: region,
+      targetClass: this.anchorTargetClass,
+    });
+    const state = this.reconstructor.getState();
+    this.metrics.reconstructionState = state.state;
+    this.metrics.reconstructionReady = state.ready;
+    this.metrics.reconstructionFrames = state.frameCount;
+    this.metrics.reconstructionLandmarks = state.landmarkCount;
+    this.metrics.reconstructionPreview = state.preview;
+    this.metrics.reconstructionFailureReason = 'Rebuilding reconstruction after support recovery';
   }
 
   /**
@@ -3144,17 +3361,17 @@ export class ImageAnchorService {
     const residual = trackerAnchorPosition.averageResidual ?? 0;
     const confidence = trackerAnchorPosition.confidence ?? 0;
     const ownedRatio = objectOwnedLandmarks / Math.max(1, activeLandmarks);
-    const targetClass = this.anchorTargetClass || '';
-    const planarSurfaceModel = this.metrics.reconstructionPreview?.surface?.model === 'plane';
-    const taperedSurfaceModel = this.metrics.reconstructionPreview?.surface?.model === 'tapered-cylinder' ||
-      this.reconstructor?.targetSurfaceModel === 'tapered-cylinder';
-    const cupLikeCoherentTarget = /cup|vase/i.test(targetClass);
+    const surfaceModel = this._targetSurfaceModel(reconstructionPose);
+    const planarSurfaceModel = surfaceModel === SURFACE_MODEL_PLANE;
+    const taperedSurfaceModel = surfaceModel === SURFACE_MODEL_TAPERED_CYLINDER;
+    const cupLikeCoherentTarget = this._hasTaperedCylinderLikeTarget(reconstructionPose) &&
+      !this._hasMugLikeTarget();
     const supportsCoherentCentroid = this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
       ((!this._hasPlanarTargetClass() &&
       !planarSurfaceModel &&
       !this._hasCurvedReconstructionTarget()) ||
       cupLikeCoherentTarget ||
-      (taperedSurfaceModel && !/mug/i.test(targetClass)));
+      (taperedSurfaceModel && !this._hasMugLikeTarget()));
     const coherentCentroidMaxConfidence = cupLikeCoherentTarget || taperedSurfaceModel ? 1 : 0.14;
     const sparseCoherentObjectCluster = supportsCoherentCentroid &&
       ownedRatio >= 0.9 &&
@@ -3183,7 +3400,7 @@ export class ImageAnchorService {
       return false;
     }
 
-    if (/mug/i.test(this.anchorTargetClass || '')) {
+    if (this._hasMugLikeTarget()) {
       return false;
     }
 
@@ -3318,10 +3535,18 @@ export class ImageAnchorService {
       this._hasTolerantCurvedReconstructionRecovery(reconstructionPose);
   }
 
-  _shouldHoldTrackerPositionForDepthFusion({ trackerAnchorPosition, reconstructionPose }) {
+  _shouldHoldTrackerPositionForDepthFusion({
+    trackerAnchorPosition,
+    reconstructionPose,
+    useArbiterReconstructionPosition = false,
+  }) {
+    const releaseForKnownCylinder = useArbiterReconstructionPosition &&
+      this._hasKnownDepthCylinderTargetClass();
+
     return this.trackingMode === DEPTH_FUSION_POSE_MODEL &&
       !!trackerAnchorPosition &&
-      this._hasSelectedReconstructionPose(reconstructionPose);
+      this._hasSelectedReconstructionPose(reconstructionPose) &&
+      !releaseForKnownCylinder;
   }
 
   _hasPreciseCurvedReconstructionPosition(reconstructionPose) {
@@ -3467,20 +3692,99 @@ export class ImageAnchorService {
       return false;
     }
 
-    const surfaceModel = reconstructionPose?.preview?.surface?.model ||
-      this.metrics.reconstructionPreview?.surface?.model ||
-      '';
+    const surfaceModel = this._targetSurfaceModel(reconstructionPose);
 
-    return /cylinder|ellipsoid/.test(surfaceModel) ||
+    return CURVED_SURFACE_MODELS.has(surfaceModel) ||
       /cup|mug|vase|can|bottle|jar|container|ball|sphere/i.test(this.anchorTargetClass || '');
   }
 
+  _targetSurfaceModel(reconstructionPose = null) {
+    const supportMask = this.currentObjectSupportMask || this.objectSupportMask || null;
+    const region = supportMask?.bbox ||
+      this.trackingRegion ||
+      this.templateRegion;
+    if (this._hasGenericTargetClass()) {
+      if (!region) {
+        return null;
+      }
+      if (this._hasSparseGenericSupportMask(supportMask)) {
+        return null;
+      }
+
+      return modelFromRegion(region, null);
+    }
+
+    if (NON_PRIMITIVE_TARGET_CLASS_PATTERN.test(this.anchorTargetClass || '')) {
+      return null;
+    }
+
+    const previewModel = reconstructionPose?.preview?.surface?.model ||
+      this.metrics.reconstructionPreview?.surface?.model ||
+      null;
+    if (previewModel) {
+      return previewModel;
+    }
+
+    if (!region) {
+      return null;
+    }
+
+    if (SURFACE_CLASS_HINT_PATTERN.test(this.anchorTargetClass || '')) {
+      return modelFromRegion(region, this.anchorTargetClass);
+    }
+
+    return null;
+  }
+
+  _hasGenericTargetClass() {
+    return GENERIC_TARGET_CLASS_PATTERN.test(this.anchorTargetClass || '');
+  }
+
+  _hasSparseGenericSupportMask(objectSupportMask) {
+    const bboxArea = Math.max(1, (objectSupportMask?.bbox?.width || 0) * (objectSupportMask?.bbox?.height || 0));
+    if (!objectSupportMask || !Number.isFinite(objectSupportMask.pixelCount) || bboxArea <= 1) {
+      return false;
+    }
+
+    return objectSupportMask.pixelCount / bboxArea < MIN_GENERIC_PRIMITIVE_MASK_FILL_RATIO;
+  }
+
+  _hasMugLikeTarget() {
+    return /mug/i.test(this.anchorTargetClass || '');
+  }
+
+  _hasCylinderLikeTarget(reconstructionPose = null) {
+    return this._targetSurfaceModel(reconstructionPose) === SURFACE_MODEL_CYLINDER ||
+      /can|bottle|jar|container/i.test(this.anchorTargetClass || '');
+  }
+
+  _hasKnownDepthCylinderTargetClass() {
+    return /can|bottle|jar|container/i.test(this.anchorTargetClass || '') &&
+      !this._hasMugLikeTarget() &&
+      !/cup|vase/i.test(this.anchorTargetClass || '');
+  }
+
+  _hasTaperedCylinderLikeTarget(reconstructionPose = null) {
+    return this._targetSurfaceModel(reconstructionPose) === SURFACE_MODEL_TAPERED_CYLINDER ||
+      /cup|vase/i.test(this.anchorTargetClass || '');
+  }
+
   _hasPlanarTargetClass() {
-    return PLANAR_TARGET_CLASS_PATTERN.test(this.anchorTargetClass || '');
+    if (PLANAR_TARGET_CLASS_PATTERN.test(this.anchorTargetClass || '')) {
+      return true;
+    }
+
+    return this._hasGenericTargetClass() &&
+      this._targetSurfaceModel() === SURFACE_MODEL_PLANE;
   }
 
   _hasRigidPlanarTargetClass() {
-    return RIGID_PLANAR_TARGET_CLASS_PATTERN.test(this.anchorTargetClass || '');
+    if (RIGID_PLANAR_TARGET_CLASS_PATTERN.test(this.anchorTargetClass || '')) {
+      return true;
+    }
+
+    return this._hasGenericTargetClass() &&
+      this._targetSurfaceModel() === SURFACE_MODEL_PLANE;
   }
 
   _hasSelectedReconstructionPose(reconstructionPose) {
@@ -3557,14 +3861,16 @@ export class ImageAnchorService {
     };
 
     const measuredScale = typeof anchorPosition.scale === 'number' ? anchorPosition.scale : previous.scale;
-    const surfaceModel = this.metrics.reconstructionPreview?.surface?.model || '';
-    const rawScale = anchorPosition.method === 'reference_similarity_transform' &&
+    const surfaceModel = this._targetSurfaceModel(anchorPosition) || '';
+    const cylinderReferenceScale = anchorPosition.method === 'reference_similarity_transform' &&
       this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
-      surfaceModel === 'cylinder'
+      surfaceModel === SURFACE_MODEL_CYLINDER;
+    const cylinderReconstructionScale = anchorPosition.method === RECONSTRUCTION_POSE_MODEL &&
+      this._hasCylinderLikeTarget(anchorPosition) &&
+      (this.currentNormal?.z ?? 1) > 0.9;
+    const rawScale = cylinderReferenceScale
       ? measuredScale * 1.015
-      : anchorPosition.method === RECONSTRUCTION_POSE_MODEL &&
-      (/can|bottle|jar|container/i.test(this.anchorTargetClass || '') || surfaceModel === 'cylinder') &&
-      (this.currentNormal?.z ?? 1) > 0.9
+      : cylinderReconstructionScale
       ? measuredScale * 1.03
       : measuredScale;
     let boundedScale = this.currentPlanarTransform
@@ -3572,10 +3878,10 @@ export class ImageAnchorService {
       : rawScale;
     const holdSparseMugReferenceScale = anchorPosition.method === 'reference_similarity_transform' &&
       this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
-      /mug/i.test(this.anchorTargetClass || '');
+      this._hasMugLikeTarget();
     const holdSparseMugCentroidScale = anchorPosition.method === 'curved-centroid-position' &&
       this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
-      /mug/i.test(this.anchorTargetClass || '');
+      this._hasMugLikeTarget();
     const holdSelectedCurvedReferenceScale = this._shouldHoldSelectedCurvedReferenceScale(anchorPosition);
     if (this.currentPlanarTransform && holdSparseMugReferenceScale) {
       boundedScale = Math.max(boundedScale, previous.scale * 0.985);
@@ -3623,12 +3929,11 @@ export class ImageAnchorService {
   }
 
   _shouldHoldSelectedCurvedReferenceScale(anchorPosition) {
-    const targetClass = this.anchorTargetClass || '';
     if (anchorPosition.method !== 'reference_similarity_transform' ||
         this.trackingMode === RECONSTRUCTION_POSE_MODEL ||
         !isReconstructionMode(this.trackingMode) ||
         !this._hasCurvedReconstructionTarget(anchorPosition) ||
-        !/cup|mug|vase/i.test(targetClass) ||
+        !(this._hasMugLikeTarget() || this._hasTaperedCylinderLikeTarget(anchorPosition)) ||
         this.metrics.reconstructionReady !== true ||
         (this.metrics.reconstructionMapConfidence ?? 0) < 0.66 ||
         (this.metrics.reconstructionMatureLandmarks || 0) < 16 ||
@@ -3641,17 +3946,6 @@ export class ImageAnchorService {
   }
 
   _filterPositionCandidate(position, timestamp, method) {
-    if (this._shouldHoldReversingWeakParametricPosition(position, method)) {
-      const predicted = this._predictCurvedMotionPosition(timestamp);
-      if (predicted) {
-        this.metrics.positionFilterAdjustment = 'curved-motion-hold';
-        return this._limitPositionStep({
-          ...predicted,
-          confidence: predicted.confidence,
-        }, method);
-      }
-    }
-
     if (this._shouldUseCurvedMotionPrediction(position, method)) {
       const predicted = this._predictCurvedMotionPosition(timestamp);
       if (predicted) {
@@ -3747,12 +4041,6 @@ export class ImageAnchorService {
     return !/bottle/i.test(this.anchorTargetClass || '');
   }
 
-  _shouldHoldReversingWeakParametricPosition(position, method) {
-    return method === 'parametric-surface' &&
-      this.trackingMode === 'parametric-surface' &&
-      this._isReversingWeakParametricMotion(position);
-  }
-
   _curvedReferencePredictionBlendWeight(position, method) {
     if (method !== 'reference_similarity_transform' ||
         this.trackingMode === RECONSTRUCTION_POSE_MODEL ||
@@ -3796,6 +4084,12 @@ export class ImageAnchorService {
       return false;
     }
 
+    if (this.trackingMode === DEPTH_FUSION_POSE_MODEL &&
+        this._hasTaperedCylinderLikeTarget() &&
+        !this._hasMugLikeTarget()) {
+      return false;
+    }
+
     const activeLandmarks = this.metrics.activeLandmarkCount || this.metrics.keypointCount || 0;
     const matureLandmarks = this.metrics.reconstructionMatureLandmarks || 0;
     const mapConfidence = this.metrics.reconstructionMapConfidence ?? 0;
@@ -3825,9 +4119,16 @@ export class ImageAnchorService {
     const ownedRatio = objectOwnedLandmarks / Math.max(1, activeLandmarks);
     const poseDroppedOut = (this.metrics.poseInliers || 0) === 0 &&
       (this.metrics.reconstructionPoseInliers || 0) === 0;
-    const handledMug = /mug/i.test(this.anchorTargetClass || '');
-    const activeLandmarkRange = handledMug
-      ? activeLandmarks >= 8 && activeLandmarks <= SPARSE_MUG_MOTION_HOLD_MAX_ACTIVE_LANDMARKS
+    const mugLike = this._hasMugLikeTarget();
+    const cylinderLike = this._hasCylinderLikeTarget();
+    const handledCurvedObject = (mugLike &&
+      activeLandmarks <= SPARSE_MUG_MOTION_HOLD_MAX_ACTIVE_LANDMARKS) ||
+      cylinderLike;
+    const maxActiveLandmarks = cylinderLike && !mugLike
+      ? SPARSE_CYLINDER_MOTION_HOLD_MAX_ACTIVE_LANDMARKS
+      : SPARSE_MUG_MOTION_HOLD_MAX_ACTIVE_LANDMARKS;
+    const activeLandmarkRange = handledCurvedObject
+      ? activeLandmarks >= 8 && activeLandmarks <= maxActiveLandmarks
       : activeLandmarks >= 24 && activeLandmarks <= 32;
 
     return activeLandmarkRange &&
@@ -3958,8 +4259,8 @@ export class ImageAnchorService {
     return method === 'reference_similarity_transform' &&
       this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
       this._hasCurvedReconstructionTarget() &&
-      /cup|vase/i.test(this.anchorTargetClass || '') &&
-      !/mug/i.test(this.anchorTargetClass || '') &&
+      this._hasTaperedCylinderLikeTarget() &&
+      !this._hasMugLikeTarget() &&
       this.metrics.reconstructionReady === true &&
       (this.metrics.reconstructionMapConfidence ?? 0) >= 0.6 &&
       (this.metrics.reconstructionMatureLandmarks || 0) >= 16 &&
@@ -4072,6 +4373,18 @@ export class ImageAnchorService {
 
   _getInitialAnchorState(quality) {
     return quality >= this.targetTemplateQuality ? 'tracking' : 'degraded';
+  }
+
+  _selectTrackingState({ overallQuality, poseInliers }) {
+    if (overallQuality >= 0.8 && poseInliers >= 25) {
+      return 'stable';
+    }
+
+    if (overallQuality >= 0.4) {
+      return 'tracking';
+    }
+
+    return 'degraded';
   }
 
   _getProgressiveBootstrapState(keypointCount, quality) {
@@ -4372,12 +4685,25 @@ export class ImageAnchorService {
     this.metrics.objectSupportPositionSource = null;
     this.metrics.objectSupportPositionDelta = null;
     this.metrics.objectSupportPositionStep = null;
-    this.metrics.segmentationRefreshReason = null;
-    this.metrics.segmentationRefreshFrame = null;
+    this.metrics.keypointReinitializationResult = null;
+    this.metrics.keypointReinitializationReason = null;
+    this.metrics.keypointReinitializationCandidateCount = null;
+    this.metrics.keypointReinitializationLandmarks = null;
+    this.metrics.keypointReinitializationAnchorDelta = null;
+    const refreshFrame = this.metrics.segmentationRefreshFrame;
+    if (!PERSISTENT_SEGMENTATION_REFRESH_REASONS.has(this.metrics.segmentationRefreshReason) ||
+        !Number.isFinite(refreshFrame) ||
+        this.frameIndex - refreshFrame > 2) {
+      this.metrics.segmentationRefreshReason = null;
+      this.metrics.segmentationRefreshFrame = null;
+    }
   }
 
   _recordCurvedMotionSample(result) {
     if (!this._shouldRecordCurvedMotionSample(result)) {
+      return;
+    }
+    if (this.metrics.positionFilterAdjustment === 'curved-motion-hold') {
       return;
     }
     const timestamp = this.now();
@@ -4524,6 +4850,7 @@ export class ImageAnchorService {
       this.framesWithoutNormalPose = 0;
       this.lastNormalPoseSource = null;
       this.frameIndex = 0;
+      this.lastKeypointReinitializationFrame = -Infinity;
 
       // Reset resilience counters
       this.keypointFailureCount = 0;
