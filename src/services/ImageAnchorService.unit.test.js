@@ -1117,6 +1117,45 @@ test('mature sparse curved maps use bounded motion hold during full pose dropout
   assert.ok(held.y < 154);
 });
 
+test('sparse mug motion hold expires before stale reversal dominates recovery', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('sparse-reconstruction');
+  service.anchorTargetClass = 'mug';
+  service.currentPosition = { x: 300, y: 220, z: 0 };
+  service.templateRegion = { width: 120, height: 120 };
+  service.metrics.lastUpdateResult = 'success';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.91;
+  service.metrics.reconstructionMatureLandmarks = 36;
+  service.metrics.activeLandmarkCount = 18;
+  service.metrics.objectOwnedLandmarks = 18;
+  service.metrics.poseInliers = 0;
+  service.metrics.reconstructionPoseInliers = 0;
+  service.positionFilterX.filter(300, 1000);
+  service.positionFilterY.filter(220, 1000);
+  service.curvedMotionSample = {
+    position: { x: 320, y: 236 },
+    velocity: { x: -0.2, y: -0.12 },
+    timestamp: 1000,
+    confidence: 0.86,
+  };
+
+  service._filterPositionCandidate(
+    {
+      x: 312,
+      y: 226,
+      z: 0,
+      confidence: 0.12,
+      averageResidual: 9,
+      inlierCount: 6,
+    },
+    1166.67,
+    'reference_similarity_transform'
+  );
+
+  assert.notEqual(service.metrics.positionFilterAdjustment, 'curved-motion-hold');
+});
+
 test('curved motion hold predictions do not extend the motion sample', () => {
   let now = 1033.33;
   const service = new ImageAnchorService({ now: () => now });
@@ -3498,7 +3537,8 @@ test('immature handled mug recovery caps low-active support recentering', () => 
   assert.equal(applied, true);
   assert.equal(service.metrics.objectSupportPositionCorrection, 'pose-dropout-recovery');
   assert.ok(Math.abs(service.metrics.objectSupportPositionStep - 6) < 1e-6);
-  assert.equal(service.currentPosition.y, 108);
+  assert.ok(service.currentPosition.y < 108);
+  assert.ok(service.currentPosition.y > 107);
 });
 
 test('sparse cup recovery uses a conservative support recentering cap', () => {
@@ -3513,7 +3553,7 @@ test('sparse cup recovery uses a conservative support recentering cap', () => {
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 6);
 });
 
-test('coherent depth cup recovery limits support recentering impulses', () => {
+test('depth-fusion cup recovery uses a conservative support recentering cap', () => {
   const service = new ImageAnchorService();
   const objectSupportMask = {
     bbox: { x: 12, y: 16, width: 80, height: 72 },
@@ -3523,10 +3563,10 @@ test('coherent depth cup recovery limits support recentering impulses', () => {
   service.setTrackingMode('depth-fusion');
   service.metrics.reconstructionTrackerDelta = 4;
 
-  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 12);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 5);
 
   service.metrics.reconstructionTrackerDelta = 18;
-  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 14);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 5);
 });
 
 test('handled mug support correction caps follow reconstruction mode ownership', () => {
@@ -3560,12 +3600,20 @@ test('handled mug support correction caps follow reconstruction mode ownership',
 
   service.anchorTargetClass = 'bottle';
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
-  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 14);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 10);
 
   service.anchorTargetClass = 'can';
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 10);
+
+  service.anchorTargetClass = 'segmented-object';
+  service.setTrackingMode('direct-photometric');
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 10);
 
   service.anchorTargetClass = 'bag';
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 6);
+
+  service.anchorTargetClass = 'person';
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 16);
 });
 

@@ -923,6 +923,32 @@ test('replay avoids stale depth-fusion cup motion hold through repeated occlusio
   assert.ok(maxAnchorError <= 22, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
 });
 
+test('replay bounds depth-fusion cup support recovery during early occlusion', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = findQuickBenchmarkScenario({
+    object: 'textured-cup',
+    motion: 'fast',
+    occlusion: 'early',
+  });
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'depth-fusion',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+    depthFrameForFrame: createSyntheticDepthFrame,
+  });
+  const supportCorrections = replay.frames.filter(frame => (
+    frame.metrics.objectSupportPositionCorrection === 'pose-dropout-recovery'
+  ));
+  const maxSupportStep = Math.max(...supportCorrections.map(frame => frame.metrics.objectSupportPositionStep || 0), 0);
+  const maxAnchorError = Math.max(...replay.frames.map(frame => frame.anchorError));
+
+  assert.ok(supportCorrections.length >= 1);
+  assert.ok(maxSupportStep <= 5 + LIMIT_EPSILON);
+  assert.ok(maxAnchorError <= 26, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
+});
+
 test('replay keeps mug repeated recovery bounded without stale motion-hold corrections', async () => {
   const cv = await loadOpenCvForNode();
   const scenario = findQuickBenchmarkScenario({
@@ -950,6 +976,109 @@ test('replay keeps mug repeated recovery bounded without stale motion-hold corre
   assert.ok(recoveryCorrections.length >= 1);
   assert.ok(maxAnchorError <= 40, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
   assert.ok(meanAnchorError <= 18, `mean anchor error should stay bounded, got ${meanAnchorError.toFixed(2)}px`);
+});
+
+test('replay corrects parametric mug vertical drift during repeated recovery', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = createVisionBenchmarkMatrix({ size: 'quick' })
+    .find(item => item.axes.object === 'handled-mug' &&
+      item.axes.background === 'window' &&
+      item.axes.motion === 'fast' &&
+      item.axes.occlusion === 'repeated');
+  assert.ok(scenario);
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'parametric-surface',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+  });
+  const maxAnchorError = Math.max(...replay.frames.map(frame => frame.anchorError));
+  const meanAnchorError = replay.frames.reduce((sum, frame) => sum + frame.anchorError, 0) /
+    Math.max(1, replay.frames.length);
+
+  assert.ok(maxAnchorError <= 32, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
+  assert.ok(meanAnchorError <= 14, `mean anchor error should stay bounded, got ${meanAnchorError.toFixed(2)}px`);
+});
+
+test('replay caps generic free-tap recovery impulses in dense modes', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = createVisionBenchmarkMatrix({ size: 'quick' })
+    .find(item => item.axes.object === 'generic-free-tap-can' &&
+      item.axes.background === 'shelf' &&
+      item.axes.motion === 'fast' &&
+      item.axes.occlusion === 'early');
+  assert.ok(scenario);
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'direct-photometric',
+    targetClassOverride: scenario.targetClassOverride,
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+  });
+  const maxSupportStep = Math.max(...replay.frames.map(frame => frame.metrics.objectSupportPositionStep || 0), 0);
+  const maxAnchorError = Math.max(...replay.frames.map(frame => frame.anchorError));
+  const meanAnchorError = replay.frames.reduce((sum, frame) => sum + frame.anchorError, 0) /
+    Math.max(1, replay.frames.length);
+
+  assert.ok(maxSupportStep <= 10 + LIMIT_EPSILON);
+  assert.ok(maxAnchorError <= 22, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
+  assert.ok(meanAnchorError <= 12, `mean anchor error should stay bounded, got ${meanAnchorError.toFixed(2)}px`);
+});
+
+test('replay caps glossy can sparse recovery jumps', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = createVisionBenchmarkMatrix({ size: 'quick' })
+    .find(item => item.axes.object === 'glossy-can' &&
+      item.axes.background === 'window' &&
+      item.axes.motion === 'fast' &&
+      item.axes.occlusion === 'early');
+  assert.ok(scenario);
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'sparse-reconstruction',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+  });
+  const maxSupportStep = Math.max(...replay.frames.map(frame => frame.metrics.objectSupportPositionStep || 0), 0);
+  const maxFrameJump = Math.max(...replay.frames.slice(1).map((frame, index) => Math.hypot(
+    frame.predicted.x - replay.frames[index].predicted.x,
+    frame.predicted.y - replay.frames[index].predicted.y
+  )), 0);
+  const maxAnchorError = Math.max(...replay.frames.map(frame => frame.anchorError));
+
+  assert.ok(maxSupportStep <= 10 + LIMIT_EPSILON);
+  assert.ok(maxFrameJump <= 17, `max frame jump should stay bounded, got ${maxFrameJump.toFixed(2)}px`);
+  assert.ok(maxAnchorError <= 18, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
+});
+
+test('replay caps rigid-box periodic support recentering jumps', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = createVisionBenchmarkMatrix({ size: 'quick' })
+    .find(item => item.axes.object === 'rigid-box' &&
+      item.axes.background === 'kitchen' &&
+      item.axes.motion === 'fast' &&
+      item.axes.occlusion === 'early');
+  assert.ok(scenario);
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'parametric-surface',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+  });
+  const maxPeriodicSupportStep = Math.max(...replay.frames
+    .filter(frame => frame.metrics.objectSupportPositionCorrection === 'periodic-segmentation-refresh')
+    .map(frame => frame.metrics.objectSupportPositionStep || 0), 0);
+  const maxFrameJump = Math.max(...replay.frames.slice(1).map((frame, index) => Math.hypot(
+    frame.predicted.x - replay.frames[index].predicted.x,
+    frame.predicted.y - replay.frames[index].predicted.y
+  )), 0);
+
+  assert.ok(maxPeriodicSupportStep <= 6 + LIMIT_EPSILON);
+  assert.ok(maxFrameJump <= 16, `max frame jump should stay bounded, got ${maxFrameJump.toFixed(2)}px`);
 });
 
 test('replay leaves textured cup motion holds on pose-dropout recovery path', async () => {
