@@ -4686,7 +4686,7 @@ test('depth-fusion keeps tracker positioning as the anchor spine', () => {
   assert.equal(readiness.attachmentSourceReady, true);
 });
 
-test('mature depth-fusion can pose can own position when reference geometry is weak', () => {
+test('mature depth-fusion curved pose can own position when reference geometry is weak', () => {
   const service = new ImageAnchorService();
   service.setTrackingMode('depth-fusion');
   service.anchorTargetClass = 'can';
@@ -4733,10 +4733,16 @@ test('mature depth-fusion can pose can own position when reference geometry is w
   }), false);
 
   service.anchorTargetClass = 'cup';
-  assert.equal(service._shouldUseArbiterReconstructionPosition({
+  const useCupArbiterReconstructionPosition = service._shouldUseArbiterReconstructionPosition({
     poseArbitration,
     reconstructionPose,
     trackerAnchorPosition,
+  });
+  assert.equal(useCupArbiterReconstructionPosition, true);
+  assert.equal(service._shouldHoldTrackerPositionForDepthFusion({
+    trackerAnchorPosition,
+    reconstructionPose,
+    useArbiterReconstructionPosition: useCupArbiterReconstructionPosition,
   }), false);
 
   service.anchorTargetClass = 'mug';

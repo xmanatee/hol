@@ -105,6 +105,7 @@ const MIN_COHERENT_PARAMETRIC_RELEASE_ACTIVE_LANDMARKS = 18;
 const MIN_COHERENT_PARAMETRIC_RELEASE_MAP_CONFIDENCE = 0.6;
 const MAX_COHERENT_PARAMETRIC_RELEASE_TRACKER_DELTA = 2;
 const CURVED_DROPOUT_MAX_PREDICTION_MS = 150;
+const PARAMETRIC_CYLINDER_DROPOUT_MAX_PREDICTION_MS = 260;
 const CURVED_DROPOUT_MAX_STEP = 18;
 const SPARSE_CURVED_REFERENCE_MAX_STEP = 8;
 const OBJECT_SUPPORT_POSITION_CORRECTION_MIN_DELTA = 4;
@@ -2349,10 +2350,15 @@ export class ImageAnchorService {
     }
 
     if (this.trackingMode === DEPTH_FUSION_POSE_MODEL &&
-        this._hasKnownDepthCylinderTargetClass()) {
+        this._depthFusionOwnsCurvedPositionTarget(reconstructionPose)) {
+      const minInliers = this._hasTaperedCylinderLikeTarget(reconstructionPose) &&
+        !this._hasMugLikeTarget()
+        ? 10
+        : 12;
+
       return trackerRejected &&
         matureCurvedMap &&
-        (reconstructionPose.inlierCount || 0) >= 12 &&
+        (reconstructionPose.inlierCount || 0) >= minInliers &&
         (reconstructionPose.averageResidual ?? Infinity) <= 6.2 &&
         (reconstructionPose.confidence ?? 0) >= 0.5;
     }
@@ -3556,13 +3562,13 @@ export class ImageAnchorService {
     reconstructionPose,
     useArbiterReconstructionPosition = false,
   }) {
-    const releaseForKnownCylinder = useArbiterReconstructionPosition &&
-      this._hasKnownDepthCylinderTargetClass();
+    const releaseForCurvedTarget = useArbiterReconstructionPosition &&
+      this._depthFusionOwnsCurvedPositionTarget(reconstructionPose);
 
     return this.trackingMode === DEPTH_FUSION_POSE_MODEL &&
       !!trackerAnchorPosition &&
       this._hasSelectedReconstructionPose(reconstructionPose) &&
-      !releaseForKnownCylinder;
+      !releaseForCurvedTarget;
   }
 
   _hasPreciseCurvedReconstructionPosition(reconstructionPose) {
@@ -3778,6 +3784,11 @@ export class ImageAnchorService {
     return /can|bottle|jar|container/i.test(this.anchorTargetClass || '') &&
       !this._hasMugLikeTarget() &&
       !/cup|vase/i.test(this.anchorTargetClass || '');
+  }
+
+  _depthFusionOwnsCurvedPositionTarget(reconstructionPose = null) {
+    return this._hasKnownDepthCylinderTargetClass() ||
+      (this._hasTaperedCylinderLikeTarget(reconstructionPose) && !this._hasMugLikeTarget());
   }
 
   _hasTaperedCylinderLikeTarget(reconstructionPose = null) {
@@ -4163,7 +4174,8 @@ export class ImageAnchorService {
   _predictCurvedMotionPosition(timestamp) {
     const sample = this.curvedMotionSample;
     const elapsed = Math.max(0, timestamp - sample.timestamp);
-    if (elapsed > CURVED_DROPOUT_MAX_PREDICTION_MS) {
+    const maxPredictionMs = this._curvedDropoutPredictionWindowMs();
+    if (elapsed > maxPredictionMs) {
       return null;
     }
 
@@ -4180,7 +4192,7 @@ export class ImageAnchorService {
       x: sample.position.x + sample.velocity.x * elapsed,
       y: sample.position.y + sample.velocity.y * elapsed,
       z: 0,
-      confidence: sample.confidence * clamp(1 - elapsed / CURVED_DROPOUT_MAX_PREDICTION_MS, 0.35, 1),
+      confidence: sample.confidence * clamp(1 - elapsed / maxPredictionMs, 0.35, 1),
     };
 
     if (!this.currentPosition) {
@@ -4200,6 +4212,14 @@ export class ImageAnchorService {
       x: this.currentPosition.x + dx * scale,
       y: this.currentPosition.y + dy * scale,
     };
+  }
+
+  _curvedDropoutPredictionWindowMs() {
+    return this.trackingMode === 'parametric-surface' &&
+      this._hasCylinderLikeTarget() &&
+      !this._hasMugLikeTarget()
+      ? PARAMETRIC_CYLINDER_DROPOUT_MAX_PREDICTION_MS
+      : CURVED_DROPOUT_MAX_PREDICTION_MS;
   }
 
   _shouldUseStepOnlyBookPosition() {

@@ -943,10 +943,15 @@ test('replay bounds depth-fusion cup support recovery during early occlusion', a
   ));
   const maxSupportStep = Math.max(...supportCorrections.map(frame => frame.metrics.objectSupportPositionStep || 0), 0);
   const maxAnchorError = Math.max(...replay.frames.map(frame => frame.anchorError));
+  const meanAnchorError = replay.frames.reduce((sum, frame) => sum + frame.anchorError, 0) /
+    Math.max(1, replay.frames.length);
+  const depthFusionPositionFrames = replay.frames.filter(frame => frame.positionSource === 'depth-fusion');
 
   assert.ok(supportCorrections.length >= 1);
   assert.ok(maxSupportStep <= 5 + LIMIT_EPSILON);
-  assert.ok(maxAnchorError <= 26, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
+  assert.ok(depthFusionPositionFrames.length >= 4);
+  assert.ok(maxAnchorError <= 22, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
+  assert.ok(meanAnchorError <= 9, `mean anchor error should stay bounded, got ${meanAnchorError.toFixed(2)}px`);
 });
 
 test('replay keeps mug repeated recovery bounded without stale motion-hold corrections', async () => {
