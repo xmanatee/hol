@@ -281,6 +281,28 @@ const drawQuad = (imageData, points, texture, shade = 1) => {
   drawTriangle(imageData, [points[0], points[2], points[3]], [uvs[0], uvs[2], uvs[3]], texture, shade);
 };
 
+const fillTriangleMask = (mask, triangle) => {
+  const minX = Math.max(0, Math.floor(Math.min(...triangle.map(point => point.x))));
+  const maxX = Math.min(mask.width - 1, Math.ceil(Math.max(...triangle.map(point => point.x))));
+  const minY = Math.max(0, Math.floor(Math.min(...triangle.map(point => point.y))));
+  const maxY = Math.min(mask.height - 1, Math.ceil(Math.max(...triangle.map(point => point.y))));
+  const [a, b, c] = triangle;
+
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      const weights = barycentric({ x: x + 0.5, y: y + 0.5 }, a, b, c);
+      if (!weights || weights.u < -0.001 || weights.v < -0.001 || weights.w < -0.001) continue;
+
+      mask.data[y * mask.width + x] = 255;
+    }
+  }
+};
+
+const fillQuadMask = (mask, points) => {
+  fillTriangleMask(mask, [points[0], points[1], points[2]]);
+  fillTriangleMask(mask, [points[0], points[2], points[3]]);
+};
+
 const drawShadow = (imageData, points, frameIndex) => {
   const shifted = points.map(point => ({
     x: point.x + 16 + frameIndex * 0.2,
@@ -1457,7 +1479,7 @@ const mugBodyPoint = (angle, y, objectHeight = 180) => {
   };
 };
 
-const drawMugHandle = ({ imageData, pose, projected }) => {
+const drawMugHandle = ({ imageData, objectMask, pose, projected }) => {
   const segments = 18;
   const handlePoints = [];
 
@@ -1489,6 +1511,7 @@ const drawMugHandle = ({ imageData, pose, projected }) => {
     projected.push(...quad);
     const shade = clamp(0.5 + Math.sin((segment / segments) * Math.PI) * 0.26 + projectNormal(pose).z * 0.1, 0.38, 0.92);
     drawQuad(imageData, quad, (u, v) => mugTexture(current.u + (next.u - current.u) * u, 0.22 + v * 0.56), shade);
+    fillQuadMask(objectMask, quad);
   }
 };
 
@@ -1496,6 +1519,11 @@ const drawMugFrame = ({ frameIndex, frameCount, occluded, reference, backgroundS
   const imageData = createImageData(DEFAULT_WIDTH, DEFAULT_HEIGHT);
   fillBackground(imageData, frameIndex, backgroundSeed, backgroundVariant);
   const pose = mugPoseAt(frameIndex, frameCount);
+  const objectMask = {
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
+    data: new Uint8Array(DEFAULT_WIDTH * DEFAULT_HEIGHT),
+  };
   const objectHeight = 180;
   const strips = 48;
   const projected = [];
@@ -1511,9 +1539,10 @@ const drawMugFrame = ({ frameIndex, frameCount, occluded, reference, backgroundS
     projected.push(...quad);
     const shade = clamp(0.46 + Math.cos((a0 + a1) * 0.5) * 0.3 + projectNormal(pose).z * 0.16, 0.32, 1);
     drawQuad(imageData, quad, (u, v) => mugTexture((strip + u) / strips, v), shade);
+    fillQuadMask(objectMask, quad);
   }
 
-  drawMugHandle({ imageData, pose, projected });
+  drawMugHandle({ imageData, objectMask, pose, projected });
 
   const boundingBox = bboxFor(projected);
   if (occluded) drawOcclusion(imageData, boundingBox, frameIndex, 'handled-mug');
@@ -1528,9 +1557,17 @@ const drawMugFrame = ({ frameIndex, frameCount, occluded, reference, backgroundS
 
   return {
     imageData,
+    objectMask: {
+      data: objectMask.data,
+    },
     corners: projected.map(point => ({ x: point.x, y: point.y })),
     boundingBox,
     groundTruth,
+    maskProbePoints: {
+      object: groundTruth.anchor,
+      handleRim: project3({ x: 104, y: 0, z: -40 }, pose, DEFAULT_CAMERA),
+      handleGap: project3({ x: 78, y: 0, z: -42 }, pose, DEFAULT_CAMERA),
+    },
   };
 };
 

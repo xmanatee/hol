@@ -357,7 +357,7 @@ export const summarizeReplay = replay => {
   const failures = frames.filter(frame => !frame.success);
   const jumps = [];
   const poseSourceCounts = successful.reduce((counts, frame) => {
-    const source = frame.poseSource || frame.method || 'none';
+    const source = frame.poseSource || 'none';
     counts[source] = (counts[source] || 0) + 1;
     return counts;
   }, {});

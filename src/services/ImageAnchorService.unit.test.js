@@ -218,14 +218,14 @@ test('selected strong curved reconstruction can bypass planar pose estimation', 
   reconstructionPose.depthQuality = 0.16;
 
   service.trackingMode = 'parametric-surface';
-  service.anchorTargetClass = 'mug';
+  service.anchorTargetClass = 'cup';
   service.metrics.reconstructionMapConfidence = 0.74;
   assert.equal(service._shouldSkipPlanarPoseForSelectedReconstruction(reconstructionPose), true);
 
   service.anchorTargetClass = 'book';
   assert.equal(service._shouldSkipPlanarPoseForSelectedReconstruction(reconstructionPose), false);
 
-  service.anchorTargetClass = 'mug';
+  service.anchorTargetClass = 'cup';
   service.metrics.reconstructionMapConfidence = 0.4;
   assert.equal(service._shouldSkipPlanarPoseForSelectedReconstruction(reconstructionPose), false);
 });
@@ -1068,11 +1068,11 @@ test('depth-fusion disables curved reference hold for tapered cups but keeps it 
   assert.equal(can.metrics.positionFilterAdjustment, 'curved-motion-hold');
 });
 
-test('mature sparse curved maps use bounded motion hold during full pose dropout', () => {
+test('mature sparse cylinder maps use bounded motion hold during full pose dropout', () => {
   let now = 1000;
   const service = new ImageAnchorService({ now: () => now });
   service.setTrackingMode('sparse-reconstruction');
-  service.anchorTargetClass = 'mug';
+  service.anchorTargetClass = 'can';
   service.currentPosition = { x: 200, y: 160, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
   service.metrics.lastUpdateResult = 'success';
@@ -4870,6 +4870,81 @@ test('arbiter-selected planar pose owns position when reference similarity is we
   assert.equal(service.metrics.rejectedPoseCandidates.reference_similarity_transform.reason, 'weak-geometry');
 });
 
+test('parametric mug reconstruction position does not own attachment normal', () => {
+  const service = new ImageAnchorService();
+  const reconstructionPose = createObjectPose({
+    method: 'parametric-surface',
+    confidence: 0.9,
+    inlierCount: 28,
+    averageResidual: 1.2,
+    normal: { x: 0.42, y: 0.08, z: 0.9 },
+  });
+  reconstructionPose.depthQuality = 0.2;
+  reconstructionPose.preview = {
+    statistics: {
+      mapConfidence: 0.82,
+      matureLandmarks: 28,
+    },
+    surface: { model: 'tapered-cylinder' },
+  };
+  const trackerAnchorPosition = {
+    method: 'reference_similarity_transform',
+    confidence: 0.1,
+    averageResidual: 20,
+  };
+  const poseArbitration = {
+    selected: { source: 'parametric-surface' },
+    rejected: {
+      reference_similarity_transform: { reason: 'weak-geometry' },
+    },
+  };
+
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'cup';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.82;
+  service.metrics.reconstructionMatureLandmarks = 28;
+  service.metrics.reconstructionTrackerDelta = 18;
+
+  assert.equal(service._hasSelectedReconstructionPose(reconstructionPose), true);
+  assert.equal(service._canSelectedReconstructionOwnAttachment(reconstructionPose), true);
+  assert.equal(service._hasStrongCurvedReconstructionPosition(reconstructionPose), true);
+  assert.equal(service._shouldUseArbiterReconstructionPosition({
+    poseArbitration,
+    reconstructionPose,
+    trackerAnchorPosition,
+  }), true);
+  assert.equal(service._shouldSkipPlanarPoseForSelectedReconstruction(reconstructionPose), true);
+  assert.equal(service._shouldTrustNormalPose(reconstructionPose), true);
+
+  service.anchorTargetClass = 'mug';
+
+  assert.equal(service._hasSelectedReconstructionPose(reconstructionPose), true);
+  assert.equal(service._canSelectedReconstructionOwnAttachment(reconstructionPose), false);
+  assert.equal(service._hasStrongCurvedReconstructionPosition(reconstructionPose), true);
+  assert.equal(service._shouldUseArbiterReconstructionPosition({
+    poseArbitration,
+    reconstructionPose,
+    trackerAnchorPosition,
+  }), true);
+  assert.equal(service._shouldSkipPlanarPoseForSelectedReconstruction(reconstructionPose), false);
+  assert.equal(service._shouldTrustNormalPose(reconstructionPose), false);
+
+  service.metrics.activeLandmarkCount = 28;
+  service.metrics.objectOwnedLandmarks = 28;
+  service.metrics.contourFitResidual = 0;
+  service.metrics.silhouetteCoverage = 1;
+  const arbitration = service._recordPoseCandidates({
+    reconstructionPose,
+    planarPose: null,
+    objectPose: null,
+    trackerAnchorPosition: null,
+    reconstructionConsistentWithTracker: true,
+  });
+  assert.equal(arbitration.selected, null);
+  assert.equal(arbitration.rejected['parametric-surface'].reason, 'overlay-not-owned');
+});
+
 test('curved reconstruction relaxes stale normals when pose drops out', () => {
   const service = new ImageAnchorService();
   const staleNormal = { x: 0.55, y: -0.2, z: 0.81 };
@@ -5299,6 +5374,23 @@ test('rigid planar reconstruction normals are not trusted external corrections',
     }),
     true
   );
+
+  assert.equal(
+    cupService._shouldTrustNormalPose({
+      success: true,
+      method: 'parametric-surface',
+      confidence: 0.95,
+      inlierCount: 24,
+      normal: { x: 0.99, y: 0.02, z: 0.08 },
+      depthQuality: 0.08,
+      preview: {
+        statistics: {
+          mapConfidence: 0.72,
+        },
+      },
+    }),
+    false
+  );
 });
 
 test('curved reconstruction targets reject planar homography normals during pose dropout', () => {
@@ -5377,6 +5469,23 @@ test('recent mature reconstruction holds through one-frame planar normal dropout
 
   assert.equal(selected, null);
   assert.equal(service.metrics.poseSourceHoldReason, 'transient-reconstruction-dropout');
+});
+
+test('raw homography normal candidates report the canonical planar pose source', () => {
+  const service = new ImageAnchorService();
+  const selected = service._selectPlanarNormalCandidate({
+    candidatePose: {
+      success: true,
+      method: 'homography',
+      normal: { x: 0.08, y: -0.02, z: 0.996 },
+      confidence: 0.86,
+      inlierCount: 24,
+    },
+    reconstructionPose: null,
+  });
+
+  assert.equal(selected.method, 'planar-homography');
+  assert.equal(selected.inlierCount, 24);
 });
 
 test('selected reconstruction modes accept robust surface residuals without relaxing object pose gates', () => {

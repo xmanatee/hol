@@ -123,6 +123,7 @@ const DEPTH_CUP_SUPPORT_RECOVERY_MAX_STEP = 5;
 const GENERIC_SUPPORT_RECOVERY_MAX_STEP = 10;
 const NON_CURVED_PERIODIC_SUPPORT_CORRECTION_MAX_STEP = 6;
 const SPARSE_MUG_MOTION_HOLD_MAX_ACTIVE_LANDMARKS = 27;
+const SPARSE_MUG_SUPPORT_RECOVERY_MAX_ACTIVE_LANDMARKS = 20;
 const SPARSE_CYLINDER_MOTION_HOLD_MAX_ACTIVE_LANDMARKS = 44;
 const PLANAR_POSE_POSITION_METHODS = new Set([
   RECONSTRUCTION_POSE_MODEL,
@@ -848,7 +849,8 @@ export class ImageAnchorService {
       return 2;
     }
     if (mugLike && this.trackingMode === RECONSTRUCTION_POSE_MODEL) {
-      return recoveryCorrection ? 4 : 0;
+      const active = this.metrics.activeLandmarkCount ?? this.metrics.keypointCount ?? 0;
+      return recoveryCorrection && active <= SPARSE_MUG_SUPPORT_RECOVERY_MAX_ACTIVE_LANDMARKS ? 4 : 0;
     }
     if (mugLike && this.trackingMode === 'parametric-surface') {
       const maxStep = recoveryCorrection ? clamp(maxExtent * ratio, 8, 12) : 0;
@@ -2281,7 +2283,8 @@ export class ImageAnchorService {
         objectOwnedRatio,
         continuity: reconstructionConsistentWithTracker ? 1 : 0.25,
         mapMaturity,
-        overlayEligible: reconstructionPose?.method === this.trackingMode,
+        overlayEligible: reconstructionPose?.method === this.trackingMode &&
+          !this._hasIncompleteSelectedSurfacePrior(reconstructionPose),
       }),
       this._poseCandidateFromPose(planarPose, {
         objectOwnedRatio,
@@ -2936,7 +2939,7 @@ export class ImageAnchorService {
       return planarAttachmentUsable;
     }
 
-    if (this._hasSelectedReconstructionPose(reconstructionPose)) {
+    if (this._canSelectedReconstructionOwnAttachment(reconstructionPose)) {
       return false;
     }
 
@@ -3051,7 +3054,7 @@ export class ImageAnchorService {
       return false;
     }
 
-    if (this._hasSelectedReconstructionPose(reconstructionPose)) {
+    if (this._canSelectedReconstructionOwnAttachment(reconstructionPose)) {
       return false;
     }
 
@@ -3089,12 +3092,15 @@ export class ImageAnchorService {
       });
     }
 
-    const reconstructionHighInlierNormal = this._hasStrongNonPlanarReconstruction(reconstructionPose) &&
+    const reconstructionOwnsAttachment = !this._hasIncompleteSelectedSurfacePrior(reconstructionPose);
+    const reconstructionHighInlierNormal = reconstructionOwnsAttachment &&
+      this._hasStrongNonPlanarReconstruction(reconstructionPose) &&
       (reconstructionPose.inlierCount || 0) >= 24 &&
       (reconstructionPose.averageResidual ?? Infinity) <= 2.4;
-    const reconstructionPoseUsable = this._isUsablePoseResult(reconstructionPose, reconstructionPose?.correspondences || correspondences) &&
+    const reconstructionPoseUsable = reconstructionOwnsAttachment &&
+      this._isUsablePoseResult(reconstructionPose, reconstructionPose?.correspondences || correspondences) &&
       (!this._hasPlanarDominance() ||
-        this._hasSelectedReconstructionPose(reconstructionPose) ||
+        this._canSelectedReconstructionOwnAttachment(reconstructionPose) ||
         (this._hasStrongNonPlanarReconstruction(reconstructionPose) && reconstructionConsistentWithTracker) ||
         reconstructionHighInlierNormal);
     const objectPoseUsable = this._isUsablePoseResult(objectPose, objectPose.correspondences || correspondences);
@@ -3147,7 +3153,9 @@ export class ImageAnchorService {
       return null;
     }
 
-    return candidatePose;
+    return candidatePose.method === 'homography'
+      ? { ...candidatePose, method: 'planar-homography' }
+      : candidatePose;
   }
 
   _shouldExposeSelectedPlanarSurfacePose({ reconstructionPose, planarPose }) {
@@ -3183,8 +3191,16 @@ export class ImageAnchorService {
       return false;
     }
 
+    if ((normalPose.normal?.z ?? 1) < MIN_RECONSTRUCTION_ATTACHMENT_FORESHORTENING) {
+      return false;
+    }
+
+    if (this._hasIncompleteSelectedSurfacePrior(normalPose)) {
+      return false;
+    }
+
     return this._hasStrongNonPlanarReconstruction(normalPose) ||
-      this._hasSelectedReconstructionPose(normalPose);
+      this._canSelectedReconstructionOwnAttachment(normalPose);
   }
 
   _shouldHoldPlanarNormalAfterReconstructionDropout({ candidatePose, reconstructionPose }) {
@@ -3561,7 +3577,8 @@ export class ImageAnchorService {
   }
 
   _hasStrongCurvedReconstructionPosition(reconstructionPose) {
-    if (!this._hasStrongNonPlanarReconstruction(reconstructionPose) || this._hasPlanarTargetClass()) {
+    if (!this._hasStrongNonPlanarReconstruction(reconstructionPose) ||
+        this._hasPlanarTargetClass()) {
       return false;
     }
 
@@ -3845,11 +3862,22 @@ export class ImageAnchorService {
     return mapConfidence >= 0.48 && (reconstructionPose.inlierCount || 0) >= 12;
   }
 
+  _hasIncompleteSelectedSurfacePrior(reconstructionPose) {
+    return reconstructionPose?.method === 'parametric-surface' &&
+      this.trackingMode === 'parametric-surface' &&
+      this._hasMugLikeTarget();
+  }
+
+  _canSelectedReconstructionOwnAttachment(reconstructionPose) {
+    return this._hasSelectedReconstructionPose(reconstructionPose) &&
+      !this._hasIncompleteSelectedSurfacePrior(reconstructionPose);
+  }
+
   _shouldSkipPlanarPoseForSelectedReconstruction(reconstructionPose) {
     return isReconstructionMode(this.trackingMode) &&
       this.trackingMode !== RECONSTRUCTION_POSE_MODEL &&
       !this._hasPlanarTargetClass() &&
-      this._hasSelectedReconstructionPose(reconstructionPose) &&
+      this._canSelectedReconstructionOwnAttachment(reconstructionPose) &&
       this._hasStrongNonPlanarReconstruction(reconstructionPose) &&
       this._hasCurvedReconstructionTarget(reconstructionPose);
   }
@@ -4082,7 +4110,7 @@ export class ImageAnchorService {
   }
 
   _shouldUseCurvedMotionHoldTarget() {
-    return !/bottle/i.test(this.anchorTargetClass || '');
+    return !/bottle|mug/i.test(this.anchorTargetClass || '');
   }
 
   _curvedReferencePredictionBlendWeight(position, method) {
