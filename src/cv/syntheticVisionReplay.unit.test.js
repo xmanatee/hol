@@ -1059,6 +1059,56 @@ test('replay caps glossy can sparse recovery jumps', async () => {
   assert.ok(maxAnchorError <= 18, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
 });
 
+test('replay damps high-residual sparse cylinder recovery impulses', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = createVisionBenchmarkMatrix()
+    .find(item => item.axes.object === 'glossy-can' &&
+      item.axes.background === 'desk' &&
+      item.axes.motion === 'fast' &&
+      item.axes.occlusion === 'early');
+  assert.ok(scenario);
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'sparse-reconstruction',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+  });
+  const maxFrameJump = Math.max(...replay.frames.slice(1).map((frame, index) => Math.hypot(
+    frame.predicted.x - replay.frames[index].predicted.x,
+    frame.predicted.y - replay.frames[index].predicted.y
+  )), 0);
+  const maxAnchorError = Math.max(...replay.frames.map(frame => frame.anchorError));
+
+  assert.ok(maxFrameJump <= 14, `max frame jump should stay bounded, got ${maxFrameJump.toFixed(2)}px`);
+  assert.ok(maxAnchorError <= 15, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
+});
+
+test('replay rejects stale sparse can poses during late occlusion', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = createVisionBenchmarkMatrix()
+    .find(item => item.axes.object === 'cylindrical-can' &&
+      item.axes.background === 'desk' &&
+      item.axes.motion === 'slow' &&
+      item.axes.occlusion === 'late');
+  assert.ok(scenario);
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'sparse-reconstruction',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+  });
+  const maxFrameJump = Math.max(...replay.frames.slice(1).map((frame, index) => Math.hypot(
+    frame.predicted.x - replay.frames[index].predicted.x,
+    frame.predicted.y - replay.frames[index].predicted.y
+  )), 0);
+  const maxAnchorError = Math.max(...replay.frames.map(frame => frame.anchorError));
+
+  assert.ok(maxFrameJump <= 13, `max frame jump should stay bounded, got ${maxFrameJump.toFixed(2)}px`);
+  assert.ok(maxAnchorError <= 20, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
+});
+
 test('replay caps rigid-box periodic support recentering jumps', async () => {
   const cv = await loadOpenCvForNode();
   const scenario = createVisionBenchmarkMatrix({ size: 'quick' })

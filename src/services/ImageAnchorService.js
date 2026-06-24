@@ -49,6 +49,7 @@ const RIGID_PLANAR_TARGET_CLASS_PATTERN = /book|notebook|paper|document|poster|p
 const GENERIC_TARGET_CLASS_PATTERN = /^(segmented-object|object|unknown)$/i;
 const NON_PRIMITIVE_TARGET_CLASS_PATTERN = /person|human|body|face|head|portrait|mask/i;
 const SURFACE_CLASS_HINT_PATTERN = /shelf|shelves|bookcase|cabinet|drawer|rack|wardrobe|closet|box|package|crate|face|head|portrait|mask|book|notebook|paper|document|poster|photo|picture|painting|card|ticket|label|badge|laptop|keyboard|cell phone|smartphone|phone|tablet|tv|screen|sign|whiteboard|cup|mug|vase|ball|sphere|round|can|bottle|jar|container/i;
+const CAN_LIKE_TARGET_CLASS_PATTERN = /can|jar|container/i;
 const MIN_GENERIC_PRIMITIVE_MASK_FILL_RATIO = 0.58;
 const TEXTURED_PLANAR_RECOVERY_EXCLUSION_PATTERN = /book|notebook/i;
 const CANDIDATE_MIN_TRACKABLE_POINTS = 8;
@@ -114,6 +115,10 @@ const IMMATURE_MUG_SUPPORT_RECOVERY_LANDMARKS = 16;
 const IMMATURE_MUG_HIGH_ACTIVE_LANDMARKS = 20;
 const IMMATURE_MUG_SUPPORT_RECOVERY_MAX_STEP = 6;
 const SPARSE_CUP_SUPPORT_RECOVERY_MAX_STEP = 6;
+const SPARSE_CYLINDER_HIGH_RESIDUAL_SUPPORT_RECOVERY_MAX_STEP = 4;
+const SPARSE_CYLINDER_HIGH_RESIDUAL_SUPPORT_RECOVERY_MIN_RESIDUAL = MAX_CURVED_REFERENCE_BLEND_RESIDUAL;
+const SPARSE_CAN_STALE_POSE_MIN_DROPOUT_FRAMES = 3;
+const SPARSE_CAN_STALE_POSE_MIN_TRACKER_DELTA = 32;
 const DEPTH_CUP_SUPPORT_RECOVERY_MAX_STEP = 5;
 const GENERIC_SUPPORT_RECOVERY_MAX_STEP = 10;
 const NON_CURVED_PERIODIC_SUPPORT_CORRECTION_MAX_STEP = 6;
@@ -828,6 +833,13 @@ export class ImageAnchorService {
         ) &&
         recoveryCorrection) {
       return Math.min(clamp(maxExtent * ratio, 8, 16), GENERIC_SUPPORT_RECOVERY_MAX_STEP);
+    }
+    if (this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
+        this._hasKnownDepthCylinderTargetClass() &&
+        recoveryCorrection &&
+        Number.isFinite(this.metrics.poseAverageResidual) &&
+        this.metrics.poseAverageResidual > SPARSE_CYLINDER_HIGH_RESIDUAL_SUPPORT_RECOVERY_MIN_RESIDUAL) {
+      return SPARSE_CYLINDER_HIGH_RESIDUAL_SUPPORT_RECOVERY_MAX_STEP;
     }
     if (mugLike && this.trackingMode === DEPTH_FUSION_POSE_MODEL) {
       return 4;
@@ -3786,6 +3798,11 @@ export class ImageAnchorService {
       !/cup|vase/i.test(this.anchorTargetClass || '');
   }
 
+  _hasCanLikeTargetClass() {
+    return CAN_LIKE_TARGET_CLASS_PATTERN.test(this.anchorTargetClass || '') &&
+      !/bottle|cup|mug|vase/i.test(this.anchorTargetClass || '');
+  }
+
   _depthFusionOwnsCurvedPositionTarget(reconstructionPose = null) {
     return this._hasKnownDepthCylinderTargetClass() ||
       (this._hasTaperedCylinderLikeTarget(reconstructionPose) && !this._hasMugLikeTarget());
@@ -4389,7 +4406,21 @@ export class ImageAnchorService {
   }
 
   _isUsablePoseResult(poseResult, correspondences) {
+    if (this._shouldRejectStaleSparseCanPose(poseResult)) {
+      return false;
+    }
+
     return this._getPoseRejectionReason(poseResult, correspondences) === null;
+  }
+
+  _shouldRejectStaleSparseCanPose(poseResult) {
+    return poseResult?.success &&
+      poseResult.method === this.trackingMode &&
+      this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
+      this._hasCanLikeTargetClass() &&
+      this.framesWithoutNormalPose >= SPARSE_CAN_STALE_POSE_MIN_DROPOUT_FRAMES &&
+      (this.metrics.reconstructionTrackerDelta ?? 0) >= SPARSE_CAN_STALE_POSE_MIN_TRACKER_DELTA &&
+      (poseResult.inlierCount || 0) < MIN_RECONSTRUCTION_ATTACHMENT_POSE_INLIERS;
   }
 
   _calculatePoseConfidence(poseResult, correspondences) {
