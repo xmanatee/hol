@@ -4167,10 +4167,15 @@ export class ImageAnchorService {
     const mapConfidence = this.metrics.reconstructionMapConfidence ?? 0;
     const confidence = position.confidence ?? 0;
     const residual = position.averageResidual ?? Infinity;
+    const selectedPoseDroppedOut = this.trackingMode !== RECONSTRUCTION_POSE_MODEL &&
+      (this.metrics.reconstructionPoseInliers || 0) === 0;
     const severeSelectedModeDrift = activeLandmarks <= MAX_SEVERE_CURVED_REFERENCE_LANDMARKS &&
       confidence <= MAX_SEVERE_CURVED_REFERENCE_CONFIDENCE &&
       residual >= MIN_SEVERE_CURVED_REFERENCE_RESIDUAL &&
-      (this.metrics.reconstructionTrackerDelta || 0) >= MIN_SEVERE_CURVED_REFERENCE_TRACKER_DELTA;
+      (
+        selectedPoseDroppedOut ||
+        (this.metrics.reconstructionTrackerDelta || 0) >= MIN_SEVERE_CURVED_REFERENCE_TRACKER_DELTA
+      );
 
     return matureLandmarks >= 16 &&
       mapConfidence >= 0.6 &&

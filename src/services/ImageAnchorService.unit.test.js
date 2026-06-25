@@ -820,6 +820,48 @@ test('selected curved modes hold severe zero-confidence reference drift to recen
   assert.ok(held.y < 224);
 });
 
+test('selected curved modes hold severe reference drift even when stored tracker delta is stale', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('direct-photometric');
+  service.anchorTargetClass = 'can';
+  service.currentPosition = { x: 316, y: 232, z: 0 };
+  service.metrics.lastUpdateResult = 'success';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.82;
+  service.metrics.reconstructionMatureLandmarks = 27;
+  service.metrics.reconstructionPoseInliers = 0;
+  service.metrics.activeLandmarkCount = 25;
+  service.metrics.reconstructionTrackerDelta = 2.1;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'cylinder' },
+  };
+  service.positionFilterX.filter(316, 1000);
+  service.positionFilterY.filter(232, 1000);
+  service.curvedMotionSample = {
+    position: { x: 316, y: 232 },
+    velocity: { x: 0.06, y: 0.03 },
+    timestamp: 1000,
+    confidence: 0.7,
+  };
+
+  const held = service._filterPositionCandidate(
+    {
+      x: 341,
+      y: 233,
+      z: 0,
+      confidence: 0,
+      averageResidual: 24.2,
+      inlierCount: 15,
+    },
+    1033.33,
+    'reference_similarity_transform'
+  );
+
+  assert.equal(service.metrics.positionFilterAdjustment, 'curved-motion-hold');
+  assert.ok(held.x < 323);
+  assert.ok(held.y < 236);
+});
+
 test('selected curved modes refresh motion samples from coherent reference transforms', () => {
   let now = 1000;
   const service = new ImageAnchorService({ now: () => now });
