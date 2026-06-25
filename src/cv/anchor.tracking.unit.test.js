@@ -469,6 +469,113 @@ test('keypoint refresh rejects a weak homography when similarity keeps the refer
   )));
 });
 
+test('keypoint refresh keeps viable broad reference transform over local support', () => {
+  const tracker = new KeypointTracker();
+  const activePoints = Array.from({ length: 17 }, (_, index) => ({
+    original: { x: 80 + index * 7, y: 90 + (index % 5) * 11 },
+    current: { x: 82 + index * 7, y: 92 + (index % 5) * 11 },
+  }));
+  const broadTransform = {
+    tx: -4,
+    ty: 9,
+    scale: 0.97,
+    rotation: 0.04,
+    confidence: 0.38,
+    inlierCount: 11,
+    averageResidual: 8.8,
+  };
+
+  tracker._estimateReferenceHomography = () => null;
+  tracker._estimateLocalReferenceTransformation = () => ({
+    tx: 7,
+    ty: -5,
+    scale: 1.06,
+    rotation: 0.03,
+    confidence: 0.74,
+    inlierCount: 8,
+    supportCount: 10,
+    averageResidual: 1.2,
+  });
+  tracker._estimateReferenceTransformation = () => broadTransform;
+
+  const selected = tracker._selectRefreshReferenceTransformation({}, activePoints);
+
+  assert.equal(selected, broadTransform);
+});
+
+test('keypoint refresh uses local anchor support when global curved geometry collapses', () => {
+  const tracker = new KeypointTracker();
+  tracker.initialized = true;
+  tracker.previousGray = { delete() {} };
+
+  const localTransform = {
+    tx: 12,
+    ty: -6,
+    scale: 1.03,
+    rotation: 9 * Math.PI / 180,
+  };
+  const localOriginals = Array.from({ length: 12 }, (_, index) => ({
+    x: 112 + (index % 4) * 10,
+    y: 96 + Math.floor(index / 4) * 10,
+  }));
+  const farOriginals = Array.from({ length: 22 }, (_, index) => ({
+    x: 230 + (index % 6) * 12,
+    y: 34 + Math.floor(index / 6) * 17,
+  }));
+  const newOriginals = Array.from({ length: 10 }, (_, index) => ({
+    x: 118 + (index % 5) * 9,
+    y: 134 + Math.floor(index / 5) * 10,
+  }));
+  tracker.trackedPoints = [
+    ...localOriginals.map((point, index) => createTrackedPoint(index, point, localTransform)),
+    ...farOriginals.map((point, index) => ({
+      ...createTrackedPoint(100 + index, point, localTransform),
+      current: {
+        x: 40 + (index % 5) * 15,
+        y: 170 + Math.floor(index / 5) * 13,
+      },
+      errorHistory: [24],
+    })),
+  ];
+  tracker.nextPointId = 200;
+  tracker.keypointCentroid = { x: 127, y: 106 };
+  tracker.anchorOriginalPosition = { x: 128, y: 108 };
+  tracker.tapOffset = { x: 1, y: 2 };
+
+  const currentGray = {
+    cols: 360,
+    rows: 260,
+    empty: () => false,
+    clone: () => ({ delete() {} }),
+  };
+  const detector = {
+    extractKeypoints: () => ({
+      keypoints: [
+        ...localOriginals.map(point => ({ pt: transformPoint(point, localTransform), response: 0.8 })),
+        ...newOriginals.map(point => ({ pt: transformPoint(point, localTransform), response: 1.0 })),
+      ],
+    }),
+  };
+
+  const refreshed = tracker.refreshKeypoints({}, currentGray, detector, {
+    x: 80,
+    y: 60,
+    width: 120,
+    height: 130,
+  }, null, {
+    minNewKeypoints: 10,
+  });
+
+  const added = tracker.trackedPoints.filter(point => point.id >= 200);
+
+  assert.equal(refreshed, true);
+  assert.ok(added.length > 0);
+  assert.ok(added.some(point => (
+    Math.abs(point.original.x - newOriginals[0].x) < 0.8 &&
+    Math.abs(point.original.y - newOriginals[0].y) < 0.8
+  )));
+});
+
 test('inactive cleanup preserves stable hidden landmarks and retires weak stale points', () => {
   const tracker = new KeypointTracker();
   tracker.trackedPoints = [

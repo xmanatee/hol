@@ -1380,24 +1380,28 @@ export class KeypointTracker {
       return null;
     }
 
-    const candidates = [
+    const broadCandidates = [
       activePoints.length >= 8 ? this._estimateReferenceHomography(cv, activePoints) : null,
       this._estimateReferenceTransformation(activePoints),
     ].filter(Boolean);
-
-    return candidates
+    const localCandidate = this._estimateLocalReferenceTransformation(activePoints);
+    const selectBestCandidate = candidates => candidates
       .map(candidate => ({
         transform: candidate,
         score: this._refreshTransformationScore(candidate, activePoints.length),
       }))
       .filter(candidate => candidate.score > 0)
       .sort((left, right) => right.score - left.score)[0]?.transform || null;
+
+    return selectBestCandidate(broadCandidates) ||
+      selectBestCandidate(localCandidate ? [localCandidate] : []);
   }
 
   _refreshTransformationScore(transform, activeCount) {
     const residual = transform.averageResidual ?? Infinity;
     const confidence = transform.confidence ?? 0;
-    const inlierRatio = (transform.inlierCount || 0) / Math.max(activeCount, 1);
+    const supportCount = transform.supportCount || activeCount;
+    const inlierRatio = (transform.inlierCount || 0) / Math.max(supportCount, 1);
 
     if (!Number.isFinite(residual) || transform.scale <= 0.001) {
       return 0;

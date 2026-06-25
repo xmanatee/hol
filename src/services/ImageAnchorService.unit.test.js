@@ -3866,12 +3866,18 @@ test('segmentation refresh markers survive the next frame for async recovery', (
   service.metrics.segmentationRefreshReason = 'pose-dropout-recovery';
   service.metrics.segmentationRefreshFrame = 8;
   service.metrics.keypointReinitializationResult = 'reinitialized';
+  service.metrics.landmarkRefreshReason = 'support-recovery';
+  service.metrics.landmarkRefreshAdded = 12;
+  service.metrics.landmarkRefreshFailureReason = 'no-reference-transform';
   service.frameIndex = 9;
 
   service._resetFrameObjectSupportCorrectionMetrics();
   assert.equal(service.metrics.segmentationRefreshReason, 'pose-dropout-recovery');
   assert.equal(service.metrics.segmentationRefreshFrame, 8);
   assert.equal(service.metrics.keypointReinitializationResult, null);
+  assert.equal(service.metrics.landmarkRefreshReason, null);
+  assert.equal(service.metrics.landmarkRefreshAdded, 0);
+  assert.equal(service.metrics.landmarkRefreshFailureReason, null);
 
   service.frameIndex = 11;
   service._resetFrameObjectSupportCorrectionMetrics();

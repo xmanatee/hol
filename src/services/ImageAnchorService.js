@@ -4785,6 +4785,9 @@ export class ImageAnchorService {
     this.metrics.keypointReinitializationCandidateCount = null;
     this.metrics.keypointReinitializationLandmarks = null;
     this.metrics.keypointReinitializationAnchorDelta = null;
+    this.metrics.landmarkRefreshReason = null;
+    this.metrics.landmarkRefreshAdded = 0;
+    this.metrics.landmarkRefreshFailureReason = null;
     const refreshFrame = this.metrics.segmentationRefreshFrame;
     if (!PERSISTENT_SEGMENTATION_REFRESH_REASONS.has(this.metrics.segmentationRefreshReason) ||
         !Number.isFinite(refreshFrame) ||
