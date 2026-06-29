@@ -30,6 +30,33 @@ const surfacePoints = count => Array.from({ length: count }, (_, index) => {
   });
 });
 
+const countedSurfacePoints = count => {
+  let originalReads = 0;
+  let currentReads = 0;
+  const points = surfacePoints(count).map(point => ({
+    ...point,
+    get original() {
+      originalReads++;
+      return point.original;
+    },
+    get current() {
+      currentReads++;
+      return point.current;
+    },
+  }));
+
+  return {
+    points,
+    expectedSingleObservationPassReads: count * 4,
+    get originalReads() {
+      return originalReads;
+    },
+    get currentReads() {
+      return currentReads;
+    },
+  };
+};
+
 test('parametric surface reuses the reference fit for scale and rotation', () => {
   const reconstructor = new ParametricSurfaceReconstructor();
   reconstructor.reset({
@@ -94,6 +121,30 @@ test('parametric surface skips pose fitting while the map is still mapping', () 
   assert.equal(result.success, false);
   assert.equal(result.reason, 'Move object through more surface views');
   assert.equal(fitCount, 0);
+});
+
+test('parametric surface reuses frame observations between mapping and pose', () => {
+  const reconstructor = new ParametricSurfaceReconstructor({
+    minFrames: 1,
+    minLandmarks: 8,
+  });
+  reconstructor.reset({
+    anchorReference: { x: 40, y: 80 },
+    templateRegion: { x: 0, y: 0, width: 80, height: 140 },
+    targetClass: 'mug',
+  });
+  const tracked = countedSurfacePoints(12);
+
+  reconstructor.addFrameFromTrackedPoints(tracked.points, 1000, {
+    includePreview: false,
+  });
+  const result = reconstructor.estimatePoseFromTrackedPoints(tracked.points, {
+    includePreview: false,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(tracked.originalReads, tracked.expectedSingleObservationPassReads);
+  assert.equal(tracked.currentReads, tracked.expectedSingleObservationPassReads);
 });
 
 test('parametric surface estimates compact mature-map poses after occlusion', () => {

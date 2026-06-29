@@ -70,6 +70,7 @@ export class ParametricSurfaceReconstructor {
     this.model = modelFromRegion(templateRegion, targetClass);
     this.state = 'mapping';
     this.lastFailureReason = null;
+    this.frameObservationCache = null;
     this.referencePnpTransform = null;
     this.referenceFitCache = null;
   }
@@ -78,12 +79,14 @@ export class ParametricSurfaceReconstructor {
     this.templateRegion = { ...templateRegion };
     this.targetClass = targetClass;
     this.model = modelFromRegion(templateRegion, targetClass);
+    this.frameObservationCache = null;
     this.referenceFitCache = null;
   }
 
   addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now(), optionsOrGrayImage = null, options = {}) {
     const stateOptions = optionsOrGrayImage?.includePreview === false ? optionsOrGrayImage : options;
-    const observations = toActiveObservations(trackedPoints);
+    const observations = this._activeObservationsFromTrackedPoints(trackedPoints);
+    this.frameObservationCache = { trackedPoints, observations };
 
     if (observations.length < this.minLandmarks) {
       this.lastFailureReason = 'Insufficient surface observations';
@@ -123,7 +126,7 @@ export class ParametricSurfaceReconstructor {
       };
     }
 
-    const rawObservations = toActiveObservations(trackedPoints);
+    const rawObservations = this._takeFrameObservationsForPose(trackedPoints);
     const consensus = this._poseConsensusOptions();
     const coherent = selectCoherentObservations(rawObservations, {
       minInliers: consensus.minInliers,
@@ -215,6 +218,20 @@ export class ParametricSurfaceReconstructor {
       state.preview = this._createPreview();
     }
     return state;
+  }
+
+  _activeObservationsFromTrackedPoints(trackedPoints) {
+    return toActiveObservations(trackedPoints);
+  }
+
+  _takeFrameObservationsForPose(trackedPoints) {
+    if (this.frameObservationCache?.trackedPoints !== trackedPoints) {
+      return this._activeObservationsFromTrackedPoints(trackedPoints);
+    }
+
+    const observations = this.frameObservationCache.observations;
+    this.frameObservationCache = null;
+    return observations;
   }
 
   _recordStats(observations) {
