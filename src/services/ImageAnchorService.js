@@ -127,6 +127,12 @@ const NON_CURVED_PERIODIC_SUPPORT_CORRECTION_MAX_STEP = 6;
 const SPARSE_MUG_MOTION_HOLD_MAX_ACTIVE_LANDMARKS = 27;
 const SPARSE_MUG_SUPPORT_RECOVERY_MAX_ACTIVE_LANDMARKS = 20;
 const SPARSE_CYLINDER_MOTION_HOLD_MAX_ACTIVE_LANDMARKS = 44;
+const SPARSE_MUG_PERIODIC_SUPPORT_CORRECTION_MIN_DELTA = 12;
+const SPARSE_MUG_PERIODIC_SUPPORT_CORRECTION_MAX_ACTIVE_LANDMARKS = 36;
+const SPARSE_MUG_PERIODIC_SUPPORT_CORRECTION_MIN_MAP_CONFIDENCE = 0.55;
+const SPARSE_MUG_PERIODIC_SUPPORT_CORRECTION_MAX_STEP = 8;
+const SPARSE_MUG_SUPPORT_CORRECTION_HOLD_FRAMES = 7;
+const SPARSE_MUG_SUPPORT_CORRECTION_MIN_BACKTRACK_STEP = 3;
 const PLANAR_POSE_POSITION_METHODS = new Set([
   RECONSTRUCTION_POSE_MODEL,
   'planar-homography',
@@ -204,6 +210,7 @@ export class ImageAnchorService {
     this.objectSupportMask = null;
     this.currentObjectSupportMask = null;
     this.objectSupportAnchorUv = null;
+    this.objectSupportCorrectionHold = null;
     this.expandedObjectSupportRegion = false;
     this.anchorTargetClass = null;
     this.trackingMode = POSE_MODEL;
@@ -729,7 +736,7 @@ export class ImageAnchorService {
       return null;
     }
 
-    const maxStep = this._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, reason);
+    const maxStep = this._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, reason, distance);
     if (distance < OBJECT_SUPPORT_POSITION_CORRECTION_MIN_DELTA || maxStep <= 0) {
       this.metrics.objectSupportPositionCorrection = null;
       this.metrics.objectSupportPositionSource = null;
@@ -745,6 +752,14 @@ export class ImageAnchorService {
     const appliedStep = distance * stepScale;
 
     this.currentPosition = corrected;
+    this._recordObjectSupportCorrectionHold({
+      previous: {
+        x: corrected.x - deltaX * stepScale,
+        y: corrected.y - deltaY * stepScale,
+      },
+      corrected,
+      reason,
+    });
     this.positionFilterX = createPositionFilter();
     this.positionFilterY = createPositionFilter();
     this.positionFilterX.filter(corrected.x, this.now());
@@ -768,6 +783,22 @@ export class ImageAnchorService {
     }
 
     return candidate;
+  }
+
+  _recordObjectSupportCorrectionHold({ previous, corrected, reason }) {
+    const direction = {
+      x: corrected.x - previous.x,
+      y: corrected.y - previous.y,
+    };
+    const magnitude = Math.hypot(direction.x, direction.y);
+    this.objectSupportCorrectionHold = magnitude > 0
+      ? {
+        frameIndex: this.frameIndex,
+        direction,
+        magnitude,
+        reason,
+      }
+      : null;
   }
 
   _shouldKeepTrackerPositionDuringSupportRecovery(reason) {
@@ -806,7 +837,7 @@ export class ImageAnchorService {
       reason === CURVED_OBJECT_RECOVERY_REASON;
   }
 
-  _getObjectSupportPositionCorrectionMaxStep(objectSupportMask, reason = 'segmentation-refresh') {
+  _getObjectSupportPositionCorrectionMaxStep(objectSupportMask, reason = 'segmentation-refresh', distance = 0) {
     if (this._hasRigidPlanarTargetClass()) {
       return 0;
     }
@@ -818,6 +849,19 @@ export class ImageAnchorService {
     const curved = this._hasCurvedReconstructionTarget();
     const ratio = curved ? 0.24 : 0.3;
     const recoveryCorrection = OBJECT_SUPPORT_RECOVERY_REASON_PATTERN.test(reason);
+    if (mugLike &&
+        this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
+        !recoveryCorrection &&
+        this._shouldUseSparseMugPeriodicSupportCorrection({
+          reason,
+          distance,
+          active: this.metrics.activeLandmarkCount ?? this.metrics.keypointCount ?? 0,
+        })) {
+      return Math.min(
+        clamp(maxExtent * 0.08, 6, 10),
+        SPARSE_MUG_PERIODIC_SUPPORT_CORRECTION_MAX_STEP
+      );
+    }
     if (curved && !recoveryCorrection) {
       return 0;
     }
@@ -879,6 +923,15 @@ export class ImageAnchorService {
       hardMax = 12;
     }
     return clamp(maxExtent * ratio, 8, hardMax);
+  }
+
+  _shouldUseSparseMugPeriodicSupportCorrection({ reason, distance, active }) {
+    return reason === 'periodic-segmentation-refresh' &&
+      distance >= SPARSE_MUG_PERIODIC_SUPPORT_CORRECTION_MIN_DELTA &&
+      active >= CANDIDATE_MIN_TRACKABLE_POINTS &&
+      active <= SPARSE_MUG_PERIODIC_SUPPORT_CORRECTION_MAX_ACTIVE_LANDMARKS &&
+      this.metrics.reconstructionReady === true &&
+      (this.metrics.reconstructionMapConfidence ?? 0) >= SPARSE_MUG_PERIODIC_SUPPORT_CORRECTION_MIN_MAP_CONFIDENCE;
   }
 
   /**
@@ -4045,6 +4098,15 @@ export class ImageAnchorService {
   }
 
   _filterPositionCandidate(position, timestamp, method) {
+    if (this._shouldHoldSparseMugSupportBacktrack(position, method)) {
+      this.metrics.positionFilterAdjustment = 'sparse-mug-support-correction-hold';
+      return {
+        x: this.currentPosition.x,
+        y: this.currentPosition.y,
+        z: 0,
+      };
+    }
+
     if (this._shouldUseCurvedMotionPrediction(position, method)) {
       const predicted = this._predictCurvedMotionPosition(timestamp);
       if (predicted) {
@@ -4127,6 +4189,35 @@ export class ImageAnchorService {
     this.metrics.positionFilterAdjustment = adjustment;
 
     return this._limitPositionStep(adjusted, method);
+  }
+
+  _shouldHoldSparseMugSupportBacktrack(position, method) {
+    if (method !== RECONSTRUCTION_POSE_MODEL ||
+        this.trackingMode !== RECONSTRUCTION_POSE_MODEL ||
+        !this._hasMugLikeTarget() ||
+        !this.currentPosition ||
+        !this.objectSupportCorrectionHold) {
+      return false;
+    }
+
+    const elapsedFrames = this.frameIndex - this.objectSupportCorrectionHold.frameIndex;
+    if (elapsedFrames <= 0 || elapsedFrames > SPARSE_MUG_SUPPORT_CORRECTION_HOLD_FRAMES) {
+      return false;
+    }
+
+    const step = {
+      x: position.x - this.currentPosition.x,
+      y: position.y - this.currentPosition.y,
+    };
+    const stepMagnitude = Math.hypot(step.x, step.y);
+    if (stepMagnitude < SPARSE_MUG_SUPPORT_CORRECTION_MIN_BACKTRACK_STEP) {
+      return false;
+    }
+
+    const correction = this.objectSupportCorrectionHold;
+    const alignment = (step.x * correction.direction.x + step.y * correction.direction.y) /
+      (stepMagnitude * correction.magnitude);
+    return alignment < -0.35;
   }
 
   _shouldUseHighConfidenceTrackerStepPosition(position, method) {

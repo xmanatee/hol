@@ -28,12 +28,14 @@ const SYNTHETIC_REPLAY_RECONSTRUCTION_MODES = RECONSTRUCTION_MODES
   .filter(mode => !mode.requiresDepthFrame);
 const LIMIT_EPSILON = 1e-6;
 const withinLimit = (value, limit) => value - limit <= LIMIT_EPSILON;
-const findQuickBenchmarkScenario = ({ object, motion, occlusion }) => {
+const findQuickBenchmarkScenario = ({ object, motion, occlusion, background = null }) => {
   const scenario = createVisionBenchmarkMatrix({ size: 'quick' })
     .find(item => item.axes.object === object &&
       item.axes.motion === motion &&
-      item.axes.occlusion === occlusion);
-  assert.ok(scenario, `missing quick benchmark scenario ${object}/${motion}/${occlusion}`);
+      item.axes.occlusion === occlusion &&
+      (background === null || item.axes.background === background));
+  const backgroundLabel = background === null ? '' : `/${background}`;
+  assert.ok(scenario, `missing quick benchmark scenario ${object}/${motion}/${occlusion}${backgroundLabel}`);
   return scenario;
 };
 
@@ -1204,4 +1206,34 @@ test('replay bounds sparse mug support recovery during repeated occlusion', asyn
   assert.ok(supportCorrections.length <= 5);
   assert.ok(supportCorrections.every(frame => frame.metrics.objectSupportPositionStep <= 4 + LIMIT_EPSILON));
   assert.ok(maxAnchorError <= 26, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
+});
+
+test('replay bounds sparse handled mug drift during early busy occlusion', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = findQuickBenchmarkScenario({
+    object: 'handled-mug',
+    background: 'busy',
+    motion: 'slow',
+    occlusion: 'early',
+  });
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'sparse-reconstruction',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+  });
+  const summary = summarizeReplay(replay);
+  const supportCorrections = replay.frames.filter(frame => (
+    frame.metrics.objectSupportPositionCorrection
+  ));
+  const maxSupportStep = Math.max(...supportCorrections.map(frame => (
+    frame.metrics.objectSupportPositionStep || 0
+  )), 0);
+
+  assert.ok(supportCorrections.length >= 5);
+  assert.ok(maxSupportStep <= 8 + LIMIT_EPSILON);
+  assert.ok(summary.maxFrameJump <= 13, `max frame jump should stay bounded, got ${summary.maxFrameJump.toFixed(2)}px`);
+  assert.ok(summary.maxAnchorError <= 51, `max anchor error should stay bounded, got ${summary.maxAnchorError.toFixed(2)}px`);
+  assert.ok(summary.meanAnchorError <= 35, `mean anchor error should stay bounded, got ${summary.meanAnchorError.toFixed(2)}px`);
 });

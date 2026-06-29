@@ -3454,6 +3454,67 @@ test('periodic curved support refresh updates mask without recentering anchor', 
   assert.equal(service.metrics.objectSupportMaskSource, 'interactive-segmenter');
 });
 
+test('periodic sparse mug support refresh can recenter stale sparse drift', () => {
+  const service = new ImageAnchorService({ now: () => 1040 });
+  const data = new Uint8Array(140 * 100);
+  for (let y = 24; y < 84; y++) {
+    for (let x = 56; x < 132; x++) {
+      data[y * 140 + x] = 255;
+    }
+  }
+  const refreshedMask = createObjectSupportMask({
+    width: 140,
+    height: 100,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.92,
+    referencePoint: { x: 94, y: 54 },
+    createdAtFrame: 8,
+  });
+
+  service.setTrackingMode('sparse-reconstruction');
+  service.currentPosition = { x: 58, y: 78, z: 0 };
+  service.currentPlanarTransform = { scale: 1, rotation: 0, confidence: 1, inlierCount: 20, method: 'created' };
+  service.templateRegion = { x: 30, y: 20, width: 60, height: 50 };
+  service.trackingRegion = { x: 24, y: 14, width: 72, height: 62 };
+  service.anchorTargetClass = 'mug';
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.72;
+  service.metrics.activeLandmarkCount = 18;
+  service.objectSupportAnchorUv = { u: 0.5, v: 0.5 };
+
+  const applied = service.updateObjectSupportMask(refreshedMask, { reason: 'periodic-segmentation-refresh' });
+
+  assert.equal(applied, true);
+  assert.equal(service.metrics.objectSupportPositionCorrection, 'periodic-segmentation-refresh');
+  assert.ok(service.metrics.objectSupportPositionStep <= 8 + 1e-6);
+  assert.ok(service.currentPosition.x > 62);
+  assert.ok(service.currentPosition.y < 75);
+});
+
+test('sparse mug support correction hold rejects reconstruction backtracking', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('sparse-reconstruction');
+  service.anchorTargetClass = 'mug';
+  service.frameIndex = 14;
+  service.currentPosition = { x: 120, y: 80, z: 0 };
+  service.objectSupportCorrectionHold = {
+    frameIndex: 12,
+    direction: { x: 8, y: -2 },
+    magnitude: Math.hypot(8, -2),
+    reason: 'periodic-segmentation-refresh',
+  };
+
+  const held = service._filterPositionCandidate(
+    { x: 112, y: 82, z: 0, confidence: 0.8, averageResidual: 2, inlierCount: 14 },
+    1066,
+    'sparse-reconstruction'
+  );
+
+  assert.deepEqual(held, { x: 120, y: 80, z: 0 });
+  assert.equal(service.metrics.positionFilterAdjustment, 'sparse-mug-support-correction-hold');
+});
+
 test('curved support recovery does not override a motion-held anchor', () => {
   const service = new ImageAnchorService({ now: () => 1040 });
   const data = new Uint8Array(120 * 90);
