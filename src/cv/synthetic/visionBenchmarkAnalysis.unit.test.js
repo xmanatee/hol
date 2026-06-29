@@ -164,6 +164,10 @@ test('benchmark analysis groups weak points by mode and condition axes', () => {
   assert.equal(analysis.weakPoints.byObject[0].name, 'handled-mug');
   assert.equal(analysis.weakPoints.byBackground[0].name, 'kitchen');
   assert.equal(analysis.weakPoints.byOcclusion[0].name, 'repeated');
+  assert.equal(analysis.weakPoints.byModeObject[0].name, 'direct-photometric / handled-mug');
+  assert.equal(analysis.weakPoints.byObjectOcclusion[0].name, 'handled-mug / repeated');
+  assert.equal(analysis.weakPoints.byObjectBackground[0].name, 'handled-mug / kitchen');
+  assert.equal(analysis.weakPoints.byModeOcclusion[0].name, 'direct-photometric / repeated');
   assert.equal(analysis.worstReports[0].name, 'unstable mug');
 });
 

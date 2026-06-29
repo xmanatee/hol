@@ -230,6 +230,8 @@ const finalizeGroups = groups => Object.entries(groups)
     left.name.localeCompare(right.name)
   ));
 
+const interactionKey = (...values) => values.join(' / ');
+
 export const createVisionBenchmarkAnalysis = reports => {
   const scoredReports = reports.map(report => ({
     ...report,
@@ -251,6 +253,10 @@ export const createVisionBenchmarkAnalysis = reports => {
     byLighting: {},
     byMotion: {},
     byOcclusion: {},
+    byModeObject: {},
+    byObjectOcclusion: {},
+    byObjectBackground: {},
+    byModeOcclusion: {},
   };
 
   scoredReports.forEach(report => {
@@ -263,6 +269,10 @@ export const createVisionBenchmarkAnalysis = reports => {
     addToGroup(groups.byLighting, report.axes.lighting, report);
     addToGroup(groups.byMotion, report.axes.motion, report);
     addToGroup(groups.byOcclusion, report.axes.occlusion, report);
+    addToGroup(groups.byModeObject, interactionKey(report.mode, report.axes.object), report);
+    addToGroup(groups.byObjectOcclusion, interactionKey(report.axes.object, report.axes.occlusion), report);
+    addToGroup(groups.byObjectBackground, interactionKey(report.axes.object, report.axes.background), report);
+    addToGroup(groups.byModeOcclusion, interactionKey(report.mode, report.axes.occlusion), report);
   });
 
   return {

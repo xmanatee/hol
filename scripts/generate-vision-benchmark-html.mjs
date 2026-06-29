@@ -552,6 +552,47 @@ const html = `<!doctype html>
       </section>
     </div>
 
+    <h2>Interaction Weak Points</h2>
+    <p class="note">Pairwise rankings catch localized failures that marginal object or mode averages can hide.</p>
+    <div class="grid-two">
+      <section>
+        <h3>Mode / Object</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Pair</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Failed weakness</th><th>Worst case</th></tr></thead>
+            <tbody>${compactGroupRows(benchmark.weakPoints.byModeObject.slice(0, 12))}</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3>Object / Occlusion</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Pair</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Failed weakness</th><th>Worst case</th></tr></thead>
+            <tbody>${compactGroupRows(benchmark.weakPoints.byObjectOcclusion.slice(0, 12))}</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3>Object / Background</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Pair</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Failed weakness</th><th>Worst case</th></tr></thead>
+            <tbody>${compactGroupRows(benchmark.weakPoints.byObjectBackground.slice(0, 12))}</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3>Mode / Occlusion</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Pair</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Failed weakness</th><th>Worst case</th></tr></thead>
+            <tbody>${compactGroupRows(benchmark.weakPoints.byModeOcclusion.slice(0, 12))}</tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
     <h2>Background And Lighting</h2>
     <div class="grid-two">
       <section>
