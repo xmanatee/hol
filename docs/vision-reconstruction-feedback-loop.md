@@ -39,7 +39,7 @@ Read the report in this order:
 3. **Mode comparison**: shows whether the selected reconstruction approach is helping or hiding a deeper tracker issue.
 4. **Object and geometry weak points**: picks the fixtures for targeted debugging.
 5. **Condition weak points**: identifies whether motion, occlusion, background, or lighting is the real stressor.
-6. **Performance budget**: reads per-frame processing time first; replay wall time is secondary because frame counts vary by condition. In the stage table, use `Amortized` to find sustained frame cost and `Mean When Run`/`Max` to find rare recovery spikes.
+6. **Performance budget**: reads per-frame processing time first; replay wall time is secondary because frame counts vary by condition. In the stage table, use `Amortized` to find sustained frame cost and `Mean When Run`/`Max` to find rare recovery spikes. Budget stage overages exclude wrapper timings such as `totalMs` and `keypointUpdateMs`; those remain diagnostic envelopes, not individual OpenCV stage costs.
 7. **Worst individual replays**: start debugging from these, not from average cases.
 
 The most important field is usually `primaryWeakness`. If every group says `tracking.meanAnchorError`, the next fix belongs in tracking or object ownership, not in dense reconstruction.

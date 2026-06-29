@@ -58,10 +58,15 @@ const budgetLine = performanceSummary => {
 
   const meanStatus = budget.meanFrameProcessingOverBudget ? 'over' : 'within';
   const maxStatus = budget.maxFrameProcessingOverBudget ? 'over' : 'within';
-  const overageStages = budget.stageOverages.length
-    ? ` Stage overages: ${budget.stageOverages.map(item => item.stage).join(', ')}.`
-    : ' No stage overages recorded.';
-  return `- Mobile budget: mean frame processing is ${meanStatus} the ${formatNumber(budget.trackingFrameBudgetMs)}ms tracking budget; max frame processing is ${maxStatus} the ${formatNumber(budget.frameBudgetMs)}ms frame budget.${overageStages}`;
+  const sustainedStageOverages = budget.stageOverages || [];
+  const spikeStageOverages = budget.stageSpikeOverages || [];
+  const sustainedStages = sustainedStageOverages.length
+    ? ` Sustained stage overages: ${sustainedStageOverages.map(item => item.stage).join(', ')}.`
+    : ' No sustained stage overages recorded.';
+  const spikeStages = spikeStageOverages.length
+    ? ` Rare spike stages: ${spikeStageOverages.map(item => item.stage).join(', ')}.`
+    : ' No rare spike stages recorded.';
+  return `- Mobile budget: mean frame processing is ${meanStatus} the ${formatNumber(budget.trackingFrameBudgetMs)}ms tracking budget; max frame processing is ${maxStatus} the ${formatNumber(budget.frameBudgetMs)}ms frame budget.${sustainedStages}${spikeStages}`;
 };
 
 const weakestGroupLine = (labelName, item) => (

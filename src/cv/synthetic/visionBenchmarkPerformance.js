@@ -4,6 +4,11 @@ export const VISION_PERFORMANCE_BUDGETS = {
   opencvStageBudgetMs: 6,
 };
 
+const ENVELOPE_STAGE_TIMINGS = new Set([
+  'totalMs',
+  'keypointUpdateMs',
+]);
+
 const finiteMetric = value => Number.isFinite(value) ? value : null;
 
 const sortMetric = value => Number.isFinite(value) ? value : -Infinity;
@@ -103,6 +108,15 @@ const finalizeStageTimings = (stageTimings, totalFrameCount) => Object.fromEntri
     left[0].localeCompare(right[0])
   )));
 
+const budgetStageReport = ([stage, timing]) => ({
+  stage,
+  meanMs: timing.meanMs,
+  maxMs: timing.maxMs,
+  frameCount: timing.frameCount,
+  coverageRatio: timing.coverageRatio,
+  amortizedMeanMs: timing.amortizedMeanMs,
+});
+
 const budgetFor = finalized => ({
   frameBudgetMs: VISION_PERFORMANCE_BUDGETS.frameBudgetMs,
   trackingFrameBudgetMs: VISION_PERFORMANCE_BUDGETS.trackingFrameBudgetMs,
@@ -114,21 +128,29 @@ const budgetFor = finalized => ({
   maxFrameProcessingOverBudget: Number.isFinite(finalized.maxFrameProcessingTimeMs) &&
     finalized.maxFrameProcessingTimeMs > VISION_PERFORMANCE_BUDGETS.frameBudgetMs,
   stageOverages: Object.entries(finalized.stageTimings)
+    .filter(([stage]) => !ENVELOPE_STAGE_TIMINGS.has(stage))
+    .filter(([, timing]) => (
+      Number.isFinite(timing.amortizedMeanMs) &&
+        timing.amortizedMeanMs > VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs
+    ))
+    .map(budgetStageReport),
+  stageSpikeOverages: Object.entries(finalized.stageTimings)
+    .filter(([stage]) => !ENVELOPE_STAGE_TIMINGS.has(stage))
+    .filter(([, timing]) => !(
+      Number.isFinite(timing.amortizedMeanMs) &&
+        timing.amortizedMeanMs > VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs
+    ))
     .filter(([, timing]) => (
       Number.isFinite(timing.meanMs) &&
         timing.meanMs > VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs
     ) || (
       Number.isFinite(timing.maxMs) &&
-        timing.maxMs > VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs
+        timing.maxMs > VISION_PERFORMANCE_BUDGETS.frameBudgetMs
     ))
-    .map(([stage, timing]) => ({
-      stage,
-      meanMs: timing.meanMs,
-      maxMs: timing.maxMs,
-      frameCount: timing.frameCount,
-      coverageRatio: timing.coverageRatio,
-      amortizedMeanMs: timing.amortizedMeanMs,
-    })),
+    .map(budgetStageReport),
+  excludedStageTimings: Object.entries(finalized.stageTimings)
+    .filter(([stage]) => ENVELOPE_STAGE_TIMINGS.has(stage))
+    .map(budgetStageReport),
 });
 
 const finalizeAccumulator = accumulator => {

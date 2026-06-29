@@ -141,6 +141,59 @@ test('benchmark performance summary separates stage coverage from amortized fram
   assert.equal(summary.aggregate.stageTimings.relocalizationMs.meanMs, 30);
 });
 
+test('benchmark performance budget separates sustained stages from rare spikes and wrapper timings', () => {
+  const summary = summarizeVisionBenchmarkPerformance([
+    report({
+      name: 'mixed stage budget evidence',
+      mode: 'sparse-reconstruction',
+      object: 'mug',
+      wallTimeMs: 300,
+      frameCount: 30,
+      meanProcessingTimeMs: 5,
+      maxProcessingTimeMs: 55,
+      stageTimings: {
+        totalMs: {
+          meanMs: 45,
+          maxMs: 55,
+          frameCount: 30,
+        },
+        keypointUpdateMs: {
+          meanMs: 44,
+          maxMs: 54,
+          frameCount: 30,
+        },
+        reconstructionUpdateMs: {
+          meanMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs + 1,
+          maxMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs + 2,
+          frameCount: 30,
+        },
+        relocalizationMs: {
+          meanMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs + 34,
+          maxMs: 55,
+          frameCount: 2,
+        },
+        templateUpdateMs: {
+          meanMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs - 1,
+          maxMs: VISION_PERFORMANCE_BUDGETS.frameBudgetMs + 1,
+          frameCount: 1,
+        },
+      },
+    }),
+  ]);
+
+  assert.deepEqual(summary.aggregate.budget.stageOverages.map(item => item.stage), [
+    'reconstructionUpdateMs',
+  ]);
+  assert.deepEqual(summary.aggregate.budget.stageSpikeOverages.map(item => item.stage), [
+    'relocalizationMs',
+    'templateUpdateMs',
+  ]);
+  assert.deepEqual(summary.aggregate.budget.excludedStageTimings.map(item => item.stage), [
+    'totalMs',
+    'keypointUpdateMs',
+  ]);
+});
+
 test('benchmark performance summary reports missing runtime instead of scoring it as zero cost', () => {
   const summary = summarizeVisionBenchmarkPerformance([
     report({

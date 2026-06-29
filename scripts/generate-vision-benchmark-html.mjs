@@ -145,6 +145,8 @@ const weakestBackground = backgroundRanking[0];
 const strongestBackground = backgroundRanking[backgroundRanking.length - 1];
 const backgroundRiskSpread = weakestBackground.meanRiskScore - strongestBackground.meanRiskScore;
 
+const budgetStageNames = items => items?.length ? items.map(item => item.stage).join(', ') : 'none';
+
 const conclusions = [
   `${bestMode.name} is the strongest mode overall in this run: ${formatNumber(bestMode.meanRiskScore)} mean risk, ${formatNumber(bestMode.severe)} severe cases, and ${formatNumber(bestMode.fail)} strict failures out of ${formatNumber(bestMode.count)} replays.`,
   `${topFailedStage.stage} is the top failed stage with ${formatNumber(topFailedStage.count)} failed-stage reports. Use the primaryWeakness field before assuming the owner is reconstruction or rendering.`,
@@ -156,7 +158,7 @@ const conclusions = [
     ? `Runtime is measured in the same loop. The slowest mode by frame processing is ${slowMode.name}: ${msCell(slowMode.meanFrameProcessingTimeMs)} mean processing and ${msCell(slowMode.maxFrameProcessingTimeMs)} max processing.`
     : 'Runtime is not present in this JSON; rerun the feedback loop with the current benchmark runner to include lag analysis.',
   budget
-    ? `Mobile budget status: mean frame processing is ${budget.meanFrameProcessingOverBudget ? 'over' : 'within'} the ${msCell(budget.trackingFrameBudgetMs)} tracking budget; max frame processing is ${budget.maxFrameProcessingOverBudget ? 'over' : 'within'} the ${msCell(budget.frameBudgetMs)} frame budget.`
+    ? `Mobile budget status: mean frame processing is ${budget.meanFrameProcessingOverBudget ? 'over' : 'within'} the ${msCell(budget.trackingFrameBudgetMs)} tracking budget; max frame processing is ${budget.maxFrameProcessingOverBudget ? 'over' : 'within'} the ${msCell(budget.frameBudgetMs)} frame budget. Sustained stage overages: ${budgetStageNames(budget.stageOverages)}. Rare spike stages: ${budgetStageNames(budget.stageSpikeOverages)}.`
     : 'Mobile budget status is not present in this JSON.',
 ];
 
