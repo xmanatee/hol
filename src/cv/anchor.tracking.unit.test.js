@@ -30,6 +30,49 @@ const createTrackedPoint = (id, original, transform) => ({
   isStable: false,
 });
 
+const createSyntheticLucasKanadeCv = flowForIndex => {
+  class SyntheticMat {
+    constructor(rows, cols, type) {
+      this.rows = rows;
+      this.cols = cols;
+      this.type = type;
+      this.data32F = new Float32Array(rows * cols * 2);
+      this.data = new Uint8Array(rows * cols);
+    }
+
+    delete() {}
+  }
+
+  return {
+    Mat: SyntheticMat,
+    CV_32FC2: 'CV_32FC2',
+    CV_8UC1: 'CV_8UC1',
+    CV_32FC1: 'CV_32FC1',
+    calcOpticalFlowPyrLK(previousGray, currentGray, prevPoints, nextPoints, status, flowError) {
+      for (let index = 0; index < prevPoints.rows; index++) {
+        const x = prevPoints.data32F[index * 2];
+        const y = prevPoints.data32F[index * 2 + 1];
+        const flow = flowForIndex(index, { x, y });
+        nextPoints.data32F[index * 2] = x + flow.dx;
+        nextPoints.data32F[index * 2 + 1] = y + flow.dy;
+        status.data[index] = flow.status ?? 1;
+        flowError.data32F[index] = flow.error ?? 1;
+      }
+    },
+  };
+};
+
+const syntheticGrayFrame = (width = 320, height = 240) => ({
+  cols: width,
+  rows: height,
+  delete() {},
+  clone: () => ({
+    cols: width,
+    rows: height,
+    delete() {},
+  }),
+});
+
 test('reference transform preserves anchor tap offset through rotation and scale', () => {
   const tracker = new KeypointTracker();
   const transform = {
@@ -295,6 +338,49 @@ test('outlier filtering keeps coherent rotational motion instead of assuming pur
   tracker._filterOutliers();
 
   assert.equal(tracker.trackedPoints.filter(point => point.status === 'active').length, 24);
+});
+
+test('initial LK tracking rejects low-error points that violate reference motion consensus', () => {
+  const tracker = new KeypointTracker();
+  tracker.initialized = true;
+  tracker.lkParams = {
+    winSize: {},
+    maxLevel: 3,
+    criteria: {},
+  };
+  tracker.previousGray = syntheticGrayFrame();
+  tracker.trackingAttempts = 0;
+  tracker.trackedPoints = Array.from({ length: 12 }, (_, index) => {
+    const point = {
+      x: 80 + (index % 4) * 24,
+      y: 70 + Math.floor(index / 4) * 22,
+    };
+    return createTrackedPoint(index, point, {
+      tx: 0,
+      ty: 0,
+      scale: 1,
+      rotation: 0,
+    });
+  });
+  tracker.keypointCentroid = { x: 116, y: 92 };
+  tracker.anchorOriginalPosition = { x: 116, y: 92 };
+  tracker.tapOffset = { x: 0, y: 0 };
+  const cv = createSyntheticLucasKanadeCv(index => (
+    index < 9
+      ? { dx: 5, dy: 3, error: 1 }
+      : { dx: 84 + index * 3, dy: -58, error: 1 }
+  ));
+
+  const result = tracker.trackToFrame(cv, syntheticGrayFrame());
+
+  assert.equal(result.success, true);
+  assert.equal(result.successRate, 0.75);
+  assert.equal(tracker.trackedPoints.filter(point => point.status === 'active').length, 9);
+  assert.deepEqual(
+    tracker.trackedPoints.filter(point => point.status === 'lost').map(point => point.id),
+    [9, 10, 11]
+  );
+  assert.ok(tracker.trackedPoints.slice(0, 9).every(point => point.current.x === point.original.x + 5));
 });
 
 test('keypoint refresh preserves the original reference frame for homography pose', () => {

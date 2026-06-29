@@ -9,6 +9,13 @@ import { isPointInsideObjectSupport } from './objectSupportMask.js';
 import { seedHomographyRansac } from './opencvRng.js';
 
 const clamp01 = value => Math.max(0, Math.min(1, value));
+const medianValue = values => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
+};
 
 export class KeypointTracker {
   constructor() {
@@ -197,6 +204,29 @@ export class KeypointTracker {
       let successCount = 0;
       let totalError = 0;
       const sampleResults = [];
+      const flowCandidates = activePoints.map((point, i) => {
+        const trackingStatus = status.data[i];
+        const trackingError = flowError.data32F[i];
+        const nextX = nextPoints.data32F[i * 2];
+        const nextY = nextPoints.data32F[i * 2 + 1];
+        const effectiveThreshold = point.isStable ? keepThreshold : loseThreshold;
+        const hasValidCoordinates = Number.isFinite(nextX) && Number.isFinite(nextY);
+        return {
+          point,
+          trackingStatus,
+          trackingError,
+          nextX,
+          nextY,
+          effectiveThreshold,
+          acceptedByLK: trackingStatus === 1 &&
+            Number.isFinite(trackingError) &&
+            trackingError < effectiveThreshold &&
+            hasValidCoordinates,
+        };
+      });
+      const motionConsensusRejections = isInitialTracking
+        ? this._motionConsensusRejectedPointIds(flowCandidates)
+        : new Set();
       
       logger.debugEvery('KeypointTracker', 'lucas-kanade-processing', 1000, 'Processing Lucas-Kanade results:', {
         attempt: this.trackingAttempts,
@@ -209,27 +239,25 @@ export class KeypointTracker {
       });
       
       for (let i = 0; i < activePoints.length; i++) {
-        const point = activePoints[i];
-        const trackingStatus = status.data[i];
-        const trackingError = flowError.data32F[i];
+        const candidate = flowCandidates[i];
+        const point = candidate.point;
+        const trackingStatus = candidate.trackingStatus;
+        const trackingError = candidate.trackingError;
+        const rejectedByMotionConsensus = motionConsensusRejections.has(point.id);
         const result = sampleResults.length < 5 ? {
           pointId: point.id,
           status: trackingStatus,
           error: trackingError,
           oldPos: `(${point.current.x.toFixed(1)}, ${point.current.y.toFixed(1)})`,
-          newPos: trackingStatus === 1 && nextPoints.data32F[i * 2] !== undefined && nextPoints.data32F[i * 2 + 1] !== undefined 
-            ? `(${nextPoints.data32F[i * 2].toFixed(1)}, ${nextPoints.data32F[i * 2 + 1].toFixed(1)})` 
+          newPos: trackingStatus === 1 && Number.isFinite(candidate.nextX) && Number.isFinite(candidate.nextY)
+            ? `(${candidate.nextX.toFixed(1)}, ${candidate.nextY.toFixed(1)})`
             : 'N/A'
         } : null;
-        
-        // Use hysteresis: different thresholds based on stability and current status
-        const effectiveThreshold = point.isStable ? keepThreshold : loseThreshold;
-        
-        if (trackingStatus === 1 && trackingError < effectiveThreshold && 
-            nextPoints.data32F[i * 2] !== undefined && nextPoints.data32F[i * 2 + 1] !== undefined) {
+
+        if (candidate.acceptedByLK && !rejectedByMotionConsensus) {
           // Successful tracking with valid coordinates
-          point.current.x = nextPoints.data32F[i * 2];
-          point.current.y = nextPoints.data32F[i * 2 + 1];
+          point.current.x = candidate.nextX;
+          point.current.y = candidate.nextY;
           point.lastFlowResidual = trackingError;
           point.errorHistory.push(trackingError);
           point.age++;
@@ -246,7 +274,7 @@ export class KeypointTracker {
           // Calculate stability score (weighted by streak and total success)
           const streakFactor = Math.min(1.0, point.successfulTrackingStreak / 30); // 30 frames = max streak bonus
           const totalFactor = Math.min(1.0, point.totalSuccessfulFrames / 100); // 100 frames = max total bonus
-          const errorFactor = Math.max(0, 1.0 - (trackingError / effectiveThreshold)); // Lower error = higher score
+          const errorFactor = Math.max(0, 1.0 - (trackingError / candidate.effectiveThreshold)); // Lower error = higher score
           point.stabilityScore = (streakFactor * 0.4 + totalFactor * 0.4 + errorFactor * 0.2);
           
           // Mark as stable if high stability score and long tracking history
@@ -270,8 +298,10 @@ export class KeypointTracker {
           
           if (trackingStatus === 0) {
             if (result) result.outcome = 'TRACKING_FAILED';
-          } else if (nextPoints.data32F[i * 2] === undefined || nextPoints.data32F[i * 2 + 1] === undefined) {
+          } else if (!Number.isFinite(candidate.nextX) || !Number.isFinite(candidate.nextY)) {
             if (result) result.outcome = 'UNDEFINED_COORDS';
+          } else if (rejectedByMotionConsensus) {
+            if (result) result.outcome = 'MOTION_INCONSISTENT';
           } else {
             if (result) result.outcome = 'ERROR_TOO_HIGH';
           }
@@ -1103,6 +1133,127 @@ export class KeypointTracker {
   _transformationResidual(point, transformation) {
     const projected = this._applyReferenceTransformation(point.original, transformation);
     return Math.hypot(projected.x - point.current.x, projected.y - point.current.y);
+  }
+
+  _motionConsensusRejectedPointIds(flowCandidates) {
+    const acceptedCandidates = flowCandidates.filter(candidate => candidate.acceptedByLK);
+    if (acceptedCandidates.length < 12) {
+      return new Set();
+    }
+
+    const candidatePoints = acceptedCandidates.map(candidate => ({
+      original: candidate.point.original,
+      current: { x: candidate.nextX, y: candidate.nextY },
+    }));
+    const minInliers = Math.max(8, Math.ceil(acceptedCandidates.length * 0.7));
+    const transformation = this._selectFlowConsensusTransformation(candidatePoints, minInliers);
+    if (!transformation) {
+      return new Set();
+    }
+
+    const residuals = acceptedCandidates.map(candidate => {
+      const projected = this._applyReferenceTransformation(candidate.point.original, transformation);
+      return {
+        id: candidate.point.id,
+        residual: Math.hypot(projected.x - candidate.nextX, projected.y - candidate.nextY),
+      };
+    });
+    const residualValues = residuals.map(item => item.residual);
+    const medianResidual = medianValue(residualValues);
+    const residualMad = medianValue(residualValues.map(residual => Math.abs(residual - medianResidual)));
+    const threshold = Math.max(
+      16,
+      medianResidual + Math.max(8, residualMad * 4),
+      (transformation.averageResidual || 0) * 3
+    );
+    const rejected = new Set();
+
+    residuals.forEach(item => {
+      if (item.residual > threshold && item.residual > 48) {
+        rejected.add(item.id);
+      }
+    });
+
+    if (rejected.size > acceptedCandidates.length * 0.35) {
+      return new Set();
+    }
+
+    return rejected;
+  }
+
+  _selectFlowConsensusTransformation(candidatePoints, minInliers) {
+    const directTransform = this._estimateReferenceTransformation(candidatePoints);
+    if (directTransform &&
+        directTransform.confidence >= 0.55 &&
+        directTransform.inlierCount >= minInliers &&
+        directTransform.averageResidual <= 10) {
+      return directTransform;
+    }
+
+    return this._estimatePairwiseFlowConsensusTransformation(candidatePoints, minInliers);
+  }
+
+  _estimatePairwiseFlowConsensusTransformation(candidatePoints, minInliers) {
+    let best = null;
+    for (let left = 0; left < candidatePoints.length - 1; left++) {
+      for (let right = left + 1; right < candidatePoints.length; right++) {
+        const seedTransform = this._fitSimilarityTransformFromPair(candidatePoints[left], candidatePoints[right]);
+        if (!seedTransform) {
+          continue;
+        }
+
+        const inliers = candidatePoints.filter(point => (
+          this._transformationResidual(point, seedTransform) <= 8
+        ));
+        if (inliers.length < minInliers) {
+          continue;
+        }
+
+        const refinedTransform = this._fitSimilarityTransform(inliers);
+        const refinedResiduals = inliers.map(point => this._transformationResidual(point, refinedTransform));
+        const averageResidual = refinedResiduals.reduce((sum, residual) => sum + residual, 0) / refinedResiduals.length;
+        const confidence = (inliers.length / candidatePoints.length) * Math.max(0, 1 - averageResidual / 12);
+        const candidate = {
+          ...refinedTransform,
+          confidence,
+          inlierCount: inliers.length,
+          averageResidual,
+        };
+        const score = candidate.inlierCount * 4 + candidate.confidence * 3 - candidate.averageResidual;
+        if (!best || score > best.score) {
+          best = { ...candidate, score };
+        }
+      }
+    }
+
+    if (!best || best.confidence < 0.55 || best.averageResidual > 8) {
+      return null;
+    }
+
+    const transform = { ...best };
+    delete transform.score;
+    return transform;
+  }
+
+  _fitSimilarityTransformFromPair(first, second) {
+    const sourceDx = second.original.x - first.original.x;
+    const sourceDy = second.original.y - first.original.y;
+    const targetDx = second.current.x - first.current.x;
+    const targetDy = second.current.y - first.current.y;
+    const sourceDistance = Math.hypot(sourceDx, sourceDy);
+    const targetDistance = Math.hypot(targetDx, targetDy);
+    if (sourceDistance < 12 || targetDistance < 1) {
+      return null;
+    }
+
+    const scale = targetDistance / sourceDistance;
+    const rotation = Math.atan2(targetDy, targetDx) - Math.atan2(sourceDy, sourceDx);
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    const tx = first.current.x - scale * (cos * first.original.x - sin * first.original.y);
+    const ty = first.current.y - scale * (sin * first.original.x + cos * first.original.y);
+
+    return { tx, ty, scale, rotation };
   }
 
   getLandmarkQuality(point) {
