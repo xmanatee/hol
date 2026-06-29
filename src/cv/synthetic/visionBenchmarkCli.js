@@ -7,7 +7,22 @@ const KNOWN_FLAGS = new Set([
   '--summary-only',
   '--quiet',
   '--fail-on-severe',
+  '--mode',
+  '--object',
+  '--motion',
+  '--occlusion',
+  '--background',
 ]);
+
+const FILTER_FLAGS = new Map([
+  ['--mode', 'mode'],
+  ['--object', 'object'],
+  ['--motion', 'motion'],
+  ['--occlusion', 'occlusion'],
+  ['--background', 'background'],
+]);
+
+const missingValueError = flag => new Error(`Missing value after ${flag}`);
 
 export const parseVisionBenchmarkArgs = args => {
   let quick = false;
@@ -19,10 +34,13 @@ export const parseVisionBenchmarkArgs = args => {
     quiet: false,
     failOnSevere: false,
     outputPath: null,
+    filters: {},
   };
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
+    const inlineFilter = [...FILTER_FLAGS.entries()]
+      .find(([flag]) => arg.startsWith(`${flag}=`));
 
     if (arg === '--quick') {
       quick = true;
@@ -46,6 +64,20 @@ export const parseVisionBenchmarkArgs = args => {
       if (!outputPath) {
         throw new Error('Missing path after --output');
       }
+    } else if (FILTER_FLAGS.has(arg)) {
+      const value = args[index + 1];
+      if (!value || value.startsWith('--')) {
+        throw missingValueError(arg);
+      }
+      parsed.filters[FILTER_FLAGS.get(arg)] = value;
+      index++;
+    } else if (inlineFilter) {
+      const [flag, field] = inlineFilter;
+      const value = arg.slice(`${flag}=`.length);
+      if (!value) {
+        throw missingValueError(flag);
+      }
+      parsed.filters[field] = value;
     } else if (!KNOWN_FLAGS.has(arg)) {
       throw new Error(`Unknown benchmark flag: ${arg}`);
     }
@@ -60,10 +92,33 @@ export const parseVisionBenchmarkArgs = args => {
   return parsed;
 };
 
+export const filterVisionBenchmarkRuns = ({ scenarios, modes, filters = {} }) => {
+  const filteredScenarios = scenarios.filter(scenario => (
+    (!filters.object || scenario.axes.object === filters.object) &&
+    (!filters.motion || scenario.axes.motion === filters.motion) &&
+    (!filters.occlusion || scenario.axes.occlusion === filters.occlusion) &&
+    (!filters.background || scenario.axes.background === filters.background)
+  ));
+  const filteredModes = modes.filter(mode => !filters.mode || mode.id === filters.mode);
+
+  if (filteredScenarios.length === 0) {
+    throw new Error('No benchmark scenarios match filters');
+  }
+  if (filteredModes.length === 0) {
+    throw new Error('No reconstruction modes match filters');
+  }
+
+  return {
+    scenarios: filteredScenarios,
+    modes: filteredModes,
+  };
+};
+
 const artifactSummary = (output, outputPath) => ({
   outputPath,
   size: output.size,
   scenarioCount: output.scenarioCount,
+  modeCount: output.modeCount,
   replayCount: output.replayCount,
   strictFailures: output.qualitySummary.aggregate.byStatus.fail,
   meanRiskScore: output.benchmark.aggregate.meanRiskScore,

@@ -9,6 +9,7 @@ import { createVisionBenchmarkMatrix } from '../src/cv/synthetic/visionBenchmark
 import { createVisionBenchmarkAnalysis } from '../src/cv/synthetic/visionBenchmarkAnalysis.js';
 import { summarizeVisionBenchmarkPerformance } from '../src/cv/synthetic/visionBenchmarkPerformance.js';
 import {
+  filterVisionBenchmarkRuns,
   formatVisionBenchmarkOutput,
   parseVisionBenchmarkArgs,
 } from '../src/cv/synthetic/visionBenchmarkCli.js';
@@ -27,11 +28,19 @@ const {
   quiet,
   failOnSevere,
   outputPath,
+  filters,
 } = parseVisionBenchmarkArgs(process.argv.slice(2));
 const cv = await loadOpenCvForNode();
-const scenarios = createVisionBenchmarkMatrix({ size });
+const {
+  scenarios,
+  modes,
+} = filterVisionBenchmarkRuns({
+  scenarios: createVisionBenchmarkMatrix({ size }),
+  modes: RECONSTRUCTION_MODES,
+  filters,
+});
 const reports = [];
-const totalRuns = scenarios.length * RECONSTRUCTION_MODES.length;
+const totalRuns = scenarios.length * modes.length;
 let completedRuns = 0;
 
 const mean = values => values.length
@@ -93,7 +102,7 @@ const runtimeFromReplay = ({ replay, wallTimeMs }) => {
 };
 
 for (const scenario of scenarios) {
-  for (const mode of RECONSTRUCTION_MODES) {
+  for (const mode of modes) {
     const sequence = scenario.create();
     const runStart = performance.now();
     const replay = await replayImageAnchorSequence({
@@ -145,7 +154,7 @@ const performanceSummary = summarizeVisionBenchmarkPerformance(reports);
 const output = {
   size,
   scenarioCount: scenarios.length,
-  modeCount: RECONSTRUCTION_MODES.length,
+  modeCount: modes.length,
   replayCount: reports.length,
   qualitySummary,
   performanceSummary,
