@@ -126,6 +126,7 @@ const GENERIC_SUPPORT_RECOVERY_MAX_STEP = 10;
 const NON_CURVED_PERIODIC_SUPPORT_CORRECTION_MAX_STEP = 6;
 const SPARSE_MUG_MOTION_HOLD_MAX_ACTIVE_LANDMARKS = 27;
 const SPARSE_MUG_SUPPORT_RECOVERY_MAX_ACTIVE_LANDMARKS = 20;
+const SPARSE_MUG_SUPPORT_RECOVERY_MAX_STEP = 6;
 const SPARSE_CYLINDER_MOTION_HOLD_MAX_ACTIVE_LANDMARKS = 44;
 const SPARSE_MUG_PERIODIC_SUPPORT_CORRECTION_MIN_DELTA = 12;
 const SPARSE_MUG_PERIODIC_SUPPORT_CORRECTION_MAX_ACTIVE_LANDMARKS = 36;
@@ -896,7 +897,9 @@ export class ImageAnchorService {
     }
     if (mugLike && this.trackingMode === RECONSTRUCTION_POSE_MODEL) {
       const active = this.metrics.activeLandmarkCount ?? this.metrics.keypointCount ?? 0;
-      return recoveryCorrection && active <= SPARSE_MUG_SUPPORT_RECOVERY_MAX_ACTIVE_LANDMARKS ? 4 : 0;
+      return recoveryCorrection && active <= SPARSE_MUG_SUPPORT_RECOVERY_MAX_ACTIVE_LANDMARKS
+        ? SPARSE_MUG_SUPPORT_RECOVERY_MAX_STEP
+        : 0;
     }
     if (mugLike && this.trackingMode === 'parametric-surface') {
       const maxStep = recoveryCorrection ? clamp(maxExtent * ratio, 8, 12) : 0;
@@ -1418,6 +1421,9 @@ export class ImageAnchorService {
       trackerAnchorPosition,
     });
     const selectedReconstructionReady = this._hasSelectedReconstructionPose(reconstructionPose);
+    const rejectDivergentSelectedCurvedPosition = this._shouldRejectSevereDivergentSelectedCurvedPose(reconstructionPose);
+    const selectedReconstructionPositionReady = selectedReconstructionReady &&
+      !rejectDivergentSelectedCurvedPosition;
     const suppressReconstructionForPlanarTarget = this._hasPlanarDominance() &&
       !selectedReconstructionReady &&
       !planarPoseUsableForTransform &&
@@ -1460,22 +1466,26 @@ export class ImageAnchorService {
       planarPose,
       trackerAnchorPosition,
     });
-    const useArbiterReconstructionPosition = this._shouldUseArbiterReconstructionPosition({
-      poseArbitration,
-      reconstructionPose,
-      trackerAnchorPosition,
-    });
+    const useArbiterReconstructionPosition = !rejectDivergentSelectedCurvedPosition &&
+      this._shouldUseArbiterReconstructionPosition({
+        poseArbitration,
+        reconstructionPose,
+        trackerAnchorPosition,
+      });
     const holdDepthFusionTrackerPosition = this._shouldHoldTrackerPositionForDepthFusion({
       trackerAnchorPosition,
       reconstructionPose,
       useArbiterReconstructionPosition,
     });
-    const reconstructionCandidateAllowed = !rejectedReconstruction ||
-      ['low-confidence'].includes(rejectedReconstruction) ||
-      selectedReconstructionReady ||
-      useStrongCurvedReconstructionPosition ||
-      useModerateCurvedReconstructionRecovery ||
-      useArbiterReconstructionPosition;
+    const reconstructionCandidateAllowed = !rejectDivergentSelectedCurvedPosition &&
+      (
+        !rejectedReconstruction ||
+        ['low-confidence'].includes(rejectedReconstruction) ||
+        selectedReconstructionPositionReady ||
+        useStrongCurvedReconstructionPosition ||
+        useModerateCurvedReconstructionRecovery ||
+        useArbiterReconstructionPosition
+      );
 
     if (planarPoseUsableForTransform && (preferPlanarPose || usePlanarPatchTransform || useArbiterPlanarPosition)) {
       newPosition = this._filterPositionCandidate(planarPose.position, timestamp, planarPose.method);
@@ -3931,6 +3941,32 @@ export class ImageAnchorService {
     return mapConfidence >= 0.48 && (reconstructionPose.inlierCount || 0) >= 12;
   }
 
+  _hasSelectedReconstructionPosition(reconstructionPose) {
+    return this._hasSelectedReconstructionPose(reconstructionPose) &&
+      !this._shouldRejectSevereDivergentSelectedCurvedPose(reconstructionPose);
+  }
+
+  _shouldRejectSevereDivergentSelectedCurvedPose(reconstructionPose) {
+    if (!reconstructionPose?.success ||
+        reconstructionPose.method !== this.trackingMode ||
+        this.trackingMode === RECONSTRUCTION_POSE_MODEL ||
+        !this._hasCurvedReconstructionTarget(reconstructionPose)) {
+      return false;
+    }
+
+    const templateSize = this.templateRegion
+      ? Math.max(this.templateRegion.width, this.templateRegion.height)
+      : 120;
+    const trackerDelta = this.metrics.reconstructionTrackerDelta || 0;
+    const severeTrackerDivergence = trackerDelta >= clamp(templateSize * 0.28, 32, 48);
+    if (!severeTrackerDivergence) {
+      return false;
+    }
+
+    return (reconstructionPose.averageResidual ?? Infinity) > MAX_OBJECT_ATTACHMENT_POSE_RESIDUAL &&
+      (reconstructionPose.inlierCount || 0) < 18;
+  }
+
   _hasIncompleteSelectedSurfacePrior(reconstructionPose) {
     return reconstructionPose?.method === 'parametric-surface' &&
       this.trackingMode === 'parametric-surface' &&
@@ -3938,7 +3974,7 @@ export class ImageAnchorService {
   }
 
   _canSelectedReconstructionOwnAttachment(reconstructionPose) {
-    return this._hasSelectedReconstructionPose(reconstructionPose) &&
+    return this._hasSelectedReconstructionPosition(reconstructionPose) &&
       !this._hasIncompleteSelectedSurfacePrior(reconstructionPose);
   }
 

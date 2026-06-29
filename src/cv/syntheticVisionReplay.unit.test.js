@@ -1085,6 +1085,32 @@ test('replay caps glossy can sparse recovery jumps', async () => {
   assert.ok(maxAnchorError <= 18, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
 });
 
+test('replay rejects divergent high-residual glossy can direct poses during repeated occlusion', async () => {
+  const cv = await loadOpenCvForNode();
+  const scenario = createVisionBenchmarkMatrix({ size: 'quick' })
+    .find(item => item.axes.object === 'glossy-can' &&
+      item.axes.background === 'kitchen' &&
+      item.axes.motion === 'slow' &&
+      item.axes.occlusion === 'repeated');
+  assert.ok(scenario);
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence: scenario.create(),
+    trackingMode: 'direct-photometric',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+  });
+  const summary = summarizeReplay(replay);
+  const divergentSelectedPoses = replay.frames.filter(frame => (
+    frame.positionSource === 'direct-photometric' &&
+    (frame.metrics.reconstructionTrackerDelta || 0) >= 32 &&
+    (frame.metrics.poseAverageResidual || 0) > 6.5
+  ));
+
+  assert.equal(divergentSelectedPoses.length, 0);
+  assert.ok(summary.meanAnchorError <= 14.3, `mean anchor error should stay bounded, got ${summary.meanAnchorError.toFixed(2)}px`);
+});
+
 test('replay damps high-residual sparse cylinder recovery impulses', async () => {
   const cv = await loadOpenCvForNode();
   const scenario = createVisionBenchmarkMatrix()
@@ -1204,7 +1230,7 @@ test('replay bounds sparse mug support recovery during repeated occlusion', asyn
 
   assert.ok(supportCorrections.length >= 1);
   assert.ok(supportCorrections.length <= 5);
-  assert.ok(supportCorrections.every(frame => frame.metrics.objectSupportPositionStep <= 4 + LIMIT_EPSILON));
+  assert.ok(supportCorrections.every(frame => frame.metrics.objectSupportPositionStep <= 6 + LIMIT_EPSILON));
   assert.ok(maxAnchorError <= 26, `max anchor error should stay bounded, got ${maxAnchorError.toFixed(2)}px`);
 });
 
@@ -1234,6 +1260,6 @@ test('replay bounds sparse handled mug drift during early busy occlusion', async
   assert.ok(supportCorrections.length >= 5);
   assert.ok(maxSupportStep <= 8 + LIMIT_EPSILON);
   assert.ok(summary.maxFrameJump <= 13, `max frame jump should stay bounded, got ${summary.maxFrameJump.toFixed(2)}px`);
-  assert.ok(summary.maxAnchorError <= 51, `max anchor error should stay bounded, got ${summary.maxAnchorError.toFixed(2)}px`);
-  assert.ok(summary.meanAnchorError <= 35, `mean anchor error should stay bounded, got ${summary.meanAnchorError.toFixed(2)}px`);
+  assert.ok(summary.maxAnchorError <= 50, `max anchor error should stay bounded, got ${summary.maxAnchorError.toFixed(2)}px`);
+  assert.ok(summary.meanAnchorError <= 32, `mean anchor error should stay bounded, got ${summary.meanAnchorError.toFixed(2)}px`);
 });

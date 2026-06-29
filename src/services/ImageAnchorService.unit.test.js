@@ -3811,7 +3811,7 @@ test('handled mug support correction caps follow reconstruction mode ownership',
 
   service.setTrackingMode('sparse-reconstruction');
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
-  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 4);
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 6);
 
   service.setTrackingMode('depth-fusion');
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
@@ -6683,6 +6683,10 @@ test('selected curved recovery rejects severe divergent high-residual photometri
     averageResidual: 36,
   };
 
+  assert.equal(service._shouldRejectSevereDivergentSelectedCurvedPose(reconstructionPose), true);
+  assert.equal(service._hasSelectedReconstructionPose(reconstructionPose), true);
+  assert.equal(service._hasSelectedReconstructionPosition(reconstructionPose), false);
+  assert.equal(service._canSelectedReconstructionOwnAttachment(reconstructionPose), false);
   assert.equal(service._hasStrongCurvedReconstructionPosition(reconstructionPose), false);
   assert.equal(service._hasModerateCurvedReconstructionRecovery({
     reconstructionPose,
