@@ -103,6 +103,44 @@ test('benchmark performance summary aggregates per-stage frame timing', () => {
   assert.equal(summary.byMode[0].stageTimings.reconstructionUpdateMs.maxMs, 12);
 });
 
+test('benchmark performance summary separates stage coverage from amortized frame cost', () => {
+  const summary = summarizeVisionBenchmarkPerformance([
+    report({
+      name: 'occasional recovery',
+      mode: 'sparse-reconstruction',
+      object: 'mug',
+      wallTimeMs: 120,
+      frameCount: 10,
+      meanProcessingTimeMs: 3,
+      maxProcessingTimeMs: 40,
+      stageTimings: {
+        relocalizationMs: { meanMs: 30, maxMs: 40, frameCount: 2 },
+      },
+    }),
+    report({
+      name: 'steady reconstruction',
+      mode: 'sparse-reconstruction',
+      object: 'mug',
+      wallTimeMs: 200,
+      frameCount: 20,
+      meanProcessingTimeMs: 4,
+      maxProcessingTimeMs: 7,
+      stageTimings: {
+        reconstructionUpdateMs: { meanMs: 5, maxMs: 7, frameCount: 20 },
+      },
+    }),
+  ]);
+
+  assert.equal(summary.aggregate.stageTimings.reconstructionUpdateMs.frameCount, 20);
+  assert.equal(summary.aggregate.stageTimings.reconstructionUpdateMs.coverageRatio, 20 / 30);
+  assert.equal(summary.aggregate.stageTimings.reconstructionUpdateMs.amortizedMeanMs, 100 / 30);
+  assert.equal(summary.aggregate.stageTimings.relocalizationMs.frameCount, 2);
+  assert.equal(summary.aggregate.stageTimings.relocalizationMs.coverageRatio, 2 / 30);
+  assert.equal(summary.aggregate.stageTimings.relocalizationMs.amortizedMeanMs, 60 / 30);
+  assert.equal(summary.aggregate.stageTimings.reconstructionUpdateMs.meanMs, 5);
+  assert.equal(summary.aggregate.stageTimings.relocalizationMs.meanMs, 30);
+});
+
 test('benchmark performance summary reports missing runtime instead of scoring it as zero cost', () => {
   const summary = summarizeVisionBenchmarkPerformance([
     report({
@@ -163,6 +201,9 @@ test('benchmark performance summary flags mobile frame budget overages by report
       stage: 'reconstructionUpdateMs',
       meanMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs + 0.5,
       maxMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs + 4,
+      frameCount: 30,
+      coverageRatio: 1,
+      amortizedMeanMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs + 0.5,
     },
   ]);
   assert.equal(summary.slowestReports[0].runtime.maxProcessingTimeMs, VISION_PERFORMANCE_BUDGETS.frameBudgetMs + 3);

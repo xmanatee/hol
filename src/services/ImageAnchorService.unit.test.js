@@ -2472,27 +2472,92 @@ test('landmark metrics report zero object ownership after all active points leav
   assert.equal(service.metrics.objectOwnedLandmarks, 0);
 });
 
-test('landmark metrics expose tracker quality buckets', () => {
+test('landmark quality buckets only count object-owned active landmarks', () => {
   const service = new ImageAnchorService();
+  const data = new Uint8Array(100 * 80);
+  for (let y = 20; y <= 40; y++) {
+    for (let x = 20; x <= 40; x++) {
+      data[y * 100 + x] = 255;
+    }
+  }
+
+  service.objectSupportMask = createObjectSupportMask({
+    width: 100,
+    height: 80,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 30, y: 30 },
+    createdAtFrame: 0,
+    updatedAtFrame: 0,
+  });
+  service.currentObjectSupportMask = service.objectSupportMask;
   service.metrics = {};
   Object.assign(service.keypointTracker, {
     trackedPoints: [
-      { id: 1, current: { x: 10, y: 12 }, status: 'active' },
-      { id: 2, current: { x: 24, y: 18 }, status: 'active' },
-      { id: 3, current: { x: 36, y: 26 }, status: 'lost' },
+      {
+        id: 1,
+        current: { x: 28, y: 28 },
+        status: 'active',
+        objectOwned: true,
+        age: 45,
+        totalSuccessfulFrames: 60,
+        errorHistory: [1],
+        stabilityScore: 1,
+        response: 1,
+      },
+      {
+        id: 2,
+        current: { x: 70, y: 60 },
+        status: 'active',
+        objectOwned: true,
+        age: 45,
+        totalSuccessfulFrames: 60,
+        errorHistory: [1],
+        stabilityScore: 1,
+        response: 1,
+      },
     ],
-    getLandmarkQualityStats: () => ({
-      average: 0.64,
-      highQuality: 1,
-      poseEligible: 2,
-    }),
   });
 
   service._recordLandmarkMetrics();
 
-  assert.equal(service.metrics.averageLandmarkQuality, 0.64);
+  assert.equal(service.metrics.activeLandmarkCount, 2);
+  assert.equal(service.metrics.objectOwnedLandmarks, 1);
   assert.equal(service.metrics.highQualityLandmarks, 1);
-  assert.equal(service.metrics.poseEligibleLandmarks, 2);
+  assert.equal(service.metrics.poseEligibleLandmarks, 1);
+});
+
+test('landmark metrics expose tracker quality buckets', () => {
+  const service = new ImageAnchorService();
+  service.metrics = {};
+  service.keypointTracker.trackedPoints = [
+    {
+      id: 1,
+      current: { x: 10, y: 12 },
+      status: 'active',
+      objectOwned: true,
+      age: 45,
+      totalSuccessfulFrames: 60,
+      errorHistory: [1],
+      stabilityScore: 1,
+      response: 1,
+    },
+    {
+      id: 2,
+      current: { x: 24, y: 18 },
+      status: 'active',
+      objectOwned: false,
+      errorHistory: [22],
+    },
+    { id: 3, current: { x: 36, y: 26 }, status: 'lost' },
+  ];
+
+  service._recordLandmarkMetrics();
+
+  assert.ok(service.metrics.averageLandmarkQuality > 0.5);
+  assert.equal(service.metrics.highQualityLandmarks, 1);
+  assert.equal(service.metrics.poseEligibleLandmarks, 1);
 });
 
 test('mask rejection immediately removes background landmarks from pose ownership', () => {

@@ -2188,14 +2188,23 @@ export class ImageAnchorService {
     const objectSupportMask = this._getCurrentObjectSupportMask();
     let activeLandmarks = 0;
     let objectOwnedLandmarks = 0;
+    let qualityLandmarks = 0;
+    let qualitySum = 0;
+    let highQualityLandmarks = 0;
+    let poseEligibleLandmarks = 0;
     for (const point of points) {
       if (point.status !== 'active') continue;
       activeLandmarks++;
-      if (!objectSupportMask || isPointInsideObjectSupport(objectSupportMask, point.current)) {
+      const objectOwned = !objectSupportMask || isPointInsideObjectSupport(objectSupportMask, point.current);
+      if (objectOwned) {
         objectOwnedLandmarks++;
+        const quality = this.keypointTracker.getLandmarkQuality(point);
+        qualityLandmarks++;
+        qualitySum += quality;
+        if (quality >= 0.7) highQualityLandmarks++;
+        if (quality >= 0.52) poseEligibleLandmarks++;
       }
     }
-    const qualityStats = this.keypointTracker.getLandmarkQualityStats();
 
     this.metrics.landmarkCount = points.length;
     this.metrics.activeLandmarkCount = activeLandmarks;
@@ -2203,9 +2212,9 @@ export class ImageAnchorService {
     this.metrics.inactiveLandmarkCount = Math.max(0, this.metrics.landmarkCount - this.metrics.activeLandmarkCount);
     this.metrics.inactiveLandmarks = this.metrics.inactiveLandmarkCount;
     this.metrics.objectOwnedLandmarks = objectOwnedLandmarks;
-    this.metrics.averageLandmarkQuality = qualityStats?.average ?? 0;
-    this.metrics.highQualityLandmarks = qualityStats?.highQuality ?? 0;
-    this.metrics.poseEligibleLandmarks = qualityStats?.poseEligible ?? 0;
+    this.metrics.averageLandmarkQuality = qualityLandmarks ? qualitySum / qualityLandmarks : 0;
+    this.metrics.highQualityLandmarks = highQualityLandmarks;
+    this.metrics.poseEligibleLandmarks = poseEligibleLandmarks;
   }
 
   _surfaceMetricFields(surfaceState) {

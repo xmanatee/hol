@@ -48,7 +48,7 @@ const slowestMode = performanceSummary => performanceSummary?.byMode?.[0] || nul
 const topStageTiming = performanceSummary => {
   const entry = Object.entries(performanceSummary?.aggregate?.stageTimings || {})[0];
   return entry
-    ? `${entry[0]} (${formatNumber(entry[1].meanMs)}ms mean, ${formatNumber(entry[1].maxMs)}ms max)`
+    ? `${entry[0]} (${formatNumber(entry[1].amortizedMeanMs)}ms amortized, ${formatPercent(entry[1].frameCount, performanceSummary.aggregate.frameCount)} coverage, ${formatNumber(entry[1].maxMs)}ms max)`
     : 'not recorded';
 };
 

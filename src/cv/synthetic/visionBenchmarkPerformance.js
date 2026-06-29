@@ -88,14 +88,18 @@ const addRuntime = (accumulator, runtime) => {
   }
 };
 
-const finalizeStageTimings = stageTimings => Object.fromEntries(Object.entries(stageTimings)
+const finalizeStageTimings = (stageTimings, totalFrameCount) => Object.fromEntries(Object.entries(stageTimings)
   .map(([stage, timing]) => [stage, {
     meanMs: meanOrNull(timing.timeSum, timing.frameCount),
     maxMs: timing.maxMs,
+    frameCount: timing.frameCount,
+    coverageRatio: meanOrNull(timing.frameCount, totalFrameCount),
+    amortizedMeanMs: meanOrNull(timing.timeSum, totalFrameCount),
   }])
   .sort((left, right) => (
+    sortMetric(right[1].amortizedMeanMs) - sortMetric(left[1].amortizedMeanMs) ||
     sortMetric(right[1].meanMs) - sortMetric(left[1].meanMs) ||
-    right[1].maxMs - left[1].maxMs ||
+    sortMetric(right[1].maxMs) - sortMetric(left[1].maxMs) ||
     left[0].localeCompare(right[0])
   )));
 
@@ -121,6 +125,9 @@ const budgetFor = finalized => ({
       stage,
       meanMs: timing.meanMs,
       maxMs: timing.maxMs,
+      frameCount: timing.frameCount,
+      coverageRatio: timing.coverageRatio,
+      amortizedMeanMs: timing.amortizedMeanMs,
     })),
 });
 
@@ -130,6 +137,7 @@ const finalizeAccumulator = accumulator => {
     count: accumulator.count,
     invalidRuntimeCount: accumulator.invalidRuntimeCount,
     missingProcessingReports: accumulator.missingProcessingReports,
+    frameCount: accumulator.frameCount,
     totalWallTimeMs: accumulator.wallTimeSum,
     meanReplayWallTimeMs: meanOrNull(accumulator.wallTimeSum, validRuntimeCount),
     meanFrameWallTimeMs: meanOrNull(accumulator.wallTimeSum, accumulator.frameCount),
@@ -137,7 +145,7 @@ const finalizeAccumulator = accumulator => {
     maxReplayWallTimeMs: accumulator.maxReplayWallTimeMs,
     maxFrameProcessingTimeMs: accumulator.maxFrameProcessingTimeMs,
     maxP95FrameProcessingTimeMs: accumulator.maxP95FrameProcessingTimeMs,
-    stageTimings: finalizeStageTimings(accumulator.stageTimings),
+    stageTimings: finalizeStageTimings(accumulator.stageTimings, accumulator.frameCount),
   };
   return {
     ...finalized,

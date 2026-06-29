@@ -102,6 +102,9 @@ const stageTimingRows = stageTimings => Object.entries(stageTimings || {})
   .map(([stage, timing]) => `
     <tr>
       <th scope="row">${escapeHtml(stage)}</th>
+      <td>${formatNumber(timing.frameCount)}</td>
+      <td>${formatPercent(timing.frameCount, performance.aggregate.frameCount)}</td>
+      <td>${msCell(timing.amortizedMeanMs)}</td>
       <td>${msCell(timing.meanMs)}</td>
       <td>${msCell(timing.maxMs)}</td>
     </tr>
@@ -490,7 +493,7 @@ const html = `<!doctype html>
     <h3>Aggregate Stage Timings</h3>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Stage</th><th>Mean</th><th>Max</th></tr></thead>
+            <thead><tr><th>Stage</th><th>Frames</th><th>Coverage</th><th>Amortized</th><th>Mean When Run</th><th>Max</th></tr></thead>
         <tbody>${stageTimingRows(performance.aggregate.stageTimings)}</tbody>
       </table>
     </div>
