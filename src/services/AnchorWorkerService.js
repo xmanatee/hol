@@ -89,6 +89,10 @@ export class AnchorWorkerService {
   }
 
   async createAnchorFromTap(tapPosition, imageData) {
+    if (!this.initialized || this.mode !== 'detection') {
+      throw new Error('Can only create anchor in detection mode');
+    }
+
     const copied = copyImageData(imageData);
     const result = await this._request(
       'createAnchorFromTap',
@@ -112,7 +116,7 @@ export class AnchorWorkerService {
       copied.transferables
     ).then(
       () => {},
-      error => this._handleWorkerFailure(error)
+      error => this._handleWorkerRequestError(error)
     ).finally(() => {
       this.updateInFlight = false;
     });
@@ -132,7 +136,7 @@ export class AnchorWorkerService {
       copied.transferables
     ).then(
       () => {},
-      error => this._handleWorkerFailure(error)
+      error => this._handleWorkerRequestError(error)
     ).finally(() => {
       this.segmentationRefreshInFlight = false;
     });
@@ -140,6 +144,10 @@ export class AnchorWorkerService {
   }
 
   clearAnchor() {
+    if (!this.initialized || this.mode !== 'anchor') {
+      return;
+    }
+
     this._send('clearAnchor');
   }
 
@@ -172,6 +180,8 @@ export class AnchorWorkerService {
       this.worker = null;
     }
     this._rejectAll('Anchor worker disposed');
+    this.updateInFlight = false;
+    this.segmentationRefreshInFlight = false;
     this.initialized = false;
     this.mode = 'detection';
     this.detections = [];
@@ -198,6 +208,9 @@ export class AnchorWorkerService {
     this.worker.onerror = error => {
       this._handleWorkerFailure(error);
     };
+    this.worker.onmessageerror = error => {
+      this._handleWorkerFailure(error);
+    };
     return this.worker;
   }
 
@@ -214,8 +227,16 @@ export class AnchorWorkerService {
   _send(command, payload = {}, transferables = []) {
     this._request(command, payload, transferables).then(
       () => {},
-      error => this._handleWorkerFailure(error)
+      error => this._handleWorkerRequestError(error)
     );
+  }
+
+  _handleWorkerRequestError(error) {
+    if (error?.message === 'Anchor worker disposed') {
+      return;
+    }
+
+    this._handleWorkerFailure(error);
   }
 
   _handleWorkerMessage(message) {
@@ -266,6 +287,8 @@ export class AnchorWorkerService {
       this.worker.terminate();
       this.worker = null;
     }
+    this.updateInFlight = false;
+    this.segmentationRefreshInFlight = false;
     this.initialized = false;
     this.mode = 'detection';
     this.detections = [];

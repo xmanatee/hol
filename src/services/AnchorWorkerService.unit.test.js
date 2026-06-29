@@ -67,6 +67,18 @@ const waitForWorkerPost = async () => {
 
 const waitForRequestHandlers = () => setImmediate();
 
+const outcomeAfterAsyncTurn = async promise => {
+  const outcome = promise.then(
+    value => ({ status: 'resolved', value }),
+    error => ({ status: 'rejected', error })
+  );
+  await setImmediate();
+  return Promise.race([
+    outcome,
+    Promise.resolve({ status: 'pending' }),
+  ]);
+};
+
 test('anchor worker initialization sends the active tracking mode and applies state before resolving', async () => {
   FakeAnchorWorker.instances = [];
   const service = new TestAnchorWorkerService();
@@ -111,6 +123,7 @@ test('anchor worker initialization sends the active tracking mode and applies st
 test('anchor tap requests copy frame data and transfer the copied buffer', async () => {
   FakeAnchorWorker.instances = [];
   const service = new TestAnchorWorkerService();
+  service.initialized = true;
   const imageData = createImageData();
 
   const created = service.createAnchorFromTap({ x: 1, y: 0 }, imageData);
@@ -131,6 +144,19 @@ test('anchor tap requests copy frame data and transfer the copied buffer', async
   });
 
   assert.deepEqual(await created, { success: true, id: 'anchor-1' });
+});
+
+test('anchor tap requests reject locally outside detection mode without creating a worker', async () => {
+  FakeAnchorWorker.instances = [];
+  const service = new TestAnchorWorkerService();
+
+  const outcome = await outcomeAfterAsyncTurn(
+    service.createAnchorFromTap({ x: 1, y: 0 }, createImageData())
+  );
+
+  assert.equal(outcome.status, 'rejected');
+  assert.match(outcome.error.message, /Can only create anchor in detection mode/);
+  assert.equal(FakeAnchorWorker.instances.length, 0);
 });
 
 test('anchor updates keep one in-flight request and release the gate after the response', async () => {
@@ -166,6 +192,48 @@ test('anchor updates keep one in-flight request and release the gate after the r
   assert.equal(worker.messages.length, 2);
 });
 
+test('anchor clear in detection mode does not create a worker request', async () => {
+  FakeAnchorWorker.instances = [];
+  const service = new TestAnchorWorkerService();
+
+  service.clearAnchor();
+  await waitForWorkerPost();
+
+  assert.equal(FakeAnchorWorker.instances.length, 0);
+  assert.deepEqual(service.getState(), createState());
+});
+
+test('anchor dispose clears in-flight worker gates immediately', async t => {
+  const originalError = console.error;
+  let errorCount = 0;
+  console.error = () => {
+    errorCount++;
+  };
+  t.after(() => {
+    console.error = originalError;
+  });
+
+  FakeAnchorWorker.instances = [];
+  const service = new TestAnchorWorkerService();
+  service.initialized = true;
+  service.mode = 'anchor';
+
+  service.updateAnchor(createImageData(), { timestamp: 12 });
+  service.refreshSegmentationIfNeeded(createImageData());
+  await waitForWorkerPost();
+
+  assert.equal(service.updateInFlight, true);
+  assert.equal(service.segmentationRefreshInFlight, true);
+
+  service.dispose();
+
+  assert.equal(service.updateInFlight, false);
+  assert.equal(service.segmentationRefreshInFlight, false);
+
+  await waitForRequestHandlers();
+  assert.equal(errorCount, 0);
+});
+
 test('anchor worker failures reject pending work and reset runtime state', async t => {
   const originalError = console.error;
   console.error = () => {};
@@ -188,6 +256,31 @@ test('anchor worker failures reject pending work and reset runtime state', async
   worker.onerror({ message: 'worker crashed' });
 
   await assert.rejects(pending, /worker crashed/);
+  assert.equal(worker.terminated, true);
+  assert.equal(service.pendingRequests.size, 0);
+  assert.deepEqual(service.getState(), createState());
+});
+
+test('anchor worker message errors reject pending work and reset runtime state', async t => {
+  const originalError = console.error;
+  console.error = () => {};
+  t.after(() => {
+    console.error = originalError;
+  });
+
+  FakeAnchorWorker.instances = [];
+  const service = new TestAnchorWorkerService();
+  service.initialized = true;
+  service.mode = 'anchor';
+
+  const pending = service._request('updateAnchor', { imageData: createImageData() });
+  await waitForWorkerPost();
+
+  const worker = FakeAnchorWorker.instances[0];
+  assert.equal(typeof worker.onmessageerror, 'function');
+  worker.onmessageerror({ message: 'worker message could not be cloned' });
+
+  await assert.rejects(pending, /worker message could not be cloned/);
   assert.equal(worker.terminated, true);
   assert.equal(service.pendingRequests.size, 0);
   assert.deepEqual(service.getState(), createState());
