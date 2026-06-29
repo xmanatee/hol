@@ -1,4 +1,5 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 import { loadOpenCvForNode } from '../src/cv/synthetic/opencvNodeLoader.js';
 import {
@@ -7,12 +8,28 @@ import {
   createRigidBoxSequence,
 } from '../src/cv/synthetic/visionFixtures.js';
 import {
+  createSyntheticDepthFrame,
   replayImageAnchorSequence,
   summarizeReplay,
 } from '../src/cv/synthetic/anchorReplayHarness.js';
 import { scoreHeadPoseReplay } from '../src/cv/synthetic/headPoseReplayHarness.js';
+import { createVisionBenchmarkMatrix } from '../src/cv/synthetic/visionBenchmarkMatrix.js';
+import {
+  VISION_QUALITY_THRESHOLDS,
+  scoreVisionPipelineQuality,
+} from '../src/cv/stageQualityScoring.js';
+import {
+  filterVisionBenchmarkRuns,
+  parseVisionBenchmarkArgs,
+} from '../src/cv/synthetic/visionBenchmarkCli.js';
+import {
+  debugReportUsesBenchmarkMatrix,
+  selectedDebugFrameIndexes,
+} from '../src/cv/synthetic/visionDebugReportCli.js';
+import { RECONSTRUCTION_MODES } from '../src/cv/anchor.reconstructionModes.js';
 
 const REPORT_PATH = '/tmp/hol-vision-debug-report.html';
+const SYNTHETIC_OBJECT_SUPPORT = 'synthetic-object-mask';
 
 const escapeHtml = value => String(value)
   .replaceAll('&', '&amp;')
@@ -24,6 +41,10 @@ const round = (value, digits = 3) => Number.isFinite(value) ? value.toFixed(digi
 
 const metric = (label, value, digits = 3) => `
   <span class="metric"><strong>${escapeHtml(label)}</strong>${escapeHtml(round(value, digits))}</span>
+`;
+
+const textMetric = (label, value) => `
+  <span class="metric"><strong>${escapeHtml(label)}</strong>${escapeHtml(value)}</span>
 `;
 
 const vectorLine = ({ point, normal, color, label }) => {
@@ -75,20 +96,20 @@ const frameSvg = ({ sequence, replayFrame, scoreFrame }) => {
   `;
 };
 
+const worstTrackingFrames = replay => [...replay.frames]
+  .filter(frame => Number.isFinite(frame.anchorError))
+  .sort((left, right) => right.anchorError - left.anchorError)
+  .slice(0, 6);
+
 const selectedFrameIndexes = (replay, headPose) => {
-  const frameCount = replay.frames.length;
-  const worst = headPose.summary.worstFrames.map(frame => frame.index);
-  return [...new Set([
-    1,
-    Math.max(1, Math.floor(frameCount * 0.25)),
-    Math.max(1, Math.floor(frameCount * 0.5)),
-    Math.max(1, Math.floor(frameCount * 0.75)),
-    frameCount,
-    ...worst,
-  ])].sort((left, right) => left - right);
+  return selectedDebugFrameIndexes({
+    frameCount: replay.frames.length,
+    trackingWorstFrames: worstTrackingFrames(replay),
+    headWorstFrames: headPose.summary.worstFrames,
+  });
 };
 
-const sequenceSection = ({ sequence, replay, rawSummary, headPose }) => {
+const sequenceSection = ({ title, sequence, replay, rawSummary, headPose, quality }) => {
   const framesByIndex = new Map(replay.frames.map(frame => [frame.index, frame]));
   const scoresByIndex = new Map(headPose.frames.map(frame => [frame.index, frame]));
   const selected = selectedFrameIndexes(replay, headPose)
@@ -101,8 +122,9 @@ const sequenceSection = ({ sequence, replay, rawSummary, headPose }) => {
 
   return `
     <section>
-      <h2>${escapeHtml(sequence.kind)}</h2>
+      <h2>${escapeHtml(title || sequence.kind)}</h2>
       <div class="metrics">
+        ${quality ? textMetric('quality', quality.overallStatus) : ''}
         ${metric('anchor max px', rawSummary.maxAnchorError, 2)}
         ${metric('anchor mean px', rawSummary.meanAnchorError, 2)}
         ${metric('head max world', headPose.summary.maxWorldPositionError)}
@@ -117,39 +139,105 @@ const sequenceSection = ({ sequence, replay, rawSummary, headPose }) => {
   `;
 };
 
-const cv = await loadOpenCvForNode();
-const sequences = [
-  createPlanarBookSequence({
-    kind: 'planar-book',
-    frameCount: 32,
-    occlusionFrames: [14, 15, 16, 17],
-  }),
-  createPlanarBookSequence({
-    kind: 'dark-book',
-    frameCount: 32,
-    occlusionFrames: [14, 15, 16, 17],
-  }),
-  createCylindricalCanSequence({
-    frameCount: 30,
-    occlusionFrames: [12, 13, 14],
-  }),
-  createRigidBoxSequence({
-    frameCount: 28,
-    occlusionFrames: [10, 11, 12],
-  }),
+const legacyDebugRuns = () => [
+  {
+    title: 'sparse-reconstruction / planar-book',
+    mode: RECONSTRUCTION_MODES.find(mode => mode.id === 'sparse-reconstruction'),
+    sequence: createPlanarBookSequence({
+      kind: 'planar-book',
+      frameCount: 32,
+      occlusionFrames: [14, 15, 16, 17],
+    }),
+  },
+  {
+    title: 'sparse-reconstruction / dark-book',
+    mode: RECONSTRUCTION_MODES.find(mode => mode.id === 'sparse-reconstruction'),
+    sequence: createPlanarBookSequence({
+      kind: 'dark-book',
+      frameCount: 32,
+      occlusionFrames: [14, 15, 16, 17],
+    }),
+  },
+  {
+    title: 'sparse-reconstruction / cylindrical-can',
+    mode: RECONSTRUCTION_MODES.find(mode => mode.id === 'sparse-reconstruction'),
+    sequence: createCylindricalCanSequence({
+      frameCount: 30,
+      occlusionFrames: [12, 13, 14],
+    }),
+  },
+  {
+    title: 'sparse-reconstruction / rigid-box',
+    mode: RECONSTRUCTION_MODES.find(mode => mode.id === 'sparse-reconstruction'),
+    sequence: createRigidBoxSequence({
+      frameCount: 28,
+      occlusionFrames: [10, 11, 12],
+    }),
+  },
 ];
 
+const benchmarkDebugRuns = ({ size, filters }) => {
+  const { scenarios, modes } = filterVisionBenchmarkRuns({
+    scenarios: createVisionBenchmarkMatrix({ size }),
+    modes: RECONSTRUCTION_MODES,
+    filters,
+  });
+
+  return scenarios.flatMap(scenario => modes.map(mode => ({
+    title: `${mode.id} / ${scenario.name}`,
+    mode,
+    scenario,
+    sequence: scenario.create(),
+    targetClassOverride: scenario.targetClassOverride,
+  })));
+};
+
+const debugRunsFor = ({ size, filters }) => (
+  debugReportUsesBenchmarkMatrix({ size, filters })
+    ? benchmarkDebugRuns({ size, filters })
+    : legacyDebugRuns()
+);
+
+const qualityForRun = ({ title, replay, rawSummary, headPose }) => scoreVisionPipelineQuality({
+  name: title,
+  replay,
+  summary: rawSummary,
+  headPose,
+  thresholds: VISION_QUALITY_THRESHOLDS,
+});
+
+const args = parseVisionBenchmarkArgs(process.argv.slice(2));
+const reportPath = args.outputPath || REPORT_PATH;
+const cv = await loadOpenCvForNode();
 const sections = [];
-for (const sequence of sequences) {
+const runs = debugRunsFor(args);
+
+for (const run of runs) {
   const replay = await replayImageAnchorSequence({
     cv,
-    sequence,
-    trackingMode: 'sparse-reconstruction',
+    sequence: run.sequence,
+    trackingMode: run.mode.id,
+    targetClassOverride: run.targetClassOverride,
     useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+    depthFrameForFrame: run.mode.requiresDepthFrame ? createSyntheticDepthFrame : null,
   });
   const rawSummary = summarizeReplay(replay);
-  const headPose = scoreHeadPoseReplay({ replay, sequence });
-  sections.push(sequenceSection({ sequence, replay, rawSummary, headPose }));
+  const headPose = scoreHeadPoseReplay({ replay, sequence: run.sequence });
+  const quality = qualityForRun({
+    title: run.title,
+    replay,
+    rawSummary,
+    headPose,
+  });
+  sections.push(sequenceSection({
+    title: run.title,
+    sequence: run.sequence,
+    replay,
+    rawSummary,
+    headPose,
+    quality,
+  }));
 }
 
 const html = `<!doctype html>
@@ -175,11 +263,13 @@ const html = `<!doctype html>
 </head>
 <body>
   <h1>HOL Vision Debug Report</h1>
-  <p>Green is synthetic ground truth, red is the tracker/head input. The SVGs show anchor position and image-plane normal direction on selected and worst-error frames.</p>
+  <p>Green is synthetic ground truth, red is the tracker/head input. The SVGs show anchor position and image-plane normal direction on sampled frames plus worst tracking and head-pose frames.</p>
+  <p>${escapeHtml(runs.length)} replay${runs.length === 1 ? '' : 's'} · ${escapeHtml(SYNTHETIC_OBJECT_SUPPORT)}</p>
   ${sections.join('')}
 </body>
 </html>
 `;
 
-await writeFile(REPORT_PATH, html, 'utf8');
-console.log(REPORT_PATH);
+await mkdir(dirname(reportPath), { recursive: true });
+await writeFile(reportPath, html, 'utf8');
+console.log(reportPath);
