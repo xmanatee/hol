@@ -3,10 +3,25 @@ import assert from 'node:assert/strict';
 
 import {
   BENCHMARK_BACKGROUND_VARIANTS,
-  BENCHMARK_MOTION_PROFILES,
+  BENCHMARK_OCCLUSION_PROFILES,
+  BENCHMARK_MOTION_VARIANTS,
   BENCHMARK_OBJECT_CASES,
   createVisionBenchmarkMatrix,
 } from './visionBenchmarkMatrix.js';
+
+const countsFor = (scenarios, axisName) => scenarios.reduce((counts, scenario) => {
+  counts[scenario.axes[axisName]] = (counts[scenario.axes[axisName]] || 0) + 1;
+  return counts;
+}, {});
+
+const motionCountsByOcclusion = scenarios => scenarios.reduce((groups, scenario) => {
+  const occlusion = scenario.axes.occlusion;
+  const motion = scenario.axes.motion;
+  const group = groups[occlusion] || {};
+  group[motion] = (group[motion] || 0) + 1;
+  groups[occlusion] = group;
+  return groups;
+}, {});
 
 test('benchmark matrix keeps explicit object, background, motion, and occlusion axes', () => {
   const scenarios = createVisionBenchmarkMatrix({ size: 'quick' });
@@ -17,12 +32,22 @@ test('benchmark matrix keeps explicit object, background, motion, and occlusion 
   assert.ok(new Set(axes.map(axis => axis.background)).size >= 3);
   assert.deepEqual(
     [...new Set(axes.map(axis => axis.motion))].sort(),
-    ['fast', 'standard']
+    ['fast', 'slow', 'standard']
   );
   assert.deepEqual(
     [...new Set(axes.map(axis => axis.occlusion))].sort(),
     ['clean', 'early', 'repeated']
   );
+  assert.deepEqual(countsFor(scenarios, 'motion'), {
+    fast: 7,
+    slow: 7,
+    standard: 7,
+  });
+  assert.deepEqual(countsFor(scenarios, 'occlusion'), {
+    clean: 7,
+    early: 7,
+    repeated: 7,
+  });
   assert.ok(axes.every(axis => Number.isInteger(axis.backgroundSeed)));
   assert.ok(axes.every(axis => BENCHMARK_BACKGROUND_VARIANTS.includes(axis.background)));
   assert.ok(axes.some(axis => (
@@ -41,7 +66,7 @@ test('benchmark matrix keeps explicit object, background, motion, and occlusion 
 
 test('representative benchmark covers every object case and motion profile once', () => {
   const scenarios = createVisionBenchmarkMatrix();
-  const expectedCount = BENCHMARK_OBJECT_CASES.length * BENCHMARK_MOTION_PROFILES.length;
+  const expectedCount = BENCHMARK_OBJECT_CASES.length * BENCHMARK_OCCLUSION_PROFILES.length;
 
   assert.equal(scenarios.length, expectedCount);
   assert.deepEqual(
@@ -52,6 +77,33 @@ test('representative benchmark covers every object case and motion profile once'
     [...new Set(scenarios.map(scenario => scenario.axes.motion))].sort(),
     ['fast', 'slow', 'standard']
   );
+  assert.deepEqual(
+    [...new Set(scenarios.map(scenario => scenario.axes.occlusion))].sort(),
+    BENCHMARK_OCCLUSION_PROFILES.map(profile => profile.id).sort()
+  );
+});
+
+test('representative benchmark balances motion independently from occlusion', () => {
+  const scenarios = createVisionBenchmarkMatrix();
+  const expectedMotionCount = BENCHMARK_OBJECT_CASES.length *
+    BENCHMARK_OCCLUSION_PROFILES.length / BENCHMARK_MOTION_VARIANTS.length;
+  const expectedMotionPerOcclusion = BENCHMARK_OBJECT_CASES.length / BENCHMARK_MOTION_VARIANTS.length;
+
+  assert.deepEqual(countsFor(scenarios, 'motion'), {
+    fast: expectedMotionCount,
+    slow: expectedMotionCount,
+    standard: expectedMotionCount,
+  });
+  assert.deepEqual(countsFor(scenarios, 'occlusion'), Object.fromEntries(
+    BENCHMARK_OCCLUSION_PROFILES.map(profile => [profile.id, BENCHMARK_OBJECT_CASES.length])
+  ));
+  for (const counts of Object.values(motionCountsByOcclusion(scenarios))) {
+    assert.deepEqual(counts, {
+      fast: expectedMotionPerOcclusion,
+      slow: expectedMotionPerOcclusion,
+      standard: expectedMotionPerOcclusion,
+    });
+  }
 });
 
 test('benchmark scenarios create real synthetic replay sequences with matching axes', () => {

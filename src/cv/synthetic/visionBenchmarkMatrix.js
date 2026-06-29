@@ -124,38 +124,72 @@ const occlusionFramesFor = (frameCount, profile) => {
   ];
 };
 
-export const BENCHMARK_MOTION_PROFILES = [
+export const BENCHMARK_MOTION_VARIANTS = [
   {
-    id: 'standard-clean',
-    motion: 'standard',
-    frameCount: 32,
-    occlusion: 'clean',
-  },
-  {
-    id: 'fast-early-occlusion',
-    motion: 'fast',
-    frameCount: 22,
-    occlusion: 'early',
-  },
-  {
-    id: 'standard-mid-occlusion',
     motion: 'standard',
     frameCount: 34,
-    occlusion: 'mid',
   },
   {
-    id: 'slow-late-occlusion',
-    motion: 'slow',
-    frameCount: 44,
-    occlusion: 'late',
-  },
-  {
-    id: 'fast-repeated-occlusion',
     motion: 'fast',
     frameCount: 24,
-    occlusion: 'repeated',
+  },
+  {
+    motion: 'slow',
+    frameCount: 44,
   },
 ];
+
+export const BENCHMARK_OCCLUSION_PROFILES = [
+  { id: 'clean' },
+  { id: 'early' },
+  { id: 'mid' },
+  { id: 'late' },
+  { id: 'repeated' },
+];
+
+const QUICK_OCCLUSION_PROFILES = [
+  { id: 'clean' },
+  { id: 'early' },
+  { id: 'repeated' },
+];
+
+const QUICK_MOTION_BY_OBJECT = {
+  'planar-book': {
+    clean: 'fast',
+    early: 'standard',
+    repeated: 'slow',
+  },
+  'glossy-can': {
+    clean: 'standard',
+    early: 'fast',
+    repeated: 'slow',
+  },
+  'textured-cup': {
+    clean: 'slow',
+    early: 'fast',
+    repeated: 'fast',
+  },
+  'handled-mug': {
+    clean: 'standard',
+    early: 'slow',
+    repeated: 'fast',
+  },
+  'rigid-box': {
+    clean: 'slow',
+    early: 'fast',
+    repeated: 'standard',
+  },
+  'generic-free-tap-can': {
+    clean: 'standard',
+    early: 'fast',
+    repeated: 'slow',
+  },
+  'human-silhouette': {
+    clean: 'slow',
+    early: 'standard',
+    repeated: 'standard',
+  },
+};
 
 const lightingForBackground = background => ({
   desk: 'soft-desk',
@@ -169,8 +203,38 @@ const backgroundForRepresentativeCase = (objectIndex, profileIndex) => (
   BENCHMARK_BACKGROUND_VARIANTS[(objectIndex * 2 + profileIndex) % BENCHMARK_BACKGROUND_VARIANTS.length]
 );
 
-const createScenario = ({ objectCase, objectIndex, profile, profileIndex, background, seedOffset }) => {
-  const occlusionFrames = occlusionFramesFor(profile.frameCount, profile.occlusion);
+const motionVariantFor = motion => {
+  const variant = BENCHMARK_MOTION_VARIANTS.find(item => item.motion === motion);
+  if (!variant) {
+    throw new Error(`Unknown benchmark motion: ${motion}`);
+  }
+  return variant;
+};
+
+const frameCountForCondition = ({ motion, occlusion }) => {
+  if (motion === 'fast' && occlusion === 'early') return 22;
+  if (motion === 'standard' && occlusion === 'clean') return 32;
+  return motionVariantFor(motion).frameCount;
+};
+
+const selectBalancedMotion = ({ objectIndex, occlusionIndex, backgroundIndex }) => (
+  BENCHMARK_MOTION_VARIANTS[
+    (objectIndex + occlusionIndex + backgroundIndex + 2) % BENCHMARK_MOTION_VARIANTS.length
+  ]
+);
+
+const createScenario = ({
+  objectCase,
+  objectIndex,
+  condition,
+  conditionIndex,
+  background,
+  backgroundIndex,
+}) => {
+  const motion = condition.motion;
+  const occlusion = condition.occlusion;
+  const frameCount = condition.frameCount;
+  const occlusionFrames = occlusionFramesFor(frameCount, occlusion);
   const axes = {
     object: objectCase.id,
     targetClass: objectCase.targetClass,
@@ -178,10 +242,11 @@ const createScenario = ({ objectCase, objectIndex, profile, profileIndex, backgr
     geometry: objectCase.geometry,
     background,
     lighting: lightingForBackground(background),
-    motion: profile.motion,
-    occlusion: profile.occlusion,
-    frameCount: profile.frameCount,
-    backgroundSeed: 2000 + objectIndex * 101 + profileIndex * 17 + seedOffset,
+    motion,
+    occlusion,
+    condition: `${motion}-${occlusion}`,
+    frameCount,
+    backgroundSeed: 2000 + objectIndex * 101 + conditionIndex * 17 + backgroundIndex * 13,
   };
 
   return {
@@ -193,7 +258,7 @@ const createScenario = ({ objectCase, objectIndex, profile, profileIndex, backgr
     ].join(' / '),
     axes,
     create: () => objectCase.create({
-      frameCount: profile.frameCount,
+      frameCount,
       occlusionFrames,
       backgroundVariant: background,
       backgroundSeed: axes.backgroundSeed,
@@ -214,28 +279,53 @@ export const createVisionBenchmarkMatrix = ({ size = 'representative' } = {}) =>
         objectCase.id === 'rigid-box'
       ))
     : BENCHMARK_OBJECT_CASES;
-  const profiles = size === 'quick'
-    ? BENCHMARK_MOTION_PROFILES.filter(profile => (
-        profile.id === 'standard-clean' ||
-        profile.id === 'fast-early-occlusion' ||
-        profile.id === 'fast-repeated-occlusion'
-      ))
-    : BENCHMARK_MOTION_PROFILES;
   const scenarios = [];
 
   objectCases.forEach((objectCase, objectIndex) => {
-    profiles.forEach((profile, profileIndex) => {
-      const backgrounds = size === 'full'
-        ? BENCHMARK_BACKGROUND_VARIANTS
-        : [backgroundForRepresentativeCase(objectIndex, profileIndex)];
-      backgrounds.forEach((background, backgroundIndex) => {
+    if (size === 'quick') {
+      QUICK_OCCLUSION_PROFILES.forEach((profile, conditionIndex) => {
+        const motionName = QUICK_MOTION_BY_OBJECT[objectCase.id]?.[profile.id];
+        const motion = motionVariantFor(motionName);
+        const background = backgroundForRepresentativeCase(objectIndex, conditionIndex);
         scenarios.push(createScenario({
           objectCase,
           objectIndex,
-          profile,
-          profileIndex,
+          condition: {
+            motion: motion.motion,
+            frameCount: frameCountForCondition({
+              motion: motion.motion,
+              occlusion: profile.id,
+            }),
+            occlusion: profile.id,
+          },
           background,
-          seedOffset: backgroundIndex * 13,
+          backgroundIndex: 0,
+          conditionIndex,
+        }));
+      });
+      return;
+    }
+
+    BENCHMARK_OCCLUSION_PROFILES.forEach((occlusionProfile, occlusionIndex) => {
+      const backgrounds = size === 'full'
+        ? BENCHMARK_BACKGROUND_VARIANTS
+        : [backgroundForRepresentativeCase(objectIndex, occlusionIndex)];
+      backgrounds.forEach((background, backgroundIndex) => {
+        const motion = selectBalancedMotion({ objectIndex, occlusionIndex, backgroundIndex });
+        scenarios.push(createScenario({
+          objectCase,
+          objectIndex,
+          condition: {
+            motion: motion.motion,
+            frameCount: frameCountForCondition({
+              motion: motion.motion,
+              occlusion: occlusionProfile.id,
+            }),
+            occlusion: occlusionProfile.id,
+          },
+          background,
+          backgroundIndex,
+          conditionIndex: occlusionIndex,
         }));
       });
     });

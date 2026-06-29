@@ -84,6 +84,43 @@ test('benchmark risk ranks anchor spikes and missing reconstruction support as s
   assert.ok(highRisk.components.some(component => component.name === 'tracking.meanAnchorError'));
 });
 
+test('benchmark risk penalizes missing required evidence instead of scoring it as zero error', () => {
+  const complete = createReport({
+    name: 'stable',
+    mode: 'depth-fusion',
+    axes: { object: 'planar-book' },
+  });
+  const missing = {
+    name: 'missing metrics',
+    mode: 'direct-photometric',
+    axes: {
+      object: 'handled-mug',
+      geometry: 'handled-tapered-cylinder',
+      background: 'kitchen',
+      lighting: 'tiled-specular-clutter',
+      motion: 'fast',
+      occlusion: 'early',
+    },
+    overallStatus: 'fail',
+    failedStages: ['tracking', 'reconstruction', 'headAttachment'],
+    stages: {
+      tracking: { metrics: {} },
+      reconstruction: { metrics: {} },
+      headAttachment: { metrics: {} },
+    },
+  };
+
+  const missingRisk = scoreBenchmarkRisk(missing);
+  const analysis = createVisionBenchmarkAnalysis([complete, missing]);
+
+  assert.equal(missingRisk.band, 'severe');
+  assert.equal(missingRisk.primaryWeakness, 'tracking.meanAnchorError');
+  assert.ok(missingRisk.score > scoreBenchmarkRisk(complete).score);
+  assert.equal(analysis.worstReports[0].name, 'missing metrics');
+  assert.equal(analysis.worstReports[0].metrics.meanAnchorError, null);
+  assert.equal(analysis.worstReports[0].metrics.readyFrameRatio, null);
+});
+
 test('benchmark analysis groups weak points by mode and condition axes', () => {
   const reports = [
     createReport({

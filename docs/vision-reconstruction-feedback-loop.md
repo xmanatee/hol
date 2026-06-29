@@ -16,8 +16,10 @@ The point is not to make one report. The report is the steering signal for the n
 Use the smallest pass that can answer the current question.
 
 - Quick: fast regression signal after a focused code change.
-- Representative: broader object and motion coverage before trusting the direction.
+- Representative: broader object, background, motion, and occlusion coverage before trusting the direction.
 - Full: final evidence across all current synthetic conditions.
+
+Representative and full matrices keep motion balanced independently from occlusion. A weak-point row for `fast` should now mean fast motion, not "the subset that also happened to have early or repeated occlusion." Quick keeps the known high-signal stress fixtures while adding matching slow and standard cases so its motion counts stay balanced.
 
 The feedback runner produces three artifacts from the same run:
 
@@ -37,7 +39,8 @@ Read the report in this order:
 3. **Mode comparison**: shows whether the selected reconstruction approach is helping or hiding a deeper tracker issue.
 4. **Object and geometry weak points**: picks the fixtures for targeted debugging.
 5. **Condition weak points**: identifies whether motion, occlusion, background, or lighting is the real stressor.
-6. **Worst individual replays**: start debugging from these, not from average cases.
+6. **Performance budget**: reads per-frame processing time first; replay wall time is secondary because frame counts vary by condition.
+7. **Worst individual replays**: start debugging from these, not from average cases.
 
 The most important field is usually `primaryWeakness`. If every group says `tracking.meanAnchorError`, the next fix belongs in tracking or object ownership, not in dense reconstruction.
 
@@ -149,6 +152,7 @@ Keep a change only when:
 - High + severe cases do not move to another mode or object family.
 - Existing curated quality stays green.
 - Runtime-sensitive work still fits the mobile frame budget.
+- Missing runtime samples are reported as invalid instead of being counted as `0ms`.
 
 ## Current Baseline Interpretation
 

@@ -31,9 +31,15 @@ const runNode = (commandArgs, options = {}) => {
   return result.stdout || '';
 };
 
-const formatNumber = value => Number(value).toLocaleString('en-US', { maximumFractionDigits: 2 });
+const formatNumber = value => Number.isFinite(value)
+  ? Number(value).toLocaleString('en-US', { maximumFractionDigits: 2 })
+  : 'n/a';
 
-const formatPercent = (value, total) => `${formatNumber(value / total * 100)}%`;
+const formatPercent = (value, total) => (
+  Number.isFinite(value) && Number.isFinite(total) && total > 0
+    ? `${formatNumber(value / total * 100)}%`
+    : 'n/a'
+);
 
 const strongestMode = modes => [...modes].sort((left, right) => left.meanRiskScore - right.meanRiskScore)[0];
 
@@ -44,6 +50,18 @@ const topStageTiming = performanceSummary => {
   return entry
     ? `${entry[0]} (${formatNumber(entry[1].meanMs)}ms mean, ${formatNumber(entry[1].maxMs)}ms max)`
     : 'not recorded';
+};
+
+const budgetLine = performanceSummary => {
+  const budget = performanceSummary?.aggregate?.budget;
+  if (!budget) return '- Mobile budget: not recorded.';
+
+  const meanStatus = budget.meanFrameProcessingOverBudget ? 'over' : 'within';
+  const maxStatus = budget.maxFrameProcessingOverBudget ? 'over' : 'within';
+  const overageStages = budget.stageOverages.length
+    ? ` Stage overages: ${budget.stageOverages.map(item => item.stage).join(', ')}.`
+    : ' No stage overages recorded.';
+  return `- Mobile budget: mean frame processing is ${meanStatus} the ${formatNumber(budget.trackingFrameBudgetMs)}ms tracking budget; max frame processing is ${maxStatus} the ${formatNumber(budget.frameBudgetMs)}ms frame budget.${overageStages}`;
 };
 
 const weakestGroupLine = (labelName, item) => (
@@ -80,13 +98,15 @@ const createInsightsMarkdown = data => {
 - Severe risk: ${formatNumber(benchmark.aggregate.byRiskBand.severe || 0)}
 - Mean replay wall time: ${performance ? `${formatNumber(performance.aggregate.meanReplayWallTimeMs)}ms` : 'not recorded'}
 - Mean frame processing time: ${performance ? `${formatNumber(performance.aggregate.meanFrameProcessingTimeMs)}ms` : 'not recorded'}
+- Invalid runtime reports: ${performance ? formatNumber(performance.aggregate.invalidRuntimeCount) : 'not recorded'}
 
 ## Conclusions
 
 - Strongest mode: ${bestMode.name} with ${formatNumber(bestMode.meanRiskScore)} mean risk, ${formatNumber(bestMode.fail)} strict failures, and ${formatNumber(bestMode.severe)} severe cases.
 - Weakest mode: ${worstMode.name} with ${formatNumber(worstMode.meanRiskScore)} mean risk, ${formatNumber(worstMode.fail)} strict failures, and ${formatNumber(worstMode.severe)} severe cases.
-${slowMode ? `- Slowest mode: ${slowMode.name} with ${formatNumber(slowMode.meanReplayWallTimeMs)}ms mean replay wall time and ${formatNumber(slowMode.maxFrameProcessingTimeMs)}ms max frame processing.` : '- Slowest mode: not recorded.'}
+${slowMode ? `- Slowest mode by frame processing: ${slowMode.name} with ${formatNumber(slowMode.meanFrameProcessingTimeMs)}ms mean processing and ${formatNumber(slowMode.maxFrameProcessingTimeMs)}ms max frame processing.` : '- Slowest mode: not recorded.'}
 - Top timed stage: ${topStage}.
+${budgetLine(performance)}
 ${weakestGroupLine('Weakest object', worstObject)}
 ${weakestGroupLine('Weakest motion profile', worstMotion)}
 ${weakestGroupLine('Weakest occlusion profile', worstOcclusion)}
@@ -95,7 +115,7 @@ ${weakestGroupLine('Weakest background', worstBackground)}
 
 ## Fix Queue
 
-1. Tracking spine: reduce ${worstReplay.risk.primaryWeakness} in the worst fast-motion and occlusion cases before adding more dense reconstruction complexity.
+1. Tracking spine: reduce ${worstReplay.risk.primaryWeakness} in the worst ${worstMotion.name} motion and ${worstOcclusion.name} occlusion cases before adding more dense reconstruction complexity.
 2. Object ownership: inspect mask refresh, object-owned landmark promotion, and background rejection for ${worstObject.name}.
 3. Recovery: improve post-occlusion correspondence recovery for ${worstOcclusion.name} occlusion and ${worstMotion.name} motion.
 4. Runtime: profile ${slowMode ? slowMode.name : 'the slowest mode'} first when lag is reported; optimize measured hot loops before adding heavier reconstruction logic.

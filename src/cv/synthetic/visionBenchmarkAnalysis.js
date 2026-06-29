@@ -21,11 +21,19 @@ export const VISION_BENCHMARK_TARGETS = {
   },
 };
 
-const finiteMetric = value => Number.isFinite(value) ? value : 0;
+const finiteMetric = value => Number.isFinite(value) ? value : null;
 
-const cappedRatio = (value, target, cap = 2.5) => clamp(finiteMetric(value) / target, 0, cap) / cap;
+const cappedRatio = (value, target, cap = 2.5) => {
+  const metric = finiteMetric(value);
+  if (metric === null) return 1;
+  return clamp(metric / target, 0, cap) / cap;
+};
 
-const cappedDeficit = (value, target) => clamp((target - finiteMetric(value)) / target, 0, 1);
+const cappedDeficit = (value, target) => {
+  const metric = finiteMetric(value);
+  if (metric === null) return 1;
+  return clamp((target - metric) / target, 0, 1);
+};
 
 const addWeighted = (components, name, raw, weight) => {
   const score = raw * weight;

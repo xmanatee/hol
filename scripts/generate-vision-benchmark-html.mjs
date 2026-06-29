@@ -9,11 +9,15 @@ const quality = benchmarkOutput.qualitySummary.aggregate;
 const performance = benchmarkOutput.performanceSummary || null;
 const risk = benchmark.aggregate;
 
-const formatNumber = value => Number(value).toLocaleString('en-US', {
-  maximumFractionDigits: 2,
-});
+const formatNumber = value => Number.isFinite(value)
+  ? Number(value).toLocaleString('en-US', { maximumFractionDigits: 2 })
+  : 'n/a';
 
-const formatPercent = (value, total) => `${formatNumber(value / total * 100)}%`;
+const formatPercent = (value, total) => (
+  Number.isFinite(value) && Number.isFinite(total) && total > 0
+    ? `${formatNumber(value / total * 100)}%`
+    : 'n/a'
+);
 
 const escapeHtml = value => String(value)
   .replaceAll('&', '&amp;')
@@ -30,7 +34,7 @@ const riskClass = score => {
 
 const riskCell = score => `<span class="risk ${riskClass(score)}">${formatNumber(score)}</span>`;
 
-const msCell = value => `${formatNumber(value)}ms`;
+const msCell = value => Number.isFinite(value) ? `${formatNumber(value)}ms` : 'n/a';
 
 const percentBar = (value, total, className = '') => `
   <div class="bar ${className}" aria-hidden="true">
@@ -77,6 +81,7 @@ const performanceRows = group => group.map(item => `
     <td>${msCell(item.meanFrameWallTimeMs)}</td>
     <td>${msCell(item.meanFrameProcessingTimeMs)}</td>
     <td>${msCell(item.maxFrameProcessingTimeMs)}</td>
+    <td>${item.budget.meanFrameProcessingOverBudget ? 'over' : 'ok'}</td>
   </tr>
 `).join('');
 
@@ -102,6 +107,8 @@ const stageTimingRows = stageTimings => Object.entries(stageTimings || {})
     </tr>
   `).join('');
 
+const percentMetricCell = value => Number.isFinite(value) ? `${formatNumber(value * 100)}%` : 'n/a';
+
 const worstRows = benchmark.worstReports.map((report, index) => `
   <tr>
     <td>${index + 1}</td>
@@ -113,7 +120,7 @@ const worstRows = benchmark.worstReports.map((report, index) => `
     <td>${escapeHtml(report.failedStages.join(', '))}</td>
     <td>${formatNumber(report.metrics.meanAnchorError)} px</td>
     <td>${formatNumber(report.metrics.maxAnchorError)} px</td>
-    <td>${formatNumber(report.metrics.readyFrameRatio * 100)}%</td>
+    <td>${percentMetricCell(report.metrics.readyFrameRatio)}</td>
   </tr>
 `).join('');
 
@@ -125,17 +132,29 @@ const backgroundRanking = benchmark.weakPoints.byBackground;
 const bestMode = [...modeRanking].sort((left, right) => left.meanRiskScore - right.meanRiskScore)[0];
 const highSevereCount = (risk.byRiskBand.high || 0) + (risk.byRiskBand.severe || 0);
 const slowMode = performance?.byMode?.[0] || null;
+const failedStages = Object.entries(quality.failedByStage || {})
+  .map(([stage, count]) => ({ stage, count }))
+  .sort((left, right) => right.count - left.count || left.stage.localeCompare(right.stage));
+const topFailedStage = failedStages[0] || { stage: 'none', count: 0 };
+const topOcclusions = occlusionRanking.slice(0, 2).map(item => item.name).join(' and ');
+const budget = performance?.aggregate?.budget || null;
+const weakestBackground = backgroundRanking[0];
+const strongestBackground = backgroundRanking[backgroundRanking.length - 1];
+const backgroundRiskSpread = weakestBackground.meanRiskScore - strongestBackground.meanRiskScore;
 
 const conclusions = [
-  `Depth fusion is the strongest mode overall: ${formatNumber(bestMode.meanRiskScore)} mean risk, ${bestMode.severe} severe cases, and ${formatNumber(bestMode.fail)} strict failures out of ${formatNumber(bestMode.count)} replays.`,
-  `The primary bottleneck is still anchor tracking, not dense fusion. Tracking accounts for ${formatNumber(quality.failedByStage.tracking)} failed stages, and tracking.meanAnchorError is the top weakness across every major group.`,
-  `Fast motion is the most damaging dynamic condition: ${formatNumber(motionRanking[0].fail)} failures out of ${formatNumber(motionRanking[0].count)}, with ${formatNumber(motionRanking[0].severe + motionRanking[0].high)} high-or-severe runs.`,
-  `Early and repeated occlusion are the most damaging occlusion patterns. Clean scenes still fail ${formatPercent(occlusionRanking.find(item => item.name === 'clean').fail, occlusionRanking.find(item => item.name === 'clean').count)}, so this is not only an occlusion problem.`,
-  `Handled mugs are the clearest object weak point: ${formatPercent(objectRanking[0].fail, objectRanking[0].count)} strict failure rate and ${formatNumber(objectRanking[0].severe)} severe cases.`,
-  `Background differences matter less than geometry and motion. Shelf, busy, window, desk, and kitchen backgrounds cluster tightly around mean risk ${formatNumber(backgroundRanking[backgroundRanking.length - 1].meanRiskScore)}-${formatNumber(backgroundRanking[0].meanRiskScore)}.`,
+  `${bestMode.name} is the strongest mode overall in this run: ${formatNumber(bestMode.meanRiskScore)} mean risk, ${formatNumber(bestMode.severe)} severe cases, and ${formatNumber(bestMode.fail)} strict failures out of ${formatNumber(bestMode.count)} replays.`,
+  `${topFailedStage.stage} is the top failed stage with ${formatNumber(topFailedStage.count)} failed-stage reports. Use the primaryWeakness field before assuming the owner is reconstruction or rendering.`,
+  `${motionRanking[0].name} motion is the most damaging dynamic condition: ${formatNumber(motionRanking[0].fail)} failures out of ${formatNumber(motionRanking[0].count)}, with ${formatNumber(motionRanking[0].severe + motionRanking[0].high)} high-or-severe runs.`,
+  `${topOcclusions} are the most damaging occlusion patterns. Clean scenes fail ${formatPercent(occlusionRanking.find(item => item.name === 'clean')?.fail || 0, occlusionRanking.find(item => item.name === 'clean')?.count || 0)}, so this is not only an occlusion problem.`,
+  `${objectRanking[0].name} is the clearest object weak point: ${formatPercent(objectRanking[0].fail, objectRanking[0].count)} strict failure rate and ${formatNumber(objectRanking[0].severe)} severe cases.`,
+  `${weakestBackground.name} is the weakest background in this run. Background mean-risk spread is ${formatNumber(backgroundRiskSpread)} points (${formatNumber(strongestBackground.meanRiskScore)}-${formatNumber(weakestBackground.meanRiskScore)}).`,
   performance
-    ? `Runtime is now measured in the same loop. The slowest mode is ${slowMode.name}: ${formatNumber(slowMode.meanReplayWallTimeMs)}ms mean replay wall time and ${formatNumber(slowMode.maxFrameProcessingTimeMs)}ms max frame processing.`
+    ? `Runtime is measured in the same loop. The slowest mode by frame processing is ${slowMode.name}: ${msCell(slowMode.meanFrameProcessingTimeMs)} mean processing and ${msCell(slowMode.maxFrameProcessingTimeMs)} max processing.`
     : 'Runtime is not present in this JSON; rerun the feedback loop with the current benchmark runner to include lag analysis.',
+  budget
+    ? `Mobile budget status: mean frame processing is ${budget.meanFrameProcessingOverBudget ? 'over' : 'within'} the ${msCell(budget.trackingFrameBudgetMs)} tracking budget; max frame processing is ${budget.maxFrameProcessingOverBudget ? 'over' : 'within'} the ${msCell(budget.frameBudgetMs)} frame budget.`
+    : 'Mobile budget status is not present in this JSON.',
 ];
 
 const html = `<!doctype html>
@@ -453,7 +472,7 @@ const html = `<!doctype html>
         <h3>Modes By Runtime</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Mode</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th></tr></thead>
+            <thead><tr><th>Mode</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th><th>Mean budget</th></tr></thead>
             <tbody>${performanceRows(performance.byMode)}</tbody>
           </table>
         </div>

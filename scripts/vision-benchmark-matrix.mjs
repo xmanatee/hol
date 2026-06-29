@@ -28,12 +28,14 @@ const reports = [];
 const totalRuns = scenarios.length * RECONSTRUCTION_MODES.length;
 let completedRuns = 0;
 
-const mean = values => values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
+const mean = values => values.length
+  ? values.reduce((sum, value) => sum + value, 0) / values.length
+  : null;
 
-const max = values => values.length ? Math.max(...values) : 0;
+const max = values => values.length ? Math.max(...values) : null;
 
 const percentile = (values, ratio) => {
-  if (!values.length) return 0;
+  if (!values.length) return null;
   const sorted = [...values].sort((left, right) => left - right);
   return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * ratio))];
 };
@@ -76,7 +78,7 @@ const runtimeFromReplay = ({ replay, wallTimeMs }) => {
   return {
     wallTimeMs,
     frameCount: replay.frames.length,
-    meanFrameWallTimeMs: wallTimeMs / Math.max(1, replay.frames.length),
+    meanFrameWallTimeMs: replay.frames.length ? wallTimeMs / replay.frames.length : null,
     meanProcessingTimeMs: mean(updateTimes),
     p95ProcessingTimeMs: percentile(updateTimes, 0.95),
     maxProcessingTimeMs: max(updateTimes),
