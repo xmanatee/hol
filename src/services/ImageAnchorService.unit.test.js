@@ -5631,6 +5631,45 @@ test('rigid planar reconstruction normals are not trusted external corrections',
   );
 });
 
+test('weak support-held sparse mug normals are not trusted fast corrections', () => {
+  const service = new ImageAnchorService();
+  const reconstructionPose = createObjectPose({
+    method: 'sparse-reconstruction',
+    confidence: 0.88,
+    inlierCount: 16,
+    averageResidual: 1.6,
+    normal: { x: 0.46, y: -0.12, z: 0.88 },
+  });
+  reconstructionPose.depthQuality = 0.12;
+  reconstructionPose.preview = {
+    statistics: {
+      mapConfidence: 0.94,
+      matureLandmarks: 49,
+    },
+    surface: { model: 'tapered-cylinder' },
+  };
+
+  service.setTrackingMode('sparse-reconstruction');
+  service.anchorTargetClass = 'mug';
+  service.metrics.positionFilterAdjustment = 'sparse-mug-support-correction-hold';
+  service.metrics.reconstructionMapConfidence = 0.94;
+  service.metrics.reconstructionMatureLandmarks = 49;
+
+  assert.equal(service._hasStrongNonPlanarReconstruction(reconstructionPose), true);
+  assert.equal(service._shouldTrustNormalPose(reconstructionPose), false);
+
+  reconstructionPose.inlierCount = 24;
+  assert.equal(service._shouldTrustNormalPose(reconstructionPose), true);
+
+  service.metrics.reconstructionMapConfidence = 0.57;
+  reconstructionPose.preview.statistics.mapConfidence = 0.57;
+  assert.equal(service._shouldTrustNormalPose(reconstructionPose), false);
+
+  service.metrics.positionFilterAdjustment = null;
+  reconstructionPose.preview.statistics.mapConfidence = 0.94;
+  assert.equal(service._shouldTrustNormalPose(reconstructionPose), true);
+});
+
 test('curved reconstruction targets reject planar homography normals during pose dropout', () => {
   const service = new ImageAnchorService();
   const correspondences = Array.from({ length: 28 }, (_, index) => ({

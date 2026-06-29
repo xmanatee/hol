@@ -134,6 +134,9 @@ const SPARSE_MUG_PERIODIC_SUPPORT_CORRECTION_MIN_MAP_CONFIDENCE = 0.55;
 const SPARSE_MUG_PERIODIC_SUPPORT_CORRECTION_MAX_STEP = 8;
 const SPARSE_MUG_SUPPORT_CORRECTION_HOLD_FRAMES = 7;
 const SPARSE_MUG_SUPPORT_CORRECTION_MIN_BACKTRACK_STEP = 3;
+const SPARSE_MUG_SUPPORT_HELD_NORMAL_MAX_WEAK_INLIERS = 17;
+const SPARSE_MUG_SUPPORT_HELD_NORMAL_MIN_MAP_CONFIDENCE = 0.75;
+const SPARSE_MUG_SUPPORT_HELD_NORMAL_MIN_MATURE_LANDMARKS = 16;
 const PLANAR_POSE_POSITION_METHODS = new Set([
   RECONSTRUCTION_POSE_MODEL,
   'planar-homography',
@@ -3278,8 +3281,33 @@ export class ImageAnchorService {
       return false;
     }
 
+    if (this._shouldDistrustSparseMugSupportHeldNormal(normalPose)) {
+      return false;
+    }
+
     return this._hasStrongNonPlanarReconstruction(normalPose) ||
       this._canSelectedReconstructionOwnAttachment(normalPose);
+  }
+
+  _shouldDistrustSparseMugSupportHeldNormal(normalPose) {
+    if (normalPose?.method !== RECONSTRUCTION_POSE_MODEL ||
+        this.trackingMode !== RECONSTRUCTION_POSE_MODEL ||
+        !this._hasMugLikeTarget() ||
+        this.metrics.positionFilterAdjustment !== 'sparse-mug-support-correction-hold') {
+      return false;
+    }
+
+    const mapConfidence = normalPose.preview?.statistics?.mapConfidence ??
+      this.metrics.reconstructionMapConfidence ??
+      0;
+    const matureLandmarks = normalPose.preview?.statistics?.matureLandmarks ??
+      this.metrics.reconstructionMatureLandmarks ??
+      0;
+    const inliers = normalPose.inlierCount || 0;
+
+    return inliers <= SPARSE_MUG_SUPPORT_HELD_NORMAL_MAX_WEAK_INLIERS ||
+      mapConfidence < SPARSE_MUG_SUPPORT_HELD_NORMAL_MIN_MAP_CONFIDENCE ||
+      matureLandmarks < SPARSE_MUG_SUPPORT_HELD_NORMAL_MIN_MATURE_LANDMARKS;
   }
 
   _shouldHoldPlanarNormalAfterReconstructionDropout({ candidatePose, reconstructionPose }) {

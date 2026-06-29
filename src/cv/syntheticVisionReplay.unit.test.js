@@ -1242,14 +1242,16 @@ test('replay bounds sparse handled mug drift during early busy occlusion', async
     motion: 'slow',
     occlusion: 'early',
   });
+  const sequence = scenario.create();
   const replay = await replayImageAnchorSequence({
     cv,
-    sequence: scenario.create(),
+    sequence,
     trackingMode: 'sparse-reconstruction',
     useObjectSupportMask: true,
     refreshObjectSupportMask: true,
   });
   const summary = summarizeReplay(replay);
+  const headPose = scoreHeadPoseReplay({ replay, sequence }).summary;
   const supportCorrections = replay.frames.filter(frame => (
     frame.metrics.objectSupportPositionCorrection
   ));
@@ -1262,4 +1264,6 @@ test('replay bounds sparse handled mug drift during early busy occlusion', async
   assert.ok(summary.maxFrameJump <= 13, `max frame jump should stay bounded, got ${summary.maxFrameJump.toFixed(2)}px`);
   assert.ok(summary.maxAnchorError <= 50, `max anchor error should stay bounded, got ${summary.maxAnchorError.toFixed(2)}px`);
   assert.ok(summary.meanAnchorError <= 32, `mean anchor error should stay bounded, got ${summary.meanAnchorError.toFixed(2)}px`);
+  assert.ok(summary.maxNormalError <= 1.22, `max normal error should stay bounded, got ${summary.maxNormalError.toFixed(3)}rad`);
+  assert.ok(headPose.maxRotationError <= 1.42, `head rotation should stay bounded, got ${headPose.maxRotationError.toFixed(3)}rad`);
 });
