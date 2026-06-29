@@ -8,6 +8,10 @@ import { scoreHeadPoseReplay } from '../src/cv/synthetic/headPoseReplayHarness.j
 import { createVisionBenchmarkMatrix } from '../src/cv/synthetic/visionBenchmarkMatrix.js';
 import { createVisionBenchmarkAnalysis } from '../src/cv/synthetic/visionBenchmarkAnalysis.js';
 import { summarizeVisionBenchmarkPerformance } from '../src/cv/synthetic/visionBenchmarkPerformance.js';
+import {
+  formatVisionBenchmarkOutput,
+  parseVisionBenchmarkArgs,
+} from '../src/cv/synthetic/visionBenchmarkCli.js';
 import { RECONSTRUCTION_MODES } from '../src/cv/anchor.reconstructionModes.js';
 import {
   VISION_QUALITY_THRESHOLDS,
@@ -17,11 +21,13 @@ import {
 
 const SYNTHETIC_OBJECT_SUPPORT = 'synthetic-object-mask';
 
-const argSet = new Set(process.argv.slice(2));
-const size = argSet.has('--full') ? 'full' : argSet.has('--quick') ? 'quick' : 'representative';
-const summaryOnly = argSet.has('--summary-only');
-const quiet = argSet.has('--quiet');
-const failOnSevere = argSet.has('--fail-on-severe');
+const {
+  size,
+  summaryOnly,
+  quiet,
+  failOnSevere,
+  outputPath,
+} = parseVisionBenchmarkArgs(process.argv.slice(2));
 const cv = await loadOpenCvForNode();
 const scenarios = createVisionBenchmarkMatrix({ size });
 const reports = [];
@@ -152,7 +158,7 @@ const output = {
     : benchmark,
 };
 
-console.log(JSON.stringify(output, null, 2));
+console.log(await formatVisionBenchmarkOutput(output, { outputPath }));
 
 if (failOnSevere && benchmark.aggregate.byRiskBand.severe) {
   process.exitCode = 1;
