@@ -205,8 +205,9 @@ export class AnchorWorkerService {
     const worker = await this._getWorker();
     const id = this.nextRequestId++;
     return new Promise((resolve, reject) => {
-      this.pendingRequests.set(id, { resolve, reject });
+      // Register after postMessage succeeds so structured-clone failures do not leak requests.
       worker.postMessage({ id, command, payload }, transferables);
+      this.pendingRequests.set(id, { resolve, reject });
     });
   }
 

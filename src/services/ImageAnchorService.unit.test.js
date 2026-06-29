@@ -1451,6 +1451,70 @@ test('selected curved pose dropout holds weak reference scale', () => {
   assert.equal(transform.method, 'reference_similarity_transform');
 });
 
+test('selected curved pose dropout follows coherent low-confidence reference scale', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('direct-photometric');
+  service.anchorTargetClass = 'cup';
+  service.currentPlanarTransform = {
+    scale: 1.15,
+    rotation: 0,
+    confidence: 0.7,
+    inlierCount: 18,
+    method: 'direct-photometric',
+  };
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.82;
+  service.metrics.reconstructionMatureLandmarks = 24;
+  service.metrics.reconstructionPoseInliers = 0;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  service.curvedScaleFilter.filter(1.15, 1000);
+
+  const transform = service._updatePlanarTransform({
+    scale: 0.9,
+    rotation: -0.08,
+    confidence: 0.08,
+    inlierCount: 12,
+    method: 'reference_similarity_transform',
+  }, 1033.33);
+
+  assert.ok(transform.scale < 1.15);
+  assert.equal(transform.method, 'reference_similarity_transform');
+});
+
+test('parametric curved pose dropout keeps low-confidence reference scale held', () => {
+  const service = new ImageAnchorService();
+  service.setTrackingMode('parametric-surface');
+  service.anchorTargetClass = 'cup';
+  service.currentPlanarTransform = {
+    scale: 1.15,
+    rotation: 0,
+    confidence: 0.7,
+    inlierCount: 18,
+    method: 'parametric-surface',
+  };
+  service.metrics.reconstructionReady = true;
+  service.metrics.reconstructionMapConfidence = 0.82;
+  service.metrics.reconstructionMatureLandmarks = 24;
+  service.metrics.reconstructionPoseInliers = 0;
+  service.metrics.reconstructionPreview = {
+    surface: { model: 'tapered-cylinder' },
+  };
+  service.curvedScaleFilter.filter(1.15, 1000);
+
+  const transform = service._updatePlanarTransform({
+    scale: 0.9,
+    rotation: -0.08,
+    confidence: 0.08,
+    inlierCount: 12,
+    method: 'reference_similarity_transform',
+  }, 1033.33);
+
+  assert.ok(transform.scale >= 1.149);
+  assert.equal(transform.method, 'reference_similarity_transform');
+});
+
 test('selected curved modes can catch up from a held pose with strong reference tracking', () => {
   const service = new ImageAnchorService();
   service.setTrackingMode('parametric-surface');

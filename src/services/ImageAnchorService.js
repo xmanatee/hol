@@ -95,6 +95,8 @@ const MAX_LOW_LAG_TRACKER_RESIDUAL = 7;
 const MIN_CURVED_REFERENCE_BLEND_CONFIDENCE = 0.25;
 const MAX_CURVED_REFERENCE_BLEND_RESIDUAL = 12;
 const MIN_CURVED_REFERENCE_BLEND_INLIERS = 8;
+const MIN_SELECTED_CURVED_REFERENCE_SCALE_CONFIDENCE = 0.05;
+const MIN_SELECTED_CURVED_REFERENCE_SCALE_INLIERS = 12;
 const MAX_SEVERE_CURVED_REFERENCE_CONFIDENCE = 0.08;
 const MIN_SEVERE_CURVED_REFERENCE_RESIDUAL = 24;
 const MIN_SEVERE_CURVED_REFERENCE_TRACKER_DELTA = 24;
@@ -1015,7 +1017,10 @@ export class ImageAnchorService {
             logger.info('ImageAnchor', 'Template matching succeeded');
             // Only reinitialize keypoints if we were completely lost, not degraded
             if (this.anchorState === 'lost') {
-              this._reinitializeKeypoints(gray);
+              this._reinitializeKeypoints(gray, {
+                objectSupportMask: this._getCurrentObjectSupportMask(),
+                reason: 'lost-template-recovery',
+              });
               this.anchorState = 'degraded'; // Promote from lost to degraded
             }
             // If we were degraded, just stay degraded - keypoint recovery will handle it
@@ -1703,7 +1708,10 @@ export class ImageAnchorService {
       if (activePointCount >= 3 && activePointCount < 20) {
         this._refreshKeypoints(grayImage);
       } else if (activePointCount < 3) {
-        this._reinitializeKeypoints(grayImage);
+        this._reinitializeKeypoints(grayImage, {
+          objectSupportMask: this._getCurrentObjectSupportMask(),
+          reason: 'template-recovery-reference-collapse',
+        });
       }
 
       return {
@@ -2424,7 +2432,7 @@ export class ImageAnchorService {
    */
   _reinitializeKeypoints(grayImage, {
     minKeypoints = 15,
-    objectSupportMask = null,
+    objectSupportMask,
     region = null,
     anchorPosition = null,
     resetReconstruction = false,
@@ -2432,13 +2440,12 @@ export class ImageAnchorService {
   } = {}) {
     if (!this.currentPosition) return;
 
-    const supportMask = objectSupportMask ?? this._getCurrentObjectSupportMask();
     const extractionRegion = region ??
       this._getAnchoredTrackingRegion(grayImage, { allowExpansion: this._shouldUseExpandedTrackingRegion() });
     const keypointResult = this._extractObjectKeypoints(
       grayImage,
       extractionRegion,
-      supportMask,
+      objectSupportMask,
       { minKeypoints }
     );
 
@@ -4013,8 +4020,19 @@ export class ImageAnchorService {
       return false;
     }
 
-    return (anchorPosition.confidence ?? 0) <= 0.24 ||
-      (anchorPosition.averageResidual ?? Infinity) >= 12;
+    const confidence = anchorPosition.confidence ?? 0;
+    const inliers = anchorPosition.inlierCount || 0;
+    const residual = anchorPosition.averageResidual;
+    const canReleaseScaleHold = this.trackingMode === DIRECT_PHOTOMETRIC_POSE_MODEL &&
+      confidence >= MIN_SELECTED_CURVED_REFERENCE_SCALE_CONFIDENCE &&
+      inliers >= MIN_SELECTED_CURVED_REFERENCE_SCALE_INLIERS &&
+      (!Number.isFinite(residual) || residual <= MAX_CURVED_REFERENCE_BLEND_RESIDUAL);
+    if (canReleaseScaleHold) {
+      return false;
+    }
+
+    return confidence <= 0.24 ||
+      (residual ?? Infinity) >= MAX_CURVED_REFERENCE_BLEND_RESIDUAL;
   }
 
   _filterPositionCandidate(position, timestamp, method) {
