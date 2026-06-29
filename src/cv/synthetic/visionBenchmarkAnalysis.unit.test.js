@@ -166,3 +166,51 @@ test('benchmark analysis groups weak points by mode and condition axes', () => {
   assert.equal(analysis.weakPoints.byOcclusion[0].name, 'repeated');
   assert.equal(analysis.worstReports[0].name, 'unstable mug');
 });
+
+test('benchmark analysis separates all-run and failed-run primary weaknesses', () => {
+  const sharedAxes = {
+    object: 'handled-mug',
+    geometry: 'handled-tapered-cylinder',
+    background: 'desk',
+    lighting: 'soft-desk',
+    motion: 'standard',
+    occlusion: 'clean',
+  };
+  const reports = [
+    createReport({
+      name: 'stable mug a',
+      mode: 'depth-fusion',
+      axes: sharedAxes,
+      meanAnchorError: 2,
+      maxAnchorError: 3,
+      maxFrameJump: 1,
+    }),
+    createReport({
+      name: 'stable mug b',
+      mode: 'depth-fusion',
+      axes: sharedAxes,
+      meanAnchorError: 2,
+      maxAnchorError: 3,
+      maxFrameJump: 1,
+    }),
+    createReport({
+      name: 'bad head attachment mug',
+      mode: 'depth-fusion',
+      axes: sharedAxes,
+      overallStatus: 'fail',
+      failedStages: ['headAttachment'],
+      meanAnchorError: 0.5,
+      maxAnchorError: 1,
+      maxFrameJump: 1,
+      maxWorldPositionError: 0.8,
+    }),
+  ];
+
+  const analysis = createVisionBenchmarkAnalysis(reports);
+  const mugGroup = analysis.weakPoints.byObject.find(group => group.name === 'handled-mug');
+
+  assert.equal(mugGroup.topPrimaryWeaknesses[0].weakness, 'tracking.meanAnchorError');
+  assert.equal(mugGroup.topPrimaryWeaknesses[0].count, 2);
+  assert.equal(mugGroup.topFailedPrimaryWeaknesses[0].weakness, 'headAttachment.maxWorldPositionError');
+  assert.equal(mugGroup.topFailedPrimaryWeaknesses[0].count, 1);
+});

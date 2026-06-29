@@ -179,6 +179,8 @@ const createGroupAccumulator = () => ({
   high: 0,
   fail: 0,
   primaryWeaknesses: {},
+  failedPrimaryWeaknesses: {},
+  highRiskPrimaryWeaknesses: {},
   worst: null,
 });
 
@@ -191,11 +193,22 @@ const addToGroup = (groups, key, report) => {
   if (report.risk.band === 'high') group.high++;
   if (report.overallStatus === 'fail') group.fail++;
   increment(group.primaryWeaknesses, report.risk.primaryWeakness);
+  if (report.overallStatus === 'fail') {
+    increment(group.failedPrimaryWeaknesses, report.risk.primaryWeakness);
+  }
+  if (report.risk.band === 'high' || report.risk.band === 'severe') {
+    increment(group.highRiskPrimaryWeaknesses, report.risk.primaryWeakness);
+  }
   if (!group.worst || report.risk.score > group.worst.risk.score) {
     group.worst = compactReport(report);
   }
   groups[key] = group;
 };
+
+const rankedWeaknesses = weaknesses => Object.entries(weaknesses)
+  .map(([weakness, count]) => ({ weakness, count }))
+  .sort((left, right) => right.count - left.count || left.weakness.localeCompare(right.weakness))
+  .slice(0, 4);
 
 const finalizeGroups = groups => Object.entries(groups)
   .map(([name, group]) => ({
@@ -206,10 +219,9 @@ const finalizeGroups = groups => Object.entries(groups)
     severe: group.severe,
     high: group.high,
     fail: group.fail,
-    topPrimaryWeaknesses: Object.entries(group.primaryWeaknesses)
-      .map(([weakness, count]) => ({ weakness, count }))
-      .sort((left, right) => right.count - left.count || left.weakness.localeCompare(right.weakness))
-      .slice(0, 4),
+    topPrimaryWeaknesses: rankedWeaknesses(group.primaryWeaknesses),
+    topFailedPrimaryWeaknesses: rankedWeaknesses(group.failedPrimaryWeaknesses),
+    topHighRiskPrimaryWeaknesses: rankedWeaknesses(group.highRiskPrimaryWeaknesses),
     worst: group.worst,
   }))
   .sort((left, right) => (

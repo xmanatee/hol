@@ -42,8 +42,14 @@ const percentBar = (value, total, className = '') => `
   </div>
 `;
 
+const topWeakness = item => (
+  item.topFailedPrimaryWeaknesses?.[0]?.weakness ||
+  item.topHighRiskPrimaryWeaknesses?.[0]?.weakness ||
+  item.topPrimaryWeaknesses?.[0]?.weakness ||
+  'none'
+);
+
 const groupRows = group => group.map(item => {
-  const failRate = item.fail / item.count;
   const severeHigh = item.severe + item.high;
   return `
     <tr>
@@ -55,7 +61,7 @@ const groupRows = group => group.map(item => {
       <td>${formatNumber(item.high)}</td>
       <td>${formatNumber(item.fail)} <span class="muted">(${formatPercent(item.fail, item.count)})</span>${percentBar(item.fail, item.count, 'fail')}</td>
       <td>${formatNumber(severeHigh)} <span class="muted">(${formatPercent(severeHigh, item.count)})</span>${percentBar(severeHigh, item.count, 'riskbar')}</td>
-      <td>${escapeHtml(item.topPrimaryWeaknesses[0].weakness)}</td>
+      <td>${escapeHtml(topWeakness(item))}</td>
       <td>${escapeHtml(item.worst.name)} <span class="muted">/ ${escapeHtml(item.worst.mode)}</span></td>
     </tr>
   `;
@@ -68,6 +74,7 @@ const compactGroupRows = group => group.map(item => `
     <td>${riskCell(item.maxRiskScore)}</td>
     <td>${formatNumber(item.fail)} <span class="muted">(${formatPercent(item.fail, item.count)})</span>${percentBar(item.fail, item.count, 'fail')}</td>
     <td>${formatNumber(item.severe + item.high)} <span class="muted">(${formatPercent(item.severe + item.high, item.count)})</span>${percentBar(item.severe + item.high, item.count, 'riskbar')}</td>
+    <td>${escapeHtml(topWeakness(item))}</td>
     <td>${escapeHtml(item.worst.name)} <span class="muted">/ ${escapeHtml(item.worst.mode)}</span></td>
   </tr>
 `).join('');
@@ -462,7 +469,7 @@ const html = `<!doctype html>
       <table>
         <thead>
           <tr>
-            <th>Mode</th><th>Runs</th><th>Mean risk</th><th>Max risk</th><th>Severe</th><th>High</th><th>Strict failures</th><th>High + severe</th><th>Top weakness</th><th>Worst case</th>
+            <th>Mode</th><th>Runs</th><th>Mean risk</th><th>Max risk</th><th>Severe</th><th>High</th><th>Strict failures</th><th>High + severe</th><th>Failed weakness</th><th>Worst case</th>
           </tr>
         </thead>
         <tbody>${groupRows(modeRanking)}</tbody>
@@ -507,7 +514,7 @@ const html = `<!doctype html>
         <h3>Objects</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Object</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Worst case</th></tr></thead>
+            <thead><tr><th>Object</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Failed weakness</th><th>Worst case</th></tr></thead>
             <tbody>${compactGroupRows(objectRanking)}</tbody>
           </table>
         </div>
@@ -516,7 +523,7 @@ const html = `<!doctype html>
         <h3>Geometry Families</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Geometry</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Worst case</th></tr></thead>
+            <thead><tr><th>Geometry</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Failed weakness</th><th>Worst case</th></tr></thead>
             <tbody>${compactGroupRows(benchmark.weakPoints.byGeometry)}</tbody>
           </table>
         </div>
@@ -529,7 +536,7 @@ const html = `<!doctype html>
         <h3>Motion</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Motion</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Worst case</th></tr></thead>
+            <thead><tr><th>Motion</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Failed weakness</th><th>Worst case</th></tr></thead>
             <tbody>${compactGroupRows(motionRanking)}</tbody>
           </table>
         </div>
@@ -538,7 +545,7 @@ const html = `<!doctype html>
         <h3>Occlusion</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Occlusion</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Worst case</th></tr></thead>
+            <thead><tr><th>Occlusion</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Failed weakness</th><th>Worst case</th></tr></thead>
             <tbody>${compactGroupRows(occlusionRanking)}</tbody>
           </table>
         </div>
@@ -551,7 +558,7 @@ const html = `<!doctype html>
         <h3>Backgrounds</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Background</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Worst case</th></tr></thead>
+            <thead><tr><th>Background</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Failed weakness</th><th>Worst case</th></tr></thead>
             <tbody>${compactGroupRows(backgroundRanking)}</tbody>
           </table>
         </div>
@@ -560,7 +567,7 @@ const html = `<!doctype html>
         <h3>Lighting Proxies</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Lighting</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Worst case</th></tr></thead>
+            <thead><tr><th>Lighting</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Failed weakness</th><th>Worst case</th></tr></thead>
             <tbody>${compactGroupRows(benchmark.weakPoints.byLighting)}</tbody>
           </table>
         </div>
