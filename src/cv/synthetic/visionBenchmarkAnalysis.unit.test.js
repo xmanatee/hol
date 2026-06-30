@@ -236,6 +236,49 @@ test('benchmark risk includes thresholded anchor accuracy without inflating tota
   assert.ok(lowAccuracy.score > highAccuracy.score);
 });
 
+test('benchmark risk scores post-occlusion recovery without penalizing clean runs', () => {
+  const clean = scoreBenchmarkRisk(createReport({
+    name: 'clean stable run',
+    mode: 'depth-fusion',
+    axes: { object: 'planar-book', occlusion: 'clean' },
+    meanAnchorError: 2,
+    maxAnchorError: 6,
+    maxFrameJump: 3,
+    anchorAccuracyAt8: 0.96,
+    anchorAccuracyAt16: 1,
+  }));
+  const cleanWithRecoveryPlaceholders = scoreBenchmarkRisk(createReport({
+    name: 'clean stable run with empty recovery fields',
+    mode: 'depth-fusion',
+    axes: { object: 'planar-book', occlusion: 'clean' },
+    meanAnchorError: 2,
+    maxAnchorError: 6,
+    maxFrameJump: 3,
+    anchorAccuracyAt8: 0.96,
+    anchorAccuracyAt16: 1,
+    postOcclusionWindowCount: 0,
+    postOcclusionRecoveryRateAt8: 0,
+    maxPostOcclusionRecoveryFramesAt8: 24,
+  }));
+  const slowRecovery = scoreBenchmarkRisk(createReport({
+    name: 'slow recovery after occlusion',
+    mode: 'depth-fusion',
+    axes: { object: 'handled-mug', occlusion: 'repeated' },
+    meanAnchorError: 2,
+    maxAnchorError: 6,
+    maxFrameJump: 3,
+    anchorAccuracyAt8: 0.96,
+    anchorAccuracyAt16: 1,
+    postOcclusionWindowCount: 2,
+    postOcclusionRecoveryRateAt8: 0.25,
+    maxPostOcclusionRecoveryFramesAt8: 18,
+  }));
+
+  assert.equal(clean.score, cleanWithRecoveryPlaceholders.score);
+  assert.equal(slowRecovery.primaryWeakness, 'tracking.postOcclusionRecoveryFramesAt8');
+  assert.ok(slowRecovery.score > clean.score);
+});
+
 test('benchmark analysis separates all-run and failed-run primary weaknesses', () => {
   const sharedAxes = {
     object: 'handled-mug',

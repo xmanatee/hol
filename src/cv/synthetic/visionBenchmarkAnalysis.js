@@ -7,6 +7,8 @@ export const VISION_BENCHMARK_TARGETS = {
     maxFrameJump: 8,
     minAnchorAccuracyAt8: 0.82,
     minAnchorAccuracyAt16: 0.95,
+    minPostOcclusionRecoveryRateAt8: 0.85,
+    maxPostOcclusionRecoveryFramesAt8: 6,
   },
   reconstruction: {
     minReadyFrameRatio: 0.65,
@@ -37,6 +39,23 @@ const cappedDeficit = (value, target) => {
   return clamp((target - metric) / target, 0, 1);
 };
 
+const hasPostOcclusionWindows = tracking => Number.isFinite(tracking.postOcclusionWindowCount) &&
+  tracking.postOcclusionWindowCount > 0;
+
+const postOcclusionRecoveryDeficit = tracking => hasPostOcclusionWindows(tracking)
+  ? cappedDeficit(
+    tracking.postOcclusionRecoveryRateAt8,
+    VISION_BENCHMARK_TARGETS.tracking.minPostOcclusionRecoveryRateAt8
+  )
+  : 0;
+
+const postOcclusionRecoveryLatency = tracking => hasPostOcclusionWindows(tracking)
+  ? cappedRatio(
+    tracking.maxPostOcclusionRecoveryFramesAt8,
+    VISION_BENCHMARK_TARGETS.tracking.maxPostOcclusionRecoveryFramesAt8
+  )
+  : 0;
+
 const addWeighted = (components, name, raw, weight) => {
   const score = raw * weight;
   components.push({ name, score, weight });
@@ -59,24 +78,36 @@ export const scoreBenchmarkRisk = report => {
       components,
       'tracking.maxAnchorError',
       cappedRatio(tracking.maxAnchorError, VISION_BENCHMARK_TARGETS.tracking.maxAnchorError),
-      12
+      9
     ),
     addWeighted(
       components,
       'tracking.maxFrameJump',
       cappedRatio(tracking.maxFrameJump, VISION_BENCHMARK_TARGETS.tracking.maxFrameJump),
-      8
+      6
     ),
     addWeighted(
       components,
       'tracking.anchorAccuracyAt8',
       cappedDeficit(tracking.anchorAccuracyAt8, VISION_BENCHMARK_TARGETS.tracking.minAnchorAccuracyAt8),
-      6
+      5
     ),
     addWeighted(
       components,
       'tracking.anchorAccuracyAt16',
       cappedDeficit(tracking.anchorAccuracyAt16, VISION_BENCHMARK_TARGETS.tracking.minAnchorAccuracyAt16),
+      3
+    ),
+    addWeighted(
+      components,
+      'tracking.postOcclusionRecoveryRateAt8',
+      postOcclusionRecoveryDeficit(tracking),
+      3
+    ),
+    addWeighted(
+      components,
+      'tracking.postOcclusionRecoveryFramesAt8',
+      postOcclusionRecoveryLatency(tracking),
       4
     ),
     addWeighted(
