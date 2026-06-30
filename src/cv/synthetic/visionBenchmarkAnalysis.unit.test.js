@@ -15,6 +15,11 @@ const createReport = ({
   meanAnchorError = 3,
   maxAnchorError = 9,
   maxFrameJump = 4,
+  objectSupportCorrectionFrames = 0,
+  objectSupportRecoveryFrames = 0,
+  maxObjectSupportPositionStep = 0,
+  maxObjectSupportAnchorError = 0,
+  meanObjectSupportAnchorError = 0,
   readyFrameRatio = 0.9,
   poseReadyFrameRatio = 0.8,
   meanReadyNormalError = 0.2,
@@ -36,6 +41,11 @@ const createReport = ({
         meanAnchorError,
         maxAnchorError,
         maxFrameJump,
+        objectSupportCorrectionFrames,
+        objectSupportRecoveryFrames,
+        maxObjectSupportPositionStep,
+        maxObjectSupportAnchorError,
+        meanObjectSupportAnchorError,
       },
     },
     reconstruction: {
@@ -151,6 +161,11 @@ test('benchmark analysis groups weak points by mode and condition axes', () => {
       meanAnchorError: 26,
       maxAnchorError: 78,
       maxFrameJump: 22,
+      objectSupportCorrectionFrames: 8,
+      objectSupportRecoveryFrames: 7,
+      maxObjectSupportPositionStep: 6,
+      maxObjectSupportAnchorError: 44,
+      meanObjectSupportAnchorError: 18,
       readyFrameRatio: 0.12,
       poseReadyFrameRatio: 0,
       maxWorldPositionError: 0.26,
@@ -169,6 +184,8 @@ test('benchmark analysis groups weak points by mode and condition axes', () => {
   assert.equal(analysis.weakPoints.byObjectBackground[0].name, 'handled-mug / kitchen');
   assert.equal(analysis.weakPoints.byModeOcclusion[0].name, 'direct-photometric / repeated');
   assert.equal(analysis.worstReports[0].name, 'unstable mug');
+  assert.equal(analysis.worstReports[0].metrics.objectSupportRecoveryFrames, 7);
+  assert.equal(analysis.worstReports[0].metrics.maxObjectSupportAnchorError, 44);
 });
 
 test('benchmark analysis separates all-run and failed-run primary weaknesses', () => {

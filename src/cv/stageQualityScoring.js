@@ -113,6 +113,35 @@ const pointDistance = (left, right) => {
   return Math.hypot(left.x - right.x, left.y - right.y);
 };
 
+const objectSupportAnchorFromMetrics = metrics => {
+  const uv = metrics?.objectSupportAnchorUv;
+  const bounds = metrics?.currentObjectSupportMaskBounds || metrics?.objectSupportMaskBounds;
+  if (!uv || !bounds ||
+      !Number.isFinite(uv.u) || !Number.isFinite(uv.v) ||
+      !Number.isFinite(bounds.x) || !Number.isFinite(bounds.y) ||
+      !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) {
+    return null;
+  }
+
+  return {
+    x: bounds.x + bounds.width * uv.u,
+    y: bounds.y + bounds.height * uv.v,
+  };
+};
+
+const objectSupportAnchorError = frame => {
+  const supportAnchor = objectSupportAnchorFromMetrics(frame.metrics);
+  const groundTruthAnchor = frame.groundTruth?.anchor;
+  if (!supportAnchor || !groundTruthAnchor) {
+    return null;
+  }
+
+  return Math.hypot(
+    supportAnchor.x - groundTruthAnchor.x,
+    supportAnchor.y - groundTruthAnchor.y
+  );
+};
+
 const transitionFrameStats = ({ frames, sourceForFrame, metricsForTransition }) => {
   const transitions = [];
   let previous = null;
@@ -187,6 +216,19 @@ const worstTrackingFrames = frames => [...frames]
     anchorError: frame.anchorError,
   }));
 
+const worstObjectSupportAnchorFrames = frames => frames
+  .map(frame => ({
+    index: frame.index,
+    positionSource: frame.positionSource || frame.method || null,
+    poseSource: frame.poseSource || frame.metrics?.poseSource || null,
+    objectSupportAnchorError: objectSupportAnchorError(frame),
+    anchorError: frame.anchorError,
+    objectSupportPositionCorrection: frame.metrics?.objectSupportPositionCorrection || null,
+  }))
+  .filter(frame => Number.isFinite(frame.objectSupportAnchorError))
+  .sort((left, right) => right.objectSupportAnchorError - left.objectSupportAnchorError)
+  .slice(0, 6);
+
 const scoreSelection = ({ replay, thresholds }) => {
   const failures = [];
   const evidence = evidenceFromReplay(replay);
@@ -233,6 +275,18 @@ const scoreTracking = ({ replay, summary, thresholds }) => {
     maxAnchorError: metricValue(summary.maxAnchorError),
     meanAnchorError: metricValue(summary.meanAnchorError),
     maxFrameJump: metricValue(summary.maxFrameJump),
+    objectSupportCorrectionFrames: metricValue(summary.objectSupportCorrectionFrames),
+    objectSupportRecoveryFrames: metricValue(summary.objectSupportRecoveryFrames),
+    maxObjectSupportPositionStep: metricValue(summary.maxObjectSupportPositionStep),
+    maxObjectSupportAnchorError: metricValue(
+      summary.maxObjectSupportAnchorError,
+      maxValue(successfulFrames.map(objectSupportAnchorError))
+    ),
+    meanObjectSupportAnchorError: metricValue(
+      summary.meanObjectSupportAnchorError,
+      meanValue(successfulFrames.map(objectSupportAnchorError))
+    ),
+    objectSupportCorrectionCounts: summary.objectSupportCorrectionCounts || {},
     trackingSuccessRate: meanValue(replay.frames.map(frame => frame.metrics?.trackingSuccessRate)),
     maxBackgroundRejected: maxValue(replay.frames.map(frame => frame.metrics?.backgroundRejected)),
     byPositionSource: sourceFrameStats({
@@ -254,6 +308,7 @@ const scoreTracking = ({ replay, summary, thresholds }) => {
       }),
     }),
     worstFrames: worstTrackingFrames(successfulFrames),
+    worstObjectSupportAnchorFrames: worstObjectSupportAnchorFrames(successfulFrames),
   };
   const failures = [];
 

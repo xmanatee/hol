@@ -20,6 +20,7 @@ const createGoodReplay = () => ({
   },
   frames: [
     {
+      index: 7,
       success: true,
       anchorError: 2.5,
       normalError: 0.1,
@@ -232,6 +233,63 @@ test('quality thresholds tolerate floating point boundary noise', () => {
   });
 
   assert.equal(report.stages.tracking.status, 'pass');
+});
+
+test('tracking scoring exposes object support correction and anchor bias diagnostics', () => {
+  const replay = createGoodReplay();
+  replay.frames = [
+    {
+      index: 7,
+      success: true,
+      positionSource: 'reference_similarity_transform',
+      poseSource: null,
+      predicted: { x: 24, y: 10 },
+      groundTruth: { anchor: { x: 25, y: 10 } },
+      anchorError: 1,
+      normalError: 0.1,
+      metrics: {
+        poseInliers: 0,
+        trackingSuccessRate: 0.8,
+        objectSupportPositionCorrection: 'pose-dropout-recovery',
+        objectSupportPositionStep: 6,
+        objectSupportAnchorUv: { u: 0.5, v: 0.5 },
+        objectSupportMaskBounds: { x: 0, y: 0, width: 20, height: 20 },
+        reconstructionReady: true,
+        reconstructionMapConfidence: 0.7,
+        reconstructionDepthQuality: 0.16,
+      },
+    },
+  ];
+  const report = scoreVisionPipelineQuality({
+    name: 'support bias fixture',
+    replay,
+    summary: {
+      ...goodSummary,
+      failedFrames: 0,
+      maxAnchorError: 1,
+      meanAnchorError: 1,
+      maxFrameJump: 0,
+      objectSupportCorrectionFrames: 1,
+      objectSupportRecoveryFrames: 1,
+      maxObjectSupportPositionStep: 6,
+      objectSupportCorrectionCounts: {
+        'pose-dropout-recovery': 1,
+      },
+    },
+    headPose: goodHeadPose,
+  });
+  const metrics = report.stages.tracking.metrics;
+
+  assert.equal(metrics.objectSupportCorrectionFrames, 1);
+  assert.equal(metrics.objectSupportRecoveryFrames, 1);
+  assert.equal(metrics.maxObjectSupportPositionStep, 6);
+  assert.equal(metrics.maxObjectSupportAnchorError, 15);
+  assert.equal(metrics.meanObjectSupportAnchorError, 15);
+  assert.deepEqual(metrics.objectSupportCorrectionCounts, {
+    'pose-dropout-recovery': 1,
+  });
+  assert.equal(metrics.worstObjectSupportAnchorFrames[0].index, 7);
+  assert.equal(metrics.worstObjectSupportAnchorFrames[0].objectSupportAnchorError, 15);
 });
 
 test('head attachment scoring reports policy-hidden frames', () => {

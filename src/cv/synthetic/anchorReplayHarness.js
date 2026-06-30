@@ -31,6 +31,35 @@ const normalAngularError = (predicted, expected) => {
   return Math.acos(Math.max(-1, Math.min(1, dot)));
 };
 
+const objectSupportAnchorFromMetrics = metrics => {
+  const uv = metrics?.objectSupportAnchorUv;
+  const bounds = metrics?.currentObjectSupportMaskBounds || metrics?.objectSupportMaskBounds;
+  if (!uv || !bounds ||
+      !Number.isFinite(uv.u) || !Number.isFinite(uv.v) ||
+      !Number.isFinite(bounds.x) || !Number.isFinite(bounds.y) ||
+      !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) {
+    return null;
+  }
+
+  return {
+    x: bounds.x + bounds.width * uv.u,
+    y: bounds.y + bounds.height * uv.v,
+  };
+};
+
+const objectSupportAnchorError = frame => {
+  const supportAnchor = objectSupportAnchorFromMetrics(frame.metrics);
+  const groundTruthAnchor = frame.groundTruth?.anchor;
+  if (!supportAnchor || !groundTruthAnchor) {
+    return null;
+  }
+
+  return Math.hypot(
+    supportAnchor.x - groundTruthAnchor.x,
+    supportAnchor.y - groundTruthAnchor.y
+  );
+};
+
 const getCameraParams = sequence => sequence.camera || HomographyEstimator.createCameraMatrix(
   63,
   sequence.width,
@@ -356,6 +385,10 @@ export const summarizeReplay = replay => {
   const successful = frames.filter(frame => frame.success);
   const failures = frames.filter(frame => !frame.success);
   const jumps = [];
+  const objectSupportCorrections = successful.filter(frame => frame.metrics?.objectSupportPositionCorrection);
+  const objectSupportAnchorErrors = successful
+    .map(objectSupportAnchorError)
+    .filter(Number.isFinite);
   const poseSourceCounts = successful.reduce((counts, frame) => {
     const source = frame.poseSource || 'none';
     counts[source] = (counts[source] || 0) + 1;
@@ -364,6 +397,11 @@ export const summarizeReplay = replay => {
   const positionSourceCounts = successful.reduce((counts, frame) => {
     const source = frame.positionSource || frame.method || 'none';
     counts[source] = (counts[source] || 0) + 1;
+    return counts;
+  }, {});
+  const objectSupportCorrectionCounts = objectSupportCorrections.reduce((counts, frame) => {
+    const reason = frame.metrics.objectSupportPositionCorrection;
+    counts[reason] = (counts[reason] || 0) + 1;
     return counts;
   }, {});
 
@@ -392,5 +430,16 @@ export const summarizeReplay = replay => {
     sparsePositionUsage: successful.filter(frame => frame.positionSource === 'sparse-reconstruction').length / Math.max(1, successful.length),
     poseSourceCounts,
     positionSourceCounts,
+    objectSupportCorrectionCounts,
+    objectSupportCorrectionFrames: objectSupportCorrections.length,
+    objectSupportRecoveryFrames: objectSupportCorrections.filter(frame => (
+      /dropout|recovery/i.test(frame.metrics.objectSupportPositionCorrection)
+    )).length,
+    maxObjectSupportPositionStep: Math.max(...objectSupportCorrections.map(frame => (
+      frame.metrics.objectSupportPositionStep || 0
+    )), 0),
+    maxObjectSupportAnchorError: Math.max(...objectSupportAnchorErrors, 0),
+    meanObjectSupportAnchorError: objectSupportAnchorErrors.reduce((sum, value) => sum + value, 0) /
+      Math.max(1, objectSupportAnchorErrors.length),
   };
 };

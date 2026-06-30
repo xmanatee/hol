@@ -130,7 +130,13 @@ test('replay summary counts position and pose sources independently', () => {
         groundTruth: { anchor: { x: 14, y: 10 } },
         planarTransform: { scale: 1, rotation: 0 },
         normal: { x: 0, y: 0, z: 1 },
-        metrics: { poseInliers: 0 },
+        metrics: {
+          poseInliers: 0,
+          objectSupportPositionCorrection: 'pose-dropout-recovery',
+          objectSupportPositionStep: 6,
+          objectSupportAnchorUv: { u: 0.5, v: 0.5 },
+          objectSupportMaskBounds: { x: 20, y: 0, width: 10, height: 20 },
+        },
         anchorError: 0,
         scaleError: 0,
         rollError: 0,
@@ -147,6 +153,14 @@ test('replay summary counts position and pose sources independently', () => {
     'planar-homography': 1,
     none: 1,
   });
+  assert.deepEqual(summary.objectSupportCorrectionCounts, {
+    'pose-dropout-recovery': 1,
+  });
+  assert.equal(summary.objectSupportCorrectionFrames, 1);
+  assert.equal(summary.objectSupportRecoveryFrames, 1);
+  assert.equal(summary.maxObjectSupportPositionStep, 6);
+  assert.equal(summary.maxObjectSupportAnchorError, 11);
+  assert.equal(summary.meanObjectSupportAnchorError, 11);
 });
 
 test('head-pose replay scorer measures the exact app overlay transform', () => {
