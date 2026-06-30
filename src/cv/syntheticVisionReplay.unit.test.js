@@ -126,7 +126,7 @@ test('replay summary counts position and pose sources independently', () => {
         positionSource: 'reference_similarity_transform',
         poseSource: null,
         method: 'reference_similarity_transform',
-        predicted: { x: 14, y: 10 },
+        predicted: { x: 22, y: 10 },
         groundTruth: { anchor: { x: 14, y: 10 } },
         planarTransform: { scale: 1, rotation: 0 },
         normal: { x: 0, y: 0, z: 1 },
@@ -137,7 +137,7 @@ test('replay summary counts position and pose sources independently', () => {
           objectSupportAnchorUv: { u: 0.5, v: 0.5 },
           objectSupportMaskBounds: { x: 20, y: 0, width: 10, height: 20 },
         },
-        anchorError: 0,
+        anchorError: 8,
         scaleError: 0,
         rollError: 0,
         normalError: 0,
@@ -156,6 +156,9 @@ test('replay summary counts position and pose sources independently', () => {
   assert.deepEqual(summary.objectSupportCorrectionCounts, {
     'pose-dropout-recovery': 1,
   });
+  assert.equal(summary.anchorAccuracyAt4, 0.5);
+  assert.equal(summary.anchorAccuracyAt8, 1);
+  assert.equal(summary.anchorAccuracyAt16, 1);
   assert.equal(summary.objectSupportCorrectionFrames, 1);
   assert.equal(summary.objectSupportRecoveryFrames, 1);
   assert.equal(summary.maxObjectSupportPositionStep, 6);

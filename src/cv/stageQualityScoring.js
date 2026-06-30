@@ -1,3 +1,5 @@
+import { anchorAccuracyAt } from './anchorAccuracyMetrics.js';
+
 export const VISION_QUALITY_THRESHOLDS = {
   selection: {
     minTemplateKeypoints: 8,
@@ -274,6 +276,9 @@ const scoreTracking = ({ replay, summary, thresholds }) => {
     failedFrames,
     maxAnchorError: metricValue(summary.maxAnchorError),
     meanAnchorError: metricValue(summary.meanAnchorError),
+    anchorAccuracyAt4: metricValue(summary.anchorAccuracyAt4, anchorAccuracyAt(replay.frames, 4)),
+    anchorAccuracyAt8: metricValue(summary.anchorAccuracyAt8, anchorAccuracyAt(replay.frames, 8)),
+    anchorAccuracyAt16: metricValue(summary.anchorAccuracyAt16, anchorAccuracyAt(replay.frames, 16)),
     maxFrameJump: metricValue(summary.maxFrameJump),
     objectSupportCorrectionFrames: metricValue(summary.objectSupportCorrectionFrames),
     objectSupportRecoveryFrames: metricValue(summary.objectSupportRecoveryFrames),

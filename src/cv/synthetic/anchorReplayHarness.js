@@ -5,6 +5,7 @@ import {
   needsCurvedObjectRecovery,
   shouldDeferSparseMugPoseDropoutRecovery,
 } from '../curvedObjectRecovery.js';
+import { anchorAccuracyMetrics } from '../anchorAccuracyMetrics.js';
 import { createObjectSupportMask } from '../objectSupportMask.js';
 
 const MAX_SYNTHETIC_POSE_DROPOUT_INLIERS = 12;
@@ -418,6 +419,7 @@ export const summarizeReplay = replay => {
     failureReasons: [...new Set(failures.map(frame => frame.failureReason).filter(Boolean))],
     maxAnchorError: Math.max(...successful.map(frame => frame.anchorError), 0),
     meanAnchorError: successful.reduce((sum, frame) => sum + frame.anchorError, 0) / Math.max(1, successful.length),
+    ...anchorAccuracyMetrics(frames),
     maxScaleError: Math.max(...successful.map(frame => frame.scaleError), 0),
     maxRollError: Math.max(...successful.map(frame => frame.rollError), 0),
     maxNormalError: Math.max(...successful.map(frame => frame.normalError), 0),

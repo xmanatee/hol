@@ -130,6 +130,8 @@ const worstRows = benchmark.worstReports.map((report, index) => `
     <td>${escapeHtml(report.failedStages.join(', '))}</td>
     <td>${formatNumber(report.metrics.meanAnchorError)} px</td>
     <td>${formatNumber(report.metrics.maxAnchorError)} px</td>
+    <td>${percentMetricCell(report.metrics.anchorAccuracyAt8)}</td>
+    <td>${percentMetricCell(report.metrics.anchorAccuracyAt16)}</td>
     <td>${percentMetricCell(report.metrics.readyFrameRatio)}</td>
   </tr>
 `).join('');
@@ -616,12 +618,12 @@ const html = `<!doctype html>
     </div>
 
     <h2>Worst Individual Replays</h2>
-    <p class="note">These are the highest risk cases across all 1,200 replays. They are the best starting set for debugging because they combine the largest anchor errors with missing or unstable reconstruction support.</p>
+    <p class="note">These are the highest risk cases across all ${formatNumber(benchmarkOutput.replayCount)} replays. They are the best starting set for debugging because they combine anchor error severity, frame-level anchor accuracy, and missing or unstable reconstruction support.</p>
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>#</th><th>Scenario</th><th>Mode</th><th>Risk</th><th>Band</th><th>Primary weakness</th><th>Failed stages</th><th>Mean anchor</th><th>Max anchor</th><th>Ready frames</th>
+            <th>#</th><th>Scenario</th><th>Mode</th><th>Risk</th><th>Band</th><th>Primary weakness</th><th>Failed stages</th><th>Mean anchor</th><th>Max anchor</th><th>Acc @8px</th><th>Acc @16px</th><th>Ready frames</th>
           </tr>
         </thead>
         <tbody>${worstRows}</tbody>

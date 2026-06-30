@@ -292,6 +292,69 @@ test('tracking scoring exposes object support correction and anchor bias diagnos
   assert.equal(metrics.worstObjectSupportAnchorFrames[0].objectSupportAnchorError, 15);
 });
 
+test('tracking scoring reports thresholded anchor accuracy from replay frames', () => {
+  const replay = createGoodReplay();
+  replay.frames = [
+    {
+      success: true,
+      anchorError: 3,
+      normalError: 0.1,
+      metrics: {
+        reconstructionReady: true,
+        poseInliers: 12,
+        reconstructionMapConfidence: 0.7,
+      },
+    },
+    {
+      success: true,
+      anchorError: 9,
+      normalError: 0.1,
+      metrics: {
+        reconstructionReady: true,
+        poseInliers: 12,
+        reconstructionMapConfidence: 0.7,
+      },
+    },
+    {
+      success: true,
+      anchorError: 20,
+      normalError: 0.1,
+      metrics: {
+        reconstructionReady: true,
+        poseInliers: 12,
+        reconstructionMapConfidence: 0.7,
+      },
+    },
+    {
+      success: false,
+      anchorError: Infinity,
+      normalError: Infinity,
+      metrics: {
+        reconstructionReady: false,
+        poseInliers: 0,
+      },
+    },
+  ];
+
+  const report = scoreVisionPipelineQuality({
+    name: 'threshold accuracy fixture',
+    replay,
+    summary: {
+      ...goodSummary,
+      failedFrames: 1,
+      maxAnchorError: 20,
+      meanAnchorError: 10.67,
+      maxFrameJump: 12,
+    },
+    headPose: goodHeadPose,
+  });
+  const metrics = report.stages.tracking.metrics;
+
+  assert.equal(metrics.anchorAccuracyAt4, 0.25);
+  assert.equal(metrics.anchorAccuracyAt8, 0.25);
+  assert.equal(metrics.anchorAccuracyAt16, 0.5);
+});
+
 test('head attachment scoring reports policy-hidden frames', () => {
   const report = scoreVisionPipelineQuality({
     name: 'hidden head fixture',

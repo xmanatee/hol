@@ -5,6 +5,8 @@ export const VISION_BENCHMARK_TARGETS = {
     maxMeanAnchorError: 6,
     maxAnchorError: 18,
     maxFrameJump: 8,
+    minAnchorAccuracyAt8: 0.82,
+    minAnchorAccuracyAt16: 0.95,
   },
   reconstruction: {
     minReadyFrameRatio: 0.65,
@@ -51,19 +53,31 @@ export const scoreBenchmarkRisk = report => {
       components,
       'tracking.meanAnchorError',
       cappedRatio(tracking.meanAnchorError, VISION_BENCHMARK_TARGETS.tracking.maxMeanAnchorError),
-      18
+      14
     ),
     addWeighted(
       components,
       'tracking.maxAnchorError',
       cappedRatio(tracking.maxAnchorError, VISION_BENCHMARK_TARGETS.tracking.maxAnchorError),
-      16
+      12
     ),
     addWeighted(
       components,
       'tracking.maxFrameJump',
       cappedRatio(tracking.maxFrameJump, VISION_BENCHMARK_TARGETS.tracking.maxFrameJump),
-      10
+      8
+    ),
+    addWeighted(
+      components,
+      'tracking.anchorAccuracyAt8',
+      cappedDeficit(tracking.anchorAccuracyAt8, VISION_BENCHMARK_TARGETS.tracking.minAnchorAccuracyAt8),
+      6
+    ),
+    addWeighted(
+      components,
+      'tracking.anchorAccuracyAt16',
+      cappedDeficit(tracking.anchorAccuracyAt16, VISION_BENCHMARK_TARGETS.tracking.minAnchorAccuracyAt16),
+      4
     ),
     addWeighted(
       components,
@@ -150,6 +164,9 @@ const compactMetricsFor = report => {
   return {
     maxAnchorError: finiteMetric(tracking.maxAnchorError),
     meanAnchorError: finiteMetric(tracking.meanAnchorError),
+    anchorAccuracyAt4: finiteMetric(tracking.anchorAccuracyAt4),
+    anchorAccuracyAt8: finiteMetric(tracking.anchorAccuracyAt8),
+    anchorAccuracyAt16: finiteMetric(tracking.anchorAccuracyAt16),
     maxFrameJump: finiteMetric(tracking.maxFrameJump),
     objectSupportCorrectionFrames: finiteMetric(tracking.objectSupportCorrectionFrames),
     objectSupportRecoveryFrames: finiteMetric(tracking.objectSupportRecoveryFrames),

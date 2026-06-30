@@ -14,6 +14,9 @@ const createReport = ({
   failedStages = [],
   meanAnchorError = 3,
   maxAnchorError = 9,
+  anchorAccuracyAt4 = 0.75,
+  anchorAccuracyAt8 = 0.9,
+  anchorAccuracyAt16 = 1,
   maxFrameJump = 4,
   objectSupportCorrectionFrames = 0,
   objectSupportRecoveryFrames = 0,
@@ -40,6 +43,9 @@ const createReport = ({
       metrics: {
         meanAnchorError,
         maxAnchorError,
+        anchorAccuracyAt4,
+        anchorAccuracyAt8,
+        anchorAccuracyAt16,
         maxFrameJump,
         objectSupportCorrectionFrames,
         objectSupportRecoveryFrames,
@@ -80,6 +86,8 @@ test('benchmark risk ranks anchor spikes and missing reconstruction support as s
     axes: { object: 'textured-cup' },
     meanAnchorError: 31,
     maxAnchorError: 82,
+    anchorAccuracyAt8: 0.12,
+    anchorAccuracyAt16: 0.35,
     maxFrameJump: 18,
     readyFrameRatio: 0.05,
     poseReadyFrameRatio: 0,
@@ -184,8 +192,37 @@ test('benchmark analysis groups weak points by mode and condition axes', () => {
   assert.equal(analysis.weakPoints.byObjectBackground[0].name, 'handled-mug / kitchen');
   assert.equal(analysis.weakPoints.byModeOcclusion[0].name, 'direct-photometric / repeated');
   assert.equal(analysis.worstReports[0].name, 'unstable mug');
+  assert.equal(analysis.worstReports[0].metrics.anchorAccuracyAt8, 0.9);
   assert.equal(analysis.worstReports[0].metrics.objectSupportRecoveryFrames, 7);
   assert.equal(analysis.worstReports[0].metrics.maxObjectSupportAnchorError, 44);
+});
+
+test('benchmark risk includes thresholded anchor accuracy without inflating total tracking weight', () => {
+  const highAccuracy = scoreBenchmarkRisk(createReport({
+    name: 'accurate frames',
+    mode: 'sparse-reconstruction',
+    axes: { object: 'planar-book' },
+    meanAnchorError: 2,
+    maxAnchorError: 12,
+    maxFrameJump: 4,
+    anchorAccuracyAt4: 0.6,
+    anchorAccuracyAt8: 0.9,
+    anchorAccuracyAt16: 1,
+  }));
+  const lowAccuracy = scoreBenchmarkRisk(createReport({
+    name: 'many marginal frames',
+    mode: 'sparse-reconstruction',
+    axes: { object: 'planar-book' },
+    meanAnchorError: 2,
+    maxAnchorError: 12,
+    maxFrameJump: 4,
+    anchorAccuracyAt4: 0.15,
+    anchorAccuracyAt8: 0.2,
+    anchorAccuracyAt16: 0.9,
+  }));
+
+  assert.equal(lowAccuracy.primaryWeakness, 'tracking.anchorAccuracyAt8');
+  assert.ok(lowAccuracy.score > highAccuracy.score);
 });
 
 test('benchmark analysis separates all-run and failed-run primary weaknesses', () => {
