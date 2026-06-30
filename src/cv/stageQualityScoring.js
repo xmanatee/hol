@@ -1,4 +1,5 @@
 import { anchorAccuracyAt } from './anchorAccuracyMetrics.js';
+import { postOcclusionRecoveryMetrics } from './trackingRecoveryMetrics.js';
 
 export const VISION_QUALITY_THRESHOLDS = {
   selection: {
@@ -271,6 +272,7 @@ const scoreSelection = ({ replay, thresholds }) => {
 const scoreTracking = ({ replay, summary, thresholds }) => {
   const failedFrames = metricValue(summary.failedFrames);
   const successfulFrames = replay.frames.filter(frame => frame.success);
+  const postOcclusionRecovery = postOcclusionRecoveryMetrics(replay.frames);
   const metrics = {
     frameCount: replay.frames.length,
     failedFrames,
@@ -279,6 +281,30 @@ const scoreTracking = ({ replay, summary, thresholds }) => {
     anchorAccuracyAt4: metricValue(summary.anchorAccuracyAt4, anchorAccuracyAt(replay.frames, 4)),
     anchorAccuracyAt8: metricValue(summary.anchorAccuracyAt8, anchorAccuracyAt(replay.frames, 8)),
     anchorAccuracyAt16: metricValue(summary.anchorAccuracyAt16, anchorAccuracyAt(replay.frames, 16)),
+    postOcclusionWindowCount: metricValue(
+      summary.postOcclusionWindowCount,
+      postOcclusionRecovery.postOcclusionWindowCount
+    ),
+    postOcclusionRecoveredAt8: metricValue(
+      summary.postOcclusionRecoveredAt8,
+      postOcclusionRecovery.postOcclusionRecoveredAt8
+    ),
+    postOcclusionFailedWindowsAt8: metricValue(
+      summary.postOcclusionFailedWindowsAt8,
+      postOcclusionRecovery.postOcclusionFailedWindowsAt8
+    ),
+    postOcclusionRecoveryRateAt8: metricValue(
+      summary.postOcclusionRecoveryRateAt8,
+      postOcclusionRecovery.postOcclusionRecoveryRateAt8
+    ),
+    maxPostOcclusionRecoveryFramesAt8: metricValue(
+      summary.maxPostOcclusionRecoveryFramesAt8,
+      postOcclusionRecovery.maxPostOcclusionRecoveryFramesAt8
+    ),
+    meanPostOcclusionRecoveryFramesAt8: metricValue(
+      summary.meanPostOcclusionRecoveryFramesAt8,
+      postOcclusionRecovery.meanPostOcclusionRecoveryFramesAt8
+    ),
     maxFrameJump: metricValue(summary.maxFrameJump),
     objectSupportCorrectionFrames: metricValue(summary.objectSupportCorrectionFrames),
     objectSupportRecoveryFrames: metricValue(summary.objectSupportRecoveryFrames),
@@ -314,6 +340,7 @@ const scoreTracking = ({ replay, summary, thresholds }) => {
     }),
     worstFrames: worstTrackingFrames(successfulFrames),
     worstObjectSupportAnchorFrames: worstObjectSupportAnchorFrames(successfulFrames),
+    worstPostOcclusionWindows: summary.worstPostOcclusionWindows || postOcclusionRecovery.worstPostOcclusionWindows,
   };
   const failures = [];
 

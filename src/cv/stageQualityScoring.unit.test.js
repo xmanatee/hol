@@ -355,6 +355,64 @@ test('tracking scoring reports thresholded anchor accuracy from replay frames', 
   assert.equal(metrics.anchorAccuracyAt16, 0.5);
 });
 
+test('tracking scoring exposes post-occlusion recovery diagnostics', () => {
+  const replay = createGoodReplay();
+  replay.frames = [
+    {
+      index: 1,
+      occluded: false,
+      success: true,
+      anchorError: 2,
+      normalError: 0.1,
+      metrics: { reconstructionReady: true, poseInliers: 12, reconstructionMapConfidence: 0.7 },
+    },
+    {
+      index: 2,
+      occluded: true,
+      success: true,
+      anchorError: 30,
+      normalError: 0.1,
+      metrics: { reconstructionReady: true, poseInliers: 12, reconstructionMapConfidence: 0.7 },
+    },
+    {
+      index: 3,
+      occluded: false,
+      success: true,
+      anchorError: 12,
+      normalError: 0.1,
+      metrics: { reconstructionReady: true, poseInliers: 12, reconstructionMapConfidence: 0.7 },
+    },
+    {
+      index: 4,
+      occluded: false,
+      success: true,
+      anchorError: 6,
+      normalError: 0.1,
+      metrics: { reconstructionReady: true, poseInliers: 12, reconstructionMapConfidence: 0.7 },
+    },
+  ];
+
+  const report = scoreVisionPipelineQuality({
+    name: 'occlusion recovery fixture',
+    replay,
+    summary: {
+      ...goodSummary,
+      failedFrames: 0,
+      maxAnchorError: 30,
+      meanAnchorError: 12.5,
+      maxFrameJump: 8,
+    },
+    headPose: goodHeadPose,
+  });
+  const metrics = report.stages.tracking.metrics;
+
+  assert.equal(metrics.postOcclusionWindowCount, 1);
+  assert.equal(metrics.postOcclusionRecoveredAt8, 1);
+  assert.equal(metrics.postOcclusionRecoveryRateAt8, 1);
+  assert.equal(metrics.maxPostOcclusionRecoveryFramesAt8, 2);
+  assert.equal(metrics.worstPostOcclusionWindows[0].startFrameIndex, 3);
+});
+
 test('head attachment scoring reports policy-hidden frames', () => {
   const report = scoreVisionPipelineQuality({
     name: 'hidden head fixture',

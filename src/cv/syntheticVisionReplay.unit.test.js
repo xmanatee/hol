@@ -166,6 +166,46 @@ test('replay summary counts position and pose sources independently', () => {
   assert.equal(summary.meanObjectSupportAnchorError, 11);
 });
 
+test('replay summary measures visible-frame recovery after occlusion', () => {
+  const frame = ({ index, occluded, anchorError }) => ({
+    index,
+    occluded,
+    success: true,
+    positionSource: 'reference_similarity_transform',
+    poseSource: 'sparse-reconstruction',
+    method: 'reference_similarity_transform',
+    predicted: { x: index * 5, y: 10 },
+    groundTruth: { anchor: { x: index * 5 - anchorError, y: 10 } },
+    planarTransform: { scale: 1, rotation: 0 },
+    normal: { x: 0, y: 0, z: 1 },
+    metrics: { poseInliers: 12 },
+    anchorError,
+    scaleError: 0,
+    rollError: 0,
+    normalError: 0,
+  });
+  const summary = summarizeReplay({
+    frames: [
+      frame({ index: 1, occluded: false, anchorError: 2 }),
+      frame({ index: 2, occluded: true, anchorError: 40 }),
+      frame({ index: 3, occluded: true, anchorError: 38 }),
+      frame({ index: 4, occluded: false, anchorError: 14 }),
+      frame({ index: 5, occluded: false, anchorError: 7 }),
+      frame({ index: 6, occluded: false, anchorError: 4 }),
+      frame({ index: 7, occluded: true, anchorError: 36 }),
+      frame({ index: 8, occluded: false, anchorError: 11 }),
+      frame({ index: 9, occluded: false, anchorError: 10 }),
+    ],
+  });
+
+  assert.equal(summary.postOcclusionWindowCount, 2);
+  assert.equal(summary.postOcclusionRecoveredAt8, 1);
+  assert.equal(summary.postOcclusionFailedWindowsAt8, 1);
+  assert.equal(summary.postOcclusionRecoveryRateAt8, 0.5);
+  assert.equal(summary.maxPostOcclusionRecoveryFramesAt8, 2);
+  assert.equal(summary.meanPostOcclusionRecoveryFramesAt8, 2);
+});
+
 test('head-pose replay scorer measures the exact app overlay transform', () => {
   const { replay, sequence } = createPerfectHeadPoseReplay();
   const result = scoreHeadPoseReplay({ replay, sequence });

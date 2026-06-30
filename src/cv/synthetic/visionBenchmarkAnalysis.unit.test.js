@@ -17,6 +17,9 @@ const createReport = ({
   anchorAccuracyAt4 = 0.75,
   anchorAccuracyAt8 = 0.9,
   anchorAccuracyAt16 = 1,
+  postOcclusionWindowCount = 0,
+  postOcclusionRecoveryRateAt8 = 1,
+  maxPostOcclusionRecoveryFramesAt8 = 0,
   maxFrameJump = 4,
   objectSupportCorrectionFrames = 0,
   objectSupportRecoveryFrames = 0,
@@ -46,6 +49,9 @@ const createReport = ({
         anchorAccuracyAt4,
         anchorAccuracyAt8,
         anchorAccuracyAt16,
+        postOcclusionWindowCount,
+        postOcclusionRecoveryRateAt8,
+        maxPostOcclusionRecoveryFramesAt8,
         maxFrameJump,
         objectSupportCorrectionFrames,
         objectSupportRecoveryFrames,
@@ -169,6 +175,9 @@ test('benchmark analysis groups weak points by mode and condition axes', () => {
       meanAnchorError: 26,
       maxAnchorError: 78,
       maxFrameJump: 22,
+      postOcclusionWindowCount: 2,
+      postOcclusionRecoveryRateAt8: 0.5,
+      maxPostOcclusionRecoveryFramesAt8: 3,
       objectSupportCorrectionFrames: 8,
       objectSupportRecoveryFrames: 7,
       maxObjectSupportPositionStep: 6,
@@ -193,6 +202,8 @@ test('benchmark analysis groups weak points by mode and condition axes', () => {
   assert.equal(analysis.weakPoints.byModeOcclusion[0].name, 'direct-photometric / repeated');
   assert.equal(analysis.worstReports[0].name, 'unstable mug');
   assert.equal(analysis.worstReports[0].metrics.anchorAccuracyAt8, 0.9);
+  assert.equal(analysis.worstReports[0].metrics.postOcclusionRecoveryRateAt8, 0.5);
+  assert.equal(analysis.worstReports[0].metrics.maxPostOcclusionRecoveryFramesAt8, 3);
   assert.equal(analysis.worstReports[0].metrics.objectSupportRecoveryFrames, 7);
   assert.equal(analysis.worstReports[0].metrics.maxObjectSupportAnchorError, 44);
 });

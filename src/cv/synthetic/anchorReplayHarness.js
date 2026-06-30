@@ -7,6 +7,7 @@ import {
 } from '../curvedObjectRecovery.js';
 import { anchorAccuracyMetrics } from '../anchorAccuracyMetrics.js';
 import { createObjectSupportMask } from '../objectSupportMask.js';
+import { postOcclusionRecoveryMetrics } from '../trackingRecoveryMetrics.js';
 
 const MAX_SYNTHETIC_POSE_DROPOUT_INLIERS = 12;
 const BASE_SYNTHETIC_POSE_DROPOUT_INLIERS = 8;
@@ -344,6 +345,7 @@ export const replayImageAnchorSequence = async ({
 
     frames.push({
       index,
+      occluded: frame.occluded === true,
       success: result.success,
       positionSource: result.method || null,
       method: result.method || null,
@@ -420,6 +422,7 @@ export const summarizeReplay = replay => {
     maxAnchorError: Math.max(...successful.map(frame => frame.anchorError), 0),
     meanAnchorError: successful.reduce((sum, frame) => sum + frame.anchorError, 0) / Math.max(1, successful.length),
     ...anchorAccuracyMetrics(frames),
+    ...postOcclusionRecoveryMetrics(frames),
     maxScaleError: Math.max(...successful.map(frame => frame.scaleError), 0),
     maxRollError: Math.max(...successful.map(frame => frame.rollError), 0),
     maxNormalError: Math.max(...successful.map(frame => frame.normalError), 0),

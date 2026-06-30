@@ -339,6 +339,11 @@ const drawOcclusion = (imageData, bbox, frameIndex, variant) => {
   }
 };
 
+const withOcclusionState = (frame, occluded) => ({
+  ...frame,
+  occluded,
+});
+
 const bookTexture = variant => (u, v) => {
   const fineGrid = ((Math.floor(u * 34) + Math.floor(v * 48)) % 2) * 42;
   const printNoise = (noise(u * 90, v * 120, variant === 'dark-book' ? 11 : 5) - 0.5) * 34;
@@ -738,14 +743,14 @@ export const createHumanSilhouetteSequence = ({
     rawRoll: referenceFrame.groundTruth.rawRoll,
   };
   const occlusionSet = new Set(occlusionFrames);
-  const frames = Array.from({ length: frameCount }, (_, index) => drawHumanFrame({
+  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawHumanFrame({
     frameIndex: index,
     frameCount,
     occluded: occlusionSet.has(index),
     reference,
     backgroundSeed,
     backgroundVariant,
-  }));
+  }), occlusionSet.has(index)));
 
   return {
     kind: 'human-silhouette',
@@ -932,7 +937,7 @@ export const createPlanarBookSequence = ({
     anchorUv,
   });
   const occlusionSet = new Set(occlusionFrames);
-  const frames = Array.from({ length: frameCount }, (_, index) => drawPlaneFrame({
+  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawPlaneFrame({
     kind,
     frameIndex: index,
     pose: bookPoseAt(index, frameCount, kind),
@@ -944,7 +949,7 @@ export const createPlanarBookSequence = ({
     texture: bookTexture(kind),
     backgroundSeed,
     backgroundVariant,
-  }));
+  }), occlusionSet.has(index)));
 
   return {
     kind,
@@ -999,7 +1004,7 @@ export const createGlossyPhoneSequence = ({
     anchorUv,
   });
   const occlusionSet = new Set(occlusionFrames);
-  const frames = Array.from({ length: frameCount }, (_, index) => drawPlaneFrame({
+  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawPlaneFrame({
     kind: 'glossy-phone',
     frameIndex: index,
     pose: phonePoseAt(index, frameCount),
@@ -1011,7 +1016,7 @@ export const createGlossyPhoneSequence = ({
     texture: phoneTexture,
     backgroundSeed,
     backgroundVariant,
-  }));
+  }), occlusionSet.has(index)));
 
   return {
     kind: 'glossy-phone',
@@ -1078,7 +1083,7 @@ export const createLaminatedCardSequence = ({
     anchorUv,
   });
   const occlusionSet = new Set(occlusionFrames);
-  const frames = Array.from({ length: frameCount }, (_, index) => drawPlaneFrame({
+  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawPlaneFrame({
     kind: 'laminated-card',
     frameIndex: index,
     pose: cardPoseAt(index, frameCount),
@@ -1090,7 +1095,7 @@ export const createLaminatedCardSequence = ({
     texture: cardTexture,
     backgroundSeed,
     backgroundVariant,
-  }));
+  }), occlusionSet.has(index)));
 
   return {
     kind: 'laminated-card',
@@ -1195,14 +1200,14 @@ export const createLabelBottleSequence = ({
     basisYPoint: { x: 0, y: 42, z: 0 },
   });
   const occlusionSet = new Set(occlusionFrames);
-  const frames = Array.from({ length: frameCount }, (_, index) => drawBottleFrame({
+  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawBottleFrame({
     frameIndex: index,
     frameCount,
     occluded: occlusionSet.has(index),
     reference,
     backgroundSeed,
     backgroundVariant,
-  }));
+  }), occlusionSet.has(index)));
 
   return {
     kind: 'label-bottle',
@@ -1303,7 +1308,7 @@ export const createCylindricalCanSequence = ({
     basisXPoint,
     basisYPoint,
   });
-  const frames = Array.from({ length: frameCount }, (_, index) => drawCylinderFrame({
+  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawCylinderFrame({
     frameIndex: index,
     frameCount,
     occluded: occlusionSet.has(index),
@@ -1315,7 +1320,7 @@ export const createCylindricalCanSequence = ({
     basisYPoint,
     texture,
     kind,
-  }));
+  }), occlusionSet.has(index)));
 
   return {
     kind,
@@ -1425,14 +1430,14 @@ export const createTexturedCupSequence = ({
     basisXPoint: { x: 42, y: 0, z: 0 },
     basisYPoint: { x: 0, y: 42, z: 0 },
   });
-  const frames = Array.from({ length: frameCount }, (_, index) => drawCupFrame({
+  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawCupFrame({
     frameIndex: index,
     frameCount,
     occluded: occlusionSet.has(index),
     reference,
     backgroundSeed,
     backgroundVariant,
-  }));
+  }), occlusionSet.has(index)));
 
   return {
     kind: 'textured-cup',
@@ -1585,14 +1590,14 @@ export const createHandledMugSequence = ({
     basisXPoint: { x: 42, y: 0, z: 0 },
     basisYPoint: { x: 0, y: 42, z: 0 },
   });
-  const frames = Array.from({ length: frameCount }, (_, index) => drawMugFrame({
+  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawMugFrame({
     frameIndex: index,
     frameCount,
     occluded: occlusionSet.has(index),
     reference,
     backgroundSeed,
     backgroundVariant,
-  }));
+  }), occlusionSet.has(index)));
 
   return {
     kind: 'handled-mug',
@@ -1709,14 +1714,14 @@ export const createTexturedBallSequence = ({
     basisXPoint: ballSurfacePoint({ longitude: 0.42, latitude: 0 }),
     basisYPoint: ballSurfacePoint({ longitude: 0, latitude: 0.42 }),
   });
-  const frames = Array.from({ length: frameCount }, (_, index) => drawBallFrame({
+  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawBallFrame({
     frameIndex: index,
     frameCount,
     occluded: occlusionSet.has(index),
     reference,
     backgroundSeed,
     backgroundVariant,
-  }));
+  }), occlusionSet.has(index)));
 
   return {
     kind: 'textured-ball',
@@ -1771,7 +1776,7 @@ export const createSnackPouchSequence = ({
     anchorUv,
   });
   const occlusionSet = new Set(occlusionFrames);
-  const frames = Array.from({ length: frameCount }, (_, index) => drawPlaneFrame({
+  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawPlaneFrame({
     kind: 'snack-pouch',
     frameIndex: index,
     pose: pouchPoseAt(index, frameCount),
@@ -1783,7 +1788,7 @@ export const createSnackPouchSequence = ({
     texture: pouchTexture,
     backgroundSeed,
     backgroundVariant,
-  }));
+  }), occlusionSet.has(index)));
 
   return {
     kind: 'snack-pouch',
@@ -1890,14 +1895,14 @@ export const createRigidBoxSequence = ({
     basisXPoint: { x: 42, y: 0, z: -d / 2 },
     basisYPoint: { x: 0, y: 42, z: -d / 2 },
   });
-  const frames = Array.from({ length: frameCount }, (_, index) => createRigidBoxFrame({
+  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(createRigidBoxFrame({
     frameIndex: index,
     frameCount,
     occluded: occlusionSet.has(index),
     reference,
     backgroundSeed,
     backgroundVariant,
-  }));
+  }), occlusionSet.has(index)));
 
   return {
     kind: 'rigid-box',

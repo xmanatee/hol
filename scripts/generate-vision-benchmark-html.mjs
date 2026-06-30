@@ -118,6 +118,12 @@ const stageTimingRows = stageTimings => Object.entries(stageTimings || {})
   `).join('');
 
 const percentMetricCell = value => Number.isFinite(value) ? `${formatNumber(value * 100)}%` : 'n/a';
+const recoveryRateCell = metrics => metrics.postOcclusionWindowCount
+  ? percentMetricCell(metrics.postOcclusionRecoveryRateAt8)
+  : 'n/a';
+const recoveryFramesCell = metrics => metrics.postOcclusionWindowCount
+  ? formatNumber(metrics.maxPostOcclusionRecoveryFramesAt8)
+  : 'n/a';
 
 const worstRows = benchmark.worstReports.map((report, index) => `
   <tr>
@@ -132,6 +138,8 @@ const worstRows = benchmark.worstReports.map((report, index) => `
     <td>${formatNumber(report.metrics.maxAnchorError)} px</td>
     <td>${percentMetricCell(report.metrics.anchorAccuracyAt8)}</td>
     <td>${percentMetricCell(report.metrics.anchorAccuracyAt16)}</td>
+    <td>${recoveryRateCell(report.metrics)}</td>
+    <td>${recoveryFramesCell(report.metrics)}</td>
     <td>${percentMetricCell(report.metrics.readyFrameRatio)}</td>
   </tr>
 `).join('');
@@ -623,7 +631,7 @@ const html = `<!doctype html>
       <table>
         <thead>
           <tr>
-            <th>#</th><th>Scenario</th><th>Mode</th><th>Risk</th><th>Band</th><th>Primary weakness</th><th>Failed stages</th><th>Mean anchor</th><th>Max anchor</th><th>Acc @8px</th><th>Acc @16px</th><th>Ready frames</th>
+            <th>#</th><th>Scenario</th><th>Mode</th><th>Risk</th><th>Band</th><th>Primary weakness</th><th>Failed stages</th><th>Mean anchor</th><th>Max anchor</th><th>Acc @8px</th><th>Acc @16px</th><th>Recovery @8px</th><th>Recovery frames</th><th>Ready frames</th>
           </tr>
         </thead>
         <tbody>${worstRows}</tbody>
