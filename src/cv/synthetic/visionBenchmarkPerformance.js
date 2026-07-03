@@ -182,6 +182,8 @@ const addToGroup = (groups, key, runtime) => {
 };
 
 const targetClassFor = report => report.axes.targetClass || 'missing-target-class';
+const geometryFor = report => report.axes.geometry || 'missing-geometry';
+const lightingFor = report => report.axes.lighting || 'missing-lighting';
 
 const finalizeGroups = groups => Object.entries(groups)
   .map(([name, accumulator]) => ({
@@ -201,7 +203,9 @@ export const summarizeVisionBenchmarkPerformance = reports => {
     byMode: {},
     byObject: {},
     byTargetClass: {},
+    byGeometry: {},
     byBackground: {},
+    byLighting: {},
     byMotion: {},
     byOcclusion: {},
   };
@@ -211,7 +215,9 @@ export const summarizeVisionBenchmarkPerformance = reports => {
     addToGroup(groups.byMode, report.mode, report.runtime);
     addToGroup(groups.byObject, report.axes.object, report.runtime);
     addToGroup(groups.byTargetClass, targetClassFor(report), report.runtime);
+    addToGroup(groups.byGeometry, geometryFor(report), report.runtime);
     addToGroup(groups.byBackground, report.axes.background, report.runtime);
+    addToGroup(groups.byLighting, lightingFor(report), report.runtime);
     addToGroup(groups.byMotion, report.axes.motion, report.runtime);
     addToGroup(groups.byOcclusion, report.axes.occlusion, report.runtime);
   }
@@ -221,7 +227,9 @@ export const summarizeVisionBenchmarkPerformance = reports => {
     byMode: finalizeGroups(groups.byMode),
     byObject: finalizeGroups(groups.byObject),
     byTargetClass: finalizeGroups(groups.byTargetClass),
+    byGeometry: finalizeGroups(groups.byGeometry),
     byBackground: finalizeGroups(groups.byBackground),
+    byLighting: finalizeGroups(groups.byLighting),
     byMotion: finalizeGroups(groups.byMotion),
     byOcclusion: finalizeGroups(groups.byOcclusion),
     slowestReports: [...reports]

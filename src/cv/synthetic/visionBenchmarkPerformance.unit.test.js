@@ -11,6 +11,8 @@ const report = ({
   mode,
   object,
   targetClass = object,
+  geometry = object,
+  lighting = 'soft-desk',
   wallTimeMs,
   frameCount,
   meanProcessingTimeMs,
@@ -23,7 +25,9 @@ const report = ({
   axes: {
     object,
     targetClass,
+    geometry,
     background: 'desk',
+    lighting,
     motion: 'fast',
     occlusion: 'clean',
   },
@@ -108,6 +112,53 @@ test('benchmark performance summary groups runtime by target class', () => {
   assert.equal(summary.byTargetClass[0].meanFrameProcessingTimeMs, 4);
   assert.equal(summary.byTargetClass[0].maxFrameProcessingTimeMs, 18);
   assert.equal(summary.byTargetClass[1].name, 'mug');
+});
+
+test('benchmark performance summary groups runtime by geometry and lighting', () => {
+  const summary = summarizeVisionBenchmarkPerformance([
+    report({
+      name: 'fast planar book',
+      mode: 'depth-fusion',
+      object: 'planar-book',
+      geometry: 'planar',
+      lighting: 'soft-desk',
+      wallTimeMs: 80,
+      frameCount: 20,
+      meanProcessingTimeMs: 2,
+      maxProcessingTimeMs: 5,
+    }),
+    report({
+      name: 'slow glossy card',
+      mode: 'direct-photometric',
+      object: 'laminated-card',
+      geometry: 'planar-glossy',
+      lighting: 'high-contrast-backlight',
+      wallTimeMs: 260,
+      frameCount: 20,
+      meanProcessingTimeMs: 7,
+      maxProcessingTimeMs: 20,
+    }),
+    report({
+      name: 'slow glossy phone',
+      mode: 'direct-photometric',
+      object: 'glossy-phone',
+      geometry: 'planar-glossy',
+      lighting: 'high-contrast-backlight',
+      wallTimeMs: 220,
+      frameCount: 20,
+      meanProcessingTimeMs: 5,
+      maxProcessingTimeMs: 16,
+    }),
+  ]);
+
+  assert.equal(summary.byGeometry[0].name, 'planar-glossy');
+  assert.equal(summary.byGeometry[0].count, 2);
+  assert.equal(summary.byGeometry[0].meanFrameProcessingTimeMs, 6);
+  assert.equal(summary.byGeometry[0].maxFrameProcessingTimeMs, 20);
+  assert.equal(summary.byLighting[0].name, 'high-contrast-backlight');
+  assert.equal(summary.byLighting[0].count, 2);
+  assert.equal(summary.byLighting[0].meanFrameProcessingTimeMs, 6);
+  assert.equal(summary.byLighting[1].name, 'soft-desk');
 });
 
 test('benchmark performance summary aggregates per-stage frame timing', () => {

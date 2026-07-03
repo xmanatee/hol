@@ -553,6 +553,24 @@ const html = `<!doctype html>
           </table>
         </div>
       </section>
+      <section>
+        <h3>Geometry By Runtime</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Geometry</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th><th>Mean budget</th></tr></thead>
+            <tbody>${performanceRows(performance.byGeometry || [])}</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3>Lighting By Runtime</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Lighting</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th><th>Mean budget</th></tr></thead>
+            <tbody>${performanceRows(performance.byLighting || [])}</tbody>
+          </table>
+        </div>
+      </section>
     </div>
     <h3>Aggregate Stage Timings</h3>
     <div class="table-wrap">
