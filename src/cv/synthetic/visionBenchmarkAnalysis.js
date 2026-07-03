@@ -419,18 +419,26 @@ const createPostOcclusionRecoverySummary = reports => {
   const groups = {
     byMode: {},
     byObject: {},
+    byTargetClass: {},
     byOcclusion: {},
     byModeOcclusion: {},
     byObjectOcclusion: {},
+    byTargetClassOcclusion: {},
   };
 
   reports.forEach(report => {
     addRecoveryToAccumulator(aggregate, report);
     addRecoveryToGroup(groups.byMode, report.mode, report);
     addRecoveryToGroup(groups.byObject, report.axes.object, report);
+    addRecoveryToGroup(groups.byTargetClass, targetClassFor(report), report);
     addRecoveryToGroup(groups.byOcclusion, report.axes.occlusion, report);
     addRecoveryToGroup(groups.byModeOcclusion, interactionKey(report.mode, report.axes.occlusion), report);
     addRecoveryToGroup(groups.byObjectOcclusion, interactionKey(report.axes.object, report.axes.occlusion), report);
+    addRecoveryToGroup(
+      groups.byTargetClassOcclusion,
+      interactionKey(targetClassFor(report), report.axes.occlusion),
+      report
+    );
   });
 
   return {

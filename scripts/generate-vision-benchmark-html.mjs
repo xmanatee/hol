@@ -645,6 +645,15 @@ const html = `<!doctype html>
         </div>
       </section>
       <section>
+        <h3>Target Classes By Recovery</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Target class</th><th>Runs</th><th>Windows</th><th>Recovered @8px</th><th>Failed windows</th><th>Worst frames</th><th>Mean frames</th><th>Worst case</th></tr></thead>
+            <tbody>${recoveryGroupRows(recovery.byTargetClass || [])}</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
         <h3>Occlusion Profiles By Recovery</h3>
         <div class="table-wrap">
           <table>

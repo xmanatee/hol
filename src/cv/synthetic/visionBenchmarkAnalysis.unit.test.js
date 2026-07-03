@@ -357,6 +357,7 @@ test('benchmark analysis summarizes post-occlusion recovery by audit axis', () =
       mode: 'depth-fusion',
       axes: {
         object: 'planar-book',
+        targetClass: 'book',
         geometry: 'planar',
         background: 'desk',
         lighting: 'soft-desk',
@@ -369,6 +370,7 @@ test('benchmark analysis summarizes post-occlusion recovery by audit axis', () =
       mode: 'direct-photometric',
       axes: {
         object: 'handled-mug',
+        targetClass: 'mug',
         geometry: 'handled-tapered-cylinder',
         background: 'kitchen',
         lighting: 'tiled-specular-clutter',
@@ -387,6 +389,7 @@ test('benchmark analysis summarizes post-occlusion recovery by audit axis', () =
       mode: 'depth-fusion',
       axes: {
         object: 'glossy-can',
+        targetClass: 'can',
         geometry: 'cylindrical-specular',
         background: 'window',
         lighting: 'high-contrast-backlight',
@@ -405,6 +408,7 @@ test('benchmark analysis summarizes post-occlusion recovery by audit axis', () =
       mode: 'sparse-reconstruction',
       axes: {
         object: 'handled-mug',
+        targetClass: 'mug',
         geometry: 'handled-tapered-cylinder',
         background: 'busy',
         lighting: 'moving-high-frequency-clutter',
@@ -432,6 +436,9 @@ test('benchmark analysis summarizes post-occlusion recovery by audit axis', () =
   assert.equal(recovery.worstReports[0].name, 'mug no recovery');
   assert.equal(recovery.byObject[0].name, 'handled-mug');
   assert.equal(recovery.byObject[0].recoveryRateAt8, 0.25);
+  assert.equal(recovery.byTargetClass[0].name, 'mug');
+  assert.equal(recovery.byTargetClass[0].recoveryRateAt8, 0.25);
+  assert.equal(recovery.byTargetClassOcclusion[0].name, 'mug / early');
   assert.equal(recovery.byMode[0].name, 'sparse-reconstruction');
   assert.equal(recovery.byOcclusion[0].name, 'early');
 });
