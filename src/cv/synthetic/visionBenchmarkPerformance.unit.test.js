@@ -10,6 +10,7 @@ const report = ({
   name,
   mode,
   object,
+  targetClass = object,
   wallTimeMs,
   frameCount,
   meanProcessingTimeMs,
@@ -21,6 +22,7 @@ const report = ({
   mode,
   axes: {
     object,
+    targetClass,
     background: 'desk',
     motion: 'fast',
     occlusion: 'clean',
@@ -65,6 +67,47 @@ test('benchmark performance summary ranks slow modes and reports weighted frame 
   assert.equal(summary.byMode[0].name, 'direct-photometric');
   assert.equal(summary.byMode[0].maxFrameProcessingTimeMs, 14);
   assert.equal(summary.slowestReports[0].name, 'slow direct');
+});
+
+test('benchmark performance summary groups runtime by target class', () => {
+  const summary = summarizeVisionBenchmarkPerformance([
+    report({
+      name: 'fast book cover',
+      mode: 'depth-fusion',
+      object: 'planar-book',
+      targetClass: 'book',
+      wallTimeMs: 80,
+      frameCount: 20,
+      meanProcessingTimeMs: 2,
+      maxProcessingTimeMs: 5,
+    }),
+    report({
+      name: 'slow dark book',
+      mode: 'direct-photometric',
+      object: 'dark-book',
+      targetClass: 'book',
+      wallTimeMs: 240,
+      frameCount: 20,
+      meanProcessingTimeMs: 6,
+      maxProcessingTimeMs: 18,
+    }),
+    report({
+      name: 'steady mug',
+      mode: 'sparse-reconstruction',
+      object: 'handled-mug',
+      targetClass: 'mug',
+      wallTimeMs: 120,
+      frameCount: 20,
+      meanProcessingTimeMs: 3,
+      maxProcessingTimeMs: 9,
+    }),
+  ]);
+
+  assert.equal(summary.byTargetClass[0].name, 'book');
+  assert.equal(summary.byTargetClass[0].count, 2);
+  assert.equal(summary.byTargetClass[0].meanFrameProcessingTimeMs, 4);
+  assert.equal(summary.byTargetClass[0].maxFrameProcessingTimeMs, 18);
+  assert.equal(summary.byTargetClass[1].name, 'mug');
 });
 
 test('benchmark performance summary aggregates per-stage frame timing', () => {

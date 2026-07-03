@@ -544,6 +544,15 @@ const html = `<!doctype html>
           </table>
         </div>
       </section>
+      <section>
+        <h3>Target Classes By Runtime</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Target class</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th><th>Mean budget</th></tr></thead>
+            <tbody>${performanceRows(performance.byTargetClass || [])}</tbody>
+          </table>
+        </div>
+      </section>
     </div>
     <h3>Aggregate Stage Timings</h3>
     <div class="table-wrap">

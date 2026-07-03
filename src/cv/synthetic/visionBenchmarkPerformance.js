@@ -181,6 +181,8 @@ const addToGroup = (groups, key, runtime) => {
   groups[key] = group;
 };
 
+const targetClassFor = report => report.axes.targetClass || 'missing-target-class';
+
 const finalizeGroups = groups => Object.entries(groups)
   .map(([name, accumulator]) => ({
     name,
@@ -198,6 +200,7 @@ export const summarizeVisionBenchmarkPerformance = reports => {
   const groups = {
     byMode: {},
     byObject: {},
+    byTargetClass: {},
     byBackground: {},
     byMotion: {},
     byOcclusion: {},
@@ -207,6 +210,7 @@ export const summarizeVisionBenchmarkPerformance = reports => {
     addRuntime(aggregate, report.runtime);
     addToGroup(groups.byMode, report.mode, report.runtime);
     addToGroup(groups.byObject, report.axes.object, report.runtime);
+    addToGroup(groups.byTargetClass, targetClassFor(report), report.runtime);
     addToGroup(groups.byBackground, report.axes.background, report.runtime);
     addToGroup(groups.byMotion, report.axes.motion, report.runtime);
     addToGroup(groups.byOcclusion, report.axes.occlusion, report.runtime);
@@ -216,6 +220,7 @@ export const summarizeVisionBenchmarkPerformance = reports => {
     aggregate: finalizeAccumulator(aggregate),
     byMode: finalizeGroups(groups.byMode),
     byObject: finalizeGroups(groups.byObject),
+    byTargetClass: finalizeGroups(groups.byTargetClass),
     byBackground: finalizeGroups(groups.byBackground),
     byMotion: finalizeGroups(groups.byMotion),
     byOcclusion: finalizeGroups(groups.byOcclusion),
