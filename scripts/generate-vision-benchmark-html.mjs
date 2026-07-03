@@ -7,6 +7,7 @@ const benchmarkOutput = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
 const benchmark = benchmarkOutput.benchmark;
 const quality = benchmarkOutput.qualitySummary.aggregate;
 const performance = benchmarkOutput.performanceSummary || null;
+const coverage = benchmarkOutput.coverageSummary || null;
 const risk = benchmark.aggregate;
 
 const formatNumber = value => Number.isFinite(value)
@@ -35,6 +36,8 @@ const riskClass = score => {
 const riskCell = score => `<span class="risk ${riskClass(score)}">${formatNumber(score)}</span>`;
 
 const msCell = value => Number.isFinite(value) ? `${formatNumber(value)}ms` : 'n/a';
+
+const ratioCell = value => Number.isFinite(value) ? `${formatNumber(value)}x` : 'n/a';
 
 const percentBar = (value, total, className = '') => `
   <div class="bar ${className}" aria-hidden="true">
@@ -116,6 +119,69 @@ const stageTimingRows = stageTimings => Object.entries(stageTimings || {})
       <td>${msCell(timing.maxMs)}</td>
     </tr>
   `).join('');
+
+const coverageRows = summary => summary.values.map(item => `
+  <tr>
+    <th scope="row">${escapeHtml(item.name)}</th>
+    <td>${formatNumber(item.count)}</td>
+    <td>${formatPercent(item.count, summary.total)}</td>
+  </tr>
+`).join('');
+
+const coverageTable = ({ title, label, summary }) => summary ? `
+  <section>
+    <h3>${escapeHtml(title)}</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>${escapeHtml(label)}</th><th>Count</th><th>Share</th></tr>
+        </thead>
+        <tbody>${coverageRows(summary)}</tbody>
+      </table>
+    </div>
+    <p class="note">Unique ${formatNumber(summary.uniqueCount)}; min ${formatNumber(summary.minCount)}, max ${formatNumber(summary.maxCount)}, imbalance ${ratioCell(summary.imbalanceRatio)}.</p>
+  </section>
+` : '';
+
+const coverageImbalanceRows = rows => rows.length
+  ? rows.slice(0, 8).map(row => `
+    <tr>
+      <th scope="row">${escapeHtml(row.name)}</th>
+      <td>${formatNumber(row.uniqueCount)}</td>
+      <td>${formatNumber(row.minCount)}</td>
+      <td>${formatNumber(row.maxCount)}</td>
+      <td>${ratioCell(row.imbalanceRatio)}</td>
+    </tr>
+  `).join('')
+  : '<tr><td colspan="5">No scenario-axis imbalance in this artifact.</td></tr>';
+
+const coverageSection = coverage ? `
+    <h2>Matrix Coverage</h2>
+    <p class="note">Coverage is computed from the artifact after filters. Scenario tables count generated scenarios; mode tables count executed replays.</p>
+    <div class="grid-two">
+      ${coverageTable({ title: 'Scenario Objects', label: 'Object', summary: coverage.scenarioAxes.object })}
+      ${coverageTable({ title: 'Scenario Backgrounds', label: 'Background', summary: coverage.scenarioAxes.background })}
+      ${coverageTable({ title: 'Scenario Motions', label: 'Motion', summary: coverage.scenarioAxes.motion })}
+      ${coverageTable({ title: 'Scenario Occlusions', label: 'Occlusion', summary: coverage.scenarioAxes.occlusion })}
+      ${coverageTable({ title: 'Replay Modes', label: 'Mode', summary: coverage.replayAxes.mode })}
+      <section>
+        <h3>Largest Scenario-Axis Imbalances</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Axis</th><th>Unique</th><th>Min</th><th>Max</th><th>Imbalance</th></tr>
+            </thead>
+            <tbody>${coverageImbalanceRows(coverage.imbalances.scenarioAxes)}</tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+` : `
+    <h2>Matrix Coverage</h2>
+    <div class="panel">
+      <p>Coverage summary is not present in this artifact. Regenerate the benchmark JSON with the current runner to audit matrix balance.</p>
+    </div>
+`;
 
 const percentMetricCell = value => Number.isFinite(value) ? `${formatNumber(value * 100)}%` : 'n/a';
 const recoveryRateCell = metrics => metrics.postOcclusionWindowCount
@@ -483,6 +549,8 @@ const html = `<!doctype html>
       <div class="kpi"><span>Mean replay time</span><strong>${performance ? msCell(performance.aggregate.meanReplayWallTimeMs) : 'n/a'}</strong></div>
     </section>
 
+${coverageSection}
+
     <section class="summary">
       <div class="panel">
         <h2>Executive Conclusions</h2>
@@ -799,7 +867,7 @@ const html = `<!doctype html>
     <h2>Method Notes</h2>
     <div class="panel">
       <ul>
-        <li>Full matrix: 12 object cases x 5 background variants x 5 motion/occlusion profiles x 4 reconstruction modes.</li>
+        <li>Matrix coverage is generated from the artifact after filters; scenario-axis tables count generated scenarios and mode-axis tables count replay executions.</li>
         <li>Depth fusion replays use the synthetic depth-frame harness so geometry fusion logic is exercised without timing browser ONNX inference.</li>
         <li>Risk targets are stricter than the curated release quality report; this report is intended to expose weak points, not to act as the normal pass/fail release gate.</li>
         <li>Anchor-error risk combines mean, p95, max, threshold accuracy, frame jump, and post-occlusion recovery so single-frame spikes are separated from sustained tail drift.</li>

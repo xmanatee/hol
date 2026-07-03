@@ -23,9 +23,9 @@ Representative and full matrices keep motion balanced independently from occlusi
 
 The feedback runner produces three artifacts from the same run:
 
-- Raw benchmark JSON.
-- HTML report.
-- Markdown insights and fix queue.
+- Raw benchmark JSON with `coverageSummary`, quality, runtime, and risk summaries.
+- HTML report with matrix coverage, weak-point rankings, runtime budget tables, and worst replays.
+- Markdown insights and fix queue with the largest coverage imbalance called out.
 
 The default output location is `docs/vision-benchmark-runs/`.
 Full runs also refresh `docs/vision-benchmark-full-report.html` for easy review.
@@ -34,13 +34,14 @@ Full runs also refresh `docs/vision-benchmark-full-report.html` for easy review.
 
 Read the report in this order:
 
-1. **Strict pass rate**: tells whether the overall pipeline got better or worse.
-2. **Risk bands**: high and severe cases matter more than small average movement.
-3. **Mode comparison**: shows whether the selected reconstruction approach is helping or hiding a deeper tracker issue.
-4. **Object and geometry weak points**: picks the fixtures for targeted debugging.
-5. **Condition weak points**: identifies whether motion, occlusion, background, or lighting is the real stressor.
-6. **Performance budget**: reads per-frame processing time first; replay wall time is secondary because frame counts vary by condition. In the stage table, use `Amortized` to find sustained frame cost and `Mean When Run`/`Max` to find rare recovery spikes. Budget stage overages exclude wrapper timings such as `totalMs` and `keypointUpdateMs`; those remain diagnostic envelopes, not individual OpenCV stage costs.
-7. **Worst individual replays**: start debugging from these, not from average cases.
+1. **Matrix coverage**: confirms which objects, backgrounds, motions, occlusions, and modes were actually exercised after filters.
+2. **Strict pass rate**: tells whether the overall pipeline got better or worse.
+3. **Risk bands**: high and severe cases matter more than small average movement.
+4. **Mode comparison**: shows whether the selected reconstruction approach is helping or hiding a deeper tracker issue.
+5. **Object and geometry weak points**: picks the fixtures for targeted debugging.
+6. **Condition weak points**: identifies whether motion, occlusion, background, or lighting is the real stressor.
+7. **Performance budget**: reads per-frame processing time first; replay wall time is secondary because frame counts vary by condition. In the stage table, use `Amortized` to find sustained frame cost and `Mean When Run`/`Max` to find rare recovery spikes. Budget stage overages exclude wrapper timings such as `totalMs` and `keypointUpdateMs`; those remain diagnostic envelopes, not individual OpenCV stage costs.
+8. **Worst individual replays**: start debugging from these, not from average cases.
 
 The most important field is usually `primaryWeakness`. If every group says `tracking.meanAnchorError`, the next fix belongs in tracking or object ownership, not in dense reconstruction.
 

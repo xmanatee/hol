@@ -7,6 +7,7 @@ import {
 import { scoreHeadPoseReplay } from '../src/cv/synthetic/headPoseReplayHarness.js';
 import { createVisionBenchmarkMatrix } from '../src/cv/synthetic/visionBenchmarkMatrix.js';
 import { createVisionBenchmarkAnalysis } from '../src/cv/synthetic/visionBenchmarkAnalysis.js';
+import { summarizeVisionBenchmarkCoverage } from '../src/cv/synthetic/visionBenchmarkCoverage.js';
 import { summarizeVisionBenchmarkPerformance } from '../src/cv/synthetic/visionBenchmarkPerformance.js';
 import {
   compactVisionBenchmarkAnalysis,
@@ -152,11 +153,13 @@ for (const scenario of scenarios) {
 const qualitySummary = summarizeVisionQualityReports(reports);
 const benchmark = createVisionBenchmarkAnalysis(reports);
 const performanceSummary = summarizeVisionBenchmarkPerformance(reports);
+const coverageSummary = summarizeVisionBenchmarkCoverage({ scenarios, modes });
 const output = {
   size,
   scenarioCount: scenarios.length,
   modeCount: modes.length,
   replayCount: reports.length,
+  coverageSummary,
   qualitySummary,
   performanceSummary,
   benchmark: summaryOnly ? compactVisionBenchmarkAnalysis(benchmark) : benchmark,

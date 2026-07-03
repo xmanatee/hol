@@ -52,6 +52,21 @@ const topStageTiming = performanceSummary => {
     : 'not recorded';
 };
 
+const coverageLine = coverageSummary => {
+  if (!coverageSummary) return '- Coverage audit: not recorded.';
+
+  const topScenarioAxis = coverageSummary.imbalances.scenarioAxes[0];
+  const topReplayAxis = coverageSummary.imbalances.replayAxes[0];
+  const scenarioAxis = topScenarioAxis
+    ? `${topScenarioAxis.name} ${formatNumber(topScenarioAxis.minCount)}-${formatNumber(topScenarioAxis.maxCount)} (${formatNumber(topScenarioAxis.imbalanceRatio)}x)`
+    : 'all scenario axes balanced';
+  const replayAxis = topReplayAxis
+    ? `${topReplayAxis.name} ${formatNumber(topReplayAxis.minCount)}-${formatNumber(topReplayAxis.maxCount)} (${formatNumber(topReplayAxis.imbalanceRatio)}x)`
+    : 'all replay axes balanced';
+
+  return `- Coverage audit: ${formatNumber(coverageSummary.scenarioCount)} scenarios x ${formatNumber(coverageSummary.modeCount)} modes = ${formatNumber(coverageSummary.replayCount)} replays; top scenario imbalance ${scenarioAxis}; top replay imbalance ${replayAxis}.`;
+};
+
 const budgetLine = performanceSummary => {
   const budget = performanceSummary?.aggregate?.budget;
   if (!budget) return '- Mobile budget: not recorded.';
@@ -95,7 +110,10 @@ const createInsightsMarkdown = data => {
 
 - Matrix: ${data.size}
 - Scenarios: ${formatNumber(data.scenarioCount)}
+- Modes: ${formatNumber(data.modeCount)}
 - Replays: ${formatNumber(data.replayCount)}
+- Covered objects: ${formatNumber(data.coverageSummary?.scenarioAxes?.object?.uniqueCount)}
+- Covered backgrounds: ${formatNumber(data.coverageSummary?.scenarioAxes?.background?.uniqueCount)}
 - Strict pass rate: ${formatPercent(quality.byStatus.pass, quality.total)}
 - Strict failures: ${formatNumber(quality.byStatus.fail)}
 - Mean risk: ${formatNumber(benchmark.aggregate.meanRiskScore)}
@@ -112,6 +130,7 @@ const createInsightsMarkdown = data => {
 ${slowMode ? `- Slowest mode by frame processing: ${slowMode.name} with ${formatNumber(slowMode.meanFrameProcessingTimeMs)}ms mean processing and ${formatNumber(slowMode.maxFrameProcessingTimeMs)}ms max frame processing.` : '- Slowest mode: not recorded.'}
 - Top timed stage: ${topStage}.
 ${budgetLine(performance)}
+${coverageLine(data.coverageSummary)}
 ${weakestGroupLine('Weakest object', worstObject)}
 ${weakestGroupLine('Weakest motion profile', worstMotion)}
 ${weakestGroupLine('Weakest occlusion profile', worstOcclusion)}
