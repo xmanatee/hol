@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
+  compactVisionBenchmarkAnalysis,
   filterVisionBenchmarkRuns,
   formatVisionBenchmarkOutput,
   parseVisionBenchmarkArgs,
@@ -92,6 +93,28 @@ test('benchmark CLI keeps full JSON on stdout when no output path is requested',
   const stdout = await formatVisionBenchmarkOutput(benchmarkOutput);
 
   assert.deepEqual(JSON.parse(stdout), benchmarkOutput);
+});
+
+test('benchmark CLI summary projection keeps recovery audit fields', () => {
+  const benchmark = {
+    aggregate: { meanRiskScore: 24 },
+    weakPoints: { byMode: [] },
+    postOcclusionRecovery: {
+      aggregate: {
+        windowCount: 5,
+        recoveredAt8: 3,
+      },
+    },
+    worstReports: [{ name: 'bad recovery' }],
+    reports: [{ name: 'large full report payload' }],
+  };
+
+  assert.deepEqual(compactVisionBenchmarkAnalysis(benchmark), {
+    aggregate: benchmark.aggregate,
+    weakPoints: benchmark.weakPoints,
+    postOcclusionRecovery: benchmark.postOcclusionRecovery,
+    worstReports: benchmark.worstReports,
+  });
 });
 
 test('benchmark CLI parses targeted run filters', () => {

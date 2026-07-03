@@ -124,6 +124,9 @@ const recoveryRateCell = metrics => metrics.postOcclusionWindowCount
 const recoveryFramesCell = metrics => metrics.postOcclusionWindowCount
   ? formatNumber(metrics.maxPostOcclusionRecoveryFramesAt8)
   : 'n/a';
+const recoveryFailedCell = metrics => metrics.postOcclusionWindowCount
+  ? formatNumber(metrics.postOcclusionFailedWindowsAt8)
+  : 'n/a';
 
 const worstRows = benchmark.worstReports.map((report, index) => `
   <tr>
@@ -144,6 +147,34 @@ const worstRows = benchmark.worstReports.map((report, index) => `
   </tr>
 `).join('');
 
+const recoveryGroupRows = group => group.map(item => `
+  <tr>
+    <th scope="row">${escapeHtml(item.name)}</th>
+    <td>${formatNumber(item.reportCount)}</td>
+    <td>${formatNumber(item.windowCount)}</td>
+    <td>${percentMetricCell(item.recoveryRateAt8)}</td>
+    <td>${formatNumber(item.failedWindowsAt8)}</td>
+    <td>${formatNumber(item.maxRecoveryFramesAt8)}</td>
+    <td>${formatNumber(item.meanRecoveryFramesAt8)}</td>
+    <td>${escapeHtml(item.worstReports[0]?.name || 'none')} <span class="muted">/ ${escapeHtml(item.worstReports[0]?.mode || 'none')}</span></td>
+  </tr>
+`).join('');
+
+const recoveryWorstRows = reports => reports.map((report, index) => `
+  <tr>
+    <td>${index + 1}</td>
+    <th scope="row">${escapeHtml(report.name)}</th>
+    <td>${escapeHtml(report.mode)}</td>
+    <td>${riskCell(report.risk.score)}</td>
+    <td>${formatNumber(report.metrics.postOcclusionWindowCount)}</td>
+    <td>${formatNumber(report.metrics.postOcclusionRecoveredAt8)}</td>
+    <td>${recoveryFailedCell(report.metrics)}</td>
+    <td>${recoveryRateCell(report.metrics)}</td>
+    <td>${formatNumber(report.metrics.maxPostOcclusionRecoveryFramesAt8)}</td>
+    <td>${escapeHtml(report.risk.primaryWeakness)}</td>
+  </tr>
+`).join('');
+
 const modeRanking = benchmark.weakPoints.byMode;
 const objectRanking = benchmark.weakPoints.byObject;
 const motionRanking = benchmark.weakPoints.byMotion;
@@ -157,6 +188,8 @@ const failedStages = Object.entries(quality.failedByStage || {})
   .sort((left, right) => right.count - left.count || left.stage.localeCompare(right.stage));
 const topFailedStage = failedStages[0] || { stage: 'none', count: 0 };
 const topOcclusions = occlusionRanking.slice(0, 2).map(item => item.name).join(' and ');
+const recovery = benchmark.postOcclusionRecovery;
+const recoveryAggregate = recovery.aggregate;
 const budget = performance?.aggregate?.budget || null;
 const weakestBackground = backgroundRanking[0];
 const strongestBackground = backgroundRanking[backgroundRanking.length - 1];
@@ -169,6 +202,7 @@ const conclusions = [
   `${topFailedStage.stage} is the top failed stage with ${formatNumber(topFailedStage.count)} failed-stage reports. Use the primaryWeakness field before assuming the owner is reconstruction or rendering.`,
   `${motionRanking[0].name} motion is the most damaging dynamic condition: ${formatNumber(motionRanking[0].fail)} failures out of ${formatNumber(motionRanking[0].count)}, with ${formatNumber(motionRanking[0].severe + motionRanking[0].high)} high-or-severe runs.`,
   `${topOcclusions} are the most damaging occlusion patterns. Clean scenes fail ${formatPercent(occlusionRanking.find(item => item.name === 'clean')?.fail || 0, occlusionRanking.find(item => item.name === 'clean')?.count || 0)}, so this is not only an occlusion problem.`,
+  `Post-occlusion recovery succeeds on ${formatPercent(recoveryAggregate.recoveredAt8, recoveryAggregate.windowCount)} of visible recovery windows, with a worst reacquisition window of ${formatNumber(recoveryAggregate.maxRecoveryFramesAt8)} frames.`,
   `${objectRanking[0].name} is the clearest object weak point: ${formatPercent(objectRanking[0].fail, objectRanking[0].count)} strict failure rate and ${formatNumber(objectRanking[0].severe)} severe cases.`,
   `${weakestBackground.name} is the weakest background in this run. Background mean-risk spread is ${formatNumber(backgroundRiskSpread)} points (${formatNumber(strongestBackground.meanRiskScore)}-${formatNumber(weakestBackground.meanRiskScore)}).`,
   performance
@@ -562,6 +596,54 @@ const html = `<!doctype html>
       </section>
     </div>
 
+    <h2>Post-Occlusion Recovery</h2>
+    <p class="note">Recovery windows start on the first visible frame after an occlusion run and close when the anchor returns inside the 8px threshold. Clean runs are excluded from these counts.</p>
+    <section class="kpis" aria-label="Post-occlusion recovery metrics">
+      <div class="kpi"><span>Recovery windows</span><strong>${formatNumber(recoveryAggregate.windowCount)}</strong></div>
+      <div class="kpi"><span>Recovered @8px</span><strong>${percentMetricCell(recoveryAggregate.recoveryRateAt8)}</strong></div>
+      <div class="kpi"><span>Failed windows</span><strong>${formatNumber(recoveryAggregate.failedWindowsAt8)}</strong></div>
+      <div class="kpi"><span>Worst recovery</span><strong>${formatNumber(recoveryAggregate.maxRecoveryFramesAt8)} frames</strong></div>
+      <div class="kpi"><span>Mean recovery</span><strong>${formatNumber(recoveryAggregate.meanRecoveryFramesAt8)} frames</strong></div>
+    </section>
+    <div class="grid-two">
+      <section>
+        <h3>Objects By Recovery</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Object</th><th>Runs</th><th>Windows</th><th>Recovered @8px</th><th>Failed windows</th><th>Worst frames</th><th>Mean frames</th><th>Worst case</th></tr></thead>
+            <tbody>${recoveryGroupRows(recovery.byObject)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3>Modes By Recovery</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Mode</th><th>Runs</th><th>Windows</th><th>Recovered @8px</th><th>Failed windows</th><th>Worst frames</th><th>Mean frames</th><th>Worst case</th></tr></thead>
+            <tbody>${recoveryGroupRows(recovery.byMode)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3>Occlusion Profiles By Recovery</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Occlusion</th><th>Runs</th><th>Windows</th><th>Recovered @8px</th><th>Failed windows</th><th>Worst frames</th><th>Mean frames</th><th>Worst case</th></tr></thead>
+            <tbody>${recoveryGroupRows(recovery.byOcclusion)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3>Worst Recovery Replays</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>Scenario</th><th>Mode</th><th>Risk</th><th>Windows</th><th>Recovered</th><th>Failed</th><th>Rate</th><th>Worst frames</th><th>Primary weakness</th></tr></thead>
+            <tbody>${recoveryWorstRows(recovery.worstReports)}</tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
     <h2>Interaction Weak Points</h2>
     <p class="note">Pairwise rankings catch localized failures that marginal object or mode averages can hide.</p>
     <div class="grid-two">
@@ -645,7 +727,7 @@ const html = `<!doctype html>
         <li>Keep depth fusion as the preferred advanced mode candidate. It has the lowest mean risk and no severe cases in the full synthetic sweep, but it still needs tracker stability to reach production quality.</li>
         <li>Use handled mugs, laminated cards, cups, rigid boxes, and label bottles as the core regression set. These families expose the most geometry and texture failures.</li>
         <li>Add real iPhone capture fixtures for window backlight, shelf clutter, and busy moving backgrounds. Synthetic results show background is secondary to geometry and motion, but mobile camera noise may change that ranking.</li>
-        <li>Add recovery-specific metrics: frames to recover after occlusion, anchor drift slope, and map pose reacquisition delay. The current benchmark identifies bad cases; these metrics would explain recovery behavior more directly.</li>
+        <li>Use the recovery-specific metrics to separate complete reacquisition failures from slow-but-successful recovery. Add drift-slope and map-pose reacquisition delay next if recovery cases remain ambiguous.</li>
       </ol>
     </div>
 

@@ -114,6 +114,13 @@ export const filterVisionBenchmarkRuns = ({ scenarios, modes, filters = {} }) =>
   };
 };
 
+export const compactVisionBenchmarkAnalysis = benchmark => ({
+  aggregate: benchmark.aggregate,
+  weakPoints: benchmark.weakPoints,
+  postOcclusionRecovery: benchmark.postOcclusionRecovery,
+  worstReports: benchmark.worstReports,
+});
+
 const artifactSummary = (output, outputPath) => ({
   outputPath,
   size: output.size,

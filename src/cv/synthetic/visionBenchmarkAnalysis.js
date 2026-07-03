@@ -199,6 +199,8 @@ const compactMetricsFor = report => {
     anchorAccuracyAt8: finiteMetric(tracking.anchorAccuracyAt8),
     anchorAccuracyAt16: finiteMetric(tracking.anchorAccuracyAt16),
     postOcclusionWindowCount: finiteMetric(tracking.postOcclusionWindowCount),
+    postOcclusionRecoveredAt8: finiteMetric(tracking.postOcclusionRecoveredAt8),
+    postOcclusionFailedWindowsAt8: finiteMetric(tracking.postOcclusionFailedWindowsAt8),
     postOcclusionRecoveryRateAt8: finiteMetric(tracking.postOcclusionRecoveryRateAt8),
     maxPostOcclusionRecoveryFramesAt8: finiteMetric(tracking.maxPostOcclusionRecoveryFramesAt8),
     meanPostOcclusionRecoveryFramesAt8: finiteMetric(tracking.meanPostOcclusionRecoveryFramesAt8),
@@ -289,6 +291,147 @@ const finalizeGroups = groups => Object.entries(groups)
 
 const interactionKey = (...values) => values.join(' / ');
 
+const recoveryMetricsFor = report => report.stages.tracking.metrics;
+
+const recoveryWindowCount = metrics => Number.isFinite(metrics.postOcclusionWindowCount)
+  ? metrics.postOcclusionWindowCount
+  : 0;
+
+const recoveredWindowCount = metrics => {
+  if (Number.isFinite(metrics.postOcclusionRecoveredAt8)) {
+    return metrics.postOcclusionRecoveredAt8;
+  }
+  if (Number.isFinite(metrics.postOcclusionRecoveryRateAt8)) {
+    return metrics.postOcclusionRecoveryRateAt8 * recoveryWindowCount(metrics);
+  }
+  return 0;
+};
+
+const failedRecoveryWindowCount = metrics => {
+  if (Number.isFinite(metrics.postOcclusionFailedWindowsAt8)) {
+    return metrics.postOcclusionFailedWindowsAt8;
+  }
+  return recoveryWindowCount(metrics) - recoveredWindowCount(metrics);
+};
+
+const recoveryRateAt8 = metrics => {
+  const windows = recoveryWindowCount(metrics);
+  return windows ? recoveredWindowCount(metrics) / windows : 1;
+};
+
+const maxRecoveryFramesAt8 = metrics => Number.isFinite(metrics.maxPostOcclusionRecoveryFramesAt8)
+  ? metrics.maxPostOcclusionRecoveryFramesAt8
+  : 0;
+
+const meanRecoveryFramesAt8 = metrics => Number.isFinite(metrics.meanPostOcclusionRecoveryFramesAt8)
+  ? metrics.meanPostOcclusionRecoveryFramesAt8
+  : 0;
+
+const createRecoveryAccumulator = () => ({
+  reportCount: 0,
+  windowCount: 0,
+  recoveredAt8: 0,
+  failedWindowsAt8: 0,
+  reportRecoveryRateSum: 0,
+  recoveryFrameSum: 0,
+  maxRecoveryFramesAt8: 0,
+  reports: [],
+});
+
+const addRecoveryToAccumulator = (group, report) => {
+  const metrics = recoveryMetricsFor(report);
+  const windows = recoveryWindowCount(metrics);
+  if (windows <= 0) {
+    return;
+  }
+
+  group.reportCount++;
+  group.windowCount += windows;
+  group.recoveredAt8 += recoveredWindowCount(metrics);
+  group.failedWindowsAt8 += failedRecoveryWindowCount(metrics);
+  group.reportRecoveryRateSum += recoveryRateAt8(metrics);
+  group.recoveryFrameSum += meanRecoveryFramesAt8(metrics) * windows;
+  group.maxRecoveryFramesAt8 = Math.max(group.maxRecoveryFramesAt8, maxRecoveryFramesAt8(metrics));
+  group.reports.push(report);
+};
+
+const addRecoveryToGroup = (groups, key, report) => {
+  const group = groups[key] || createRecoveryAccumulator();
+  addRecoveryToAccumulator(group, report);
+  if (group.reportCount > 0) {
+    groups[key] = group;
+  }
+};
+
+const recoveryReportComparator = (left, right) => {
+  const leftMetrics = recoveryMetricsFor(left);
+  const rightMetrics = recoveryMetricsFor(right);
+  return (
+    failedRecoveryWindowCount(rightMetrics) - failedRecoveryWindowCount(leftMetrics) ||
+    recoveryRateAt8(leftMetrics) - recoveryRateAt8(rightMetrics) ||
+    maxRecoveryFramesAt8(rightMetrics) - maxRecoveryFramesAt8(leftMetrics) ||
+    right.risk.score - left.risk.score ||
+    left.name.localeCompare(right.name)
+  );
+};
+
+const summarizeRecoveryAccumulator = group => ({
+  reportCount: group.reportCount,
+  windowCount: group.windowCount,
+  recoveredAt8: group.recoveredAt8,
+  failedWindowsAt8: group.failedWindowsAt8,
+  recoveryRateAt8: group.windowCount ? group.recoveredAt8 / group.windowCount : 1,
+  meanReportRecoveryRateAt8: group.reportCount ? group.reportRecoveryRateSum / group.reportCount : 1,
+  maxRecoveryFramesAt8: group.maxRecoveryFramesAt8,
+  meanRecoveryFramesAt8: group.windowCount ? group.recoveryFrameSum / group.windowCount : 0,
+});
+
+const finalizeRecoveryGroups = groups => Object.entries(groups)
+  .map(([name, group]) => ({
+    name,
+    ...summarizeRecoveryAccumulator(group),
+    worstReports: [...group.reports]
+      .sort(recoveryReportComparator)
+      .slice(0, 6)
+      .map(compactReport),
+  }))
+  .sort((left, right) => (
+    right.failedWindowsAt8 - left.failedWindowsAt8 ||
+    left.recoveryRateAt8 - right.recoveryRateAt8 ||
+    right.maxRecoveryFramesAt8 - left.maxRecoveryFramesAt8 ||
+    right.windowCount - left.windowCount ||
+    left.name.localeCompare(right.name)
+  ));
+
+const createPostOcclusionRecoverySummary = reports => {
+  const aggregate = createRecoveryAccumulator();
+  const groups = {
+    byMode: {},
+    byObject: {},
+    byOcclusion: {},
+    byModeOcclusion: {},
+    byObjectOcclusion: {},
+  };
+
+  reports.forEach(report => {
+    addRecoveryToAccumulator(aggregate, report);
+    addRecoveryToGroup(groups.byMode, report.mode, report);
+    addRecoveryToGroup(groups.byObject, report.axes.object, report);
+    addRecoveryToGroup(groups.byOcclusion, report.axes.occlusion, report);
+    addRecoveryToGroup(groups.byModeOcclusion, interactionKey(report.mode, report.axes.occlusion), report);
+    addRecoveryToGroup(groups.byObjectOcclusion, interactionKey(report.axes.object, report.axes.occlusion), report);
+  });
+
+  return {
+    aggregate: summarizeRecoveryAccumulator(aggregate),
+    worstReports: [...aggregate.reports]
+      .sort(recoveryReportComparator)
+      .slice(0, 12)
+      .map(compactReport),
+    ...Object.fromEntries(Object.entries(groups).map(([name, group]) => [name, finalizeRecoveryGroups(group)])),
+  };
+};
+
 export const createVisionBenchmarkAnalysis = reports => {
   const scoredReports = reports.map(report => ({
     ...report,
@@ -335,6 +478,7 @@ export const createVisionBenchmarkAnalysis = reports => {
   return {
     aggregate,
     weakPoints: Object.fromEntries(Object.entries(groups).map(([name, group]) => [name, finalizeGroups(group)])),
+    postOcclusionRecovery: createPostOcclusionRecoverySummary(scoredReports),
     worstReports: scoredReports
       .sort((left, right) => right.risk.score - left.risk.score || left.name.localeCompare(right.name))
       .slice(0, 16)

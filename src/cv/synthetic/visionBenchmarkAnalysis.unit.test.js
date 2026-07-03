@@ -18,8 +18,11 @@ const createReport = ({
   anchorAccuracyAt8 = 0.9,
   anchorAccuracyAt16 = 1,
   postOcclusionWindowCount = 0,
+  postOcclusionRecoveredAt8 = 0,
+  postOcclusionFailedWindowsAt8 = 0,
   postOcclusionRecoveryRateAt8 = 1,
   maxPostOcclusionRecoveryFramesAt8 = 0,
+  meanPostOcclusionRecoveryFramesAt8 = 0,
   maxFrameJump = 4,
   objectSupportCorrectionFrames = 0,
   objectSupportRecoveryFrames = 0,
@@ -50,8 +53,11 @@ const createReport = ({
         anchorAccuracyAt8,
         anchorAccuracyAt16,
         postOcclusionWindowCount,
+        postOcclusionRecoveredAt8,
+        postOcclusionFailedWindowsAt8,
         postOcclusionRecoveryRateAt8,
         maxPostOcclusionRecoveryFramesAt8,
+        meanPostOcclusionRecoveryFramesAt8,
         maxFrameJump,
         objectSupportCorrectionFrames,
         objectSupportRecoveryFrames,
@@ -277,6 +283,92 @@ test('benchmark risk scores post-occlusion recovery without penalizing clean run
   assert.equal(clean.score, cleanWithRecoveryPlaceholders.score);
   assert.equal(slowRecovery.primaryWeakness, 'tracking.postOcclusionRecoveryFramesAt8');
   assert.ok(slowRecovery.score > clean.score);
+});
+
+test('benchmark analysis summarizes post-occlusion recovery by audit axis', () => {
+  const reports = [
+    createReport({
+      name: 'clean book',
+      mode: 'depth-fusion',
+      axes: {
+        object: 'planar-book',
+        geometry: 'planar',
+        background: 'desk',
+        lighting: 'soft-desk',
+        motion: 'standard',
+        occlusion: 'clean',
+      },
+    }),
+    createReport({
+      name: 'mug partial recovery',
+      mode: 'direct-photometric',
+      axes: {
+        object: 'handled-mug',
+        geometry: 'handled-tapered-cylinder',
+        background: 'kitchen',
+        lighting: 'tiled-specular-clutter',
+        motion: 'slow',
+        occlusion: 'repeated',
+      },
+      postOcclusionWindowCount: 2,
+      postOcclusionRecoveredAt8: 1,
+      postOcclusionFailedWindowsAt8: 1,
+      postOcclusionRecoveryRateAt8: 0.5,
+      maxPostOcclusionRecoveryFramesAt8: 12,
+      meanPostOcclusionRecoveryFramesAt8: 7,
+    }),
+    createReport({
+      name: 'can fast recovery',
+      mode: 'depth-fusion',
+      axes: {
+        object: 'glossy-can',
+        geometry: 'cylindrical-specular',
+        background: 'window',
+        lighting: 'high-contrast-backlight',
+        motion: 'fast',
+        occlusion: 'early',
+      },
+      postOcclusionWindowCount: 1,
+      postOcclusionRecoveredAt8: 1,
+      postOcclusionFailedWindowsAt8: 0,
+      postOcclusionRecoveryRateAt8: 1,
+      maxPostOcclusionRecoveryFramesAt8: 2,
+      meanPostOcclusionRecoveryFramesAt8: 2,
+    }),
+    createReport({
+      name: 'mug no recovery',
+      mode: 'sparse-reconstruction',
+      axes: {
+        object: 'handled-mug',
+        geometry: 'handled-tapered-cylinder',
+        background: 'busy',
+        lighting: 'moving-high-frequency-clutter',
+        motion: 'slow',
+        occlusion: 'early',
+      },
+      postOcclusionWindowCount: 2,
+      postOcclusionRecoveredAt8: 0,
+      postOcclusionFailedWindowsAt8: 2,
+      postOcclusionRecoveryRateAt8: 0,
+      maxPostOcclusionRecoveryFramesAt8: 16,
+      meanPostOcclusionRecoveryFramesAt8: 16,
+    }),
+  ];
+  const analysis = createVisionBenchmarkAnalysis(reports);
+  const recovery = analysis.postOcclusionRecovery;
+
+  assert.equal(recovery.aggregate.reportCount, 3);
+  assert.equal(recovery.aggregate.windowCount, 5);
+  assert.equal(recovery.aggregate.recoveredAt8, 2);
+  assert.equal(recovery.aggregate.failedWindowsAt8, 3);
+  assert.equal(recovery.aggregate.recoveryRateAt8, 0.4);
+  assert.equal(recovery.aggregate.maxRecoveryFramesAt8, 16);
+  assert.equal(recovery.aggregate.meanRecoveryFramesAt8, 9.6);
+  assert.equal(recovery.worstReports[0].name, 'mug no recovery');
+  assert.equal(recovery.byObject[0].name, 'handled-mug');
+  assert.equal(recovery.byObject[0].recoveryRateAt8, 0.25);
+  assert.equal(recovery.byMode[0].name, 'sparse-reconstruction');
+  assert.equal(recovery.byOcclusion[0].name, 'early');
 });
 
 test('benchmark analysis separates all-run and failed-run primary weaknesses', () => {

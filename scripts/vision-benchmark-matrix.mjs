@@ -9,6 +9,7 @@ import { createVisionBenchmarkMatrix } from '../src/cv/synthetic/visionBenchmark
 import { createVisionBenchmarkAnalysis } from '../src/cv/synthetic/visionBenchmarkAnalysis.js';
 import { summarizeVisionBenchmarkPerformance } from '../src/cv/synthetic/visionBenchmarkPerformance.js';
 import {
+  compactVisionBenchmarkAnalysis,
   filterVisionBenchmarkRuns,
   formatVisionBenchmarkOutput,
   parseVisionBenchmarkArgs,
@@ -30,7 +31,6 @@ const {
   outputPath,
   filters,
 } = parseVisionBenchmarkArgs(process.argv.slice(2));
-const cv = await loadOpenCvForNode();
 const {
   scenarios,
   modes,
@@ -39,6 +39,7 @@ const {
   modes: RECONSTRUCTION_MODES,
   filters,
 });
+const cv = await loadOpenCvForNode();
 const reports = [];
 const totalRuns = scenarios.length * modes.length;
 let completedRuns = 0;
@@ -158,13 +159,7 @@ const output = {
   replayCount: reports.length,
   qualitySummary,
   performanceSummary,
-  benchmark: summaryOnly
-    ? {
-        aggregate: benchmark.aggregate,
-        weakPoints: benchmark.weakPoints,
-        worstReports: benchmark.worstReports,
-      }
-    : benchmark,
+  benchmark: summaryOnly ? compactVisionBenchmarkAnalysis(benchmark) : benchmark,
 };
 
 console.log(await formatVisionBenchmarkOutput(output, { outputPath }));
