@@ -166,6 +166,37 @@ test('replay summary counts position and pose sources independently', () => {
   assert.equal(summary.meanObjectSupportAnchorError, 11);
 });
 
+test('replay summary reports interpolated anchor-error percentiles', () => {
+  const frame = ({ anchorError, success = true }) => ({
+    success,
+    positionSource: 'reference_similarity_transform',
+    poseSource: 'sparse-reconstruction',
+    method: 'reference_similarity_transform',
+    predicted: { x: 20 + anchorError, y: 10 },
+    groundTruth: { anchor: { x: 20, y: 10 } },
+    planarTransform: { scale: 1, rotation: 0 },
+    normal: { x: 0, y: 0, z: 1 },
+    metrics: { poseInliers: 12 },
+    anchorError,
+    scaleError: 0,
+    rollError: 0,
+    normalError: 0,
+  });
+  const summary = summarizeReplay({
+    frames: [
+      frame({ anchorError: 20 }),
+      frame({ anchorError: 1 }),
+      frame({ anchorError: 10 }),
+      frame({ anchorError: 3 }),
+      frame({ anchorError: 8 }),
+      frame({ anchorError: Infinity, success: false }),
+    ],
+  });
+
+  assert.equal(summary.p50AnchorError, 8);
+  assert.equal(summary.p95AnchorError, 18);
+});
+
 test('replay summary measures visible-frame recovery after occlusion', () => {
   const frame = ({ index, occluded, anchorError }) => ({
     index,

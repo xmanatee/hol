@@ -353,6 +353,8 @@ test('tracking scoring reports thresholded anchor accuracy from replay frames', 
   assert.equal(metrics.anchorAccuracyAt4, 0.25);
   assert.equal(metrics.anchorAccuracyAt8, 0.25);
   assert.equal(metrics.anchorAccuracyAt16, 0.5);
+  assert.equal(metrics.p50AnchorError, 9);
+  assert.ok(Math.abs(metrics.p95AnchorError - 18.9) < 1e-9);
 });
 
 test('tracking scoring exposes post-occlusion recovery diagnostics', () => {

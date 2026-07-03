@@ -14,6 +14,8 @@ const createReport = ({
   failedStages = [],
   meanAnchorError = 3,
   maxAnchorError = 9,
+  p50AnchorError = 3,
+  p95AnchorError = 6,
   anchorAccuracyAt4 = 0.75,
   anchorAccuracyAt8 = 0.9,
   anchorAccuracyAt16 = 1,
@@ -49,6 +51,8 @@ const createReport = ({
       metrics: {
         meanAnchorError,
         maxAnchorError,
+        p50AnchorError,
+        p95AnchorError,
         anchorAccuracyAt4,
         anchorAccuracyAt8,
         anchorAccuracyAt16,
@@ -180,6 +184,8 @@ test('benchmark analysis groups weak points by mode and condition axes', () => {
       },
       meanAnchorError: 26,
       maxAnchorError: 78,
+      p50AnchorError: 24,
+      p95AnchorError: 45,
       maxFrameJump: 22,
       postOcclusionWindowCount: 2,
       postOcclusionRecoveryRateAt8: 0.5,
@@ -208,6 +214,7 @@ test('benchmark analysis groups weak points by mode and condition axes', () => {
   assert.equal(analysis.weakPoints.byModeOcclusion[0].name, 'direct-photometric / repeated');
   assert.equal(analysis.worstReports[0].name, 'unstable mug');
   assert.equal(analysis.worstReports[0].metrics.anchorAccuracyAt8, 0.9);
+  assert.equal(analysis.worstReports[0].metrics.p95AnchorError, 45);
   assert.equal(analysis.worstReports[0].metrics.postOcclusionRecoveryRateAt8, 0.5);
   assert.equal(analysis.worstReports[0].metrics.maxPostOcclusionRecoveryFramesAt8, 3);
   assert.equal(analysis.worstReports[0].metrics.objectSupportRecoveryFrames, 7);
@@ -240,6 +247,61 @@ test('benchmark risk includes thresholded anchor accuracy without inflating tota
 
   assert.equal(lowAccuracy.primaryWeakness, 'tracking.anchorAccuracyAt8');
   assert.ok(lowAccuracy.score > highAccuracy.score);
+});
+
+test('benchmark risk includes p95 anchor error without inflating total tracking weight', () => {
+  const lowTail = scoreBenchmarkRisk(createReport({
+    name: 'stable tail',
+    mode: 'sparse-reconstruction',
+    axes: { object: 'planar-book' },
+    meanAnchorError: 2,
+    maxAnchorError: 30,
+    p50AnchorError: 2,
+    p95AnchorError: 8,
+    maxFrameJump: 3,
+    anchorAccuracyAt8: 0.96,
+    anchorAccuracyAt16: 1,
+  }));
+  const highTail = scoreBenchmarkRisk(createReport({
+    name: 'unstable tail',
+    mode: 'sparse-reconstruction',
+    axes: { object: 'planar-book' },
+    meanAnchorError: 2,
+    maxAnchorError: 30,
+    p50AnchorError: 2,
+    p95AnchorError: 24,
+    maxFrameJump: 3,
+    anchorAccuracyAt8: 0.96,
+    anchorAccuracyAt16: 1,
+  }));
+  const saturatedTrackingOnly = scoreBenchmarkRisk(createReport({
+    name: 'saturated tracking',
+    mode: 'sparse-reconstruction',
+    axes: { object: 'planar-book' },
+    meanAnchorError: 15,
+    maxAnchorError: 45,
+    p50AnchorError: 12,
+    p95AnchorError: 30,
+    maxFrameJump: 20,
+    anchorAccuracyAt8: 0,
+    anchorAccuracyAt16: 0,
+    postOcclusionWindowCount: 1,
+    postOcclusionRecoveryRateAt8: 0,
+    maxPostOcclusionRecoveryFramesAt8: 15,
+    readyFrameRatio: 1,
+    poseReadyFrameRatio: 1,
+    meanReadyNormalError: 0,
+    maxReadyNormalError: 0,
+    maxMapConfidence: 1,
+    maxWorldPositionError: 0,
+    maxRotationError: 0,
+    maxScaleLogError: 0,
+    maxHeadJumpExcess: 0,
+  }));
+
+  assert.ok(highTail.score > lowTail.score);
+  assert.ok(Math.abs(saturatedTrackingOnly.score - 44) < 1e-9);
+  assert.ok(highTail.components.some(component => component.name === 'tracking.p95AnchorError'));
 });
 
 test('benchmark risk scores post-occlusion recovery without penalizing clean runs', () => {

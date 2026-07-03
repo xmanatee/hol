@@ -1,4 +1,4 @@
-import { anchorAccuracyAt } from './anchorAccuracyMetrics.js';
+import { anchorAccuracyAt, anchorErrorPercentileMetrics } from './anchorAccuracyMetrics.js';
 import { postOcclusionRecoveryMetrics } from './trackingRecoveryMetrics.js';
 
 export const VISION_QUALITY_THRESHOLDS = {
@@ -273,11 +273,14 @@ const scoreTracking = ({ replay, summary, thresholds }) => {
   const failedFrames = metricValue(summary.failedFrames);
   const successfulFrames = replay.frames.filter(frame => frame.success);
   const postOcclusionRecovery = postOcclusionRecoveryMetrics(replay.frames);
+  const anchorErrorPercentiles = anchorErrorPercentileMetrics(replay.frames);
   const metrics = {
     frameCount: replay.frames.length,
     failedFrames,
     maxAnchorError: metricValue(summary.maxAnchorError),
     meanAnchorError: metricValue(summary.meanAnchorError),
+    p50AnchorError: metricValue(summary.p50AnchorError, anchorErrorPercentiles.p50AnchorError),
+    p95AnchorError: metricValue(summary.p95AnchorError, anchorErrorPercentiles.p95AnchorError),
     anchorAccuracyAt4: metricValue(summary.anchorAccuracyAt4, anchorAccuracyAt(replay.frames, 4)),
     anchorAccuracyAt8: metricValue(summary.anchorAccuracyAt8, anchorAccuracyAt(replay.frames, 8)),
     anchorAccuracyAt16: metricValue(summary.anchorAccuracyAt16, anchorAccuracyAt(replay.frames, 16)),

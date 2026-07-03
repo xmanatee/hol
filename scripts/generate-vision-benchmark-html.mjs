@@ -138,6 +138,7 @@ const worstRows = benchmark.worstReports.map((report, index) => `
     <td>${escapeHtml(report.risk.primaryWeakness)}</td>
     <td>${escapeHtml(report.failedStages.join(', '))}</td>
     <td>${formatNumber(report.metrics.meanAnchorError)} px</td>
+    <td>${formatNumber(report.metrics.p95AnchorError)} px</td>
     <td>${formatNumber(report.metrics.maxAnchorError)} px</td>
     <td>${percentMetricCell(report.metrics.anchorAccuracyAt8)}</td>
     <td>${percentMetricCell(report.metrics.anchorAccuracyAt16)}</td>
@@ -713,7 +714,7 @@ const html = `<!doctype html>
       <table>
         <thead>
           <tr>
-            <th>#</th><th>Scenario</th><th>Mode</th><th>Risk</th><th>Band</th><th>Primary weakness</th><th>Failed stages</th><th>Mean anchor</th><th>Max anchor</th><th>Acc @8px</th><th>Acc @16px</th><th>Recovery @8px</th><th>Recovery frames</th><th>Ready frames</th>
+            <th>#</th><th>Scenario</th><th>Mode</th><th>Risk</th><th>Band</th><th>Primary weakness</th><th>Failed stages</th><th>Mean anchor</th><th>P95 anchor</th><th>Max anchor</th><th>Acc @8px</th><th>Acc @16px</th><th>Recovery @8px</th><th>Recovery frames</th><th>Ready frames</th>
           </tr>
         </thead>
         <tbody>${worstRows}</tbody>
@@ -737,6 +738,7 @@ const html = `<!doctype html>
         <li>Full matrix: 12 object cases x 5 background variants x 5 motion/occlusion profiles x 4 reconstruction modes.</li>
         <li>Depth fusion replays use the synthetic depth-frame harness so geometry fusion logic is exercised without timing browser ONNX inference.</li>
         <li>Risk targets are stricter than the curated release quality report; this report is intended to expose weak points, not to act as the normal pass/fail release gate.</li>
+        <li>Anchor-error risk combines mean, p95, max, threshold accuracy, frame jump, and post-occlusion recovery so single-frame spikes are separated from sustained tail drift.</li>
         <li>Worst-case and grouped rankings use mean risk first, then max risk. Lower is better.</li>
       </ul>
     </div>
