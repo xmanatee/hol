@@ -117,6 +117,8 @@ const IMMATURE_MUG_SUPPORT_RECOVERY_LANDMARKS = 16;
 const IMMATURE_MUG_HIGH_ACTIVE_LANDMARKS = 20;
 const IMMATURE_MUG_SUPPORT_RECOVERY_MAX_STEP = 6;
 const SPARSE_CUP_SUPPORT_RECOVERY_MAX_STEP = 6;
+const SPARSE_CYLINDER_BOOTSTRAP_SUPPORT_RECOVERY_MATURE_LANDMARKS = 16;
+const SPARSE_CYLINDER_BOOTSTRAP_SUPPORT_RECOVERY_MAX_STEP = 7;
 const SPARSE_CYLINDER_HIGH_RESIDUAL_SUPPORT_RECOVERY_MAX_STEP = 4;
 const SPARSE_CYLINDER_HIGH_RESIDUAL_SUPPORT_RECOVERY_MIN_RESIDUAL = MAX_CURVED_REFERENCE_BLEND_RESIDUAL;
 const SPARSE_CAN_STALE_POSE_MIN_DROPOUT_FRAMES = 3;
@@ -884,6 +886,15 @@ export class ImageAnchorService {
         ) &&
         recoveryCorrection) {
       return Math.min(clamp(maxExtent * ratio, 8, 16), GENERIC_SUPPORT_RECOVERY_MAX_STEP);
+    }
+    if (this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
+        this._hasKnownDepthCylinderTargetClass() &&
+        recoveryCorrection &&
+        (
+          this.metrics.reconstructionReady !== true ||
+          (this.metrics.reconstructionMatureLandmarks ?? 0) < SPARSE_CYLINDER_BOOTSTRAP_SUPPORT_RECOVERY_MATURE_LANDMARKS
+        )) {
+      return SPARSE_CYLINDER_BOOTSTRAP_SUPPORT_RECOVERY_MAX_STEP;
     }
     if (this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
         this._hasKnownDepthCylinderTargetClass() &&

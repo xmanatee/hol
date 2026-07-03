@@ -3801,6 +3801,19 @@ test('depth-fusion cup recovery uses a conservative support recentering cap', ()
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 5);
 });
 
+test('bootstrap sparse cylinder recovery uses a conservative support recentering cap', () => {
+  const service = new ImageAnchorService();
+  const objectSupportMask = {
+    bbox: { x: 12, y: 16, width: 80, height: 72 },
+  };
+
+  service.anchorTargetClass = 'can';
+  service.setTrackingMode('sparse-reconstruction');
+  service.metrics.reconstructionReady = false;
+
+  assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'), 7);
+});
+
 test('handled mug support correction caps follow reconstruction mode ownership', () => {
   const service = new ImageAnchorService();
   const objectSupportMask = {
