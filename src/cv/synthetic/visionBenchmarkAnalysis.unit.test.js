@@ -162,6 +162,7 @@ test('benchmark analysis groups weak points by mode and condition axes', () => {
       mode: 'depth-fusion',
       axes: {
         object: 'planar-book',
+        targetClass: 'book',
         geometry: 'planar',
         background: 'desk',
         lighting: 'soft-desk',
@@ -176,6 +177,7 @@ test('benchmark analysis groups weak points by mode and condition axes', () => {
       failedStages: ['tracking', 'headAttachment'],
       axes: {
         object: 'handled-mug',
+        targetClass: 'mug',
         geometry: 'handled-tapered-cylinder',
         background: 'kitchen',
         lighting: 'tiled-specular-clutter',
@@ -206,6 +208,7 @@ test('benchmark analysis groups weak points by mode and condition axes', () => {
   assert.equal(analysis.aggregate.byRiskBand.severe, 1);
   assert.equal(analysis.weakPoints.byMode[0].name, 'direct-photometric');
   assert.equal(analysis.weakPoints.byObject[0].name, 'handled-mug');
+  assert.equal(analysis.weakPoints.byTargetClass[0].name, 'mug');
   assert.equal(analysis.weakPoints.byBackground[0].name, 'kitchen');
   assert.equal(analysis.weakPoints.byOcclusion[0].name, 'repeated');
   assert.equal(analysis.weakPoints.byModeObject[0].name, 'direct-photometric / handled-mug');

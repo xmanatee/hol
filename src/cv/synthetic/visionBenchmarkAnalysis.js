@@ -195,6 +195,8 @@ const increment = (counts, key) => {
   counts[key] = (counts[key] || 0) + 1;
 };
 
+const targetClassFor = report => report.axes.targetClass || 'missing-target-class';
+
 const compactMetricsFor = report => {
   const tracking = report.stages.tracking.metrics;
   const reconstruction = report.stages.reconstruction.metrics;
@@ -457,6 +459,7 @@ export const createVisionBenchmarkAnalysis = reports => {
   const groups = {
     byMode: {},
     byObject: {},
+    byTargetClass: {},
     byGeometry: {},
     byBackground: {},
     byLighting: {},
@@ -473,6 +476,7 @@ export const createVisionBenchmarkAnalysis = reports => {
     increment(aggregate.byStatus, report.overallStatus);
     addToGroup(groups.byMode, report.mode, report);
     addToGroup(groups.byObject, report.axes.object, report);
+    addToGroup(groups.byTargetClass, targetClassFor(report), report);
     addToGroup(groups.byGeometry, report.axes.geometry, report);
     addToGroup(groups.byBackground, report.axes.background, report);
     addToGroup(groups.byLighting, report.axes.lighting, report);

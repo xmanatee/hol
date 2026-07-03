@@ -178,6 +178,7 @@ const recoveryWorstRows = reports => reports.map((report, index) => `
 
 const modeRanking = benchmark.weakPoints.byMode;
 const objectRanking = benchmark.weakPoints.byObject;
+const targetClassRanking = benchmark.weakPoints.byTargetClass || [];
 const motionRanking = benchmark.weakPoints.byMotion;
 const occlusionRanking = benchmark.weakPoints.byOcclusion;
 const backgroundRanking = benchmark.weakPoints.byBackground;
@@ -553,7 +554,7 @@ const html = `<!doctype html>
     </div>
     ` : ''}
 
-    <h2>Object And Geometry Weak Points</h2>
+    <h2>Object Class And Geometry Weak Points</h2>
     <div class="grid-two">
       <section>
         <h3>Objects</h3>
@@ -561,6 +562,15 @@ const html = `<!doctype html>
           <table>
             <thead><tr><th>Object</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Failed weakness</th><th>Worst case</th></tr></thead>
             <tbody>${compactGroupRows(objectRanking)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3>Target Classes</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Target class</th><th>Mean risk</th><th>Max risk</th><th>Failures</th><th>High + severe</th><th>Failed weakness</th><th>Worst case</th></tr></thead>
+            <tbody>${compactGroupRows(targetClassRanking)}</tbody>
           </table>
         </div>
       </section>
