@@ -184,6 +184,7 @@ const addToGroup = (groups, key, runtime) => {
 const targetClassFor = report => report.axes.targetClass || 'missing-target-class';
 const geometryFor = report => report.axes.geometry || 'missing-geometry';
 const lightingFor = report => report.axes.lighting || 'missing-lighting';
+const interactionKey = (...parts) => parts.join(' / ');
 
 const finalizeGroups = groups => Object.entries(groups)
   .map(([name, accumulator]) => ({
@@ -208,18 +209,23 @@ export const summarizeVisionBenchmarkPerformance = reports => {
     byLighting: {},
     byMotion: {},
     byOcclusion: {},
+    byModeObject: {},
+    byModeGeometry: {},
   };
 
   for (const report of reports) {
+    const geometry = geometryFor(report);
     addRuntime(aggregate, report.runtime);
     addToGroup(groups.byMode, report.mode, report.runtime);
     addToGroup(groups.byObject, report.axes.object, report.runtime);
     addToGroup(groups.byTargetClass, targetClassFor(report), report.runtime);
-    addToGroup(groups.byGeometry, geometryFor(report), report.runtime);
+    addToGroup(groups.byGeometry, geometry, report.runtime);
     addToGroup(groups.byBackground, report.axes.background, report.runtime);
     addToGroup(groups.byLighting, lightingFor(report), report.runtime);
     addToGroup(groups.byMotion, report.axes.motion, report.runtime);
     addToGroup(groups.byOcclusion, report.axes.occlusion, report.runtime);
+    addToGroup(groups.byModeObject, interactionKey(report.mode, report.axes.object), report.runtime);
+    addToGroup(groups.byModeGeometry, interactionKey(report.mode, geometry), report.runtime);
   }
 
   return {
@@ -232,6 +238,8 @@ export const summarizeVisionBenchmarkPerformance = reports => {
     byLighting: finalizeGroups(groups.byLighting),
     byMotion: finalizeGroups(groups.byMotion),
     byOcclusion: finalizeGroups(groups.byOcclusion),
+    byModeObject: finalizeGroups(groups.byModeObject),
+    byModeGeometry: finalizeGroups(groups.byModeGeometry),
     slowestReports: [...reports]
       .sort((left, right) => (
         sortMetric(right.runtime?.maxProcessingTimeMs) - sortMetric(left.runtime?.maxProcessingTimeMs) ||

@@ -161,6 +161,48 @@ test('benchmark performance summary groups runtime by geometry and lighting', ()
   assert.equal(summary.byLighting[1].name, 'soft-desk');
 });
 
+test('benchmark performance summary exposes localized mode interaction bottlenecks', () => {
+  const summary = summarizeVisionBenchmarkPerformance([
+    report({
+      name: 'fast direct book',
+      mode: 'direct-photometric',
+      object: 'planar-book',
+      geometry: 'planar',
+      wallTimeMs: 80,
+      frameCount: 20,
+      meanProcessingTimeMs: 2,
+      maxProcessingTimeMs: 5,
+    }),
+    report({
+      name: 'slow direct mug',
+      mode: 'direct-photometric',
+      object: 'handled-mug',
+      geometry: 'handled-tapered-cylinder',
+      wallTimeMs: 320,
+      frameCount: 20,
+      meanProcessingTimeMs: 8,
+      maxProcessingTimeMs: 24,
+    }),
+    report({
+      name: 'fast sparse mug',
+      mode: 'sparse-reconstruction',
+      object: 'handled-mug',
+      geometry: 'handled-tapered-cylinder',
+      wallTimeMs: 100,
+      frameCount: 20,
+      meanProcessingTimeMs: 3,
+      maxProcessingTimeMs: 7,
+    }),
+  ]);
+
+  assert.equal(summary.byModeObject[0].name, 'direct-photometric / handled-mug');
+  assert.equal(summary.byModeObject[0].meanFrameProcessingTimeMs, 8);
+  assert.equal(summary.byModeObject[0].maxFrameProcessingTimeMs, 24);
+  assert.equal(summary.byModeGeometry[0].name, 'direct-photometric / handled-tapered-cylinder');
+  assert.equal(summary.byModeGeometry[0].meanFrameProcessingTimeMs, 8);
+  assert.equal(summary.byModeGeometry[1].name, 'sparse-reconstruction / handled-tapered-cylinder');
+});
+
 test('benchmark performance summary aggregates per-stage frame timing', () => {
   const summary = summarizeVisionBenchmarkPerformance([
     report({

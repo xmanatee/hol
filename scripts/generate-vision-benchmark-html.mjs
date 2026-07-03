@@ -545,6 +545,24 @@ const html = `<!doctype html>
         </div>
       </section>
       <section>
+        <h3>Mode / Object By Runtime</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Mode / object</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th><th>Mean budget</th></tr></thead>
+            <tbody>${performanceRows((performance.byModeObject || []).slice(0, 12))}</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3>Mode / Geometry By Runtime</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Mode / geometry</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th><th>Mean budget</th></tr></thead>
+            <tbody>${performanceRows((performance.byModeGeometry || []).slice(0, 12))}</tbody>
+          </table>
+        </div>
+      </section>
+      <section>
         <h3>Target Classes By Runtime</h3>
         <div class="table-wrap">
           <table>
