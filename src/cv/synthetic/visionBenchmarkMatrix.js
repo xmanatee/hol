@@ -203,6 +203,8 @@ const backgroundForRepresentativeCase = (objectIndex, profileIndex) => (
   BENCHMARK_BACKGROUND_VARIANTS[(objectIndex * 2 + profileIndex) % BENCHMARK_BACKGROUND_VARIANTS.length]
 );
 
+const backgroundVariantIndex = background => BENCHMARK_BACKGROUND_VARIANTS.indexOf(background);
+
 const motionVariantFor = motion => {
   const variant = BENCHMARK_MOTION_VARIANTS.find(item => item.motion === motion);
   if (!variant) {
@@ -287,6 +289,7 @@ export const createVisionBenchmarkMatrix = ({ size = 'representative' } = {}) =>
         const motionName = QUICK_MOTION_BY_OBJECT[objectCase.id]?.[profile.id];
         const motion = motionVariantFor(motionName);
         const background = backgroundForRepresentativeCase(objectIndex, conditionIndex);
+        const backgroundIndex = backgroundVariantIndex(background);
         scenarios.push(createScenario({
           objectCase,
           objectIndex,
@@ -299,7 +302,7 @@ export const createVisionBenchmarkMatrix = ({ size = 'representative' } = {}) =>
             occlusion: profile.id,
           },
           background,
-          backgroundIndex: 0,
+          backgroundIndex,
           conditionIndex,
         }));
       });
@@ -312,6 +315,7 @@ export const createVisionBenchmarkMatrix = ({ size = 'representative' } = {}) =>
         : [backgroundForRepresentativeCase(objectIndex, occlusionIndex)];
       backgrounds.forEach((background, backgroundIndex) => {
         const motion = selectBalancedMotion({ objectIndex, occlusionIndex, backgroundIndex });
+        const selectedBackgroundIndex = backgroundVariantIndex(background);
         scenarios.push(createScenario({
           objectCase,
           objectIndex,
@@ -324,7 +328,7 @@ export const createVisionBenchmarkMatrix = ({ size = 'representative' } = {}) =>
             occlusion: occlusionProfile.id,
           },
           background,
-          backgroundIndex,
+          backgroundIndex: selectedBackgroundIndex,
           conditionIndex: occlusionIndex,
         }));
       });

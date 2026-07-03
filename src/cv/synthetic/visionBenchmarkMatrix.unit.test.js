@@ -106,6 +106,21 @@ test('representative benchmark balances motion independently from occlusion', ()
   }
 });
 
+test('representative benchmark ties procedural background seed to selected background', () => {
+  const scenarios = createVisionBenchmarkMatrix();
+
+  for (const scenario of scenarios) {
+    const objectIndex = BENCHMARK_OBJECT_CASES.findIndex(objectCase => objectCase.id === scenario.axes.object);
+    const occlusionIndex = BENCHMARK_OCCLUSION_PROFILES.findIndex(profile => profile.id === scenario.axes.occlusion);
+    const backgroundIndex = BENCHMARK_BACKGROUND_VARIANTS.indexOf(scenario.axes.background);
+    assert.equal(
+      scenario.axes.backgroundSeed,
+      2000 + objectIndex * 101 + occlusionIndex * 17 + backgroundIndex * 13,
+      `${scenario.name} seed should include selected background axis`
+    );
+  }
+});
+
 test('benchmark scenarios create real synthetic replay sequences with matching axes', () => {
   const scenarios = createVisionBenchmarkMatrix({ size: 'quick' });
   const cleanScenario = scenarios.find(scenario => scenario.axes.occlusion === 'clean');
