@@ -6,6 +6,8 @@ export const REQUIRED_OPENCV_FEATURES = [
   'warpAffine',
   'cvtColor',
   'Canny',
+  'ORB',
+  'KeyPointVector',
 ];
 
 export const getRequiredFeatures = () => [...REQUIRED_OPENCV_FEATURES];
@@ -22,8 +24,8 @@ export const checkCriticalFeatures = (cv = globalThis.window?.cv) => {
     };
   }
 
-  const available = required.filter(feature => typeof cv[feature] !== 'undefined');
-  const missing = required.filter(feature => typeof cv[feature] === 'undefined');
+  const available = required.filter((feature) => typeof cv[feature] !== 'undefined');
+  const missing = required.filter((feature) => typeof cv[feature] === 'undefined');
 
   return {
     allAvailable: missing.length === 0,

@@ -18,22 +18,21 @@ const clampRegion = (region, imageWidth, imageHeight) => {
   };
 };
 
-const clampRegionToDetection = (region, boundingBox) => {
+const clampRegionToSelection = (region, boundingBox) => {
   const bboxWidth = boundingBox.x2 - boundingBox.x1;
   const bboxHeight = boundingBox.y2 - boundingBox.y1;
 
   return {
     ...region,
-    x: bboxWidth >= region.width
-      ? clamp(region.x, boundingBox.x1, boundingBox.x2 - region.width)
-      : region.x,
-    y: bboxHeight >= region.height
-      ? clamp(region.y, boundingBox.y1, boundingBox.y2 - region.height)
-      : region.y,
+    x: bboxWidth >= region.width ? clamp(region.x, boundingBox.x1, boundingBox.x2 - region.width) : region.x,
+    y:
+      bboxHeight >= region.height
+        ? clamp(region.y, boundingBox.y1, boundingBox.y2 - region.height)
+        : region.y,
   };
 };
 
-const calculateDetectionTemplateSize = (boundingBox, imageWidth, imageHeight) => {
+const calculateSelectionTemplateSize = (boundingBox, imageWidth, imageHeight) => {
   const bboxWidth = boundingBox.x2 - boundingBox.x1;
   const bboxHeight = boundingBox.y2 - boundingBox.y1;
   const maxImageSize = Math.min(MAX_TEMPLATE_SIZE, Math.min(imageWidth, imageHeight) * 0.25);
@@ -46,37 +45,41 @@ const calculateDetectionTemplateSize = (boundingBox, imageWidth, imageHeight) =>
 
 export const calculateTemplateRegion = (tapPosition, boundingBox, imageWidth, imageHeight) => {
   if (boundingBox) {
-    const size = calculateDetectionTemplateSize(boundingBox, imageWidth, imageHeight);
+    const selectionSize = calculateSelectionTemplateSize(boundingBox, imageWidth, imageHeight);
     const tapCenteredRegion = {
+      x: tapPosition.x - selectionSize / 2,
+      y: tapPosition.y - selectionSize / 2,
+      width: selectionSize,
+      height: selectionSize,
+    };
+
+    return clampRegion(clampRegionToSelection(tapCenteredRegion, boundingBox), imageWidth, imageHeight);
+  }
+
+  const size = clamp(Math.min(imageWidth, imageHeight) * 0.22, 96, FALLBACK_TEMPLATE_SIZE);
+  return clampRegion(
+    {
       x: tapPosition.x - size / 2,
       y: tapPosition.y - size / 2,
       width: size,
       height: size,
-    };
-
-    return clampRegion(
-      clampRegionToDetection(tapCenteredRegion, boundingBox),
-      imageWidth,
-      imageHeight
-    );
-  }
-
-  const size = clamp(Math.min(imageWidth, imageHeight) * 0.22, 96, FALLBACK_TEMPLATE_SIZE);
-  return clampRegion({
-    x: tapPosition.x - size / 2,
-    y: tapPosition.y - size / 2,
-    width: size,
-    height: size,
-  }, imageWidth, imageHeight);
+    },
+    imageWidth,
+    imageHeight,
+  );
 };
 
 export const calculateTapLocalTemplateRegion = (tapPosition, imageWidth, imageHeight, { scale = 1 } = {}) => {
   const radius = calculateTapLocalRadius({ width: imageWidth, height: imageHeight }) * scale;
   const size = Math.max(scale > 1 ? 180 : 140, radius * 2);
-  return clampRegion({
-    x: tapPosition.x - size / 2,
-    y: tapPosition.y - size / 2,
-    width: size,
-    height: size,
-  }, imageWidth, imageHeight);
+  return clampRegion(
+    {
+      x: tapPosition.x - size / 2,
+      y: tapPosition.y - size / 2,
+      width: size,
+      height: size,
+    },
+    imageWidth,
+    imageHeight,
+  );
 };

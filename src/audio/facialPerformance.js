@@ -1,4 +1,4 @@
-const clamp01 = value => Math.max(0, Math.min(1, value));
+const clamp01 = (value) => Math.max(0, Math.min(1, value));
 
 export const EXPRESSION_ALIASES = {
   bubbly: 'happy',
@@ -100,9 +100,7 @@ export const PERFORMANCE_PROFILES = {
     blinkStrength: 0.94,
     blinkIntervalMinMs: 3600,
     blinkIntervalMaxMs: 7200,
-    speechAccentWeights: [
-      ['browInnerUp', 0.05],
-    ],
+    speechAccentWeights: [['browInnerUp', 0.05]],
   },
   gruff: {
     restClosure: 0.82,
@@ -161,12 +159,9 @@ const HORIZONTAL_MOUTH_BLENDSHAPES = new Set([
   'mouthDimpleRight',
 ]);
 
-const ROUND_MOUTH_BLENDSHAPES = new Set([
-  'mouthFunnel',
-  'mouthPucker',
-]);
+const ROUND_MOUTH_BLENDSHAPES = new Set(['mouthFunnel', 'mouthPucker']);
 
-export const resolveFacialExpression = expression => {
+export const resolveFacialExpression = (expression) => {
   const resolved = EXPRESSION_ALIASES[expression] || expression;
   if (!Object.hasOwn(EXPRESSION_LAYER_WEIGHTS, resolved)) {
     throw new Error(`Unknown facial expression: ${expression}`);
@@ -174,26 +169,19 @@ export const resolveFacialExpression = expression => {
   return resolved;
 };
 
-export const getExpressionLayerWeights = expression => {
+export const getExpressionLayerWeights = (expression) => {
   return EXPRESSION_LAYER_WEIGHTS[resolveFacialExpression(expression)];
 };
 
-export const getPerformanceProfile = expression => {
+export const getPerformanceProfile = (expression) => {
   return PERFORMANCE_PROFILES[resolveFacialExpression(expression)];
 };
 
-export const performanceGain = intensity => 0.85 + clamp01(intensity) * 0.75;
+export const performanceGain = (intensity) => 0.85 + clamp01(intensity) * 0.75;
 
-export const speechGain = intensity => 1 + clamp01(intensity) * 0.75;
+export const speechGain = (intensity) => 1 + clamp01(intensity) * 0.75;
 
-export const speechEnvelope = energy => Math.pow(clamp01(energy), 0.72);
-
-export const getRestMouthWeights = profile => {
-  return REST_MOUTH_WEIGHTS.map(([blendShapeName, weight]) => [
-    blendShapeName,
-    clamp01(weight * profile.restClosure),
-  ]);
-};
+export const speechEnvelope = (energy) => Math.pow(clamp01(energy), 0.72);
 
 export const getSpeechBlendShapeScale = (blendShapeName, profile) => {
   if (blendShapeName === 'jawOpen') {

@@ -14,7 +14,7 @@ const transformPoint = (point, transform) => {
   };
 };
 
-const createForeshortenedCorrespondences = transform => {
+const createForeshortenedCorrespondences = (transform) => {
   return Array.from({ length: 30 }, (_, index) => {
     const column = index % 6;
     const row = Math.floor(index / 6);
@@ -110,13 +110,15 @@ test('object pose accepts strong absolute affine support when optical flow leave
     rotation: 0.16,
   };
   const coherent = createForeshortenedCorrespondences(transform).slice(0, 12);
-  const outliers = createForeshortenedCorrespondences(transform).slice(12, 24).map((correspondence, index) => ({
-    prev: correspondence.prev,
-    curr: {
-      x: 430 + index * 7,
-      y: 80 + index * 11,
-    },
-  }));
+  const outliers = createForeshortenedCorrespondences(transform)
+    .slice(12, 24)
+    .map((correspondence, index) => ({
+      prev: correspondence.prev,
+      curr: {
+        x: 430 + index * 7,
+        y: 80 + index * 11,
+      },
+    }));
   const anchorReference = { x: 137, y: 111 };
   const pose = estimator.estimate({
     correspondences: [...coherent, ...outliers],

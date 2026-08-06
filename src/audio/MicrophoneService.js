@@ -1,7 +1,16 @@
-// Dedicated Microphone Audio Analysis Service
-// Provides the same interface as ElevenLabs audio analysis but uses microphone input
-
 import { logger } from '../utils/logger.js';
+
+const createSilentFrame = () => ({
+  energy: 0,
+  centroid: 0,
+  voiceActive: false,
+});
+
+const stopMediaStream = (stream) => {
+  stream.getTracks().forEach((track) => {
+    track.stop();
+  });
+};
 
 export class MicrophoneService {
   constructor() {
@@ -13,6 +22,8 @@ export class MicrophoneService {
     this.timeData = null;
     this.isActive = false;
     this.isInitialized = false;
+    this.initializationPromise = null;
+    this.lifecycleGeneration = 0;
     this.voiceActivityThreshold = 0.02;
     this.inputGain = 3.0;
     this.debugMode = false;
@@ -20,108 +31,122 @@ export class MicrophoneService {
     this.energyHistory = [];
     this.baselineNoise = 0;
     this.stateChangeHandler = null;
+    this.latestFrame = createSilentFrame();
   }
 
-  async initialize() {
+  initialize() {
     if (this.isInitialized) {
-      return;
+      return Promise.resolve(true);
     }
 
-    try {
-      // Create audio context if not exists
-      if (!this.audioContext) {
-        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      }
-
-      // Resume audio context if suspended (iOS requirement)
-      if (this.audioContext.state === 'suspended') {
-        await this.audioContext.resume();
-        logger.info('MicrophoneService', 'AudioContext resumed from suspended state');
-      }
-
-      // Handle audio context state changes (important for mobile)
-      this.stateChangeHandler = () => {
-        if (this.debugMode) {
-          logger.info('MicrophoneService', 'AudioContext state changed to:', this.audioContext.state);
-        }
-        if (this.audioContext.state === 'suspended' && this.isActive) {
-          logger.warn('MicrophoneService', 'AudioContext suspended while active, attempting resume');
-          this.audioContext.resume().catch(err => {
-            logger.error('MicrophoneService', 'Failed to resume AudioContext:', err);
-          });
-        }
-      };
-      this.audioContext.addEventListener('statechange', this.stateChangeHandler);
-
-      // Request microphone access
-      this.microphoneStream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 44100
-        }
-      });
-
-      // Create microphone source and analyzer
-      this.microphoneSource = this.audioContext.createMediaStreamSource(this.microphoneStream);
-      this.analyserNode = this.audioContext.createAnalyser();
-      
-      // Configure analyzer for real-time speech analysis
-      this.analyserNode.fftSize = 256; // Good balance of frequency resolution and performance
-      this.analyserNode.smoothingTimeConstant = 0.3; // Some smoothing for natural speech
-      this.analyserNode.minDecibels = -90;
-      this.analyserNode.maxDecibels = -10;
-
-      // Connect microphone to analyzer
-      this.microphoneSource.connect(this.analyserNode);
-
-      this.frequencyData = new Uint8Array(this.analyserNode.frequencyBinCount);
-      this.timeData = new Uint8Array(this.analyserNode.fftSize);
-
-      this.isInitialized = true;
-      this.isActive = true;
-
-      logger.info('MicrophoneService', 'Microphone initialized successfully', {
-        sampleRate: this.audioContext.sampleRate,
-        fftSize: this.analyserNode.fftSize,
-        frequencyBinCount: this.analyserNode.frequencyBinCount
-      });
-
-    } catch (error) {
-      logger.error('MicrophoneService', 'Failed to initialize microphone:', error);
-      throw new Error(`Microphone initialization failed: ${error.message}`);
+    if (this.initializationPromise) {
+      return this.initializationPromise;
     }
+
+    const generation = this.lifecycleGeneration;
+    const initialization = this._initialize(generation)
+      .catch(async (error) => {
+        if (generation !== this.lifecycleGeneration) {
+          return false;
+        }
+        await this._releaseResources();
+        logger.error('MicrophoneService', 'Failed to initialize microphone:', error);
+        throw new Error(`Microphone initialization failed: ${error.message}`, { cause: error });
+      })
+      .finally(() => {
+        if (this.initializationPromise === initialization) {
+          this.initializationPromise = null;
+        }
+      });
+    this.initializationPromise = initialization;
+    return initialization;
   }
 
-  // Main analysis method - matches ElevenLabs AudioAnalyzer interface
-  getAnalysis() {
-    if (!this.isInitialized || !this.analyserNode || !this.frequencyData || !this.timeData) {
-      return {
-        energy: 0,
-        centroid: 0,
-        spectrum: new Array(128).fill(0)
-      };
+  async _initialize(generation) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const audioContext = new AudioContextClass();
+    this.audioContext = audioContext;
+
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+      logger.info('MicrophoneService', 'AudioContext resumed from suspended state');
     }
 
-    // Get frequency and time domain data
+    if (!this._ownsInitialization(generation, audioContext)) {
+      await this._closeAudioContext(audioContext);
+      return false;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        sampleRate: 44100,
+      },
+    });
+
+    if (!this._ownsInitialization(generation, audioContext)) {
+      stopMediaStream(stream);
+      await this._closeAudioContext(audioContext);
+      return false;
+    }
+
+    const microphoneSource = audioContext.createMediaStreamSource(stream);
+    const analyserNode = audioContext.createAnalyser();
+    analyserNode.fftSize = 256;
+    analyserNode.smoothingTimeConstant = 0.3;
+    analyserNode.minDecibels = -90;
+    analyserNode.maxDecibels = -10;
+    microphoneSource.connect(analyserNode);
+
+    this.microphoneStream = stream;
+    this.microphoneSource = microphoneSource;
+    this.analyserNode = analyserNode;
+    this.frequencyData = new Uint8Array(analyserNode.frequencyBinCount);
+    this.timeData = new Uint8Array(analyserNode.fftSize);
+    this.stateChangeHandler = () => {
+      if (this.debugMode) {
+        logger.info('MicrophoneService', 'AudioContext state changed to:', audioContext.state);
+      }
+      if (audioContext.state === 'suspended' && this.isActive) {
+        audioContext.resume().catch((error) => {
+          logger.error('MicrophoneService', 'Failed to resume AudioContext:', error);
+        });
+      }
+    };
+    audioContext.addEventListener('statechange', this.stateChangeHandler);
+    this.isInitialized = true;
+    this.isActive = true;
+
+    logger.info('MicrophoneService', 'Microphone initialized successfully', {
+      sampleRate: audioContext.sampleRate,
+      fftSize: analyserNode.fftSize,
+      frequencyBinCount: analyserNode.frequencyBinCount,
+    });
+    return true;
+  }
+
+  _ownsInitialization(generation, audioContext) {
+    return generation === this.lifecycleGeneration && this.audioContext === audioContext;
+  }
+
+  readFrame() {
+    if (!this.isInitialized || !this.isActive) {
+      return this.latestFrame;
+    }
+
     this.analyserNode.getByteFrequencyData(this.frequencyData);
     this.analyserNode.getByteTimeDomainData(this.timeData);
 
-    // Calculate RMS energy from time domain data with improved normalization
     let energy = 0;
-    for (let i = 0; i < this.timeData.length; i++) {
-      const sample = (this.timeData[i] - 128) / 128; // Convert to -1 to 1 range
+    for (let index = 0; index < this.timeData.length; index++) {
+      const sample = (this.timeData[index] - 128) / 128;
       energy += sample * sample;
     }
-    energy = Math.sqrt(energy / this.timeData.length);
+    energy = Math.sqrt(energy / this.timeData.length) * this.inputGain;
 
-    // Apply input gain and normalize
-    energy = energy * this.inputGain;
-    
-    // Update baseline noise level (exponential moving average)
     if (this.energyHistory.length < 10) {
-      // During initialization, collect baseline
       this.energyHistory.push(energy);
       if (this.energyHistory.length === 10) {
         this.baselineNoise = Math.min(...this.energyHistory) * 1.5;
@@ -130,54 +155,36 @@ export class MicrophoneService {
         }
       }
     } else {
-      // Update baseline slowly
       this.baselineNoise = this.baselineNoise * 0.995 + energy * 0.005;
     }
 
-    // Subtract baseline noise and ensure positive
-    energy = Math.max(0, energy - this.baselineNoise);
-    
-    // Normalize energy to 0-1 range with dynamic range compression
-    energy = Math.min(1.0, energy * 2.0); // Scale up for visibility
+    energy = Math.min(1, Math.max(0, energy - this.baselineNoise) * 2);
 
-    // Calculate spectral centroid from frequency data
     let weightedSum = 0;
     let magnitudeSum = 0;
-    
-    for (let i = 1; i < this.frequencyData.length; i++) { // Skip DC component
-      const magnitude = this.frequencyData[i] / 255; // Normalize to 0-1
-      const frequency = i / this.frequencyData.length; // Normalized frequency
-      
-      weightedSum += frequency * magnitude;
+    for (let index = 1; index < this.frequencyData.length; index++) {
+      const magnitude = this.frequencyData[index] / 255;
+      weightedSum += (index / this.frequencyData.length) * magnitude;
       magnitudeSum += magnitude;
     }
-    
     const centroid = magnitudeSum > 0 ? weightedSum / magnitudeSum : 0;
+    const voiceActive = energy > this.voiceActivityThreshold;
+    this.latestFrame.energy = energy;
+    this.latestFrame.centroid = centroid;
+    this.latestFrame.voiceActive = voiceActive;
 
-    // Convert frequency data to spectrum format expected by viseme picker
-    const spectrum = Array.from(this.frequencyData);
-
-    if (this.debugMode && (this.debugCounter++ % 60 === 0)) {
-      logger.info('MicrophoneService', 'Audio Analysis:', {
+    if (this.debugMode && this.debugCounter++ % 60 === 0) {
+      logger.info('MicrophoneService', 'Audio analysis:', {
         energy,
         centroid: centroid.toFixed(3),
         threshold: this.voiceActivityThreshold,
-        isActive: energy > this.voiceActivityThreshold,
+        voiceActive,
         baselineNoise: this.baselineNoise.toFixed(4),
-        inputGain: this.inputGain
+        inputGain: this.inputGain,
       });
     }
 
-    return { energy, centroid, spectrum };
-  }
-
-  isVoiceActive() {
-    if (!this.isInitialized) {
-      return false;
-    }
-    
-    const analysis = this.getAnalysis();
-    return analysis.energy > this.voiceActivityThreshold;
+    return this.latestFrame;
   }
 
   setVoiceActivityThreshold(threshold) {
@@ -197,63 +204,48 @@ export class MicrophoneService {
     this.baselineNoise = 0;
   }
 
-  start() {
-    if (this.isInitialized) {
-      this.isActive = true;
-    }
-  }
-
-  stop() {
-    this.isActive = false;
-  }
-
-  dispose() {
-    this.isActive = false;
-    
-    if (this.microphoneSource) {
-      this.microphoneSource.disconnect();
-      this.microphoneSource = null;
-    }
-
-    if (this.microphoneStream) {
-      this.microphoneStream.getTracks().forEach(track => track.stop());
-      this.microphoneStream = null;
-    }
-
-    this.analyserNode = null;
-    this.frequencyData = null;
-    this.timeData = null;
-    this.isInitialized = false;
-
-    if (this.audioContext) {
-      if (this.stateChangeHandler) {
-        this.audioContext.removeEventListener('statechange', this.stateChangeHandler);
-        this.stateChangeHandler = null;
-      }
-      if (this.audioContext.state !== 'closed') {
-        this.audioContext.close();
-      }
-      this.audioContext = null;
-    }
-
+  async dispose() {
+    this.lifecycleGeneration++;
+    this.initializationPromise = null;
+    await this._releaseResources();
     logger.info('MicrophoneService', 'Microphone resources disposed');
   }
 
-  getDebugInfo() {
-    const currentAnalysis = this.getAnalysis();
-    return {
-      isInitialized: this.isInitialized,
-      isActive: this.isActive,
-      voiceActivityThreshold: this.voiceActivityThreshold,
-      inputGain: this.inputGain,
-      baselineNoise: this.baselineNoise,
-      currentEnergy: currentAnalysis.energy,
-      currentCentroid: currentAnalysis.centroid,
-      debugMode: this.debugMode,
-      audioContextState: this.audioContext?.state || 'none',
-      hasAnalyser: !!this.analyserNode,
-      hasMicrophoneStream: !!this.microphoneStream,
-      energyHistoryLength: this.energyHistory.length
-    };
+  async _releaseResources() {
+    this.isActive = false;
+    this.isInitialized = false;
+    this.latestFrame = createSilentFrame();
+
+    const microphoneSource = this.microphoneSource;
+    const microphoneStream = this.microphoneStream;
+    const audioContext = this.audioContext;
+    const stateChangeHandler = this.stateChangeHandler;
+
+    this.microphoneSource = null;
+    this.microphoneStream = null;
+    this.audioContext = null;
+    this.stateChangeHandler = null;
+    this.analyserNode = null;
+    this.frequencyData = null;
+    this.timeData = null;
+    this.energyHistory = [];
+    this.baselineNoise = 0;
+    this.debugCounter = 0;
+
+    microphoneSource?.disconnect();
+    if (microphoneStream) {
+      stopMediaStream(microphoneStream);
+    }
+    if (audioContext && stateChangeHandler) {
+      audioContext.removeEventListener('statechange', stateChangeHandler);
+    }
+    await this._closeAudioContext(audioContext);
+  }
+
+  _closeAudioContext(audioContext) {
+    if (audioContext && audioContext.state !== 'closed') {
+      return audioContext.close();
+    }
+    return Promise.resolve();
   }
 }

@@ -1,8 +1,7 @@
 import { modelFromRegion } from './anchor.parametricGeometry.js';
 import { isPointInsideObjectSupport } from './objectSupportMask.js';
 import { extractObjectSilhouette, scoreSilhouetteLandmarks } from './objectSilhouette.js';
-
-const clamp01 = value => Math.max(0, Math.min(1, value));
+import { LANDMARK_COVERAGE_CELL_SIZE, summarizeLandmarkMaskCoverage } from './landmarkSpatialCoverage.js';
 
 const emptyState = {
   surfacePrior: 'unknown',
@@ -22,27 +21,15 @@ const emptyState = {
   lastOcclusionReason: 'No object support',
 };
 
-const pointResidual = point => {
+const pointResidual = (point) => {
   const errors = point.errorHistory || [];
-  const usable = errors.filter(error => Number.isFinite(error));
-  return usable.length
-    ? usable.reduce((sum, error) => sum + error, 0) / usable.length
-    : 0;
+  const usable = errors.filter((error) => Number.isFinite(error));
+  return usable.length ? usable.reduce((sum, error) => sum + error, 0) / usable.length : 0;
 };
 
-const pointQuality = point => point.landmarkQuality ??
-  point.quality ??
-  point.response ??
-  0;
+const pointQuality = (point) => point.landmarkQuality ?? point.quality ?? point.response ?? 0;
 
-const pointReference = point => point.current || point.reference || point.original;
-
-const cellKeyForPoint = ({ point, bbox, cellSize }) => {
-  const reference = pointReference(point);
-  const column = Math.floor((reference.x - bbox.x) / cellSize);
-  const row = Math.floor((reference.y - bbox.y) / cellSize);
-  return `${column}:${row}`;
-};
+const pointReference = (point) => point.current || point.reference || point.original;
 
 const occlusionStateFromLandmarks = ({ activeLandmarks, objectLandmarks, poseResidual, previousState }) => {
   const active = activeLandmarks;
@@ -84,7 +71,7 @@ const occlusionStateFromLandmarks = ({ activeLandmarks, objectLandmarks, poseRes
 };
 
 export class ObjectSurfaceModel {
-  constructor({ cellSize = 42, lockQuality = 0.72 } = {}) {
+  constructor({ cellSize = LANDMARK_COVERAGE_CELL_SIZE, lockQuality = 0.72 } = {}) {
     this.cellSize = cellSize;
     this.lockQuality = lockQuality;
     this.state = { ...emptyState };
@@ -102,38 +89,33 @@ export class ObjectSurfaceModel {
 
     const bbox = { ...objectSupportMask.bbox };
     const silhouette = extractObjectSilhouette(objectSupportMask);
-    const columns = Math.max(1, Math.ceil(bbox.width / this.cellSize));
-    const rows = Math.max(1, Math.ceil(bbox.height / this.cellSize));
-    const activeLandmarks = landmarks.filter(point => point.status === 'active');
-    const activeObjectLandmarks = activeLandmarks.filter(point => (
-      point.objectOwned !== false &&
-      pointReference(point) &&
-      isPointInsideObjectSupport(objectSupportMask, pointReference(point))
-    ));
+    const activeLandmarks = landmarks.filter((point) => point.status === 'active');
+    const activeObjectLandmarks = activeLandmarks.filter(
+      (point) =>
+        point.objectOwned !== false &&
+        pointReference(point) &&
+        isPointInsideObjectSupport(objectSupportMask, pointReference(point)),
+    );
     const silhouetteFit = scoreSilhouetteLandmarks({
       objectSupportMask,
-      landmarks: landmarks.filter(point => point.status === 'active' && point.objectOwned !== false),
+      landmarks: landmarks.filter((point) => point.status === 'active' && point.objectOwned !== false),
       silhouette,
     });
-    const occupied = new Set(activeObjectLandmarks.map(point => cellKeyForPoint({
-      point,
-      bbox,
+    const spatialCoverage = summarizeLandmarkMaskCoverage({
+      objectSupportMask,
+      points: activeObjectLandmarks.map(pointReference),
       cellSize: this.cellSize,
-    })));
-    const locked = activeObjectLandmarks.filter(point => (
-      point.objectOwned === true &&
-      pointQuality(point) >= this.lockQuality &&
-      pointResidual(point) <= 8
-    ));
+    });
+    const locked = activeObjectLandmarks.filter(
+      (point) =>
+        point.objectOwned === true && pointQuality(point) >= this.lockQuality && pointResidual(point) <= 8,
+    );
     const occlusion = occlusionStateFromLandmarks({
       activeLandmarks,
       objectLandmarks: activeObjectLandmarks,
       poseResidual,
       previousState: this.state.occlusionState,
     });
-    const cellCount = columns * rows;
-    const coverage = clamp01(occupied.size / Math.max(1, cellCount));
-
     this.state = {
       surfacePrior: modelFromRegion(bbox, targetClass),
       bounds: {
@@ -141,9 +123,9 @@ export class ObjectSurfaceModel {
         max: { x: bbox.x + bbox.width, y: bbox.y + bbox.height },
         bbox,
       },
-      cellCount,
-      occupiedCells: occupied.size,
-      coverage,
+      cellCount: spatialCoverage.cellCount,
+      occupiedCells: spatialCoverage.occupiedCells,
+      coverage: spatialCoverage.coverage,
       lockedLandmarks: locked.length,
       contourSegments: silhouette.contourSegments,
       silhouette,

@@ -9,7 +9,7 @@ const DEFAULT_CAMERA = {
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
-const normalizeAngle = value => {
+const normalizeAngle = (value) => {
   let angle = value;
   while (angle > Math.PI) angle -= Math.PI * 2;
   while (angle < -Math.PI) angle += Math.PI * 2;
@@ -54,35 +54,31 @@ const backgroundBase = (x, y, imageData, frameIndex, seed, variant) => {
   if (variant === 'shelf') {
     const panel = (Math.floor((x + movingOffset) / 84) % 2) * 12;
     const horizontal = Math.abs((y % 96) - 48) < 2 ? -22 : 0;
-    const base = 96 - vignette * 42 + grain * 22 + panel + horizontal;
+    const shelfBase = 96 - vignette * 42 + grain * 22 + panel + horizontal;
     return [
-      clamp(base + 24, 18, 214),
-      clamp(base + 18, 18, 214),
-      clamp(base + 10, 18, 214),
+      clamp(shelfBase + 24, 18, 214),
+      clamp(shelfBase + 18, 18, 214),
+      clamp(shelfBase + 10, 18, 214),
       255,
     ];
   }
 
   if (variant === 'busy') {
-    const block = ((Math.floor((x + movingOffset) / 58) + Math.floor((y - movingOffset * 0.4) / 42)) % 2) * 26;
+    const block =
+      ((Math.floor((x + movingOffset) / 58) + Math.floor((y - movingOffset * 0.4) / 42)) % 2) * 26;
     const diagonal = Math.abs(((x + y + frameIndex * 2) % 120) - 60) < 4 ? -28 : 0;
-    const base = 104 - vignette * 48 + grain * 26 + block + diagonal;
-    return [
-      clamp(base + 8, 20, 220),
-      clamp(base + 18, 20, 220),
-      clamp(base + 28, 20, 220),
-      255,
-    ];
+    const busyBase = 104 - vignette * 48 + grain * 26 + block + diagonal;
+    return [clamp(busyBase + 8, 20, 220), clamp(busyBase + 18, 20, 220), clamp(busyBase + 28, 20, 220), 255];
   }
 
   if (variant === 'window') {
     const brightBand = x > imageData.width * 0.58 && y < imageData.height * 0.7 ? 38 : 0;
     const blind = Math.abs(((y + frameIndex * 1.7) % 54) - 27) < 3 ? -34 : 0;
-    const base = 118 - vignette * 46 + grain * 20 + brightBand + blind;
+    const windowBase = 118 - vignette * 46 + grain * 20 + brightBand + blind;
     return [
-      clamp(base + 24, 28, 238),
-      clamp(base + 26, 28, 238),
-      clamp(base + 18, 28, 238),
+      clamp(windowBase + 24, 28, 238),
+      clamp(windowBase + 26, 28, 238),
+      clamp(windowBase + 18, 28, 238),
       255,
     ];
   }
@@ -90,11 +86,11 @@ const backgroundBase = (x, y, imageData, frameIndex, seed, variant) => {
   if (variant === 'kitchen') {
     const tile = (Math.floor((x + movingOffset * 0.5) / 52) + Math.floor(y / 52)) % 2 ? 10 : -6;
     const grout = Math.abs((x % 52) - 26) < 1 || Math.abs((y % 52) - 26) < 1 ? -30 : 0;
-    const base = 112 - vignette * 38 + grain * 22 + tile + grout;
+    const kitchenBase = 112 - vignette * 38 + grain * 22 + tile + grout;
     return [
-      clamp(base + 30, 22, 230),
-      clamp(base + 25, 22, 230),
-      clamp(base + 18, 22, 230),
+      clamp(kitchenBase + 30, 22, 230),
+      clamp(kitchenBase + 25, 22, 230),
+      clamp(kitchenBase + 18, 22, 230),
       255,
     ];
   }
@@ -102,12 +98,7 @@ const backgroundBase = (x, y, imageData, frameIndex, seed, variant) => {
   const deskLine = y > imageData.height * 0.62 ? 18 : 0;
   const stripe = (Math.floor((x + y * 0.35) / 46) % 2) * 5;
   const base = 116 - vignette * 56 + grain * 18 + deskLine + stripe;
-  return [
-    clamp(base + 18, 20, 210),
-    clamp(base + 12, 20, 210),
-    clamp(base + 4, 20, 210),
-    255,
-  ];
+  return [clamp(base + 18, 20, 210), clamp(base + 12, 20, 210), clamp(base + 4, 20, 210), 255];
 };
 
 const drawMovingBackgroundObject = (imageData, frameIndex, seed, variant) => {
@@ -170,8 +161,8 @@ const project3 = (point, pose, camera) => {
   const y = rotated.y + (pose.ty || 0);
   const z = rotated.z + pose.distance;
   return {
-    x: camera.cx + camera.fx * x / z,
-    y: camera.cy + camera.fy * y / z,
+    x: camera.cx + (camera.fx * x) / z,
+    y: camera.cy + (camera.fy * y) / z,
     z,
   };
 };
@@ -212,9 +203,9 @@ const localSurfaceNormal = ({ anchorPoint, basisXPoint, basisYPoint }) => {
   };
 };
 
-const bboxFor = points => {
-  const xs = points.map(point => point.x);
-  const ys = points.map(point => point.y);
+const bboxFor = (points) => {
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
   const minY = Math.min(...ys);
@@ -250,10 +241,10 @@ const barycentric = (point, a, b, c) => {
 };
 
 const drawTriangle = (imageData, triangle, uvTriangle, texture, shade = 1) => {
-  const minX = Math.max(0, Math.floor(Math.min(...triangle.map(point => point.x))));
-  const maxX = Math.min(imageData.width - 1, Math.ceil(Math.max(...triangle.map(point => point.x))));
-  const minY = Math.max(0, Math.floor(Math.min(...triangle.map(point => point.y))));
-  const maxY = Math.min(imageData.height - 1, Math.ceil(Math.max(...triangle.map(point => point.y))));
+  const minX = Math.max(0, Math.floor(Math.min(...triangle.map((point) => point.x))));
+  const maxX = Math.min(imageData.width - 1, Math.ceil(Math.max(...triangle.map((point) => point.x))));
+  const minY = Math.max(0, Math.floor(Math.min(...triangle.map((point) => point.y))));
+  const maxY = Math.min(imageData.height - 1, Math.ceil(Math.max(...triangle.map((point) => point.y))));
   const [a, b, c] = triangle;
   const [ua, ub, uc] = uvTriangle;
 
@@ -264,7 +255,9 @@ const drawTriangle = (imageData, triangle, uvTriangle, texture, shade = 1) => {
 
       const u = ua.u * weights.w + ub.u * weights.u + uc.u * weights.v;
       const v = ua.v * weights.w + ub.v * weights.u + uc.v * weights.v;
-      const color = texture(u, v).map((channel, index) => index < 3 ? clamp(channel * shade, 0, 255) : channel);
+      const color = texture(u, v).map((channel, index) =>
+        index < 3 ? clamp(channel * shade, 0, 255) : channel,
+      );
       setPixel(imageData, x, y, color);
     }
   }
@@ -282,10 +275,10 @@ const drawQuad = (imageData, points, texture, shade = 1) => {
 };
 
 const fillTriangleMask = (mask, triangle) => {
-  const minX = Math.max(0, Math.floor(Math.min(...triangle.map(point => point.x))));
-  const maxX = Math.min(mask.width - 1, Math.ceil(Math.max(...triangle.map(point => point.x))));
-  const minY = Math.max(0, Math.floor(Math.min(...triangle.map(point => point.y))));
-  const maxY = Math.min(mask.height - 1, Math.ceil(Math.max(...triangle.map(point => point.y))));
+  const minX = Math.max(0, Math.floor(Math.min(...triangle.map((point) => point.x))));
+  const maxX = Math.min(mask.width - 1, Math.ceil(Math.max(...triangle.map((point) => point.x))));
+  const minY = Math.max(0, Math.floor(Math.min(...triangle.map((point) => point.y))));
+  const maxY = Math.min(mask.height - 1, Math.ceil(Math.max(...triangle.map((point) => point.y))));
   const [a, b, c] = triangle;
 
   for (let y = minY; y <= maxY; y++) {
@@ -304,15 +297,15 @@ const fillQuadMask = (mask, points) => {
 };
 
 const drawShadow = (imageData, points, frameIndex) => {
-  const shifted = points.map(point => ({
+  const shifted = points.map((point) => ({
     x: point.x + 16 + frameIndex * 0.2,
     y: point.y + 20,
   }));
   const texture = () => [0, 0, 0, 255];
-  const minX = Math.max(0, Math.floor(Math.min(...shifted.map(point => point.x))));
-  const maxX = Math.min(imageData.width - 1, Math.ceil(Math.max(...shifted.map(point => point.x))));
-  const minY = Math.max(0, Math.floor(Math.min(...shifted.map(point => point.y))));
-  const maxY = Math.min(imageData.height - 1, Math.ceil(Math.max(...shifted.map(point => point.y))));
+  const minX = Math.max(0, Math.floor(Math.min(...shifted.map((point) => point.x))));
+  const maxX = Math.min(imageData.width - 1, Math.ceil(Math.max(...shifted.map((point) => point.x))));
+  const minY = Math.max(0, Math.floor(Math.min(...shifted.map((point) => point.y))));
+  const maxY = Math.min(imageData.height - 1, Math.ceil(Math.max(...shifted.map((point) => point.y))));
   const mask = createImageData(imageData.width, imageData.height);
   drawQuad(mask, shifted, texture, 1);
 
@@ -344,17 +337,18 @@ const withOcclusionState = (frame, occluded) => ({
   occluded,
 });
 
-const bookTexture = variant => (u, v) => {
+const bookTexture = (variant) => (u, v) => {
   const fineGrid = ((Math.floor(u * 34) + Math.floor(v * 48)) % 2) * 42;
   const printNoise = (noise(u * 90, v * 120, variant === 'dark-book' ? 11 : 5) - 0.5) * 34;
   const spine = u < 0.13;
   const darkBlock = u > 0.58 && u < 0.94 && v > 0.66 && v < 0.86;
   const lightTitle = u > 0.19 && u < 0.88 && v > 0.16 && v < 0.27;
   const barcode = u > 0.7 && u < 0.92 && v > 0.08 && v < 0.15 && Math.floor(u * 160) % 3 === 0;
-  const diagonal = Math.abs((u - 0.5) + (v - 0.5) * 0.55) < 0.035;
-  const base = variant === 'dark-book'
-    ? [38 + fineGrid * 0.15, 42 + fineGrid * 0.08, 54 + fineGrid * 0.22]
-    : [34 + fineGrid * 0.15, 90 + fineGrid * 0.22, 138 + fineGrid * 0.18];
+  const diagonal = Math.abs(u - 0.5 + (v - 0.5) * 0.55) < 0.035;
+  const base =
+    variant === 'dark-book'
+      ? [38 + fineGrid * 0.15, 42 + fineGrid * 0.08, 54 + fineGrid * 0.22]
+      : [34 + fineGrid * 0.15, 90 + fineGrid * 0.22, 138 + fineGrid * 0.18];
 
   if (spine) return [18 + printNoise, 22 + printNoise * 0.5, 32 + printNoise * 0.5, 255];
   if (darkBlock) return [18 + printNoise * 0.2, 20 + printNoise * 0.2, 26 + printNoise * 0.2, 255];
@@ -362,12 +356,11 @@ const bookTexture = variant => (u, v) => {
   if (barcode) return [240, 238, 224, 255];
   if (diagonal) return [220, 196, 68, 255];
 
-  const letter = (
+  const letter =
     (u > 0.22 && u < 0.28 && v > 0.34 && v < 0.57) ||
     (u > 0.34 && u < 0.4 && v > 0.34 && v < 0.57) ||
     (u > 0.46 && u < 0.66 && v > 0.39 && v < 0.45) ||
-    (u > 0.46 && u < 0.66 && v > 0.52 && v < 0.58)
-  );
+    (u > 0.46 && u < 0.66 && v > 0.52 && v < 0.58);
   if (letter) return variant === 'dark-book' ? [206, 218, 238, 255] : [236, 246, 252, 255];
 
   return [
@@ -380,27 +373,30 @@ const bookTexture = variant => (u, v) => {
 
 const canTexture = (u, v) => {
   const stripe = Math.abs(u - 0.5) < 0.06 || Math.abs(u - 0.22) < 0.035;
-  const textBand = v > 0.28 && v < 0.65 && (
-    (u > 0.28 && u < 0.35) ||
-    (u > 0.41 && u < 0.48) ||
-    (u > 0.54 && u < 0.61) ||
-    (u > 0.67 && u < 0.74)
-  );
+  const textBand =
+    v > 0.28 &&
+    v < 0.65 &&
+    ((u > 0.28 && u < 0.35) || (u > 0.41 && u < 0.48) || (u > 0.54 && u < 0.61) || (u > 0.67 && u < 0.74));
   const nutritionPanel = u > 0.48 && u < 0.78 && v > 0.34 && v < 0.78;
-  const panelBorder = nutritionPanel && (
-    Math.abs(u - 0.48) < 0.008 ||
-    Math.abs(u - 0.78) < 0.008 ||
-    Math.abs(v - 0.34) < 0.008 ||
-    Math.abs(v - 0.78) < 0.008
-  );
+  const panelBorder =
+    nutritionPanel &&
+    (Math.abs(u - 0.48) < 0.008 ||
+      Math.abs(u - 0.78) < 0.008 ||
+      Math.abs(v - 0.34) < 0.008 ||
+      Math.abs(v - 0.78) < 0.008);
   const panelRows = nutritionPanel && Math.floor(v * 82) % 7 === 0;
   const panelColumns = nutritionPanel && Math.floor(u * 96) % 11 === 0;
-  const smallPrint = nutritionPanel &&
-    ((Math.floor(u * 150) + Math.floor(v * 120)) % 9 < 2) &&
-    Math.floor(v * 55) % 3 === 0;
-  const logoCurve = v > 0.38 && v < 0.62 && Math.abs(Math.sin((u - 0.14) * Math.PI * 5.8) * 0.08 + 0.5 - v) < 0.018;
-  const logoShadow = v > 0.36 && v < 0.64 && Math.abs(Math.sin((u - 0.12) * Math.PI * 5.8) * 0.08 + 0.53 - v) < 0.012;
-  const frontDots = u > 0.38 && u < 0.68 && v > 0.2 && v < 0.82 &&
+  const smallPrint =
+    nutritionPanel && (Math.floor(u * 150) + Math.floor(v * 120)) % 9 < 2 && Math.floor(v * 55) % 3 === 0;
+  const logoCurve =
+    v > 0.38 && v < 0.62 && Math.abs(Math.sin((u - 0.14) * Math.PI * 5.8) * 0.08 + 0.5 - v) < 0.018;
+  const logoShadow =
+    v > 0.36 && v < 0.64 && Math.abs(Math.sin((u - 0.12) * Math.PI * 5.8) * 0.08 + 0.53 - v) < 0.012;
+  const frontDots =
+    u > 0.38 &&
+    u < 0.68 &&
+    v > 0.2 &&
+    v < 0.82 &&
     Math.floor(u * 70) % 8 === 0 &&
     Math.floor(v * 76) % 8 === 0;
   const ridges = Math.floor(v * 70) % 12 === 0;
@@ -444,14 +440,19 @@ const glossyCanTexture = (u, v, frameIndex = 0) => {
 const cupTexture = (u, v) => {
   const ceramicNoise = (noise(u * 86, v * 74, 31) - 0.5) * 22;
   const verticalRib = Math.floor(u * 42) % 6 === 0;
-  const logo = u > 0.28 && u < 0.72 && v > 0.28 && v < 0.58 &&
+  const logo =
+    u > 0.28 &&
+    u < 0.72 &&
+    v > 0.28 &&
+    v < 0.58 &&
     Math.abs(Math.sin((u - 0.25) * Math.PI * 4) * 0.08 + 0.43 - v) < 0.022;
   const darkBand = v > 0.72 && v < 0.86;
   const rim = v < 0.08 || v > 0.93;
-  const check = ((Math.floor(u * 18) + Math.floor(v * 22)) % 2) === 0;
+  const check = (Math.floor(u * 18) + Math.floor(v * 22)) % 2 === 0;
 
   if (logo) return [44 + ceramicNoise * 0.2, 84 + ceramicNoise * 0.2, 128 + ceramicNoise * 0.2, 255];
-  if (darkBand && check) return [38 + ceramicNoise * 0.3, 42 + ceramicNoise * 0.3, 48 + ceramicNoise * 0.3, 255];
+  if (darkBand && check)
+    return [38 + ceramicNoise * 0.3, 42 + ceramicNoise * 0.3, 48 + ceramicNoise * 0.3, 255];
   if (rim) return [228 + ceramicNoise * 0.25, 224 + ceramicNoise * 0.25, 212 + ceramicNoise * 0.25, 255];
   if (verticalRib) return [172 + ceramicNoise, 154 + ceramicNoise * 0.7, 136 + ceramicNoise * 0.45, 255];
 
@@ -462,19 +463,24 @@ const mugTexture = (u, v) => {
   const ceramicNoise = (noise(u * 100, v * 90, 117) - 0.5) * 24;
   const verticalRib = Math.floor(u * 48) % 7 === 0;
   const rim = v < 0.08 || v > 0.92;
-  const logo = u > 0.2 && u < 0.78 && v > 0.25 && v < 0.58 &&
+  const logo =
+    u > 0.2 &&
+    u < 0.78 &&
+    v > 0.25 &&
+    v < 0.58 &&
     Math.abs(Math.cos((u - 0.18) * Math.PI * 4.6) * 0.08 + 0.42 - v) < 0.026;
   const darkPatch = u > 0.58 && u < 0.86 && v > 0.62 && v < 0.82;
-  const speckles = ((Math.floor(u * 72) + Math.floor(v * 84)) % 19) === 0;
+  const speckles = (Math.floor(u * 72) + Math.floor(v * 84)) % 19 === 0;
 
   if (rim) return [232 + ceramicNoise * 0.2, 230 + ceramicNoise * 0.2, 220 + ceramicNoise * 0.2, 255];
   if (logo) return [26 + ceramicNoise * 0.2, 96 + ceramicNoise * 0.2, 132 + ceramicNoise * 0.2, 255];
   if (darkPatch) return [44 + ceramicNoise * 0.25, 48 + ceramicNoise * 0.25, 54 + ceramicNoise * 0.25, 255];
-  if (verticalRib || speckles) return [148 + ceramicNoise, 118 + ceramicNoise * 0.65, 98 + ceramicNoise * 0.45, 255];
+  if (verticalRib || speckles)
+    return [148 + ceramicNoise, 118 + ceramicNoise * 0.65, 98 + ceramicNoise * 0.45, 255];
   return [202 + ceramicNoise, 182 + ceramicNoise * 0.7, 154 + ceramicNoise * 0.5, 255];
 };
 
-const boxTexture = face => (u, v) => {
+const boxTexture = (face) => (u, v) => {
   const grid = ((Math.floor(u * 16) + Math.floor(v * 19)) % 2) * 36;
   const label = u > 0.18 && u < 0.82 && v > 0.22 && v < 0.42;
   const darkCorner = u > 0.68 && v > 0.66;
@@ -488,16 +494,19 @@ const boxTexture = face => (u, v) => {
 const phoneTexture = (u, v) => {
   const glassNoise = (noise(u * 130, v * 180, 61) - 0.5) * 16;
   const bezel = u < 0.06 || u > 0.94 || v < 0.05 || v > 0.95;
-  const glare = Math.abs((u - 0.72) + (v - 0.22) * 0.68) < 0.035;
+  const glare = Math.abs(u - 0.72 + (v - 0.22) * 0.68) < 0.035;
   const iconColumn = Math.floor((u - 0.14) * 6);
   const iconRow = Math.floor((v - 0.2) * 8);
-  const iconGrid = u > 0.14 && u < 0.86 && v > 0.2 && v < 0.82 &&
+  const iconGrid =
+    u > 0.14 &&
+    u < 0.86 &&
+    v > 0.2 &&
+    v < 0.82 &&
     iconColumn >= 0 &&
     iconRow >= 0 &&
-    Math.abs(((u - 0.14) * 6) % 1 - 0.5) < 0.27 &&
-    Math.abs(((v - 0.2) * 8) % 1 - 0.5) < 0.22;
-  const qr = u > 0.64 && u < 0.86 && v > 0.68 && v < 0.9 &&
-    ((Math.floor(u * 74) + Math.floor(v * 86)) % 5 < 2);
+    Math.abs((((u - 0.14) * 6) % 1) - 0.5) < 0.27 &&
+    Math.abs((((v - 0.2) * 8) % 1) - 0.5) < 0.22;
+  const qr = u > 0.64 && u < 0.86 && v > 0.68 && v < 0.9 && (Math.floor(u * 74) + Math.floor(v * 86)) % 5 < 2;
   const cameraIsland = u > 0.12 && u < 0.32 && v > 0.08 && v < 0.2;
 
   if (bezel) return [10 + glassNoise, 12 + glassNoise, 16 + glassNoise, 255];
@@ -526,8 +535,8 @@ const cardTexture = (u, v) => {
   const portrait = u > 0.08 && u < 0.31 && v > 0.18 && v < 0.62;
   const magneticStripe = v > 0.72 && v < 0.84;
   const barcode = u > 0.58 && u < 0.9 && v > 0.13 && v < 0.3 && Math.floor(u * 170) % 5 < 2;
-  const microText = u > 0.38 && u < 0.88 && v > 0.38 && v < 0.64 &&
-    ((Math.floor(u * 150) + Math.floor(v * 180)) % 8 < 3);
+  const microText =
+    u > 0.38 && u < 0.88 && v > 0.38 && v < 0.64 && (Math.floor(u * 150) + Math.floor(v * 180)) % 8 < 3;
   const hologram = Math.abs((u - 0.73) * 0.8 - (v - 0.48)) < 0.025;
 
   if (border) return [18 + printNoise * 0.2, 24 + printNoise * 0.2, 36 + printNoise * 0.2, 255];
@@ -544,8 +553,13 @@ const bottleTexture = (u, v) => {
   const label = v > 0.22 && v < 0.72;
   const labelStripe = label && Math.abs(u - 0.52) < 0.055;
   const barcode = label && u > 0.66 && u < 0.86 && v > 0.48 && v < 0.66 && Math.floor(u * 145) % 4 < 2;
-  const smallText = label && u > 0.18 && u < 0.58 && v > 0.34 && v < 0.6 &&
-    ((Math.floor(u * 130) + Math.floor(v * 170)) % 11 < 3);
+  const smallText =
+    label &&
+    u > 0.18 &&
+    u < 0.58 &&
+    v > 0.34 &&
+    v < 0.6 &&
+    (Math.floor(u * 130) + Math.floor(v * 170)) % 11 < 3;
   const emboss = Math.floor(v * 88) % 13 === 0;
   const shoulder = v < 0.16;
 
@@ -559,14 +573,19 @@ const bottleTexture = (u, v) => {
 };
 
 const pouchTexture = (u, v) => {
-  const crinkle = Math.sin(u * 44 + Math.sin(v * 19) * 2.2) * 18 +
+  const crinkle =
+    Math.sin(u * 44 + Math.sin(v * 19) * 2.2) * 18 +
     Math.cos(v * 38 + u * 5) * 16 +
     (noise(u * 170, v * 150, 89) - 0.5) * 28;
   const seal = v < 0.08 || v > 0.9 || u < 0.06 || u > 0.94;
-  const logo = u > 0.22 && u < 0.76 && v > 0.18 && v < 0.44 &&
+  const logo =
+    u > 0.22 &&
+    u < 0.76 &&
+    v > 0.18 &&
+    v < 0.44 &&
     Math.abs(Math.sin((u - 0.2) * Math.PI * 4.4) * 0.06 + 0.31 - v) < 0.025;
-  const productPhoto = u > 0.18 && u < 0.82 && v > 0.52 && v < 0.8 &&
-    ((Math.floor(u * 28) + Math.floor(v * 31)) % 2 === 0);
+  const productPhoto =
+    u > 0.18 && u < 0.82 && v > 0.52 && v < 0.8 && (Math.floor(u * 28) + Math.floor(v * 31)) % 2 === 0;
   const nutrition = u > 0.62 && u < 0.88 && v > 0.42 && v < 0.86;
   const rows = nutrition && Math.floor(v * 92) % 6 === 0;
 
@@ -581,8 +600,12 @@ const pouchTexture = (u, v) => {
 const ballTexture = (u, v) => {
   const n = (noise(u * 130, v * 120, 127) - 0.5) * 28;
   const seam = Math.abs(Math.sin(u * Math.PI * 6)) < 0.06 || Math.abs(Math.cos(v * Math.PI * 5)) < 0.05;
-  const panel = ((Math.floor(u * 8) + Math.floor(v * 6)) % 2) === 0;
-  const logo = u > 0.36 && u < 0.64 && v > 0.36 && v < 0.58 &&
+  const panel = (Math.floor(u * 8) + Math.floor(v * 6)) % 2 === 0;
+  const logo =
+    u > 0.36 &&
+    u < 0.64 &&
+    v > 0.36 &&
+    v < 0.58 &&
     Math.abs(Math.sin((u - 0.36) * Math.PI * 7) * 0.06 + 0.47 - v) < 0.02;
   const dot = Math.floor(u * 42) % 9 === 0 && Math.floor(v * 46) % 9 === 0;
 
@@ -598,7 +621,7 @@ const humanPoseAt = (index, count) => {
     centerX: DEFAULT_WIDTH * 0.52 + Math.sin(t * Math.PI * 2.2) * 34,
     centerY: DEFAULT_HEIGHT * 0.53 + Math.cos(t * Math.PI * 1.5) * 18,
     scale: 0.98 + Math.sin(t * Math.PI * 1.15) * 0.14,
-    roll: Math.sin(t * Math.PI * 1.7) * 8 * Math.PI / 180,
+    roll: (Math.sin(t * Math.PI * 1.7) * 8 * Math.PI) / 180,
   };
 };
 
@@ -642,9 +665,9 @@ const humanMaskParts = [
   { x: 20, y: 92, rx: 17, ry: 76, rotation: -0.08 },
 ];
 
-const isInsideHumanSilhouette = point => humanMaskParts.some(part => insideRotatedEllipse(point, part));
+const isInsideHumanSilhouette = (point) => humanMaskParts.some((part) => insideRotatedEllipse(point, part));
 
-const humanTexture = point => {
+const humanTexture = (point) => {
   const textureNoise = (noise(point.x * 0.09, point.y * 0.08, 151) - 0.5) * 28;
   const localHead = insideRotatedEllipse(point, humanMaskParts[0]);
   const stripe = point.y > -58 && point.y < 54 && Math.floor((point.y + 140) / 13) % 2 === 0;
@@ -654,11 +677,19 @@ const humanTexture = point => {
   if (localHead) return [186 + textureNoise * 0.4, 140 + textureNoise * 0.25, 108 + textureNoise * 0.18, 255];
   if (jacketEdge) return [36 + textureNoise * 0.25, 58 + textureNoise * 0.4, 84 + textureNoise * 0.6, 255];
   if (stripe) return [218 + textureNoise * 0.2, 224 + textureNoise * 0.2, 212 + textureNoise * 0.2, 255];
-  if (legHighlight) return [68 + textureNoise * 0.25, 82 + textureNoise * 0.35, 112 + textureNoise * 0.45, 255];
+  if (legHighlight)
+    return [68 + textureNoise * 0.25, 82 + textureNoise * 0.35, 112 + textureNoise * 0.45, 255];
   return [86 + textureNoise * 0.35, 118 + textureNoise * 0.45, 152 + textureNoise * 0.55, 255];
 };
 
-const drawHumanFrame = ({ frameIndex, frameCount, occluded, reference, backgroundSeed, backgroundVariant }) => {
+const drawHumanFrame = ({
+  frameIndex,
+  frameCount,
+  occluded,
+  reference,
+  backgroundSeed,
+  backgroundVariant,
+}) => {
   const imageData = createImageData(DEFAULT_WIDTH, DEFAULT_HEIGHT);
   fillBackground(imageData, frameIndex, backgroundSeed, backgroundVariant);
   const pose = humanPoseAt(frameIndex, frameCount);
@@ -669,10 +700,10 @@ const drawHumanFrame = ({ frameIndex, frameCount, occluded, reference, backgroun
     transformHumanLocal(pose, { x: 96, y: 176 }),
     transformHumanLocal(pose, { x: -96, y: 176 }),
   ];
-  const minX = Math.max(0, Math.floor(Math.min(...localBounds.map(point => point.x)) - 8));
-  const maxX = Math.min(DEFAULT_WIDTH - 1, Math.ceil(Math.max(...localBounds.map(point => point.x)) + 8));
-  const minY = Math.max(0, Math.floor(Math.min(...localBounds.map(point => point.y)) - 8));
-  const maxY = Math.min(DEFAULT_HEIGHT - 1, Math.ceil(Math.max(...localBounds.map(point => point.y)) + 8));
+  const minX = Math.max(0, Math.floor(Math.min(...localBounds.map((point) => point.x)) - 8));
+  const maxX = Math.min(DEFAULT_WIDTH - 1, Math.ceil(Math.max(...localBounds.map((point) => point.x)) + 8));
+  const minY = Math.max(0, Math.floor(Math.min(...localBounds.map((point) => point.y)) - 8));
+  const maxY = Math.min(DEFAULT_HEIGHT - 1, Math.ceil(Math.max(...localBounds.map((point) => point.y)) + 8));
   const maskPoints = [];
 
   for (let y = minY; y <= maxY; y++) {
@@ -743,14 +774,19 @@ export const createHumanSilhouetteSequence = ({
     rawRoll: referenceFrame.groundTruth.rawRoll,
   };
   const occlusionSet = new Set(occlusionFrames);
-  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawHumanFrame({
-    frameIndex: index,
-    frameCount,
-    occluded: occlusionSet.has(index),
-    reference,
-    backgroundSeed,
-    backgroundVariant,
-  }), occlusionSet.has(index)));
+  const frames = Array.from({ length: frameCount }, (_, index) =>
+    withOcclusionState(
+      drawHumanFrame({
+        frameIndex: index,
+        frameCount,
+        occluded: occlusionSet.has(index),
+        reference,
+        backgroundSeed,
+        backgroundVariant,
+      }),
+      occlusionSet.has(index),
+    ),
+  );
 
   return {
     kind: 'human-silhouette',
@@ -777,24 +813,33 @@ export const createHumanSilhouetteSequence = ({
 };
 
 const createPlaneGroundTruth = ({ pose, camera, objectWidth, objectHeight, anchorUv, reference = null }) => {
-  const modelPoint = uv => ({
+  const modelPoint = (uv) => ({
     x: (uv.u - 0.5) * objectWidth,
     y: (uv.v - 0.5) * objectHeight,
     z: 0,
   });
   const anchor = project3(modelPoint(anchorUv), pose, camera);
   const basis = 42;
-  const basisX = project3({
-    ...modelPoint(anchorUv),
-    x: modelPoint(anchorUv).x + basis,
-  }, pose, camera);
-  const basisY = project3({
-    ...modelPoint(anchorUv),
-    y: modelPoint(anchorUv).y + basis,
-  }, pose, camera);
+  const basisX = project3(
+    {
+      ...modelPoint(anchorUv),
+      x: modelPoint(anchorUv).x + basis,
+    },
+    pose,
+    camera,
+  );
+  const basisY = project3(
+    {
+      ...modelPoint(anchorUv),
+      y: modelPoint(anchorUv).y + basis,
+    },
+    pose,
+    camera,
+  );
   const vectorX = { x: basisX.x - anchor.x, y: basisX.y - anchor.y };
   const vectorY = { x: basisY.x - anchor.x, y: basisY.y - anchor.y };
-  const rawScale = Math.sqrt(Math.max(1e-9, Math.hypot(vectorX.x, vectorX.y) * Math.hypot(vectorY.x, vectorY.y))) / basis;
+  const rawScale =
+    Math.sqrt(Math.max(1e-9, Math.hypot(vectorX.x, vectorX.y) * Math.hypot(vectorY.x, vectorY.y))) / basis;
   const rawRoll = Math.atan2(vectorX.y, vectorX.x);
   const referenceScale = reference?.rawScale ?? rawScale;
   const referenceRoll = reference?.rawRoll ?? rawRoll;
@@ -809,27 +854,35 @@ const createPlaneGroundTruth = ({ pose, camera, objectWidth, objectHeight, ancho
   };
 };
 
-const createLocalSurfaceGroundTruth = ({ pose, camera, anchorPoint, basisXPoint, basisYPoint, reference = null }) => {
+const createLocalSurfaceGroundTruth = ({
+  pose,
+  camera,
+  anchorPoint,
+  basisXPoint,
+  basisYPoint,
+  reference = null,
+}) => {
   const anchor = project3(anchorPoint, pose, camera);
   const basisX = project3(basisXPoint, pose, camera);
   const basisY = project3(basisYPoint, pose, camera);
   const modelBasisX = Math.hypot(
     basisXPoint.x - anchorPoint.x,
     basisXPoint.y - anchorPoint.y,
-    basisXPoint.z - anchorPoint.z
+    basisXPoint.z - anchorPoint.z,
   );
   const modelBasisY = Math.hypot(
     basisYPoint.x - anchorPoint.x,
     basisYPoint.y - anchorPoint.y,
-    basisYPoint.z - anchorPoint.z
+    basisYPoint.z - anchorPoint.z,
   );
   const vectorX = { x: basisX.x - anchor.x, y: basisX.y - anchor.y };
   const vectorY = { x: basisY.x - anchor.x, y: basisY.y - anchor.y };
-  const rawScale = Math.sqrt(Math.max(1e-9, (
-    Math.hypot(vectorX.x, vectorX.y) / modelBasisX
-  ) * (
-    Math.hypot(vectorY.x, vectorY.y) / modelBasisY
-  )));
+  const rawScale = Math.sqrt(
+    Math.max(
+      1e-9,
+      (Math.hypot(vectorX.x, vectorX.y) / modelBasisX) * (Math.hypot(vectorY.x, vectorY.y) / modelBasisY),
+    ),
+  );
   const rawRoll = Math.atan2(vectorX.y, vectorX.x);
   const referenceScale = reference?.rawScale ?? rawScale;
   const referenceRoll = reference?.rawRoll ?? rawRoll;
@@ -869,9 +922,13 @@ const drawPlaneFrame = ({
     { x: objectWidth / 2, y: objectHeight / 2, z: 0 },
     { x: -objectWidth / 2, y: objectHeight / 2, z: 0 },
   ];
-  const corners = modelCorners.map(point => project3(point, pose, camera));
+  const corners = modelCorners.map((point) => project3(point, pose, camera));
   const normal = projectNormal(pose);
-  const shade = clamp(0.58 + normal.z * 0.34 - Math.abs(normal.x) * 0.18 + Math.sin(frameIndex * 0.37) * 0.04, 0.46, 1);
+  const shade = clamp(
+    0.58 + normal.z * 0.34 - Math.abs(normal.x) * 0.18 + Math.sin(frameIndex * 0.37) * 0.04,
+    0.46,
+    1,
+  );
   drawShadow(imageData, corners, frameIndex);
   drawQuad(imageData, corners, texture, shade);
 
@@ -889,7 +946,7 @@ const drawPlaneFrame = ({
 
   return {
     imageData,
-    corners: corners.map(point => ({ x: point.x, y: point.y })),
+    corners: corners.map((point) => ({ x: point.x, y: point.y })),
     boundingBox,
     groundTruth,
   };
@@ -899,9 +956,9 @@ const bookPoseAt = (index, count, variant) => {
   const t = index / Math.max(1, count - 1);
   if (variant === 'depth-book') {
     return {
-      yaw: Math.sin(t * Math.PI * 1.35) * 34 * Math.PI / 180,
-      pitch: Math.sin(t * Math.PI * 1.7) * 16 * Math.PI / 180,
-      roll: Math.sin(t * Math.PI * 2.05) * 12 * Math.PI / 180,
+      yaw: (Math.sin(t * Math.PI * 1.35) * 34 * Math.PI) / 180,
+      pitch: (Math.sin(t * Math.PI * 1.7) * 16 * Math.PI) / 180,
+      roll: (Math.sin(t * Math.PI * 2.05) * 12 * Math.PI) / 180,
       tx: Math.sin(t * Math.PI * 2.4) * 34,
       ty: Math.sin(t * Math.PI * 1.8) * 22,
       distance: 780 - Math.sin(t * Math.PI) * 170,
@@ -909,9 +966,9 @@ const bookPoseAt = (index, count, variant) => {
   }
 
   return {
-    yaw: (Math.sin(t * Math.PI * 1.24) * 28 - 10) * Math.PI / 180,
-    pitch: (Math.sin(t * Math.PI * 1.8 + 0.4) * 13) * Math.PI / 180,
-    roll: (Math.sin(t * Math.PI * 1.5 - 0.2) * 9) * Math.PI / 180,
+    yaw: ((Math.sin(t * Math.PI * 1.24) * 28 - 10) * Math.PI) / 180,
+    pitch: (Math.sin(t * Math.PI * 1.8 + 0.4) * 13 * Math.PI) / 180,
+    roll: (Math.sin(t * Math.PI * 1.5 - 0.2) * 9 * Math.PI) / 180,
     tx: Math.sin(t * Math.PI * 2.1) * 28 + (variant === 'dark-book' ? -18 : 0),
     ty: Math.cos(t * Math.PI * 1.6) * 18,
     distance: 720 - Math.sin(t * Math.PI * 1.1) * 90,
@@ -937,19 +994,24 @@ export const createPlanarBookSequence = ({
     anchorUv,
   });
   const occlusionSet = new Set(occlusionFrames);
-  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawPlaneFrame({
-    kind,
-    frameIndex: index,
-    pose: bookPoseAt(index, frameCount, kind),
-    objectWidth,
-    objectHeight,
-    anchorUv,
-    reference,
-    occluded: occlusionSet.has(index),
-    texture: bookTexture(kind),
-    backgroundSeed,
-    backgroundVariant,
-  }), occlusionSet.has(index)));
+  const frames = Array.from({ length: frameCount }, (_, index) =>
+    withOcclusionState(
+      drawPlaneFrame({
+        kind,
+        frameIndex: index,
+        pose: bookPoseAt(index, frameCount, kind),
+        objectWidth,
+        objectHeight,
+        anchorUv,
+        reference,
+        occluded: occlusionSet.has(index),
+        texture: bookTexture(kind),
+        backgroundSeed,
+        backgroundVariant,
+      }),
+      occlusionSet.has(index),
+    ),
+  );
 
   return {
     kind,
@@ -977,9 +1039,9 @@ export const createPlanarBookSequence = ({
 const phonePoseAt = (index, count) => {
   const t = index / Math.max(1, count - 1);
   return {
-    yaw: (Math.sin(t * Math.PI * 1.65) * 32 + 8) * Math.PI / 180,
-    pitch: (Math.sin(t * Math.PI * 1.35 + 0.5) * 18 - 4) * Math.PI / 180,
-    roll: Math.sin(t * Math.PI * 2.1) * 16 * Math.PI / 180,
+    yaw: ((Math.sin(t * Math.PI * 1.65) * 32 + 8) * Math.PI) / 180,
+    pitch: ((Math.sin(t * Math.PI * 1.35 + 0.5) * 18 - 4) * Math.PI) / 180,
+    roll: (Math.sin(t * Math.PI * 2.1) * 16 * Math.PI) / 180,
     tx: -20 + Math.sin(t * Math.PI * 2.4) * 32,
     ty: Math.cos(t * Math.PI * 1.7) * 22,
     distance: 680 - Math.sin(t * Math.PI * 1.05) * 130,
@@ -1004,19 +1066,24 @@ export const createGlossyPhoneSequence = ({
     anchorUv,
   });
   const occlusionSet = new Set(occlusionFrames);
-  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawPlaneFrame({
-    kind: 'glossy-phone',
-    frameIndex: index,
-    pose: phonePoseAt(index, frameCount),
-    objectWidth,
-    objectHeight,
-    anchorUv,
-    reference,
-    occluded: occlusionSet.has(index),
-    texture: phoneTexture,
-    backgroundSeed,
-    backgroundVariant,
-  }), occlusionSet.has(index)));
+  const frames = Array.from({ length: frameCount }, (_, index) =>
+    withOcclusionState(
+      drawPlaneFrame({
+        kind: 'glossy-phone',
+        frameIndex: index,
+        pose: phonePoseAt(index, frameCount),
+        objectWidth,
+        objectHeight,
+        anchorUv,
+        reference,
+        occluded: occlusionSet.has(index),
+        texture: phoneTexture,
+        backgroundSeed,
+        backgroundVariant,
+      }),
+      occlusionSet.has(index),
+    ),
+  );
 
   return {
     kind: 'glossy-phone',
@@ -1044,9 +1111,9 @@ export const createGlossyPhoneSequence = ({
 const canPoseAt = (index, count) => {
   const t = index / Math.max(1, count - 1);
   return {
-    yaw: (Math.sin(t * Math.PI * 1.45) * 42 - 6) * Math.PI / 180,
-    pitch: Math.sin(t * Math.PI * 1.7) * 8 * Math.PI / 180,
-    roll: Math.sin(t * Math.PI * 1.2) * 7 * Math.PI / 180,
+    yaw: ((Math.sin(t * Math.PI * 1.45) * 42 - 6) * Math.PI) / 180,
+    pitch: (Math.sin(t * Math.PI * 1.7) * 8 * Math.PI) / 180,
+    roll: (Math.sin(t * Math.PI * 1.2) * 7 * Math.PI) / 180,
     tx: 18 + Math.sin(t * Math.PI * 1.8) * 34,
     ty: Math.cos(t * Math.PI * 1.3) * 16,
     distance: 690 - Math.sin(t * Math.PI) * 70,
@@ -1056,9 +1123,9 @@ const canPoseAt = (index, count) => {
 const cardPoseAt = (index, count) => {
   const t = index / Math.max(1, count - 1);
   return {
-    yaw: (Math.sin(t * Math.PI * 1.75) * 38 - 14) * Math.PI / 180,
-    pitch: (Math.sin(t * Math.PI * 1.45 + 0.3) * 21 - 3) * Math.PI / 180,
-    roll: Math.sin(t * Math.PI * 2.2) * 17 * Math.PI / 180,
+    yaw: ((Math.sin(t * Math.PI * 1.75) * 38 - 14) * Math.PI) / 180,
+    pitch: ((Math.sin(t * Math.PI * 1.45 + 0.3) * 21 - 3) * Math.PI) / 180,
+    roll: (Math.sin(t * Math.PI * 2.2) * 17 * Math.PI) / 180,
     tx: -18 + Math.sin(t * Math.PI * 2.1) * 36,
     ty: Math.cos(t * Math.PI * 1.6) * 18,
     distance: 690 - Math.sin(t * Math.PI * 1.1) * 115,
@@ -1083,19 +1150,24 @@ export const createLaminatedCardSequence = ({
     anchorUv,
   });
   const occlusionSet = new Set(occlusionFrames);
-  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawPlaneFrame({
-    kind: 'laminated-card',
-    frameIndex: index,
-    pose: cardPoseAt(index, frameCount),
-    objectWidth,
-    objectHeight,
-    anchorUv,
-    reference,
-    occluded: occlusionSet.has(index),
-    texture: cardTexture,
-    backgroundSeed,
-    backgroundVariant,
-  }), occlusionSet.has(index)));
+  const frames = Array.from({ length: frameCount }, (_, index) =>
+    withOcclusionState(
+      drawPlaneFrame({
+        kind: 'laminated-card',
+        frameIndex: index,
+        pose: cardPoseAt(index, frameCount),
+        objectWidth,
+        objectHeight,
+        anchorUv,
+        reference,
+        occluded: occlusionSet.has(index),
+        texture: cardTexture,
+        backgroundSeed,
+        backgroundVariant,
+      }),
+      occlusionSet.has(index),
+    ),
+  );
 
   return {
     kind: 'laminated-card',
@@ -1123,16 +1195,23 @@ export const createLaminatedCardSequence = ({
 const bottlePoseAt = (index, count) => {
   const t = index / Math.max(1, count - 1);
   return {
-    yaw: (Math.sin(t * Math.PI * 1.7) * 38 - 10) * Math.PI / 180,
-    pitch: Math.sin(t * Math.PI * 1.45 + 0.2) * 10 * Math.PI / 180,
-    roll: Math.sin(t * Math.PI * 1.55) * 8 * Math.PI / 180,
+    yaw: ((Math.sin(t * Math.PI * 1.7) * 38 - 10) * Math.PI) / 180,
+    pitch: (Math.sin(t * Math.PI * 1.45 + 0.2) * 10 * Math.PI) / 180,
+    roll: (Math.sin(t * Math.PI * 1.55) * 8 * Math.PI) / 180,
     tx: 12 + Math.sin(t * Math.PI * 2.2) * 26,
     ty: Math.cos(t * Math.PI * 1.5) * 18,
     distance: 700 - Math.sin(t * Math.PI) * 86,
   };
 };
 
-const drawBottleFrame = ({ frameIndex, frameCount, occluded, reference, backgroundSeed, backgroundVariant }) => {
+const drawBottleFrame = ({
+  frameIndex,
+  frameCount,
+  occluded,
+  reference,
+  backgroundSeed,
+  backgroundVariant,
+}) => {
   const imageData = createImageData(DEFAULT_WIDTH, DEFAULT_HEIGHT);
   fillBackground(imageData, frameIndex, backgroundSeed, backgroundVariant);
   const pose = bottlePoseAt(frameIndex, frameCount);
@@ -1142,15 +1221,15 @@ const drawBottleFrame = ({ frameIndex, frameCount, occluded, reference, backgrou
   const strips = 42;
 
   for (let strip = 0; strip < strips; strip++) {
-    const a0 = -Math.PI * 0.5 + strip / strips * Math.PI;
-    const a1 = -Math.PI * 0.5 + (strip + 1) / strips * Math.PI;
+    const a0 = -Math.PI * 0.5 + (strip / strips) * Math.PI;
+    const a1 = -Math.PI * 0.5 + ((strip + 1) / strips) * Math.PI;
     const quad3 = [
       { x: Math.sin(a0) * bodyRadius, y: -bodyHeight / 2, z: Math.cos(a0) * bodyRadius - bodyRadius },
       { x: Math.sin(a1) * bodyRadius, y: -bodyHeight / 2, z: Math.cos(a1) * bodyRadius - bodyRadius },
       { x: Math.sin(a1) * bodyRadius, y: bodyHeight / 2, z: Math.cos(a1) * bodyRadius - bodyRadius },
       { x: Math.sin(a0) * bodyRadius, y: bodyHeight / 2, z: Math.cos(a0) * bodyRadius - bodyRadius },
     ];
-    const quad = quad3.map(point => project3(point, pose, DEFAULT_CAMERA));
+    const quad = quad3.map((point) => project3(point, pose, DEFAULT_CAMERA));
     projected.push(...quad);
     const shade = clamp(0.42 + Math.cos((a0 + a1) * 0.5) * 0.32 + projectNormal(pose).z * 0.17, 0.3, 1);
     drawQuad(imageData, quad, (u, v) => bottleTexture((strip + u) / strips, v), shade);
@@ -1163,7 +1242,7 @@ const drawBottleFrame = ({ frameIndex, frameCount, occluded, reference, backgrou
     { x: neckWidth / 2, y: -bodyHeight / 2 - neckHeight, z: -bodyRadius * 0.55 },
     { x: neckWidth / 2, y: -bodyHeight / 2, z: -bodyRadius * 0.55 },
     { x: -neckWidth / 2, y: -bodyHeight / 2, z: -bodyRadius * 0.55 },
-  ].map(point => project3(point, pose, DEFAULT_CAMERA));
+  ].map((point) => project3(point, pose, DEFAULT_CAMERA));
   projected.push(...neckCorners);
   drawQuad(imageData, neckCorners, (u, v) => bottleTexture(u, v * 0.18), 0.82);
 
@@ -1180,7 +1259,7 @@ const drawBottleFrame = ({ frameIndex, frameCount, occluded, reference, backgrou
 
   return {
     imageData,
-    corners: projected.map(point => ({ x: point.x, y: point.y })),
+    corners: projected.map((point) => ({ x: point.x, y: point.y })),
     boundingBox,
     groundTruth,
   };
@@ -1200,14 +1279,19 @@ export const createLabelBottleSequence = ({
     basisYPoint: { x: 0, y: 42, z: 0 },
   });
   const occlusionSet = new Set(occlusionFrames);
-  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawBottleFrame({
-    frameIndex: index,
-    frameCount,
-    occluded: occlusionSet.has(index),
-    reference,
-    backgroundSeed,
-    backgroundVariant,
-  }), occlusionSet.has(index)));
+  const frames = Array.from({ length: frameCount }, (_, index) =>
+    withOcclusionState(
+      drawBottleFrame({
+        frameIndex: index,
+        frameCount,
+        occluded: occlusionSet.has(index),
+        reference,
+        backgroundSeed,
+        backgroundVariant,
+      }),
+      occlusionSet.has(index),
+    ),
+  );
 
   return {
     kind: 'label-bottle',
@@ -1257,13 +1341,13 @@ const drawCylinderFrame = ({
   const projected = [];
 
   for (let strip = 0; strip < strips; strip++) {
-    const a0 = -Math.PI * 0.52 + strip / strips * Math.PI * 1.04;
-    const a1 = -Math.PI * 0.52 + (strip + 1) / strips * Math.PI * 1.04;
+    const a0 = -Math.PI * 0.52 + (strip / strips) * Math.PI * 1.04;
+    const a1 = -Math.PI * 0.52 + ((strip + 1) / strips) * Math.PI * 1.04;
     const p0 = { x: Math.sin(a0) * radius, y: -objectHeight / 2, z: Math.cos(a0) * radius - radius };
     const p1 = { x: Math.sin(a1) * radius, y: -objectHeight / 2, z: Math.cos(a1) * radius - radius };
     const p2 = { x: Math.sin(a1) * radius, y: objectHeight / 2, z: Math.cos(a1) * radius - radius };
     const p3 = { x: Math.sin(a0) * radius, y: objectHeight / 2, z: Math.cos(a0) * radius - radius };
-    const quad = [p0, p1, p2, p3].map(point => project3(point, pose, camera));
+    const quad = [p0, p1, p2, p3].map((point) => project3(point, pose, camera));
     projected.push(...quad);
     const shade = clamp(0.42 + Math.cos((a0 + a1) * 0.5) * 0.35 + projectNormal(pose).z * 0.16, 0.28, 1);
     drawQuad(imageData, quad, (u, v) => texture((strip + u) / strips, v, frameIndex), shade);
@@ -1282,7 +1366,7 @@ const drawCylinderFrame = ({
 
   return {
     imageData,
-    corners: projected.map(point => ({ x: point.x, y: point.y })),
+    corners: projected.map((point) => ({ x: point.x, y: point.y })),
     boundingBox,
     groundTruth,
   };
@@ -1308,19 +1392,24 @@ export const createCylindricalCanSequence = ({
     basisXPoint,
     basisYPoint,
   });
-  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawCylinderFrame({
-    frameIndex: index,
-    frameCount,
-    occluded: occlusionSet.has(index),
-    reference,
-    backgroundSeed,
-    backgroundVariant,
-    anchorPoint,
-    basisXPoint,
-    basisYPoint,
-    texture,
-    kind,
-  }), occlusionSet.has(index)));
+  const frames = Array.from({ length: frameCount }, (_, index) =>
+    withOcclusionState(
+      drawCylinderFrame({
+        frameIndex: index,
+        frameCount,
+        occluded: occlusionSet.has(index),
+        reference,
+        backgroundSeed,
+        backgroundVariant,
+        anchorPoint,
+        basisXPoint,
+        basisYPoint,
+        texture,
+        kind,
+      }),
+      occlusionSet.has(index),
+    ),
+  );
 
   return {
     kind,
@@ -1346,21 +1435,22 @@ export const createCylindricalCanSequence = ({
   };
 };
 
-export const createGlossyCanSequence = options => createCylindricalCanSequence({
-  kind: 'glossy-can',
-  backgroundVariant: 'kitchen',
-  backgroundSeed: 137,
-  texture: glossyCanTexture,
-  hasSpecularHighlights: true,
-  ...options,
-});
+export const createGlossyCanSequence = (options) =>
+  createCylindricalCanSequence({
+    kind: 'glossy-can',
+    backgroundVariant: 'kitchen',
+    backgroundSeed: 137,
+    texture: glossyCanTexture,
+    hasSpecularHighlights: true,
+    ...options,
+  });
 
 const cupPoseAt = (index, count) => {
   const t = index / Math.max(1, count - 1);
   return {
-    yaw: Math.sin(t * Math.PI * 1.55) * 36 * Math.PI / 180,
-    pitch: Math.sin(t * Math.PI * 1.25) * 11 * Math.PI / 180,
-    roll: Math.sin(t * Math.PI * 1.85) * 9 * Math.PI / 180,
+    yaw: (Math.sin(t * Math.PI * 1.55) * 36 * Math.PI) / 180,
+    pitch: (Math.sin(t * Math.PI * 1.25) * 11 * Math.PI) / 180,
+    roll: (Math.sin(t * Math.PI * 1.85) * 9 * Math.PI) / 180,
     tx: -14 + Math.sin(t * Math.PI * 2.1) * 30,
     ty: Math.cos(t * Math.PI * 1.4) * 18,
     distance: 720 - Math.sin(t * Math.PI) * 120,
@@ -1376,8 +1466,8 @@ const drawCupFrame = ({ frameIndex, frameCount, occluded, reference, backgroundS
   const projected = [];
 
   for (let strip = 0; strip < strips; strip++) {
-    const a0 = -Math.PI * 0.52 + strip / strips * Math.PI * 1.04;
-    const a1 = -Math.PI * 0.52 + (strip + 1) / strips * Math.PI * 1.04;
+    const a0 = -Math.PI * 0.52 + (strip / strips) * Math.PI * 1.04;
+    const a1 = -Math.PI * 0.52 + ((strip + 1) / strips) * Math.PI * 1.04;
     const pointAt = (angle, y) => {
       const v = (y + objectHeight / 2) / objectHeight;
       const radius = 58 + v * 22;
@@ -1391,7 +1481,7 @@ const drawCupFrame = ({ frameIndex, frameCount, occluded, reference, backgroundS
     const p1 = pointAt(a1, -objectHeight / 2);
     const p2 = pointAt(a1, objectHeight / 2);
     const p3 = pointAt(a0, objectHeight / 2);
-    const quad = [p0, p1, p2, p3].map(point => project3(point, pose, DEFAULT_CAMERA));
+    const quad = [p0, p1, p2, p3].map((point) => project3(point, pose, DEFAULT_CAMERA));
     projected.push(...quad);
     const shade = clamp(0.48 + Math.cos((a0 + a1) * 0.5) * 0.28 + projectNormal(pose).z * 0.16, 0.34, 1);
     drawQuad(imageData, quad, (u, v) => cupTexture((strip + u) / strips, v), shade);
@@ -1410,7 +1500,7 @@ const drawCupFrame = ({ frameIndex, frameCount, occluded, reference, backgroundS
 
   return {
     imageData,
-    corners: projected.map(point => ({ x: point.x, y: point.y })),
+    corners: projected.map((point) => ({ x: point.x, y: point.y })),
     boundingBox,
     groundTruth,
   };
@@ -1430,14 +1520,19 @@ export const createTexturedCupSequence = ({
     basisXPoint: { x: 42, y: 0, z: 0 },
     basisYPoint: { x: 0, y: 42, z: 0 },
   });
-  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawCupFrame({
-    frameIndex: index,
-    frameCount,
-    occluded: occlusionSet.has(index),
-    reference,
-    backgroundSeed,
-    backgroundVariant,
-  }), occlusionSet.has(index)));
+  const frames = Array.from({ length: frameCount }, (_, index) =>
+    withOcclusionState(
+      drawCupFrame({
+        frameIndex: index,
+        frameCount,
+        occluded: occlusionSet.has(index),
+        reference,
+        backgroundSeed,
+        backgroundVariant,
+      }),
+      occlusionSet.has(index),
+    ),
+  );
 
   return {
     kind: 'textured-cup',
@@ -1465,9 +1560,9 @@ export const createTexturedCupSequence = ({
 const mugPoseAt = (index, count) => {
   const t = index / Math.max(1, count - 1);
   return {
-    yaw: (Math.sin(t * Math.PI * 1.7) * 42 + 8) * Math.PI / 180,
-    pitch: (Math.sin(t * Math.PI * 1.5 + 0.25) * 12 - 2) * Math.PI / 180,
-    roll: Math.sin(t * Math.PI * 1.95) * 10 * Math.PI / 180,
+    yaw: ((Math.sin(t * Math.PI * 1.7) * 42 + 8) * Math.PI) / 180,
+    pitch: ((Math.sin(t * Math.PI * 1.5 + 0.25) * 12 - 2) * Math.PI) / 180,
+    roll: (Math.sin(t * Math.PI * 1.95) * 10 * Math.PI) / 180,
     tx: 16 + Math.sin(t * Math.PI * 2.05) * 34,
     ty: Math.cos(t * Math.PI * 1.35) * 20,
     distance: 710 - Math.sin(t * Math.PI * 1.08) * 130,
@@ -1512,10 +1607,19 @@ const drawMugHandle = ({ imageData, objectMask, pose, projected }) => {
     const current = handlePoints[segment];
     const next = handlePoints[segment + 1];
     const quad3 = [current.outer, next.outer, next.inner, current.inner];
-    const quad = quad3.map(point => project3(point, pose, DEFAULT_CAMERA));
+    const quad = quad3.map((point) => project3(point, pose, DEFAULT_CAMERA));
     projected.push(...quad);
-    const shade = clamp(0.5 + Math.sin((segment / segments) * Math.PI) * 0.26 + projectNormal(pose).z * 0.1, 0.38, 0.92);
-    drawQuad(imageData, quad, (u, v) => mugTexture(current.u + (next.u - current.u) * u, 0.22 + v * 0.56), shade);
+    const shade = clamp(
+      0.5 + Math.sin((segment / segments) * Math.PI) * 0.26 + projectNormal(pose).z * 0.1,
+      0.38,
+      0.92,
+    );
+    drawQuad(
+      imageData,
+      quad,
+      (u, v) => mugTexture(current.u + (next.u - current.u) * u, 0.22 + v * 0.56),
+      shade,
+    );
     fillQuadMask(objectMask, quad);
   }
 };
@@ -1534,13 +1638,13 @@ const drawMugFrame = ({ frameIndex, frameCount, occluded, reference, backgroundS
   const projected = [];
 
   for (let strip = 0; strip < strips; strip++) {
-    const a0 = -Math.PI * 0.55 + strip / strips * Math.PI * 1.1;
-    const a1 = -Math.PI * 0.55 + (strip + 1) / strips * Math.PI * 1.1;
+    const a0 = -Math.PI * 0.55 + (strip / strips) * Math.PI * 1.1;
+    const a1 = -Math.PI * 0.55 + ((strip + 1) / strips) * Math.PI * 1.1;
     const p0 = mugBodyPoint(a0, -objectHeight / 2, objectHeight);
     const p1 = mugBodyPoint(a1, -objectHeight / 2, objectHeight);
     const p2 = mugBodyPoint(a1, objectHeight / 2, objectHeight);
     const p3 = mugBodyPoint(a0, objectHeight / 2, objectHeight);
-    const quad = [p0, p1, p2, p3].map(point => project3(point, pose, DEFAULT_CAMERA));
+    const quad = [p0, p1, p2, p3].map((point) => project3(point, pose, DEFAULT_CAMERA));
     projected.push(...quad);
     const shade = clamp(0.46 + Math.cos((a0 + a1) * 0.5) * 0.3 + projectNormal(pose).z * 0.16, 0.32, 1);
     drawQuad(imageData, quad, (u, v) => mugTexture((strip + u) / strips, v), shade);
@@ -1565,7 +1669,7 @@ const drawMugFrame = ({ frameIndex, frameCount, occluded, reference, backgroundS
     objectMask: {
       data: objectMask.data,
     },
-    corners: projected.map(point => ({ x: point.x, y: point.y })),
+    corners: projected.map((point) => ({ x: point.x, y: point.y })),
     boundingBox,
     groundTruth,
     maskProbePoints: {
@@ -1590,14 +1694,19 @@ export const createHandledMugSequence = ({
     basisXPoint: { x: 42, y: 0, z: 0 },
     basisYPoint: { x: 0, y: 42, z: 0 },
   });
-  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawMugFrame({
-    frameIndex: index,
-    frameCount,
-    occluded: occlusionSet.has(index),
-    reference,
-    backgroundSeed,
-    backgroundVariant,
-  }), occlusionSet.has(index)));
+  const frames = Array.from({ length: frameCount }, (_, index) =>
+    withOcclusionState(
+      drawMugFrame({
+        frameIndex: index,
+        frameCount,
+        occluded: occlusionSet.has(index),
+        reference,
+        backgroundSeed,
+        backgroundVariant,
+      }),
+      occlusionSet.has(index),
+    ),
+  );
 
   return {
     kind: 'handled-mug',
@@ -1625,9 +1734,9 @@ export const createHandledMugSequence = ({
 const ballPoseAt = (index, count) => {
   const t = index / Math.max(1, count - 1);
   return {
-    yaw: (Math.sin(t * Math.PI * 1.55) * 39 - 5) * Math.PI / 180,
-    pitch: (Math.sin(t * Math.PI * 1.3 + 0.35) * 18 + 2) * Math.PI / 180,
-    roll: Math.sin(t * Math.PI * 2.25) * 17 * Math.PI / 180,
+    yaw: ((Math.sin(t * Math.PI * 1.55) * 39 - 5) * Math.PI) / 180,
+    pitch: ((Math.sin(t * Math.PI * 1.3 + 0.35) * 18 + 2) * Math.PI) / 180,
+    roll: (Math.sin(t * Math.PI * 2.25) * 17 * Math.PI) / 180,
     tx: -8 + Math.sin(t * Math.PI * 1.85) * 36,
     ty: Math.cos(t * Math.PI * 1.55) * 20,
     distance: 720 - Math.sin(t * Math.PI * 1.12) * 105,
@@ -1640,7 +1749,14 @@ const ballSurfacePoint = ({ longitude, latitude, radiusX = 82, radiusY = 78, rad
   z: Math.cos(longitude) * Math.cos(latitude) * radiusZ - radiusZ,
 });
 
-const drawBallFrame = ({ frameIndex, frameCount, occluded, reference, backgroundSeed, backgroundVariant }) => {
+const drawBallFrame = ({
+  frameIndex,
+  frameCount,
+  occluded,
+  reference,
+  backgroundSeed,
+  backgroundVariant,
+}) => {
   const imageData = createImageData(DEFAULT_WIDTH, DEFAULT_HEIGHT);
   fillBackground(imageData, frameIndex, backgroundSeed, backgroundVariant);
   const pose = ballPoseAt(frameIndex, frameCount);
@@ -1653,30 +1769,31 @@ const drawBallFrame = ({ frameIndex, frameCount, occluded, reference, background
   const projected = [];
 
   for (let latIndex = 0; latIndex < latitudeSegments; latIndex++) {
-    const lat0 = latitudeMin + latIndex / latitudeSegments * (latitudeMax - latitudeMin);
-    const lat1 = latitudeMin + (latIndex + 1) / latitudeSegments * (latitudeMax - latitudeMin);
+    const lat0 = latitudeMin + (latIndex / latitudeSegments) * (latitudeMax - latitudeMin);
+    const lat1 = latitudeMin + ((latIndex + 1) / latitudeSegments) * (latitudeMax - latitudeMin);
     for (let lonIndex = 0; lonIndex < longitudeSegments; lonIndex++) {
-      const lon0 = longitudeMin + lonIndex / longitudeSegments * (longitudeMax - longitudeMin);
-      const lon1 = longitudeMin + (lonIndex + 1) / longitudeSegments * (longitudeMax - longitudeMin);
+      const lon0 = longitudeMin + (lonIndex / longitudeSegments) * (longitudeMax - longitudeMin);
+      const lon1 = longitudeMin + ((lonIndex + 1) / longitudeSegments) * (longitudeMax - longitudeMin);
       const quad3 = [
         ballSurfacePoint({ longitude: lon0, latitude: lat0 }),
         ballSurfacePoint({ longitude: lon1, latitude: lat0 }),
         ballSurfacePoint({ longitude: lon1, latitude: lat1 }),
         ballSurfacePoint({ longitude: lon0, latitude: lat1 }),
       ];
-      const quad = quad3.map(point => project3(point, pose, DEFAULT_CAMERA));
+      const quad = quad3.map((point) => project3(point, pose, DEFAULT_CAMERA));
       projected.push(...quad);
       const lonMid = (lon0 + lon1) * 0.5;
       const latMid = (lat0 + lat1) * 0.5;
-      const shade = clamp(0.42 + Math.cos(lonMid) * Math.cos(latMid) * 0.38 + projectNormal(pose).z * 0.12, 0.3, 1);
+      const shade = clamp(
+        0.42 + Math.cos(lonMid) * Math.cos(latMid) * 0.38 + projectNormal(pose).z * 0.12,
+        0.3,
+        1,
+      );
       drawQuad(
         imageData,
         quad,
-        (u, v) => ballTexture(
-          (lonIndex + u) / longitudeSegments,
-          (latIndex + v) / latitudeSegments
-        ),
-        shade
+        (u, v) => ballTexture((lonIndex + u) / longitudeSegments, (latIndex + v) / latitudeSegments),
+        shade,
       );
     }
   }
@@ -1694,7 +1811,7 @@ const drawBallFrame = ({ frameIndex, frameCount, occluded, reference, background
 
   return {
     imageData,
-    corners: projected.map(point => ({ x: point.x, y: point.y })),
+    corners: projected.map((point) => ({ x: point.x, y: point.y })),
     boundingBox,
     groundTruth,
   };
@@ -1714,14 +1831,19 @@ export const createTexturedBallSequence = ({
     basisXPoint: ballSurfacePoint({ longitude: 0.42, latitude: 0 }),
     basisYPoint: ballSurfacePoint({ longitude: 0, latitude: 0.42 }),
   });
-  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawBallFrame({
-    frameIndex: index,
-    frameCount,
-    occluded: occlusionSet.has(index),
-    reference,
-    backgroundSeed,
-    backgroundVariant,
-  }), occlusionSet.has(index)));
+  const frames = Array.from({ length: frameCount }, (_, index) =>
+    withOcclusionState(
+      drawBallFrame({
+        frameIndex: index,
+        frameCount,
+        occluded: occlusionSet.has(index),
+        reference,
+        backgroundSeed,
+        backgroundVariant,
+      }),
+      occlusionSet.has(index),
+    ),
+  );
 
   return {
     kind: 'textured-ball',
@@ -1749,9 +1871,9 @@ export const createTexturedBallSequence = ({
 const pouchPoseAt = (index, count) => {
   const t = index / Math.max(1, count - 1);
   return {
-    yaw: (Math.sin(t * Math.PI * 1.25) * 26 - 7) * Math.PI / 180,
-    pitch: (Math.sin(t * Math.PI * 1.9 + 0.2) * 19) * Math.PI / 180,
-    roll: Math.sin(t * Math.PI * 2.3) * 13 * Math.PI / 180,
+    yaw: ((Math.sin(t * Math.PI * 1.25) * 26 - 7) * Math.PI) / 180,
+    pitch: (Math.sin(t * Math.PI * 1.9 + 0.2) * 19 * Math.PI) / 180,
+    roll: (Math.sin(t * Math.PI * 2.3) * 13 * Math.PI) / 180,
     tx: 22 + Math.sin(t * Math.PI * 2.0) * 36,
     ty: Math.cos(t * Math.PI * 1.6) * 19,
     distance: 735 - Math.sin(t * Math.PI * 1.15) * 105,
@@ -1776,19 +1898,24 @@ export const createSnackPouchSequence = ({
     anchorUv,
   });
   const occlusionSet = new Set(occlusionFrames);
-  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(drawPlaneFrame({
-    kind: 'snack-pouch',
-    frameIndex: index,
-    pose: pouchPoseAt(index, frameCount),
-    objectWidth,
-    objectHeight,
-    anchorUv,
-    reference,
-    occluded: occlusionSet.has(index),
-    texture: pouchTexture,
-    backgroundSeed,
-    backgroundVariant,
-  }), occlusionSet.has(index)));
+  const frames = Array.from({ length: frameCount }, (_, index) =>
+    withOcclusionState(
+      drawPlaneFrame({
+        kind: 'snack-pouch',
+        frameIndex: index,
+        pose: pouchPoseAt(index, frameCount),
+        objectWidth,
+        objectHeight,
+        anchorUv,
+        reference,
+        occluded: occlusionSet.has(index),
+        texture: pouchTexture,
+        backgroundSeed,
+        backgroundVariant,
+      }),
+      occlusionSet.has(index),
+    ),
+  );
 
   return {
     kind: 'snack-pouch',
@@ -1816,16 +1943,23 @@ export const createSnackPouchSequence = ({
 const boxPoseAt = (frameIndex, frameCount) => {
   const t = frameIndex / Math.max(1, frameCount - 1);
   return {
-    yaw: (-24 + Math.sin(t * Math.PI * 1.3) * 34) * Math.PI / 180,
-    pitch: (8 + Math.sin(t * Math.PI * 1.6) * 12) * Math.PI / 180,
-    roll: Math.sin(t * Math.PI * 1.7) * 8 * Math.PI / 180,
+    yaw: ((-24 + Math.sin(t * Math.PI * 1.3) * 34) * Math.PI) / 180,
+    pitch: ((8 + Math.sin(t * Math.PI * 1.6) * 12) * Math.PI) / 180,
+    roll: (Math.sin(t * Math.PI * 1.7) * 8 * Math.PI) / 180,
     tx: -24 + Math.sin(t * Math.PI * 1.5) * 28,
     ty: Math.sin(t * Math.PI * 1.1) * 16,
     distance: 760 - Math.sin(t * Math.PI) * 60,
   };
 };
 
-const createRigidBoxFrame = ({ frameIndex, frameCount, occluded, reference, backgroundSeed, backgroundVariant }) => {
+const createRigidBoxFrame = ({
+  frameIndex,
+  frameCount,
+  occluded,
+  reference,
+  backgroundSeed,
+  backgroundVariant,
+}) => {
   const imageData = createImageData(DEFAULT_WIDTH, DEFAULT_HEIGHT);
   fillBackground(imageData, frameIndex, backgroundSeed, backgroundVariant);
   const pose = boxPoseAt(frameIndex, frameCount);
@@ -1855,8 +1989,8 @@ const createRigidBoxFrame = ({ frameIndex, frameCount, occluded, reference, back
     },
   ];
   const projected = [];
-  faces.forEach(face => {
-    const corners = face.corners.map(point => project3(point, pose, DEFAULT_CAMERA));
+  faces.forEach((face) => {
+    const corners = face.corners.map((point) => project3(point, pose, DEFAULT_CAMERA));
     projected.push(...corners);
     drawQuad(imageData, corners, face.texture, face.shade);
   });
@@ -1874,7 +2008,7 @@ const createRigidBoxFrame = ({ frameIndex, frameCount, occluded, reference, back
 
   return {
     imageData,
-    corners: projected.map(point => ({ x: point.x, y: point.y })),
+    corners: projected.map((point) => ({ x: point.x, y: point.y })),
     boundingBox,
     groundTruth,
   };
@@ -1895,14 +2029,19 @@ export const createRigidBoxSequence = ({
     basisXPoint: { x: 42, y: 0, z: -d / 2 },
     basisYPoint: { x: 0, y: 42, z: -d / 2 },
   });
-  const frames = Array.from({ length: frameCount }, (_, index) => withOcclusionState(createRigidBoxFrame({
-    frameIndex: index,
-    frameCount,
-    occluded: occlusionSet.has(index),
-    reference,
-    backgroundSeed,
-    backgroundVariant,
-  }), occlusionSet.has(index)));
+  const frames = Array.from({ length: frameCount }, (_, index) =>
+    withOcclusionState(
+      createRigidBoxFrame({
+        frameIndex: index,
+        frameCount,
+        occluded: occlusionSet.has(index),
+        reference,
+        backgroundSeed,
+        backgroundVariant,
+      }),
+      occlusionSet.has(index),
+    ),
+  );
 
   return {
     kind: 'rigid-box',

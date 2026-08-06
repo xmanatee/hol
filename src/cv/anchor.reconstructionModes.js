@@ -27,6 +27,6 @@ export const RECONSTRUCTION_MODES = [
   },
 ];
 
-export const RECONSTRUCTION_MODE_IDS = new Set(RECONSTRUCTION_MODES.map(mode => mode.id));
+export const RECONSTRUCTION_MODE_IDS = new Set(RECONSTRUCTION_MODES.map((mode) => mode.id));
 
-export const isReconstructionMode = mode => RECONSTRUCTION_MODE_IDS.has(mode);
+export const isReconstructionMode = (mode) => RECONSTRUCTION_MODE_IDS.has(mode);

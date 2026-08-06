@@ -8,6 +8,7 @@ import {
 } from '../src/cv/synthetic/anchorReplayHarness.js';
 import { scoreHeadPoseReplay } from '../src/cv/synthetic/headPoseReplayHarness.js';
 import { RECONSTRUCTION_MODES } from '../src/cv/anchor.reconstructionModes.js';
+import { ANCHOR_TRACKING_INTERVAL_MS } from '../src/utils/cvScheduling.js';
 
 const SYNTHETIC_OBJECT_SUPPORT = 'synthetic-object-mask';
 const cv = await loadOpenCvForNode();
@@ -22,6 +23,7 @@ for (const scenario of reportReplayScenarios) {
       trackingMode: mode.id,
       useObjectSupportMask: true,
       depthFrameForFrame: mode.requiresDepthFrame ? createSyntheticDepthFrame : null,
+      updateIntervalMs: ANCHOR_TRACKING_INTERVAL_MS,
     });
     const lastFrame = replay.frames.at(-1);
     const preview = lastFrame?.metrics?.reconstructionPreview;
@@ -30,11 +32,13 @@ for (const scenario of reportReplayScenarios) {
       kind: sequence.kind,
       mode: mode.id,
       targetClass: sequence.targetClass,
+      captureCondition: sequence.metadata.captureCondition || 'nominal',
       objectSupportMask: SYNTHETIC_OBJECT_SUPPORT,
       surfaceModel: preview?.surface?.model || null,
       surfaceFaces: preview?.surface?.faces?.length || 0,
       geometricConsistency: preview?.statistics?.geometricConsistency || 0,
       backgroundVariant: sequence.metadata.backgroundVariant,
+      cadence: replay.cadence,
       anchorCreated: replay.anchorCreated,
       createFailure: replay.createFailure || null,
       ...summarizeReplay(replay),
@@ -43,7 +47,7 @@ for (const scenario of reportReplayScenarios) {
   }
 }
 
-const generatedFixtures = createSyntheticObjectSuite().map(sequence => ({
+const generatedFixtures = createSyntheticObjectSuite().map((sequence) => ({
   kind: sequence.kind,
   frames: sequence.frames.length,
   width: sequence.width,
@@ -59,7 +63,13 @@ const generatedFixtures = createSyntheticObjectSuite().map(sequence => ({
   hasMovingBackground: sequence.metadata.hasMovingBackground,
 }));
 
-console.log(JSON.stringify({
-  generatedFixtures,
-  replaySummaries,
-}, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      generatedFixtures,
+      replaySummaries,
+    },
+    null,
+    2,
+  ),
+);

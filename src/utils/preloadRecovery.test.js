@@ -20,14 +20,14 @@ const createWindow = () => {
       },
       removeItem(key) {
         storage.delete(key);
-      }
+      },
     },
     location: {
       reloads: 0,
       reload() {
         this.reloads++;
-      }
-    }
+      },
+    },
   };
 };
 
@@ -39,7 +39,7 @@ test('preload recovery reloads once for stale dynamic import chunks', () => {
   windowLike.listeners.get('vite:preloadError')({
     preventDefault() {
       prevented = true;
-    }
+    },
   });
 
   assert.equal(prevented, true);
@@ -56,7 +56,7 @@ test('preload recovery does not loop if the reload also hits a stale chunk', () 
   windowLike.listeners.get('vite:preloadError')({
     preventDefault() {
       prevented = true;
-    }
+    },
   });
 
   assert.equal(prevented, false);

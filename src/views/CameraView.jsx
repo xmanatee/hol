@@ -1,26 +1,30 @@
 import { lazy, Suspense, useRef, useCallback, useEffect, useMemo, useState } from 'react';
-import { useAnimationFrame, useFrameRate } from '../hooks/useAnimationFrame.js';
+import { useVideoFrames } from '../hooks/useVideoFrames.js';
 import { useCameraSystem } from '../hooks/useCameraSystem.js';
+import { ANCHOR_SELECTION_IN_PROGRESS_REASON } from '../services/AnchorSelectionGate.js';
 import { useHudMetrics } from '../hooks/useHudMetrics.js';
+import { useMicrophoneRuntime } from '../hooks/useMicrophoneRuntime.js';
+import { useTransientFeedback } from '../hooks/useTransientFeedback.js';
 
 import CameraVideo from '../components/CameraVideo.jsx';
-import DetectionCanvas from '../components/DetectionCanvas.jsx';
+import CameraCanvas from '../components/CameraCanvas.jsx';
+import OverlaySceneBoundary from '../components/OverlaySceneBoundary.jsx';
 import FieldControls from '../components/ui/FieldControls.jsx';
-import { renderDetectionOverlay, renderDebugStats, renderKeypoints } from '../utils/detectionRenderer.js';
+import { renderAnchorOverlay, renderDebugStats, renderKeypoints } from '../utils/anchorOverlayRenderer.js';
 import { logger } from '../utils/logger.js';
-import { describeAnchorState } from '../utils/anchorDiagnostics.js';
-import { collectRuntimeReadiness } from '../utils/runtimeReadiness.js';
 import { RECONSTRUCTION_POSE_MODEL, isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
 import { shouldAutoStartObjectVoice } from '../audio/objectVoicePolicy.js';
-import { getRenderableAnchorOverlay, shouldMountOverlayScene } from '../utils/overlayVisibility.js';
+import { ownsObjectVoiceRequest } from '../audio/objectVoiceOwnership.js';
+import { shouldMountOverlayScene } from '../utils/overlayVisibility.js';
+import { captureCameraFrame, shouldCaptureCameraFrame } from '../utils/cameraFrameCapture.js';
 import {
   ANCHOR_TRACKING_INTERVAL_MS,
   SEGMENTATION_REFRESH_CHECK_INTERVAL_MS,
-  TAP_FRAME_SNAPSHOT_INTERVAL_MS,
   shouldRunTimedStep,
 } from '../utils/cvScheduling.js';
 
 const OverlayScene = lazy(() => import('../scenes/OverlayScene.jsx'));
+const CAMERA_PRESENTATION_MIRRORED = false;
 
 const getStartButtonLabel = (cameraState) => {
   if (cameraState === 'requesting') return 'Starting Camera...';
@@ -32,54 +36,63 @@ const getStartButtonLabel = (cameraState) => {
 const StartScreen = ({ cameraState, cameraError, onStartCamera }) => {
   if (cameraState === 'active') return null;
   const isRequesting = cameraState === 'requesting';
-  
+
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-black z-40 pointer-events-auto">
+    <section
+      aria-labelledby="start-screen-title"
+      className="absolute inset-0 flex items-center justify-center bg-black z-40 pointer-events-auto"
+    >
       <div className="text-center text-white max-w-sm mx-auto px-4">
-        <h1 className="text-4xl font-bold mb-4 text-white">
+        <h1 id="start-screen-title" className="text-4xl font-bold mb-4 text-white">
           High on Life
         </h1>
-        <p className="text-base mb-8 text-gray-400">
-          Tap an object in view to bring it to life
-        </p>
+        <p className="text-base mb-8 text-gray-400">Tap an object in view to bring it to life</p>
         <button
+          type="button"
           onClick={onStartCamera}
           disabled={isRequesting}
-          className="px-6 py-3 text-lg bg-blue-600 text-white border-0 rounded-lg cursor-pointer hover:bg-blue-700 transition-all duration-200 font-medium disabled:cursor-wait disabled:bg-blue-900"
+          aria-busy={isRequesting}
+          className="px-6 py-3 text-lg bg-blue-600 text-white border-0 rounded-lg cursor-pointer hover:bg-blue-700 transition-colors duration-200 font-medium disabled:cursor-wait disabled:bg-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
         >
           {getStartButtonLabel(cameraState)}
         </button>
-        <div className="mt-6 text-sm text-gray-500">
+        <div role="status" aria-live="polite" aria-atomic="true" className="mt-6 text-sm text-gray-400">
           {cameraError || 'Allow camera permissions when prompted'}
         </div>
       </div>
-    </div>
+    </section>
   );
 };
 
 const AnchorFeedback = ({ feedback }) => {
   if (!feedback) return null;
 
-  const toneClass = feedback.severity === 'bad'
-    ? 'border-red-500 bg-red-950/90 text-red-100'
-    : feedback.severity === 'warn'
-      ? 'border-yellow-500 bg-yellow-950/90 text-yellow-100'
-      : 'border-green-500 bg-green-950/90 text-green-100';
+  const toneClass =
+    feedback.severity === 'bad'
+      ? 'border-red-500 bg-red-950/90 text-red-100'
+      : feedback.severity === 'warn'
+        ? 'border-yellow-500 bg-yellow-950/90 text-yellow-100'
+        : 'border-green-500 bg-green-950/90 text-green-100';
 
   return (
-    <div className={`fixed left-1/2 bottom-8 z-50 w-[min(92vw,28rem)] -translate-x-1/2 rounded border px-3 py-2 text-center text-sm shadow-lg ${toneClass}`}>
+    <div
+      role={feedback.severity === 'bad' ? 'alert' : 'status'}
+      aria-live={feedback.severity === 'bad' ? 'assertive' : 'polite'}
+      aria-atomic="true"
+      className={`fixed left-1/2 bottom-8 z-50 w-[min(92vw,28rem)] -translate-x-1/2 rounded border px-3 py-2 text-center text-sm shadow-lg ${toneClass}`}
+    >
       {feedback.message}
     </div>
   );
 };
 
-const getPersonalityRoi = (position, sourceDetection) => {
-  if (sourceDetection) {
+const getPersonalityRoi = (position, selectionRegion) => {
+  if (selectionRegion) {
     return {
-      x: sourceDetection.x1,
-      y: sourceDetection.y1,
-      width: sourceDetection.x2 - sourceDetection.x1,
-      height: sourceDetection.y2 - sourceDetection.y1
+      x: selectionRegion.x1,
+      y: selectionRegion.y1,
+      width: selectionRegion.x2 - selectionRegion.x1,
+      height: selectionRegion.y2 - selectionRegion.y1,
     };
   }
 
@@ -87,118 +100,130 @@ const getPersonalityRoi = (position, sourceDetection) => {
     x: position.x - 50,
     y: position.y - 50,
     width: 100,
-    height: 100
+    height: 100,
   };
 };
 
 const CameraView = () => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const captureCanvasRef = useRef(null);
+  const captureContextRef = useRef(null);
   const frameCountRef = useRef(0);
   const ctxRef = useRef(null);
-  const lastProcessedDetectionsRef = useRef(null);
-  const anchorFeedbackTimeoutRef = useRef(null);
+  const overlayContentRef = useRef(false);
   const autoVoiceRequestRef = useRef(0);
   const mapReadyAnchorRef = useRef(null);
   const lastAnchorUpdateAtRef = useRef(0);
   const lastSegmentationRefreshCheckAtRef = useRef(0);
-  const latestTapFrameRef = useRef(null);
-  const lastTapFrameSnapshotAtRef = useRef(0);
+  const lastCameraFrameCostRef = useRef(0);
 
   const [showStats, setShowStats] = useState(false);
   const [discoveredMeshes, setDiscoveredMeshes] = useState([]);
   const [hiddenMeshes, setHiddenMeshes] = useState(new Set());
   const [manualRotation, setManualRotation] = useState({ x: 0, y: 0, z: 0 });
-  const [anchorFeedback, setAnchorFeedback] = useState(null);
-  const [fieldControlsVisible, setFieldControlsVisible] = useState(false);
-  
-  // Microphone state
-  const [microphoneMode, setMicrophoneMode] = useState(false);
-  const [voiceActivityThreshold, setVoiceActivityThreshold] = useState(0.02);
-  const [microphoneActive, setMicrophoneActive] = useState(false);
-  const [currentViseme, setCurrentViseme] = useState('M');
-  const [audioEnergy, setAudioEnergy] = useState(0);
-  const [isVoiceActive, setIsVoiceActive] = useState(false);
-  // Enhanced microphone controls
-  const [microphoneGain, setMicrophoneGain] = useState(3.0);
-  const [microphoneDebugMode, setMicrophoneDebugMode] = useState(false);
-  const [microphoneBaselineResetToken, setMicrophoneBaselineResetToken] = useState(0);
+  const { feedback: anchorFeedback, showFeedback: showAnchorFeedback } = useTransientFeedback();
+  const [fieldControlsOpen, setFieldControlsOpen] = useState(false);
 
-
-  const { metrics, updateMetric } = useHudMetrics();
-  const runtimeReadiness = useMemo(() => collectRuntimeReadiness(), []);
+  const { metricStore, updateMetric } = useHudMetrics();
 
   // Use the camera system hook with image-based anchors
   const {
     cameraState,
     cameraError,
     videoDimensions,
-    detectionState,
-    depthState,
+    depthStateStore,
     anchorSystemState,
+    getAnchorSystemState,
+    subscribeAnchorSystemState,
     personalityData,
     ttsData,
     services,
     startCamera,
     resumeCamera,
     stopCamera,
-    detectObjects,
-    processDetections,
-    updateAnchor,
-    refreshAnchorSegmentation,
-    createAnchorFromTap,
+    canProcessAnchorFrame,
+    processAnchorFrame,
+    selectAnchorFromTap,
     clearAnchor,
-    findDetectionAtPosition,
     generatePersonality,
     synthesizeSpeech,
     stopTTS,
     speakGreeting,
-    setCurrentCanvas,
     setAnchorTrackingMode,
-    setDetectionEnabled
   } = useCameraSystem({ onMetricUpdate: updateMetric });
-  const throttledFrame = useFrameRate(30);
-  const anchorDiagnostics = useMemo(() => describeAnchorState({
-    cameraState,
-    anchorSystemState
-  }), [cameraState, anchorSystemState]);
   const cameraViewportStyle = useMemo(() => ({}), []);
-  const renderableAnchor = useMemo(() => getRenderableAnchorOverlay({
-    activeAnchor: anchorSystemState.activeAnchor,
-    anchorState: anchorSystemState.anchorState
-  }), [anchorSystemState.activeAnchor, anchorSystemState.anchorState]);
   const overlaySceneEnabled = shouldMountOverlayScene({
     cameraState,
     activeAnchor: anchorSystemState.activeAnchor,
-    anchorState: anchorSystemState.anchorState
   });
 
-  useEffect(() => () => {
-    if (anchorFeedbackTimeoutRef.current) {
-      window.clearTimeout(anchorFeedbackTimeoutRef.current);
+  useEffect(() => {
+    if (cameraState !== 'active') {
+      frameCountRef.current = 0;
     }
+  }, [cameraState]);
+
+  const captureCurrentCameraFrame = useCallback(() => {
+    if (!captureCanvasRef.current) {
+      captureCanvasRef.current = document.createElement('canvas');
+    }
+    const captured = captureCameraFrame({
+      video: videoRef.current,
+      canvas: captureCanvasRef.current,
+      context: captureContextRef.current,
+    });
+    captureContextRef.current = captured.context;
+    return captured.imageData;
   }, []);
 
-  const showAnchorFeedback = useCallback((message, severity = 'info') => {
-    if (anchorFeedbackTimeoutRef.current) {
-      window.clearTimeout(anchorFeedbackTimeoutRef.current);
-    }
-
-    setAnchorFeedback({ message, severity });
-    anchorFeedbackTimeoutRef.current = window.setTimeout(() => {
-      setAnchorFeedback(null);
-      anchorFeedbackTimeoutRef.current = null;
-    }, 3500);
-  }, []);
+  const handleMicrophoneUnavailable = useCallback(() => {
+    showAnchorFeedback('Anchor an object before enabling microphone mode.', 'warn');
+  }, [showAnchorFeedback]);
+  const {
+    mode: microphoneMode,
+    runtime: microphoneRuntime,
+    telemetryStore: microphoneTelemetryStore,
+    voiceActivityThreshold,
+    gain: microphoneGain,
+    debugMode: microphoneDebugMode,
+    toggle: handleMicrophoneModeChange,
+    updateVoiceActivityThreshold: handleVoiceActivityThresholdChange,
+    updateGain: handleMicrophoneGainChange,
+    updateDebugMode: handleMicrophoneDebugModeChange,
+    resetBaseline: handleResetMicrophoneBaseline,
+    publishTelemetry: publishMicrophoneTelemetry,
+  } = useMicrophoneRuntime({
+    microphoneService: services.microphone,
+    available: overlaySceneEnabled,
+    stopTTS,
+    onUnavailable: handleMicrophoneUnavailable,
+  });
+  const publishSpeechTelemetry = useCallback(
+    ({ audioEnergy, audioCentroid }) => {
+      if (!metricStore.hasSubscribers()) {
+        return;
+      }
+      updateMetric('Audio energy', audioEnergy);
+      updateMetric('Audio centroid', audioCentroid);
+    },
+    [metricStore, updateMetric],
+  );
 
   // Handle camera start/resume
   const handleStartClick = useCallback(async () => {
+    setFieldControlsOpen(false);
     if (cameraState === 'blocked') {
       await resumeCamera();
     } else {
       await startCamera(videoRef.current);
     }
   }, [cameraState, startCamera, resumeCamera]);
+
+  const handleStopClick = useCallback(() => {
+    setFieldControlsOpen(false);
+    stopCamera();
+  }, [stopCamera]);
 
   // Handle mesh discovery from HeadAnchor
   const handleMeshNamesDiscovered = useCallback((meshNames) => {
@@ -208,7 +233,7 @@ const CameraView = () => {
 
   // Toggle mesh visibility
   const handleMeshVisibilityChange = useCallback((meshName, isVisible) => {
-    setHiddenMeshes(prev => {
+    setHiddenMeshes((prev) => {
       const newSet = new Set(prev);
       if (isVisible) {
         newSet.delete(meshName);
@@ -223,204 +248,190 @@ const CameraView = () => {
   const handleRotationChange = useCallback((rotation) => {
     setManualRotation(rotation);
     logger.info('CameraView', 'Manual rotation changed to:', {
-      x: `${(rotation.x * 180 / Math.PI).toFixed(1)}°`,
-      y: `${(rotation.y * 180 / Math.PI).toFixed(1)}°`, 
-      z: `${(rotation.z * 180 / Math.PI).toFixed(1)}°`
+      x: `${((rotation.x * 180) / Math.PI).toFixed(1)}°`,
+      y: `${((rotation.y * 180) / Math.PI).toFixed(1)}°`,
+      z: `${((rotation.z * 180) / Math.PI).toFixed(1)}°`,
     });
   }, []);
 
-  const handleConfigChange = useCallback((config) => {
-    if (config.detectionInterval) {
-      services.detection.setDetectionInterval(config.detectionInterval);
-    }
-    if (typeof config.detectionEnabled === 'boolean') {
-      setDetectionEnabled(config.detectionEnabled);
-    }
-    if (config.anchorTrackingMode) {
-      setAnchorTrackingMode(config.anchorTrackingMode === 'auto' ? RECONSTRUCTION_POSE_MODEL : config.anchorTrackingMode);
-    }
-  }, [services.detection, setAnchorTrackingMode, setDetectionEnabled]);
+  const handleAnchorTrackingModeChange = useCallback(
+    (anchorTrackingMode) => {
+      setAnchorTrackingMode(anchorTrackingMode === 'auto' ? RECONSTRUCTION_POSE_MODEL : anchorTrackingMode);
+    },
+    [setAnchorTrackingMode],
+  );
 
   const handleGeneratePersonality = useCallback(async () => {
-    if (anchorSystemState.mode !== 'anchor' || !anchorSystemState.activeAnchor || !canvasRef.current) {
-      logger.warn('CameraView', 'No active anchor or canvas available for personality generation');
+    const liveAnchorSystemState = getAnchorSystemState();
+    if (liveAnchorSystemState.mode !== 'anchor' || !liveAnchorSystemState.activeAnchor || !videoRef.current) {
+      logger.warn('CameraView', 'No active anchor or camera frame available for personality generation');
       return;
     }
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    
-    const position = anchorSystemState.activeAnchor.position;
-    const sourceDetection = anchorSystemState.activeAnchor.sourceDetection;
-    const roi = getPersonalityRoi(position, sourceDetection);
-    
+    const imageData = captureCurrentCameraFrame();
+
+    const position = liveAnchorSystemState.activeAnchor.position;
+    const selectionRegion = liveAnchorSystemState.activeAnchor.selectionRegion;
+    const roi = getPersonalityRoi(position, selectionRegion);
+
     try {
       await generatePersonality(imageData, roi);
     } catch (error) {
       logger.error('CameraView', 'Failed to generate personality:', error);
     }
-  }, [anchorSystemState, generatePersonality]);
+  }, [captureCurrentCameraFrame, generatePersonality, getAnchorSystemState]);
 
-  const generateAndSpeakForAnchor = useCallback(async (imageData, position, sourceDetection) => {
-    const requestId = ++autoVoiceRequestRef.current;
-    const roi = getPersonalityRoi(position, sourceDetection);
+  const generateAndSpeakForAnchor = useCallback(
+    async ({ imageData, position, selectionRegion, anchorCreatedAt }) => {
+      const requestId = ++autoVoiceRequestRef.current;
+      const roi = getPersonalityRoi(position, selectionRegion);
+      const ownsRequest = () =>
+        ownsObjectVoiceRequest({
+          requestId,
+          currentRequestId: autoVoiceRequestRef.current,
+          anchorCreatedAt,
+          activeAnchor: getAnchorSystemState().activeAnchor,
+        });
 
-    try {
-      showAnchorFeedback('Generating object voice...', 'warn');
-      const persona = await generatePersonality(imageData, roi);
-
-      if (requestId !== autoVoiceRequestRef.current) {
-        return;
-      }
-
-      const greeting = persona.oneLiners[0];
-      const voiceStyle = persona.voiceStyle || 'cheerful';
-      const emotionalDelivery = persona.emotionalDelivery || persona.tone;
-      await synthesizeSpeech(greeting, voiceStyle, emotionalDelivery);
-      showAnchorFeedback('Object voice is live.', 'good');
-    } catch (error) {
-      logger.error('CameraView', 'Failed to start object voice:', error);
-      showAnchorFeedback(`Voice not started: ${error.message}`, 'bad');
-    }
-  }, [generatePersonality, showAnchorFeedback, synthesizeSpeech]);
-
-  // Microphone handlers
-  const handleToggleMicrophoneMode = useCallback(async (enabled) => {
-    setMicrophoneMode(enabled);
-    logger.info('CameraView', 'Microphone mode toggled:', enabled);
-
-    if (enabled) {
-      setMicrophoneActive(true);
-      logger.info('CameraView', 'Microphone listening activated');
-    } else {
-      stopTTS();
-      setMicrophoneActive(false);
-      setIsVoiceActive(false);
-      setCurrentViseme('M');
-      setAudioEnergy(0);
-    }
-  }, [stopTTS]);
-
-  const handleVoiceActivityThresholdChange = useCallback((threshold) => {
-    setVoiceActivityThreshold(threshold);
-    logger.info('CameraView', 'Voice activity threshold changed:', threshold);
-  }, []);
-
-  const handleMicrophoneGainChange = useCallback((gain) => {
-    setMicrophoneGain(gain);
-    logger.info('CameraView', 'Microphone gain changed:', gain);
-  }, []);
-
-  const handleToggleMicrophoneDebug = useCallback((enabled) => {
-    setMicrophoneDebugMode(enabled);
-    logger.info('CameraView', 'Microphone debug mode:', enabled);
-  }, []);
-
-  const handleResetMicrophoneBaseline = useCallback(() => {
-    setMicrophoneBaselineResetToken(token => token + 1);
-    logger.info('CameraView', 'Microphone baseline reset');
-  }, []);
-
-  // Handle lip-sync updates from HeadAnchor
-  const handleLipSyncUpdate = useCallback((lipSyncData) => {
-    if (microphoneMode) {
-      setCurrentViseme(lipSyncData.currentViseme);
-      setAudioEnergy(lipSyncData.audioEnergy);
-      setIsVoiceActive(lipSyncData.isVoiceActive);
-      setMicrophoneActive(lipSyncData.microphoneActive);
-    }
-  }, [microphoneMode]);
-
-  // Handle canvas tap for anchor creation or clearing
-  const handleCanvasTap = useCallback(async (event, canvas) => {
-    if (!canvas || cameraState !== 'active') {
-      return;
-    }
-
-    const rect = canvas.getBoundingClientRect();
-    const tapX = event.clientX - rect.left;
-    const tapY = event.clientY - rect.top;
-
-    // Convert tap coordinates to canvas space
-    const x = (tapX / rect.width) * canvas.width;
-    const y = (tapY / rect.height) * canvas.height;
-
-    const position = { x, y };
-
-    if (anchorSystemState.mode === 'detection') {
-      const detection = findDetectionAtPosition(position);
       try {
-        const imageData = latestTapFrameRef.current;
-        if (!imageData) {
-          showAnchorFeedback('Preparing camera frame...', 'warn');
+        showAnchorFeedback('Generating object voice...', 'warn');
+        const persona = await generatePersonality(imageData, roi);
+
+        if (!persona || !ownsRequest()) {
           return;
         }
 
-        logger.info('CameraView', `Creating tap-local anchor at (${position.x.toFixed(1)}, ${position.y.toFixed(1)})`, {
-          detection: detection
-            ? {
-              class: detection.class,
-              confidence: detection.confidence?.toFixed(3),
-              bbox: `${detection.x1?.toFixed(1)},${detection.y1?.toFixed(1)} -> ${detection.x2?.toFixed(1)},${detection.y2?.toFixed(1)}`
-            }
-            : null,
-          imageSize: `${imageData.width}x${imageData.height}`,
-          canvasSize: `${canvas.width}x${canvas.height}`
-        });
-
-        if (!anchorSystemState.initialized) {
-          showAnchorFeedback('Preparing vision tracking...', 'warn');
+        const greeting = persona.oneLiners[0];
+        const started = await synthesizeSpeech(greeting, persona.voiceStyle, persona.emotionalDelivery);
+        if (!started || !ownsRequest()) {
+          return;
         }
-
-        const result = await createAnchorFromTap(position, imageData);
-
-        if (result.success) {
-          lastAnchorUpdateAtRef.current = 0;
-          lastSegmentationRefreshCheckAtRef.current = 0;
-          logger.info('CameraView', 'Anchor created successfully:', {
-            keypoints: result.keypoints,
-            quality: result.quality?.toFixed(3),
-            method: result.method,
-            position: result.position
-          });
-          const qualityLabel = result.state === 'degraded' ? 'weak' : 'solid';
-          if (result.state === 'candidate' || result.state === 'mapping') {
-            showAnchorFeedback(`Object selected. Building support from ${result.evidence?.objectOwnedLandmarks || result.keypoints} object landmarks.`, 'warn');
-          } else if (isReconstructionMode(result.trackingMode)) {
-            showAnchorFeedback(`Anchor created with ${result.keypoints} local points. Move slowly to build the 3D map.`, 'warn');
-          } else {
-            showAnchorFeedback(`Anchor created with ${result.keypoints} local points (${qualityLabel} lock).`, result.state === 'degraded' ? 'warn' : 'good');
-            if (shouldAutoStartObjectVoice({
-              trackingMode: result.trackingMode,
-              reconstructionReady: false,
-              hasUserGesture: true,
-            })) {
-              generateAndSpeakForAnchor(imageData, result.position, detection);
-            }
-          }
-        } else {
-          logger.warn('CameraView', 'Anchor creation failed:', result);
-          showAnchorFeedback('Anchor was not created. Try a sharper textured area.', 'warn');
-        }
+        showAnchorFeedback('Object voice is live.', 'good');
       } catch (error) {
-        logger.warn('CameraView', `Anchor not created: ${error.message}`);
-        updateMetric('Anchor creation', error.message);
-        showAnchorFeedback(`Anchor not created: ${error.message}`, 'bad');
+        if (!ownsRequest()) {
+          return;
+        }
+        logger.error('CameraView', 'Failed to start object voice:', error);
+        showAnchorFeedback(`Voice not started: ${error.message}`, 'bad');
       }
-    } else if (anchorSystemState.mode === 'anchor') {
-      // In anchor mode: clear anchor on tap
-      logger.info('CameraView', 'Clearing anchor to return to detection mode');
-      autoVoiceRequestRef.current++;
-      mapReadyAnchorRef.current = null;
-      lastAnchorUpdateAtRef.current = 0;
-      lastSegmentationRefreshCheckAtRef.current = 0;
-      latestTapFrameRef.current = null;
-      lastTapFrameSnapshotAtRef.current = 0;
-      clearAnchor();
-      showAnchorFeedback('Anchor cleared. Tap any object to anchor again.', 'good');
-    }
-  }, [cameraState, anchorSystemState, findDetectionAtPosition, createAnchorFromTap, clearAnchor, updateMetric, showAnchorFeedback, generateAndSpeakForAnchor]);
+    },
+    [generatePersonality, getAnchorSystemState, showAnchorFeedback, synthesizeSpeech],
+  );
+
+  const handleClearAnchor = useCallback(() => {
+    autoVoiceRequestRef.current++;
+    mapReadyAnchorRef.current = null;
+    lastAnchorUpdateAtRef.current = 0;
+    lastSegmentationRefreshCheckAtRef.current = 0;
+    clearAnchor();
+    showAnchorFeedback('Anchor cleared. Tap any object to anchor again.', 'good');
+  }, [clearAnchor, showAnchorFeedback]);
+
+  // Handle canvas selection for anchor creation or clearing
+  const handleCanvasSelect = useCallback(
+    async (position) => {
+      if (cameraState !== 'active') {
+        return;
+      }
+
+      const liveAnchorSystemState = getAnchorSystemState();
+      if (liveAnchorSystemState.mode === 'selection') {
+        try {
+          const canvas = canvasRef.current;
+          if (!canvas || !videoRef.current || frameCountRef.current === 0) {
+            showAnchorFeedback('Preparing camera frame...', 'warn');
+            return;
+          }
+          let imageData = null;
+          const result = await selectAnchorFromTap({
+            tapPosition: position,
+            captureFrame: () => {
+              imageData = captureCurrentCameraFrame();
+              logger.info(
+                'CameraView',
+                `Creating tap-local anchor at (${position.x.toFixed(1)}, ${position.y.toFixed(1)})`,
+                {
+                  imageSize: `${imageData.width}x${imageData.height}`,
+                },
+              );
+              if (!liveAnchorSystemState.initialized) {
+                showAnchorFeedback('Preparing vision tracking...', 'warn');
+              }
+              return imageData;
+            },
+          });
+
+          if (result.reason === ANCHOR_SELECTION_IN_PROGRESS_REASON) {
+            return;
+          }
+
+          if (result.success) {
+            lastAnchorUpdateAtRef.current = 0;
+            lastSegmentationRefreshCheckAtRef.current = 0;
+            logger.info('CameraView', 'Anchor created successfully:', {
+              keypoints: result.keypoints,
+              quality: result.quality?.toFixed(3),
+              method: result.method,
+              position: result.position,
+            });
+            const qualityLabel = result.state === 'degraded' ? 'weak' : 'solid';
+            if (result.state === 'candidate' || result.state === 'mapping') {
+              showAnchorFeedback(
+                `Object selected. Building support from ${result.evidence?.objectOwnedLandmarks || result.keypoints} object landmarks.`,
+                'warn',
+              );
+            } else if (isReconstructionMode(result.trackingMode)) {
+              showAnchorFeedback(
+                `Anchor created with ${result.keypoints} local points. Move slowly to build the 3D map.`,
+                'warn',
+              );
+            } else {
+              showAnchorFeedback(
+                `Anchor created with ${result.keypoints} local points (${qualityLabel} lock).`,
+                result.state === 'degraded' ? 'warn' : 'good',
+              );
+              if (
+                shouldAutoStartObjectVoice({
+                  trackingMode: result.trackingMode,
+                  reconstructionReady: false,
+                  hasUserGesture: true,
+                })
+              ) {
+                const createdAnchor = getAnchorSystemState().activeAnchor;
+                generateAndSpeakForAnchor({
+                  imageData,
+                  position: result.position,
+                  selectionRegion: createdAnchor?.selectionRegion,
+                  anchorCreatedAt: createdAnchor?.createdAt,
+                });
+              }
+            }
+          } else {
+            logger.warn('CameraView', 'Anchor creation failed:', result);
+            showAnchorFeedback('Anchor was not created. Try a sharper textured area.', 'warn');
+          }
+        } catch (error) {
+          logger.warn('CameraView', `Anchor not created: ${error.message}`);
+          updateMetric('Anchor creation', error.message);
+          showAnchorFeedback(`Anchor not created: ${error.message}`, 'bad');
+        }
+      } else if (liveAnchorSystemState.mode === 'anchor') {
+        // In anchor mode: clear anchor on tap
+        logger.info('CameraView', 'Clearing anchor to return to selection mode');
+        handleClearAnchor();
+      }
+    },
+    [
+      cameraState,
+      captureCurrentCameraFrame,
+      selectAnchorFromTap,
+      updateMetric,
+      showAnchorFeedback,
+      generateAndSpeakForAnchor,
+      getAnchorSystemState,
+      handleClearAnchor,
+    ],
+  );
 
   useEffect(() => {
     const activeAnchor = anchorSystemState.activeAnchor;
@@ -428,7 +439,7 @@ const CameraView = () => {
     const activeMode = anchorSystemState.anchorState?.metrics?.poseModel || activeAnchor?.trackingMode;
     const isReconstructionAnchor = isReconstructionMode(activeMode);
 
-    if (!activeAnchor || !isReconstructionAnchor || !diagnostics?.reconstructionReady || !canvasRef.current) {
+    if (!activeAnchor || !isReconstructionAnchor || !diagnostics?.reconstructionReady || !videoRef.current) {
       return;
     }
 
@@ -438,307 +449,238 @@ const CameraView = () => {
 
     mapReadyAnchorRef.current = activeAnchor.createdAt;
 
-    if (shouldAutoStartObjectVoice({
-      trackingMode: activeMode,
-      reconstructionReady: true,
-      hasUserGesture: false,
-    })) {
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    if (
+      shouldAutoStartObjectVoice({
+        trackingMode: activeMode,
+        reconstructionReady: true,
+        hasUserGesture: false,
+      })
+    ) {
+      const imageData = captureCurrentCameraFrame();
       showAnchorFeedback('3D map locked. Starting object voice.', 'good');
-      generateAndSpeakForAnchor(imageData, activeAnchor.position, activeAnchor.sourceDetection);
+      generateAndSpeakForAnchor({
+        imageData,
+        position: activeAnchor.position,
+        selectionRegion: activeAnchor.selectionRegion,
+        anchorCreatedAt: activeAnchor.createdAt,
+      });
     } else {
       showAnchorFeedback('3D map locked. Voice controls are ready.', 'good');
     }
-  }, [anchorSystemState.activeAnchor, anchorSystemState.anchorState, generateAndSpeakForAnchor, showAnchorFeedback]);
+  }, [
+    anchorSystemState.activeAnchor,
+    anchorSystemState.anchorState,
+    captureCurrentCameraFrame,
+    generateAndSpeakForAnchor,
+    showAnchorFeedback,
+  ]);
 
-  // Main animation frame loop
-  useAnimationFrame(() => {
+  // Camera processing follows presented video frames instead of display refreshes.
+  useVideoFrames(videoRef, cameraState === 'active', ({ now: videoFrameAt, captureFps }) => {
     if (cameraState === 'active' && videoRef.current && canvasRef.current) {
-      throttledFrame(({ fps, frameTime }) => {
-        const video = videoRef.current;
-        const canvas = canvasRef.current;
-        
-        if (!ctxRef.current) {
-          ctxRef.current = canvas.getContext('2d', { willReadFrequently: true });
-        }
-        let ctx = ctxRef.current;
+      const frameWorkStartedAt = performance.now();
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      let resized = false;
+      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctxRef.current = null;
+        resized = true;
+      }
+      if (!ctxRef.current) {
+        ctxRef.current = canvas.getContext('2d');
+      }
+      const ctx = ctxRef.current;
+      const frameIndex = ++frameCountRef.current;
+      const liveAnchorSystemState = getAnchorSystemState();
+      const hasOverlayContent =
+        Boolean(liveAnchorSystemState.mode === 'anchor' && liveAnchorSystemState.activeAnchor) || showStats;
+      if (resized || hasOverlayContent || overlayContentRef.current) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      overlayContentRef.current = hasOverlayContent;
 
-        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          ctxRef.current = canvas.getContext('2d', { willReadFrequently: true });
-          ctx = ctxRef.current;
-        }
+      if (liveAnchorSystemState.mode === 'anchor') {
+        const now = videoFrameAt;
+        const shouldUpdateAnchor = shouldRunTimedStep({
+          now,
+          lastRunAt: lastAnchorUpdateAtRef.current,
+          intervalMs: ANCHOR_TRACKING_INTERVAL_MS,
+        });
+        const shouldCheckSegmentationRefresh = shouldRunTimedStep({
+          now,
+          lastRunAt: lastSegmentationRefreshCheckAtRef.current,
+          intervalMs: SEGMENTATION_REFRESH_CHECK_INTERVAL_MS,
+        });
+        const scheduledWork = shouldUpdateAnchor || shouldCheckSegmentationRefresh;
+        const canProcess = scheduledWork && canProcessAnchorFrame();
 
-        ctx.save();
-        ctx.scale(-1, 1);
-        ctx.translate(-canvas.width, 0);
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        ctx.restore();
-
-        const frameIndex = ++frameCountRef.current;
-        const hasUnprocessedDetections = detectionState.lastDetections
-          && detectionState.lastDetections !== lastProcessedDetectionsRef.current;
-
-        if (anchorSystemState.mode === 'detection') {
-          const now = performance.now();
-          const shouldDetect = services.detection.shouldDetectFrame(frameIndex);
-          const shouldRefreshTapFrame = shouldRunTimedStep({
-            now,
-            lastRunAt: lastTapFrameSnapshotAtRef.current,
-            intervalMs: TAP_FRAME_SNAPSHOT_INTERVAL_MS,
-          });
-          const imageData = shouldDetect || hasUnprocessedDetections || shouldRefreshTapFrame
-            ? ctx.getImageData(0, 0, canvas.width, canvas.height)
-            : null;
-
-          if (shouldRefreshTapFrame && imageData) {
-            latestTapFrameRef.current = imageData;
-            lastTapFrameSnapshotAtRef.current = now;
-          }
-
-          if (shouldDetect) {
-            detectObjects(imageData, { frameIndex });
-          }
-          
-          if (hasUnprocessedDetections) {
-            processDetections(detectionState.lastDetections, imageData);
-            lastProcessedDetectionsRef.current = detectionState.lastDetections;
-          }
-        } else if (anchorSystemState.mode === 'anchor') {
-          latestTapFrameRef.current = null;
-          lastTapFrameSnapshotAtRef.current = 0;
-          const now = performance.now();
-          const shouldUpdateAnchor = shouldRunTimedStep({
-            now,
-            lastRunAt: lastAnchorUpdateAtRef.current,
-            intervalMs: ANCHOR_TRACKING_INTERVAL_MS,
-          });
-          const shouldCheckSegmentationRefresh = shouldRunTimedStep({
-            now,
-            lastRunAt: lastSegmentationRefreshCheckAtRef.current,
-            intervalMs: SEGMENTATION_REFRESH_CHECK_INTERVAL_MS,
+        if (
+          shouldCaptureCameraFrame({
+            mode: liveAnchorSystemState.mode,
+            shouldUpdateAnchor,
+            shouldRefreshSegmentation: shouldCheckSegmentationRefresh,
+            canProcess,
+          })
+        ) {
+          const updateResult = processAnchorFrame(captureCurrentCameraFrame(), {
+            update: shouldUpdateAnchor,
+            refreshSegmentation: shouldCheckSegmentationRefresh,
+            capturedAt: now,
           });
 
-          if (shouldUpdateAnchor || shouldCheckSegmentationRefresh) {
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const updateResult = shouldUpdateAnchor ? updateAnchor(imageData) : null;
+          if (shouldUpdateAnchor) {
+            lastAnchorUpdateAtRef.current = now;
+          }
+          if (shouldCheckSegmentationRefresh) {
+            lastSegmentationRefreshCheckAtRef.current = now;
+          }
 
-            if (shouldUpdateAnchor) {
-              lastAnchorUpdateAtRef.current = now;
-            }
-
-            if (shouldCheckSegmentationRefresh) {
-              refreshAnchorSegmentation(imageData);
-              lastSegmentationRefreshCheckAtRef.current = now;
-            }
-
-            if (frameIndex % 30 === 0) {
-              logger.debug('CameraView', 'Anchor tracking update:', {
-                success: updateResult?.success,
-                reason: updateResult?.reason,
-                method: updateResult?.method,
-                confidence: updateResult?.confidence?.toFixed(3),
-                position: updateResult?.position,
-                anchorState: anchorSystemState.anchorState?.state,
-                activeAnchor: !!anchorSystemState.activeAnchor
-              });
-            }
+          if (frameIndex % 30 === 0) {
+            logger.debug('CameraView', 'Anchor tracking update:', {
+              success: updateResult?.success,
+              reason: updateResult?.reason,
+              method: updateResult?.method,
+              confidence: updateResult?.confidence?.toFixed(3),
+              position: updateResult?.position,
+              anchorState: liveAnchorSystemState.anchorState?.state,
+              activeAnchor: !!liveAnchorSystemState.activeAnchor,
+            });
           }
         }
+      }
 
-        if (anchorSystemState.mode === 'detection' && detectionState.detectionEnabled) {
-          renderDetectionOverlay(ctx, {
-            detections: anchorSystemState.detections,
-            mode: 'detection'
-          });
-        } else if (anchorSystemState.mode === 'anchor' && anchorSystemState.activeAnchor) {
-          renderDetectionOverlay(ctx, {
-            anchor: anchorSystemState.activeAnchor,
-            anchorState: anchorSystemState.anchorState,
-            trackedPoints: services.anchor?.imageAnchorService?.keypointTracker?.trackedPoints || [],
-            showObjectSupport: showStats,
-            mode: 'anchor'
-          });
-        }
+      if (liveAnchorSystemState.mode === 'anchor' && liveAnchorSystemState.activeAnchor) {
+        renderAnchorOverlay(ctx, {
+          anchor: liveAnchorSystemState.activeAnchor,
+          anchorState: liveAnchorSystemState.anchorState,
+          trackedPoints: services.anchor?.imageAnchorService?.keypointTracker?.trackedPoints || [],
+          showObjectSupport: showStats,
+        });
+      }
 
-        // Update HUD metrics
-        const processingTime = detectionState.processingTime || 0;
-        const objectCount = anchorSystemState.mode === 'detection' ? 
-          anchorSystemState.detections?.length || 0 : 
-          (anchorSystemState.activeAnchor ? 1 : 0);
-        
-        if (typeof fps === 'number' && !isNaN(fps)) {
-          updateMetric('Capture FPS', fps);
-        }
-        if (typeof frameTime === 'number' && !isNaN(frameTime)) {
-          updateMetric('Render frame time', frameTime);
-        }
-        updateMetric('Detection amortized cost', processingTime);
-        updateMetric('Object Count', objectCount);
-        
-        const stableAnchorCount = anchorSystemState?.anchorState?.state === 'stable' ? 1 : 0;
-        updateMetric('Stable Anchors', stableAnchorCount);
-        
-        // Update stability metrics for active anchor
-        if (anchorSystemState?.activeAnchor) {
-          const anchorState = anchorSystemState.anchorState;
-          if (anchorState) {
-            const stabilityScore = anchorState.confidence || 0;
-            updateMetric('Stability score', stabilityScore.toFixed(3));
-            
-            if (anchorState.normal) {
-              updateMetric('Normal (X,Y,Z)', `${anchorState.normal.x.toFixed(2)}, ${anchorState.normal.y.toFixed(2)}, ${anchorState.normal.z.toFixed(2)}`);
-            }
+      if (typeof captureFps === 'number' && !isNaN(captureFps)) {
+        updateMetric('Capture FPS', captureFps);
+      }
+      if (showStats) {
+        renderDebugStats(ctx, {
+          fps: captureFps ?? 0,
+          cameraFrameCost: lastCameraFrameCostRef.current,
+          processingTime: liveAnchorSystemState.anchorState?.metrics?.processingTime ?? 0,
+          objectCount: liveAnchorSystemState.activeAnchor ? 1 : 0,
+        });
+      }
+      if (showStats && liveAnchorSystemState.anchorState?.anchored) {
+        renderKeypoints(ctx, services.anchor?.imageAnchorService);
+      }
 
-            if (anchorState.planarTransform) {
-              updateMetric('Tracked scale', anchorState.planarTransform.scale);
-              updateMetric('Tracked roll', anchorState.planarTransform.rotation * 180 / Math.PI);
-            }
-
-            if (anchorState.metrics) {
-              updateMetric('Pose patch points', anchorState.metrics.poseKeypointCount || 0);
-              updateMetric('Pose confidence', anchorState.metrics.poseConfidence || 0);
-              updateMetric('Pose inliers', anchorState.metrics.poseInliers || 0);
-              updateMetric('Object pose inliers', anchorState.metrics.objectPoseInliers || 0);
-              updateMetric('Pose residual', anchorState.metrics.poseAverageResidual || 0);
-              updateMetric('Pose foreshortening', anchorState.metrics.poseForeshortening || 1);
-              updateMetric('Pose source', anchorState.metrics.poseSource || 'None');
-              updateMetric('Pose rejection', anchorState.metrics.poseRejectedReason || 'None');
-            }
-            
-            updateMetric('Anchor State', anchorState.state || 'unknown');
-          }
-        }
-        
-        // Update anchor persistence metric
-        // For image-based anchors, persistence is based on anchor state
-        if (anchorSystemState?.activeAnchor && anchorSystemState?.mode === 'anchor') {
-          const anchorState = anchorSystemState.anchorState;
-          if (anchorState?.state === 'stable' || anchorState?.state === 'tracking') {
-            updateMetric('Anchor persistence', 100);
-          } else {
-            updateMetric('Anchor persistence', 0);
-          }
-        }
-        
-        // Only draw debug stats on canvas if showStats is enabled
-        if (showStats) {
-          renderDebugStats(ctx, {
-            fps,
-            frameTime,
-            processingTime: detectionState.processingTime,
-            objectCount: anchorSystemState?.mode === 'detection' ? (anchorSystemState.detections?.length || 0) : 
-                        anchorSystemState?.activeAnchor ? 1 : 0
-          });
-        }
-        
-        if (showStats && anchorSystemState?.anchorState?.anchored) {
-          renderKeypoints(ctx, services.anchor?.imageAnchorService);
-        }
-      });
+      const cameraFrameCost = performance.now() - frameWorkStartedAt;
+      lastCameraFrameCostRef.current = cameraFrameCost;
+      updateMetric('Camera frame cost', cameraFrameCost);
     }
   });
 
   // Set canvas ref for child component
-  const handleCanvasDraw = useCallback((canvas) => {
+  const handleCanvasReady = useCallback((canvas) => {
     canvasRef.current = canvas;
-    setCurrentCanvas(canvas);
-  }, [setCurrentCanvas]);
+  }, []);
 
   return (
-    <div className="camera-view fixed top-0 left-0 w-screen h-screen" style={{ overflow: 'visible' }}>
-      {/* Video source for camera playback; the canvas presents active frames. */}
-      <CameraVideo ref={videoRef} isVisible={cameraState !== 'active'} />
-      
-      {/* Canvas for CV processing and detection overlay */}
-      <DetectionCanvas
+    <main
+      aria-label="Camera experience"
+      className="camera-view fixed top-0 left-0 w-screen h-screen"
+      style={{ overflow: 'visible' }}
+    >
+      {/* The browser compositor presents video; canvas work is reserved for CV and diagnostics. */}
+      <CameraVideo
+        ref={videoRef}
+        isVisible={cameraState === 'active'}
+        mirrored={CAMERA_PRESENTATION_MIRRORED}
+      />
+
+      {/* Transparent canvas for tap selection and anchor diagnostics. */}
+      <CameraCanvas
         cameraState={cameraState}
-        onTap={handleCanvasTap}
-        onDraw={handleCanvasDraw}
+        selectionMode={anchorSystemState.mode}
+        onSelect={handleCanvasSelect}
+        onCanvasReady={handleCanvasReady}
+        mirrored={CAMERA_PRESENTATION_MIRRORED}
         style={cameraViewportStyle}
       />
       <AnchorFeedback feedback={anchorFeedback} />
 
       {/* WebGL Overlay Scene */}
       {overlaySceneEnabled && (
-        <Suspense fallback={null}>
-          <OverlayScene
-            width={videoDimensions?.width || 1280}
-            height={videoDimensions?.height || 720}
-            isAgentSpeaking={microphoneMode ? microphoneActive : ttsData.isPlaying}
-            hiddenMeshes={hiddenMeshes}
-            manualRotation={manualRotation}
-            onMeshNamesDiscovered={handleMeshNamesDiscovered}
-            onLipSyncUpdate={handleLipSyncUpdate}
-            microphoneMode={microphoneMode}
-            agentAudioAnalysis={ttsData.audioAnalysis}
-            agentAudioAlignment={ttsData.audioAlignment}
-            facialExpression={personalityData.currentPersona?.facialExpression || 'neutral'}
-            animationIntensity={personalityData.currentPersona?.animationIntensity ?? 0.65}
-            voiceActivityThreshold={voiceActivityThreshold}
-            microphoneGain={microphoneGain}
-            microphoneDebugMode={microphoneDebugMode}
-            microphoneBaselineResetToken={microphoneBaselineResetToken}
-            style={cameraViewportStyle}
-            activeAnchor={renderableAnchor}
-            anchorState={anchorSystemState.anchorState}
-          />
-        </Suspense>
+        <OverlaySceneBoundary>
+          <Suspense fallback={null}>
+            <OverlayScene
+              width={videoDimensions?.width || 1280}
+              height={videoDimensions?.height || 720}
+              isAgentSpeaking={ttsData.isPlaying}
+              hiddenMeshes={hiddenMeshes}
+              manualRotation={manualRotation}
+              onMeshNamesDiscovered={handleMeshNamesDiscovered}
+              onMicrophoneTelemetry={publishMicrophoneTelemetry}
+              onSpeechTelemetry={publishSpeechTelemetry}
+              microphoneMode={microphoneMode}
+              microphoneService={services.microphone}
+              ttsService={services.tts}
+              facialExpression={personalityData.currentPersona?.facialExpression || 'neutral'}
+              animationIntensity={personalityData.currentPersona?.animationIntensity ?? 0.65}
+              style={cameraViewportStyle}
+              anchorSystemState={anchorSystemState}
+              subscribeAnchorSystemState={subscribeAnchorSystemState}
+              mirrored={CAMERA_PRESENTATION_MIRRORED}
+            />
+          </Suspense>
+        </OverlaySceneBoundary>
       )}
 
       {/* Start Screen - only when camera is not active */}
-      <StartScreen 
-        cameraState={cameraState} 
-        cameraError={cameraError}
-        onStartCamera={handleStartClick} 
-      />
+      <StartScreen cameraState={cameraState} cameraError={cameraError} onStartCamera={handleStartClick} />
 
       {cameraState === 'active' && (
         <FieldControls
-          cameraState={cameraState}
-          detectionEnabled={detectionState.detectionEnabled}
-          activeTrackId={anchorSystemState?.activeAnchor ? 'anchor' : null}
+          hasActiveAnchor={Boolean(anchorSystemState.activeAnchor)}
           showStats={showStats}
-          onToggleStats={() => setShowStats(!showStats)}
-          onUnlock={clearAnchor}
-          onStop={stopCamera}
-          onConfigChange={handleConfigChange}
-          metrics={metrics}
-          depthState={depthState}
-          anchorDiagnostics={anchorDiagnostics}
+          onShowStatsChange={setShowStats}
+          onClearAnchor={handleClearAnchor}
+          onStopCamera={handleStopClick}
+          onAnchorTrackingModeChange={handleAnchorTrackingModeChange}
+          metricStore={metricStore}
+          depthStateStore={depthStateStore}
+          cameraState={cameraState}
+          anchorSystemState={anchorSystemState}
           anchorTrackingMode={anchorSystemState.trackingMode}
-          runtimeReadiness={runtimeReadiness}
           personalityData={personalityData}
           ttsData={ttsData}
           onGeneratePersonality={handleGeneratePersonality}
           onSpeakGreeting={speakGreeting}
           discoveredMeshes={discoveredMeshes}
           hiddenMeshes={hiddenMeshes}
+          rotation={manualRotation}
           onMeshVisibilityChange={handleMeshVisibilityChange}
           onRotationChange={handleRotationChange}
           // Microphone props
           microphoneMode={microphoneMode}
-          onToggleMicrophoneMode={handleToggleMicrophoneMode}
+          onMicrophoneModeChange={handleMicrophoneModeChange}
           voiceActivityThreshold={voiceActivityThreshold}
           onVoiceActivityThresholdChange={handleVoiceActivityThresholdChange}
-          microphoneActive={microphoneActive}
-          currentViseme={currentViseme}
-          audioEnergy={audioEnergy}
-          isVoiceActive={isVoiceActive}
+          microphoneActive={microphoneRuntime.active}
+          microphoneError={microphoneRuntime.error}
+          microphoneTelemetryStore={microphoneTelemetryStore}
           // Enhanced microphone controls
           onMicrophoneGainChange={handleMicrophoneGainChange}
-          onToggleMicrophoneDebug={handleToggleMicrophoneDebug}
+          onMicrophoneDebugModeChange={handleMicrophoneDebugModeChange}
           onResetMicrophoneBaseline={handleResetMicrophoneBaseline}
           microphoneGain={microphoneGain}
           microphoneDebugMode={microphoneDebugMode}
-          isVisible={fieldControlsVisible}
-          onVisibilityChange={setFieldControlsVisible}
+          open={fieldControlsOpen}
+          onOpenChange={setFieldControlsOpen}
         />
       )}
-    </div>
+    </main>
   );
 };
 

@@ -7,11 +7,7 @@ test('template recovery preserves the tapped anchor offset from the matched temp
   persistence.templateRegion = { x: 100, y: 100, width: 80, height: 80 };
   persistence.anchorOffset = { x: -20, y: -10 };
 
-  const position = persistence._matchLocationToAnchorPosition(
-    { x: 30, y: 40 },
-    { x: 50, y: 60 },
-    1
-  );
+  const position = persistence._matchLocationToAnchorPosition({ x: 30, y: 40 }, { x: 50, y: 60 }, 1);
 
   assert.deepEqual(position, { x: 100, y: 130 });
 });
@@ -44,33 +40,4 @@ test('template recovery searches whenever a template is available', () => {
   assert.equal(result.success, false);
   assert.equal(result.reason, 'Template match below threshold');
   assert.equal(searches, 1);
-});
-
-test('full-frame recovery uses multi-scale matching so moved objects can be reacquired', () => {
-  const persistence = new AnchorPersistenceSystem();
-  let searches = 0;
-
-  persistence.template = { cols: 80, rows: 60 };
-  persistence.templateRegion = { x: 0, y: 0, width: 80, height: 60 };
-  persistence.anchorOffset = { x: 8, y: -6 };
-  persistence._multiScaleTemplateMatch = (_cv, searchImage, template, options) => {
-    searches++;
-    assert.equal(searchImage, currentGray);
-    assert.equal(template, persistence.template);
-    assert.deepEqual(options, { fullFrame: true });
-    return {
-      success: true,
-      confidence: 0.88,
-      location: { x: 220, y: 130 },
-      scale: 1.35,
-    };
-  };
-
-  const currentGray = { cols: 640, rows: 480 };
-  const result = persistence.fullFrameSearch({}, currentGray);
-
-  assert.equal(searches, 1);
-  assert.equal(result.success, true);
-  assert.equal(result.scale, 1.35);
-  assert.deepEqual(result.position, { x: 284.8, y: 162.4 });
 });

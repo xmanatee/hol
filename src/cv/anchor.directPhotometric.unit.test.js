@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 
 import { DirectPhotometricReconstructor } from './anchor.directPhotometric.js';
 
-const affinePoint = point => ({
+const affinePoint = (point) => ({
   x: point.x * 1.08 + point.y * 0.04 + 14,
   y: point.x * -0.03 + point.y * 0.92 + 9,
 });
 
-const similarityPoint = point => {
+const similarityPoint = (point) => {
   const scale = 1.06;
   const rotation = 0.18;
   const cos = Math.cos(rotation);
@@ -39,18 +39,20 @@ test('direct photometric coherence uses the mobile affine sample window with clu
     templateRegion: { x: 0, y: 0, width: 80, height: 140 },
     targetClass: 'mug',
   });
-  reconstructor._attachPhotometricData = observation => ({
+  reconstructor._attachPhotometricData = (observation) => ({
     ...observation,
     photometric: { values: [0.2, 0.4, 0.6], gradient: 18 },
   });
   assert.equal(reconstructor._consensusOptions().maxSample, 28);
 
-  const outliers = Array.from({ length: 20 }, (_, index) => trackedPoint({
-    id: `outlier-${index}`,
-    reference: { x: index * 12, y: 0 },
-    current: { x: 420 + index * 31, y: -260 + (index % 5) * 95 },
-    quality: 10,
-  }));
+  const outliers = Array.from({ length: 20 }, (_, index) =>
+    trackedPoint({
+      id: `outlier-${index}`,
+      reference: { x: index * 12, y: 0 },
+      current: { x: 420 + index * 31, y: -260 + (index % 5) * 95 },
+      quality: 10,
+    }),
+  );
   const highQualityCollinearInliers = [0, 24, 48, 72].map((x, index) => {
     const reference = { x, y: 96 };
     return trackedPoint({
@@ -69,12 +71,14 @@ test('direct photometric coherence uses the mobile affine sample window with clu
     { x: 24, y: 128 },
     { x: 48, y: 128 },
     { x: 72, y: 128 },
-  ].map((reference, index) => trackedPoint({
-    id: `surface-inlier-${index}`,
-    reference,
-    current: affinePoint(reference),
-    quality: 1,
-  }));
+  ].map((reference, index) =>
+    trackedPoint({
+      id: `surface-inlier-${index}`,
+      reference,
+      current: affinePoint(reference),
+      quality: 1,
+    }),
+  );
 
   const state = reconstructor.addFrameFromTrackedPoints([
     ...outliers,
@@ -98,7 +102,7 @@ test('direct photometric reuses frame descriptors between mapping and pose', () 
   });
 
   let attachCount = 0;
-  reconstructor._attachPhotometricData = observation => {
+  reconstructor._attachPhotometricData = (observation) => {
     attachCount++;
     return {
       ...observation,
@@ -119,18 +123,26 @@ test('direct photometric reuses frame descriptors between mapping and pose', () 
     { x: 24, y: 128 },
     { x: 48, y: 128 },
     { x: 72, y: 128 },
-  ].map((reference, index) => trackedPoint({
-    id: `point-${index}`,
-    reference,
-    current: affinePoint(reference),
-    quality: 5,
-  }));
+  ].map((reference, index) =>
+    trackedPoint({
+      id: `point-${index}`,
+      reference,
+      current: affinePoint(reference),
+      quality: 5,
+    }),
+  );
   const grayImage = { cols: 120, rows: 160 };
 
   reconstructor.addFrameFromTrackedPoints(trackedPoints, 1000, grayImage);
-  reconstructor.estimatePoseFromTrackedPoints(trackedPoints, grayImage);
+  reconstructor.addFrameFromTrackedPoints(trackedPoints, 1033, grayImage);
+  reconstructor.addFrameFromTrackedPoints(trackedPoints, 1066, grayImage);
+  const mappingConsensus = reconstructor.frameConsensusCache;
+  const pose = reconstructor.estimatePoseFromTrackedPoints(trackedPoints, grayImage);
 
   assert.equal(attachCount, trackedPoints.length);
+  assert.ok(mappingConsensus);
+  assert.equal(reconstructor.frameConsensusCache, mappingConsensus);
+  assert.equal(pose.success, true);
 });
 
 test('direct photometric can estimate hot-path pose without live preview', () => {
@@ -143,7 +155,7 @@ test('direct photometric can estimate hot-path pose without live preview', () =>
     templateRegion: { x: 0, y: 0, width: 80, height: 140 },
     targetClass: 'mug',
   });
-  reconstructor._attachPhotometricData = observation => ({
+  reconstructor._attachPhotometricData = (observation) => ({
     ...observation,
     photometric: { values: [0.2, 0.4, 0.6], gradient: 18 },
   });
@@ -160,12 +172,14 @@ test('direct photometric can estimate hot-path pose without live preview', () =>
     { x: 24, y: 128 },
     { x: 48, y: 128 },
     { x: 72, y: 128 },
-  ].map((reference, index) => trackedPoint({
-    id: `point-${index}`,
-    reference,
-    current: affinePoint(reference),
-    quality: 5,
-  }));
+  ].map((reference, index) =>
+    trackedPoint({
+      id: `point-${index}`,
+      reference,
+      current: affinePoint(reference),
+      quality: 5,
+    }),
+  );
 
   for (let index = 0; index < 3; index++) {
     reconstructor.addFrameFromTrackedPoints(trackedPoints, 1000 + index);
@@ -207,7 +221,7 @@ test('direct photometric recovers strict similarity pose when affine consensus d
       photometric: { values: [0.2, 0.4, 0.6], gradient: 18 },
     };
   });
-  observations.forEach(observation => {
+  observations.forEach((observation) => {
     reconstructor.surfels.set(observation.id, {
       id: observation.id,
       reference: observation.reference,
@@ -254,7 +268,7 @@ test('direct photometric keeps similarity recovery out of unhandled cup targets'
       photometric: { values: [0.2, 0.4, 0.6], gradient: 18 },
     };
   });
-  observations.forEach(observation => {
+  observations.forEach((observation) => {
     reconstructor.surfels.set(observation.id, {
       id: observation.id,
       reference: observation.reference,
@@ -305,6 +319,42 @@ test('direct photometric reuses the reference fit for scale and rotation', () =>
   assert.equal(fitCount, 1);
 });
 
+test('direct photometric keeps one reference fit until the surface model changes', () => {
+  const reconstructor = new DirectPhotometricReconstructor({ maxFrames: 2 });
+  reconstructor.reset({
+    anchorReference: { x: 40, y: 80 },
+    templateRegion: { x: 0, y: 0, width: 80, height: 140 },
+    targetClass: 'mug',
+  });
+  reconstructor.frames = [{ observations: [{ id: 'initial-reference' }] }];
+
+  let fitCount = 0;
+  reconstructor._fitAttachmentTransform = () => {
+    fitCount++;
+    return {
+      success: true,
+      transformKind: 'affine',
+      transform: {
+        rowX: [1, 0, 0],
+        rowY: [0, 1, 0],
+      },
+      similarityTransform: {
+        rotation: reconstructor.surfaceModel === 'plane' ? 0.24 : 0.12,
+      },
+    };
+  };
+
+  assert.equal(reconstructor._referenceRotation(), 0.12);
+  reconstructor.frames = [{ observations: [{ id: 'oldest-retained-frame' }] }];
+  reconstructor.updateReferenceRegion({ x: 4, y: 6, width: 92, height: 150 }, 'mug');
+  assert.equal(reconstructor._referenceRotation(), 0.12);
+  assert.equal(fitCount, 1);
+
+  reconstructor.updateReferenceRegion({ x: 4, y: 6, width: 150, height: 92 }, 'book');
+  assert.equal(reconstructor._referenceRotation(), 0.24);
+  assert.equal(fitCount, 2);
+});
+
 test('direct photometric skips pose fitting while the map is still mapping', () => {
   const reconstructor = new DirectPhotometricReconstructor();
   reconstructor.reset({
@@ -338,11 +388,18 @@ test('direct photometric can return hot-path state without rebuilding preview ge
     templateRegion: { x: 0, y: 0, width: 80, height: 140 },
     targetClass: 'mug',
   });
-  reconstructor._attachPhotometricData = observation => ({
+  reconstructor._attachPhotometricData = (observation) => ({
     ...observation,
     photometric: { values: [0.2, 0.4, 0.6], gradient: 18 },
   });
 
+  let statisticsCount = 0;
+  const originalStatistics = reconstructor._statistics.bind(reconstructor);
+  reconstructor._statistics = () => {
+    statisticsCount++;
+    return originalStatistics();
+  };
+  const originalCreatePreview = reconstructor._createPreview.bind(reconstructor);
   let previewCount = 0;
   reconstructor._createPreview = () => {
     previewCount++;
@@ -362,18 +419,29 @@ test('direct photometric can return hot-path state without rebuilding preview ge
     { x: 24, y: 128 },
     { x: 48, y: 128 },
     { x: 72, y: 128 },
-  ].map((reference, index) => trackedPoint({
-    id: `point-${index}`,
-    reference,
-    current: affinePoint(reference),
-    quality: 5,
-  }));
+  ].map((reference, index) =>
+    trackedPoint({
+      id: `point-${index}`,
+      reference,
+      current: affinePoint(reference),
+      quality: 5,
+    }),
+  );
   const state = reconstructor.addFrameFromTrackedPoints(trackedPoints, 1000, null, {
     includePreview: false,
   });
 
   assert.equal('preview' in state, false);
   assert.equal(previewCount, 0);
+  assert.equal(statisticsCount, 1);
   assert.equal(state.frameCount, 1);
   assert.equal(state.landmarkCount, 12);
+
+  reconstructor._createPreview = originalCreatePreview;
+  statisticsCount = 0;
+  const previewState = reconstructor.getState();
+
+  assert.ok(previewState.preview);
+  assert.equal(statisticsCount, 1);
+  assert.equal(previewState.preview.statistics, previewState.statistics);
 });

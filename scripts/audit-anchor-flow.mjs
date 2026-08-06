@@ -86,13 +86,19 @@ const REQUIRED_DIAGNOSTICS = [
   'landmarksInsideMask',
   'landmarksOutsideMask',
   'occlusionState',
-  'poseCandidateSource',
-  'poseCandidateScore',
+  'posePositionCandidateSource',
+  'posePositionCandidateScore',
+  'poseAttachmentCandidateSource',
+  'poseAttachmentCandidateScore',
+  'poseOverlayCandidateSource',
+  'poseOverlayCandidateScore',
+  'posePositionRole',
+  'posePositionReason',
   'rejectedPoseCandidates',
 ];
 
 const files = [];
-const walkFiles = dir => {
+const walkFiles = (dir) => {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
@@ -109,29 +115,31 @@ const defaultedImportantOptions = [];
 const calls = [];
 
 const nodeLocation = (node, file) => `${file}:${node.loc?.start?.line || '?'}`;
-const locationFile = loc => loc.slice(0, loc.lastIndexOf(':'));
-const omissionIsAllowed = ({ call, definition, missing }) => ALLOWED_OMISSIONS.some(rule => (
-  rule.callFile === locationFile(call.loc) &&
-  rule.callee === call.name &&
-  rule.definitionFile === locationFile(definition.loc) &&
-  rule.missing === missing
-));
-const keyName = node => {
+const locationFile = (loc) => loc.slice(0, loc.lastIndexOf(':'));
+const omissionIsAllowed = ({ call, definition, missing }) =>
+  ALLOWED_OMISSIONS.some(
+    (rule) =>
+      rule.callFile === locationFile(call.loc) &&
+      rule.callee === call.name &&
+      rule.definitionFile === locationFile(definition.loc) &&
+      rule.missing === missing,
+  );
+const keyName = (node) => {
   if (!node) return null;
   if (node.type === 'Identifier') return node.name;
   if (node.type === 'StringLiteral') return node.value;
   if (node.type === 'NumericLiteral') return String(node.value);
   return null;
 };
-const calleeName = callee => {
+const calleeName = (callee) => {
   if (callee?.type === 'Identifier') return callee.name;
   if (callee?.type === 'MemberExpression') return keyName(callee.property);
   return null;
 };
-const objectPatternKeys = pattern => {
+const objectPatternKeys = (pattern) => {
   if (pattern?.type !== 'ObjectPattern') return [];
   return pattern.properties
-    .map(prop => prop.type === 'ObjectProperty' ? keyName(prop.key) : null)
+    .map((prop) => (prop.type === 'ObjectProperty' ? keyName(prop.key) : null))
     .filter(Boolean);
 };
 const recordDefaultedImportantOptions = (pattern, file) => {
@@ -147,10 +155,12 @@ const recordDefaultedImportantOptions = (pattern, file) => {
     }
   }
 };
-const objectExpressionKeys = node => {
+const objectExpressionKeys = (node) => {
   if (node?.type !== 'ObjectExpression') return null;
   return node.properties
-    .map(prop => prop.type === 'ObjectProperty' ? keyName(prop.key) : prop.type === 'SpreadElement' ? '...spread' : null)
+    .map((prop) =>
+      prop.type === 'ObjectProperty' ? keyName(prop.key) : prop.type === 'SpreadElement' ? '...spread' : null,
+    )
     .filter(Boolean);
 };
 
@@ -160,7 +170,7 @@ const recordFunction = (name, node, file) => {
     const target = param.type === 'AssignmentPattern' ? param.left : param;
     recordDefaultedImportantOptions(target, file);
     const keys = objectPatternKeys(target);
-    const relevant = keys.filter(key => IMPORTANT_OPTIONS.has(key));
+    const relevant = keys.filter((key) => IMPORTANT_OPTIONS.has(key));
     if (!relevant.length) return;
     const entries = functionOptions.get(name) || [];
     entries.push({ name, index, relevant, loc: nodeLocation(node, file) });
@@ -174,7 +184,10 @@ const visit = (node, file) => {
     recordFunction(node.id?.name, node, file);
   } else if (node.type === 'ClassMethod' || node.type === 'ObjectMethod') {
     recordFunction(keyName(node.key), node, file);
-  } else if (node.type === 'VariableDeclarator' && ['ArrowFunctionExpression', 'FunctionExpression'].includes(node.init?.type)) {
+  } else if (
+    node.type === 'VariableDeclarator' &&
+    ['ArrowFunctionExpression', 'FunctionExpression'].includes(node.init?.type)
+  ) {
     recordFunction(node.id?.name, node.init, file);
   } else if (node.type === 'CallExpression') {
     const name = calleeName(node.callee);
@@ -190,7 +203,9 @@ const visit = (node, file) => {
   for (const [key, value] of Object.entries(node)) {
     if (['loc', 'start', 'end'].includes(key)) continue;
     if (Array.isArray(value)) {
-      value.forEach(child => visit(child, file));
+      value.forEach((child) => {
+        visit(child, file);
+      });
     } else if (value?.type) {
       visit(value, file);
     }
@@ -210,7 +225,7 @@ for (const call of calls) {
   for (const definition of functionOptions.get(call.name) || []) {
     const keys = call.argKeys[definition.index];
     if (!keys || keys.includes('...spread')) continue;
-    for (const missing of definition.relevant.filter(key => !keys.includes(key))) {
+    for (const missing of definition.relevant.filter((key) => !keys.includes(key))) {
       if (!omissionIsAllowed({ call, definition, missing })) {
         optionOmissions.push({
           call: call.loc,
@@ -224,16 +239,24 @@ for (const call of calls) {
 }
 
 const diagnosticsSource = fs.readFileSync('src/utils/anchorDiagnostics.js', 'utf8');
-const missingDiagnostics = REQUIRED_DIAGNOSTICS.filter(field => !diagnosticsSource.includes(`metrics.${field}`));
+const missingDiagnostics = REQUIRED_DIAGNOSTICS.filter(
+  (field) => !diagnosticsSource.includes(`metrics.${field}`),
+);
 
 if (optionOmissions.length || defaultedImportantOptions.length || missingDiagnostics.length) {
   console.error(JSON.stringify({ optionOmissions, defaultedImportantOptions, missingDiagnostics }, null, 2));
   process.exit(1);
 }
 
-console.log(JSON.stringify({
-  checkedFiles: files.length,
-  optionOmissions: 0,
-  defaultedImportantOptions: 0,
-  missingDiagnostics: 0,
-}, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      checkedFiles: files.length,
+      optionOmissions: 0,
+      defaultedImportantOptions: 0,
+      missingDiagnostics: 0,
+    },
+    null,
+    2,
+  ),
+);

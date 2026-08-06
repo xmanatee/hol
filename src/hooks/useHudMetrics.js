@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const METRIC_DEFINITIONS = {
   'Capture FPS': {
@@ -6,15 +6,10 @@ const METRIC_DEFINITIONS = {
     isRed: (value) => value < 28,
     unit: 'FPS',
   },
-  'Render frame time': {
-    target: 2.5,
-    isRed: (value) => value > 2.5,
-    unit: 'ms',
-  },
-  'Detection amortized cost': {
+  'Camera frame cost': {
     target: 4,
     isRed: (value) => value > 4,
-    unit: 'ms/frame',
+    unit: 'ms',
   },
   'Anchor processing time': {
     target: 6,
@@ -66,11 +61,6 @@ const METRIC_DEFINITIONS = {
     isRed: (value) => value > 3,
     unit: '',
   },
-  'Track ID persistence': {
-    target: 90,
-    isRed: (value) => value < 90,
-    unit: '%',
-  },
   'Object Count': {
     target: 1,
     isRed: (value) => value === 0,
@@ -96,7 +86,8 @@ const METRIC_DEFINITIONS = {
     isRed: (value) => value > 6,
     unit: '°',
   },
-  'Mode confidence': { // This is more about display than a numerical target for red/green
+  'Mode confidence': {
+    // This is more about display than a numerical target for red/green
     target: null,
     isRed: () => false, // No red condition based on the description
     unit: '',
@@ -151,7 +142,7 @@ const METRIC_DEFINITIONS = {
     isRed: (value) => value < 0.6,
     unit: '',
   },
-  'Agent start latency': {
+  'TTS latency to first audio': {
     target: 700,
     isRed: (value) => value > 700,
     unit: 'ms',
@@ -186,7 +177,8 @@ const METRIC_DEFINITIONS = {
     isRed: (value) => value > 10,
     unit: '%',
   },
-  'Exit recovery path': { // This is more about display than a numerical target for red/green
+  'Exit recovery path': {
+    // This is more about display than a numerical target for red/green
     target: 80, // Re-attach success rate
     isRed: (value) => value < 80, // Assuming value is the re-attach success rate
     unit: '%',
@@ -226,73 +218,87 @@ const createMetricEntry = (previousEntry, name, value) => {
   };
 };
 
-export const createHudMetricStore = () => {
+export const createHudMetricStore = (scheduleFlush) => {
   let metrics = {};
   let pendingMetrics = {};
+  let cancelScheduledFlush = null;
   const listeners = new Set();
+
+  const promotePendingMetrics = () => {
+    const pendingNames = Object.keys(pendingMetrics);
+    if (pendingNames.length === 0) {
+      return false;
+    }
+
+    metrics = {
+      ...metrics,
+      ...pendingMetrics,
+    };
+    pendingMetrics = {};
+    return true;
+  };
+
+  const cancelPendingFlush = () => {
+    if (!cancelScheduledFlush) {
+      return;
+    }
+    const cancel = cancelScheduledFlush;
+    cancelScheduledFlush = null;
+    cancel();
+  };
+
+  const flush = () => {
+    cancelScheduledFlush = null;
+    if (listeners.size === 0 || !promotePendingMetrics()) {
+      return;
+    }
+    listeners.forEach((listener) => {
+      listener(metrics);
+    });
+  };
 
   return {
     getSnapshot: () => metrics,
-    subscribe: listener => {
+    hasSubscribers: () => listeners.size > 0,
+    subscribe: (listener) => {
+      if (listeners.size === 0) {
+        promotePendingMetrics();
+      }
       listeners.add(listener);
-      return () => listeners.delete(listener);
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) {
+          cancelPendingFlush();
+        }
+      };
     },
     updateMetric: (name, value) => {
-      pendingMetrics = {
-        ...pendingMetrics,
-        [name]: createMetricEntry(pendingMetrics[name] || metrics[name], name, value),
-      };
+      const previousEntry = pendingMetrics[name] || metrics[name];
+      if (previousEntry && Object.is(previousEntry.value, value)) {
+        return;
+      }
+      pendingMetrics[name] = createMetricEntry(previousEntry, name, value);
+      if (listeners.size > 0 && !cancelScheduledFlush) {
+        cancelScheduledFlush = scheduleFlush(flush);
+      }
     },
-    flush: () => {
-      const pendingNames = Object.keys(pendingMetrics);
-      if (pendingNames.length === 0) return;
-
-      metrics = {
-        ...metrics,
-        ...pendingMetrics,
-      };
+    dispose: () => {
+      cancelPendingFlush();
+      listeners.clear();
+      metrics = {};
       pendingMetrics = {};
-      listeners.forEach(listener => listener(metrics));
     },
   };
 };
 
-const scheduleMetricFlush = callback => {
-  if (typeof requestAnimationFrame === 'function') {
-    const frameId = requestAnimationFrame(callback);
-    return () => cancelAnimationFrame(frameId);
-  }
-
-  const timeoutId = setTimeout(callback, 100);
-  return () => clearTimeout(timeoutId);
+const scheduleMetricFlush = (callback) => {
+  const timeoutId = globalThis.setTimeout(callback, 100);
+  return () => globalThis.clearTimeout(timeoutId);
 };
 
 export const useHudMetrics = () => {
-  const storeRef = useRef(null);
-  if (!storeRef.current) {
-    storeRef.current = createHudMetricStore();
-  }
+  const [store] = useState(() => createHudMetricStore(scheduleMetricFlush));
+  useEffect(() => () => store.dispose(), [store]);
 
-  const cancelFlushRef = useRef(null);
-  const [metrics, setMetrics] = useState(() => storeRef.current.getSnapshot());
-
-  useEffect(() => storeRef.current.subscribe(setMetrics), []);
-
-  useEffect(() => () => {
-    if (cancelFlushRef.current) {
-      cancelFlushRef.current();
-    }
-  }, []);
-
-  const updateMetric = useCallback((name, value) => {
-    storeRef.current.updateMetric(name, value);
-    if (cancelFlushRef.current) return;
-
-    cancelFlushRef.current = scheduleMetricFlush(() => {
-      cancelFlushRef.current = null;
-      storeRef.current.flush();
-    });
-  }, []);
-
-  return { metrics, updateMetric };
+  return { metricStore: store, updateMetric: store.updateMetric };
 };

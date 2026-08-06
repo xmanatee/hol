@@ -7,29 +7,25 @@ const EPSILON = 1e-9;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
-const normalize2 = vector => {
+const normalize2 = (vector) => {
   const length = Math.hypot(vector.x, vector.y);
   return {
     x: vector.x / length,
-    y: vector.y / length
+    y: vector.y / length,
   };
 };
 
-const normalize3 = vector => {
+const normalize3 = (vector) => {
   const length = Math.hypot(vector.x, vector.y, vector.z);
   return {
     x: vector.x / length,
     y: vector.y / length,
-    z: vector.z / length
+    z: vector.z / length,
   };
 };
 
 const solve3x3 = (matrix, values) => {
-  const [
-    [a, b, c],
-    [d, e, f],
-    [g, h, i]
-  ] = matrix;
+  const [[a, b, c], [d, e, f], [g, h, i]] = matrix;
   const determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
 
   if (Math.abs(determinant) < EPSILON) return null;
@@ -39,43 +35,46 @@ const solve3x3 = (matrix, values) => {
   return [
     (x * (e * i - f * h) - b * (y * i - f * z) + c * (y * h - e * z)) / determinant,
     (a * (y * i - f * z) - x * (d * i - f * g) + c * (d * z - y * g)) / determinant,
-    (a * (e * z - y * h) - b * (d * z - y * g) + x * (d * h - e * g)) / determinant
+    (a * (e * z - y * h) - b * (d * z - y * g) + x * (d * h - e * g)) / determinant,
   ];
 };
 
-const fitAffine = correspondences => {
-  const sums = correspondences.reduce((acc, correspondence) => {
-    const { prev, curr } = correspondence;
-    acc.xx += prev.x * prev.x;
-    acc.xy += prev.x * prev.y;
-    acc.yy += prev.y * prev.y;
-    acc.x += prev.x;
-    acc.y += prev.y;
-    acc.u += curr.x;
-    acc.v += curr.y;
-    acc.xu += prev.x * curr.x;
-    acc.yu += prev.y * curr.x;
-    acc.xv += prev.x * curr.y;
-    acc.yv += prev.y * curr.y;
-    return acc;
-  }, {
-    xx: 0,
-    xy: 0,
-    yy: 0,
-    x: 0,
-    y: 0,
-    u: 0,
-    v: 0,
-    xu: 0,
-    yu: 0,
-    xv: 0,
-    yv: 0
-  });
+const fitAffine = (correspondences) => {
+  const sums = correspondences.reduce(
+    (acc, correspondence) => {
+      const { prev, curr } = correspondence;
+      acc.xx += prev.x * prev.x;
+      acc.xy += prev.x * prev.y;
+      acc.yy += prev.y * prev.y;
+      acc.x += prev.x;
+      acc.y += prev.y;
+      acc.u += curr.x;
+      acc.v += curr.y;
+      acc.xu += prev.x * curr.x;
+      acc.yu += prev.y * curr.x;
+      acc.xv += prev.x * curr.y;
+      acc.yv += prev.y * curr.y;
+      return acc;
+    },
+    {
+      xx: 0,
+      xy: 0,
+      yy: 0,
+      x: 0,
+      y: 0,
+      u: 0,
+      v: 0,
+      xu: 0,
+      yu: 0,
+      xv: 0,
+      yv: 0,
+    },
+  );
 
   const normal = [
     [sums.xx, sums.xy, sums.x],
     [sums.xy, sums.yy, sums.y],
-    [sums.x, sums.y, correspondences.length]
+    [sums.x, sums.y, correspondences.length],
   ];
   const xSolution = solve3x3(normal, [sums.xu, sums.yu, sums.u]);
   const ySolution = solve3x3(normal, [sums.xv, sums.yv, sums.v]);
@@ -88,13 +87,13 @@ const fitAffine = correspondences => {
     tx: xSolution[2],
     c: ySolution[0],
     d: ySolution[1],
-    ty: ySolution[2]
+    ty: ySolution[2],
   };
 };
 
 const transformPoint = (point, affine) => ({
   x: affine.a * point.x + affine.b * point.y + affine.tx,
-  y: affine.c * point.x + affine.d * point.y + affine.ty
+  y: affine.c * point.x + affine.d * point.y + affine.ty,
 });
 
 const residualFor = (correspondence, affine) => {
@@ -103,18 +102,16 @@ const residualFor = (correspondence, affine) => {
 };
 
 const collectInliers = (correspondences, affine, maxResidual) => {
-  const residuals = correspondences.map(correspondence => ({
+  const residuals = correspondences.map((correspondence) => ({
     correspondence,
-    residual: residualFor(correspondence, affine)
+    residual: residualFor(correspondence, affine),
   }));
-  const inliers = residuals
-    .filter(item => item.residual <= maxResidual)
-    .map(item => item.correspondence);
+  const inliers = residuals.filter((item) => item.residual <= maxResidual).map((item) => item.correspondence);
   const totalResidual = residuals.reduce((sum, item) => sum + item.residual, 0);
 
   return {
     inliers,
-    averageResidual: totalResidual / residuals.length
+    averageResidual: totalResidual / residuals.length,
   };
 };
 
@@ -138,20 +135,20 @@ const createTriples = (length, maxHypotheses) => {
   return triples;
 };
 
-const measureSpread = correspondences => {
-  const xs = correspondences.map(correspondence => correspondence.prev.x);
-  const ys = correspondences.map(correspondence => correspondence.prev.y);
+const measureSpread = (correspondences) => {
+  const xs = correspondences.map((correspondence) => correspondence.prev.x);
+  const ys = correspondences.map((correspondence) => correspondence.prev.y);
   const width = Math.max(...xs) - Math.min(...xs);
   const height = Math.max(...ys) - Math.min(...ys);
 
   return {
     width,
     height,
-    minAxis: Math.min(width, height)
+    minAxis: Math.min(width, height),
   };
 };
 
-const estimateSingularValues = affine => {
+const estimateSingularValues = (affine) => {
   const { a, b, c, d } = affine;
   const p = a * a + c * c;
   const q = a * b + c * d;
@@ -165,7 +162,7 @@ const estimateSingularValues = affine => {
   return { large, small };
 };
 
-const smallestOutputAxis = affine => {
+const smallestOutputAxis = (affine) => {
   const { a, b, c, d } = affine;
   const m00 = a * a + b * b;
   const m01 = a * c + b * d;
@@ -186,8 +183,10 @@ const chooseNormalSign = (axis, xyMagnitude, z, previousNormal) => {
   const negative = normalize3({ x: -axis.x * xyMagnitude, y: -axis.y * xyMagnitude, z });
 
   if (previousNormal && Math.hypot(previousNormal.x, previousNormal.y) > 0.05) {
-    const positiveDot = positive.x * previousNormal.x + positive.y * previousNormal.y + positive.z * previousNormal.z;
-    const negativeDot = negative.x * previousNormal.x + negative.y * previousNormal.y + negative.z * previousNormal.z;
+    const positiveDot =
+      positive.x * previousNormal.x + positive.y * previousNormal.y + positive.z * previousNormal.z;
+    const negativeDot =
+      negative.x * previousNormal.x + negative.y * previousNormal.y + negative.z * previousNormal.z;
     return positiveDot >= negativeDot ? positive : negative;
   }
 
@@ -203,16 +202,15 @@ const decomposeAffinePose = (affine, previousNormal) => {
   const ratio = clamp(small / large, 0.12, 1);
   const xyMagnitude = ratio > 0.965 ? 0 : Math.sqrt(Math.max(0, 1 - ratio * ratio));
   const axis = smallestOutputAxis(affine);
-  const normal = xyMagnitude === 0
-    ? { x: 0, y: 0, z: 1 }
-    : chooseNormalSign(axis, xyMagnitude, ratio, previousNormal);
+  const normal =
+    xyMagnitude === 0 ? { x: 0, y: 0, z: 1 } : chooseNormalSign(axis, xyMagnitude, ratio, previousNormal);
   const determinant = affine.a * affine.d - affine.b * affine.c;
 
   return {
     normal,
     rotation: Math.atan2(affine.c - affine.b, affine.a + affine.d),
     scale: Math.sqrt(Math.max(EPSILON, Math.abs(determinant))),
-    foreshortening: ratio
+    foreshortening: ratio,
   };
 };
 
@@ -235,10 +233,10 @@ export class AffineParallaxPoseEstimator {
     let best = null;
 
     for (const triple of triples) {
-      const affine = fitAffine(triple.map(index => correspondences[index]));
-      if (!affine) continue;
+      const candidateAffine = fitAffine(triple.map((index) => correspondences[index]));
+      if (!candidateAffine) continue;
 
-      const candidate = collectInliers(correspondences, affine, maxResidual);
+      const candidate = collectInliers(correspondences, candidateAffine, maxResidual);
       if (!best || candidate.inliers.length > best.inliers.length) {
         best = candidate;
       }
@@ -273,7 +271,7 @@ export class AffineParallaxPoseEstimator {
       confidence,
       inlierCount: refined.inliers.length,
       inlierRatio,
-      averageResidual
+      averageResidual,
     };
   }
 }

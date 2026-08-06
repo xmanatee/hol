@@ -6,19 +6,20 @@ export const OBJECT_SUPPORT_MASK_SOURCES = Object.freeze({
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
-export const calculateTapLocalRadius = ({ width, height }) => (
-  clamp(Math.min(width, height) * 0.055, 28, 64)
-);
+export const calculateTapLocalRadius = ({ width, height }) => clamp(Math.min(width, height) * 0.055, 28, 64);
 
-export const getObjectSupportBounds = objectSupportMask => {
-  let minX = objectSupportMask.width;
-  let minY = objectSupportMask.height;
+const summarizePositivePixels = ({ width, height, data }) => {
+  let minX = width;
+  let minY = height;
   let maxX = -1;
   let maxY = -1;
+  let pixelCount = 0;
 
-  for (let y = 0; y < objectSupportMask.height; y++) {
-    for (let x = 0; x < objectSupportMask.width; x++) {
-      if (objectSupportMask.data[y * objectSupportMask.width + x] > 0) {
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * width;
+    for (let x = 0; x < width; x++) {
+      if (data[rowOffset + x] > 0) {
+        pixelCount++;
         minX = Math.min(minX, x);
         minY = Math.min(minY, y);
         maxX = Math.max(maxX, x);
@@ -28,16 +29,24 @@ export const getObjectSupportBounds = objectSupportMask => {
   }
 
   if (maxX < minX || maxY < minY) {
-    return { x: 0, y: 0, width: 0, height: 0 };
+    return {
+      bbox: { x: 0, y: 0, width: 0, height: 0 },
+      pixelCount: 0,
+    };
   }
 
   return {
-    x: minX,
-    y: minY,
-    width: maxX - minX + 1,
-    height: maxY - minY + 1,
+    bbox: {
+      x: minX,
+      y: minY,
+      width: maxX - minX + 1,
+      height: maxY - minY + 1,
+    },
+    pixelCount,
   };
 };
+
+export const getObjectSupportBounds = (objectSupportMask) => summarizePositivePixels(objectSupportMask).bbox;
 
 const findNearestPositivePixel = ({ width, height, data, point }) => {
   const targetX = Math.trunc(point.x);
@@ -104,7 +113,7 @@ export const keepConnectedComponentContainingPoint = ({ width, height, data, poi
   return output;
 };
 
-export const createObjectSupportMask = ({
+const assembleObjectSupportMask = ({
   width,
   height,
   data,
@@ -113,44 +122,48 @@ export const createObjectSupportMask = ({
   referencePoint,
   createdAtFrame,
   updatedAtFrame,
-}) => {
-  const mask = {
-    width,
-    height,
-    data: new Uint8Array(data),
-    source,
-    confidence,
-    referencePoint: { ...referencePoint },
-    createdAtFrame,
-    updatedAtFrame,
-    bbox: { x: 0, y: 0, width: 0, height: 0 },
-    pixelCount: 0,
-  };
+  bbox,
+  pixelCount,
+}) => ({
+  width,
+  height,
+  data,
+  source,
+  confidence,
+  referencePoint: { ...referencePoint },
+  createdAtFrame,
+  updatedAtFrame,
+  bbox,
+  pixelCount,
+});
 
-  mask.bbox = getObjectSupportBounds(mask);
-  for (const value of mask.data) {
-    if (value > 0) {
-      mask.pixelCount++;
-    }
-  }
-  return mask;
+export const createObjectSupportMask = (options) => {
+  const data = new Uint8Array(options.data);
+  const summary = summarizePositivePixels({
+    width: options.width,
+    height: options.height,
+    data,
+  });
+  return assembleObjectSupportMask({
+    ...options,
+    data,
+    ...summary,
+  });
 };
 
-const hasMaskPixel = (objectSupportMask, x, y) => (
+const hasMaskPixel = (objectSupportMask, x, y) =>
   x >= 0 &&
   y >= 0 &&
   x < objectSupportMask.width &&
   y < objectSupportMask.height &&
-  objectSupportMask.data[y * objectSupportMask.width + x] > 0
-);
+  objectSupportMask.data[y * objectSupportMask.width + x] > 0;
 
-const isBoundaryPixel = (objectSupportMask, x, y) => (
+const isBoundaryPixel = (objectSupportMask, x, y) =>
   hasMaskPixel(objectSupportMask, x, y) &&
   (!hasMaskPixel(objectSupportMask, x - 1, y) ||
     !hasMaskPixel(objectSupportMask, x + 1, y) ||
     !hasMaskPixel(objectSupportMask, x, y - 1) ||
-    !hasMaskPixel(objectSupportMask, x, y + 1))
-);
+    !hasMaskPixel(objectSupportMask, x, y + 1));
 
 export const createObjectSupportMaskPreview = (objectSupportMask, { maxPoints = 180 } = {}) => {
   const { bbox } = objectSupportMask;
@@ -233,16 +246,25 @@ export const constrainObjectSupportMaskToTapLocalCircle = ({
   const data = new Uint8Array(objectSupportMask.width * objectSupportMask.height);
   const centerX = Math.round(clamp(referencePoint.x, 0, objectSupportMask.width - 1));
   const centerY = Math.round(clamp(referencePoint.y, 0, objectSupportMask.height - 1));
-  const localRadius = Math.round(clamp(radius, 1, Math.min(objectSupportMask.width, objectSupportMask.height)));
+  const localRadius = Math.round(
+    clamp(radius, 1, Math.min(objectSupportMask.width, objectSupportMask.height)),
+  );
   const radiusSquared = localRadius * localRadius;
 
-  for (let y = Math.max(0, centerY - localRadius); y <= Math.min(objectSupportMask.height - 1, centerY + localRadius); y++) {
+  for (
+    let y = Math.max(0, centerY - localRadius);
+    y <= Math.min(objectSupportMask.height - 1, centerY + localRadius);
+    y++
+  ) {
     const rowOffset = y * objectSupportMask.width;
-    for (let x = Math.max(0, centerX - localRadius); x <= Math.min(objectSupportMask.width - 1, centerX + localRadius); x++) {
+    for (
+      let x = Math.max(0, centerX - localRadius);
+      x <= Math.min(objectSupportMask.width - 1, centerX + localRadius);
+      x++
+    ) {
       const dx = x - centerX;
       const dy = y - centerY;
-      if (dx * dx + dy * dy <= radiusSquared &&
-          objectSupportMask.data[rowOffset + x] > 0) {
+      if (dx * dx + dy * dy <= radiusSquared && objectSupportMask.data[rowOffset + x] > 0) {
         data[rowOffset + x] = 255;
       }
     }
@@ -278,13 +300,16 @@ export const createRegionOpenCvMask = (cv, objectSupportMask, region) => {
 
     for (let x = 0; x < region.width; x++) {
       const frameX = region.x + x;
-      if (frameX < 0 ||
-          frameY < 0 ||
-          frameX >= objectSupportMask.width ||
-          frameY >= objectSupportMask.height) {
+      if (
+        frameX < 0 ||
+        frameY < 0 ||
+        frameX >= objectSupportMask.width ||
+        frameY >= objectSupportMask.height
+      ) {
         mask.data[maskRowOffset + x] = 0;
       } else {
-        mask.data[maskRowOffset + x] = objectSupportMask.data[frameY * objectSupportMask.width + frameX] > 0 ? 255 : 0;
+        mask.data[maskRowOffset + x] =
+          objectSupportMask.data[frameY * objectSupportMask.width + frameX] > 0 ? 255 : 0;
       }
     }
   }
@@ -292,34 +317,75 @@ export const createRegionOpenCvMask = (cv, objectSupportMask, region) => {
   return mask;
 };
 
-export const warpObjectSupportMask = (objectSupportMask, {
-  position,
-  scale,
-  rotation,
-  updatedAtFrame,
-}) => {
+export const warpObjectSupportMask = (objectSupportMask, { position, scale, rotation, updatedAtFrame }) => {
   const data = new Uint8Array(objectSupportMask.width * objectSupportMask.height);
   const cos = Math.cos(rotation);
   const sin = Math.sin(rotation);
+  const { bbox } = objectSupportMask;
+  const sourceCorners = [
+    { x: bbox.x - 0.5, y: bbox.y - 0.5 },
+    { x: bbox.x + bbox.width - 0.5, y: bbox.y - 0.5 },
+    { x: bbox.x + bbox.width - 0.5, y: bbox.y + bbox.height - 0.5 },
+    { x: bbox.x - 0.5, y: bbox.y + bbox.height - 0.5 },
+  ];
+  const destinationCorners = sourceCorners.map((point) => {
+    const dx = point.x - objectSupportMask.referencePoint.x;
+    const dy = point.y - objectSupportMask.referencePoint.y;
+    return {
+      x: position.x + scale * (cos * dx - sin * dy),
+      y: position.y + scale * (sin * dx + cos * dy),
+    };
+  });
+  const destinationX = destinationCorners.map((point) => point.x);
+  const destinationY = destinationCorners.map((point) => point.y);
+  const startX = clamp(Math.floor(Math.min(...destinationX)), 0, objectSupportMask.width - 1);
+  const endX = clamp(Math.ceil(Math.max(...destinationX)), 0, objectSupportMask.width - 1);
+  const startY = clamp(Math.floor(Math.min(...destinationY)), 0, objectSupportMask.height - 1);
+  const endY = clamp(Math.ceil(Math.max(...destinationY)), 0, objectSupportMask.height - 1);
+  let minX = objectSupportMask.width;
+  let minY = objectSupportMask.height;
+  let maxX = -1;
+  let maxY = -1;
+  let pixelCount = 0;
 
-  for (let y = 0; y < objectSupportMask.height; y++) {
-    for (let x = 0; x < objectSupportMask.width; x++) {
-      const dx = (x - position.x) / scale;
-      const dy = (y - position.y) / scale;
-      const sourceX = Math.round(objectSupportMask.referencePoint.x + cos * dx + sin * dy);
-      const sourceY = Math.round(objectSupportMask.referencePoint.y - sin * dx + cos * dy);
+  if (bbox.width > 0 && bbox.height > 0) {
+    for (let y = startY; y <= endY; y++) {
+      const rowOffset = y * objectSupportMask.width;
+      for (let x = startX; x <= endX; x++) {
+        const dx = (x - position.x) / scale;
+        const dy = (y - position.y) / scale;
+        const sourceX = Math.round(objectSupportMask.referencePoint.x + cos * dx + sin * dy);
+        const sourceY = Math.round(objectSupportMask.referencePoint.y - sin * dx + cos * dy);
 
-      if (sourceX >= 0 &&
+        if (
+          sourceX >= 0 &&
           sourceY >= 0 &&
           sourceX < objectSupportMask.width &&
           sourceY < objectSupportMask.height &&
-          objectSupportMask.data[sourceY * objectSupportMask.width + sourceX] > 0) {
-        data[y * objectSupportMask.width + x] = 255;
+          objectSupportMask.data[sourceY * objectSupportMask.width + sourceX] > 0
+        ) {
+          data[rowOffset + x] = 255;
+          pixelCount++;
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
       }
     }
   }
 
-  return createObjectSupportMask({
+  const warpedBounds =
+    pixelCount > 0
+      ? {
+          x: minX,
+          y: minY,
+          width: maxX - minX + 1,
+          height: maxY - minY + 1,
+        }
+      : { x: 0, y: 0, width: 0, height: 0 };
+
+  return assembleObjectSupportMask({
     width: objectSupportMask.width,
     height: objectSupportMask.height,
     data,
@@ -328,5 +394,7 @@ export const warpObjectSupportMask = (objectSupportMask, {
     referencePoint: { x: position.x, y: position.y },
     createdAtFrame: objectSupportMask.createdAtFrame,
     updatedAtFrame,
+    bbox: warpedBounds,
+    pixelCount,
   });
 };

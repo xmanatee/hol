@@ -10,6 +10,7 @@ import {
   createTexturedBallSequence,
   createTexturedCupSequence,
 } from './visionFixtures.js';
+import { applyCaptureCondition } from './captureDegradation.js';
 
 const OPTIONAL_SPARSE_RECONSTRUCTION_QUALITY = {
   reconstruction: {
@@ -30,51 +31,68 @@ const STRESS_REPLAY_LIMITS = {
   maxHeadJumpExcess: 0.12,
 };
 
+const CAPTURE_REPLAY_LIMITS = {
+  maxAnchorError: 18,
+  meanAnchorError: 8,
+  maxScaleError: 0.2,
+  maxFrameJump: 12,
+  maxRotationError: 1.2,
+  maxWorldPositionError: 0.09,
+  maxScaleLogError: 0.2,
+  maxHeadJumpExcess: 0.06,
+};
+
 export const defaultReplayScenarios = [
   {
     name: 'planar book on desk',
-    create: () => createPlanarBookSequence({
-      kind: 'planar-book',
-      frameCount: 32,
-      occlusionFrames: [14, 15, 16, 17],
-    }),
+    create: () =>
+      createPlanarBookSequence({
+        kind: 'planar-book',
+        frameCount: 32,
+        occlusionFrames: [14, 15, 16, 17],
+      }),
   },
   {
     name: 'dark book on desk',
-    create: () => createPlanarBookSequence({
-      kind: 'dark-book',
-      frameCount: 32,
-      occlusionFrames: [14, 15, 16, 17],
-    }),
+    create: () =>
+      createPlanarBookSequence({
+        kind: 'dark-book',
+        frameCount: 32,
+        occlusionFrames: [14, 15, 16, 17],
+      }),
   },
   {
     name: 'depth book on desk',
-    create: () => createPlanarBookSequence({
-      kind: 'depth-book',
-      frameCount: 36,
-      occlusionFrames: [18, 19, 20],
-    }),
+    create: () =>
+      createPlanarBookSequence({
+        kind: 'depth-book',
+        frameCount: 36,
+        occlusionFrames: [18, 19, 20],
+      }),
   },
   {
     name: 'cylindrical can on desk',
-    create: () => createCylindricalCanSequence({
-      frameCount: 30,
-      occlusionFrames: [12, 13, 14],
-    }),
+    create: () =>
+      createCylindricalCanSequence({
+        frameCount: 30,
+        occlusionFrames: [12, 13, 14],
+      }),
   },
   {
     name: 'tapered cup on desk',
-    create: () => createTexturedCupSequence({
-      frameCount: 32,
-      occlusionFrames: [15, 16, 17],
-    }),
+    create: () =>
+      createTexturedCupSequence({
+        frameCount: 32,
+        occlusionFrames: [15, 16, 17],
+      }),
   },
   {
     name: 'rigid box on desk',
-    create: () => createRigidBoxSequence({
-      frameCount: 28,
-      occlusionFrames: [10, 11, 12],
-    }),
+    create: () =>
+      createRigidBoxSequence({
+        frameCount: 28,
+        occlusionFrames: [10, 11, 12],
+      }),
     qualityThresholdsByMode: {
       'parametric-surface': {
         reconstruction: {
@@ -88,13 +106,14 @@ export const defaultReplayScenarios = [
 export const realisticReplayScenarios = [
   {
     name: 'book cover with early occlusion on busy moving background',
-    create: () => createPlanarBookSequence({
-      kind: 'planar-book',
-      frameCount: 36,
-      occlusionFrames: [9, 10, 24],
-      backgroundVariant: 'busy',
-      backgroundSeed: 71,
-    }),
+    create: () =>
+      createPlanarBookSequence({
+        kind: 'planar-book',
+        frameCount: 36,
+        occlusionFrames: [9, 10, 24],
+        backgroundVariant: 'busy',
+        backgroundSeed: 71,
+      }),
     limits: {
       maxAnchorError: 22,
       meanAnchorError: 10,
@@ -108,13 +127,14 @@ export const realisticReplayScenarios = [
   },
   {
     name: 'dark book cover on shelf background',
-    create: () => createPlanarBookSequence({
-      kind: 'dark-book',
-      frameCount: 34,
-      occlusionFrames: [8, 9, 22],
-      backgroundVariant: 'shelf',
-      backgroundSeed: 83,
-    }),
+    create: () =>
+      createPlanarBookSequence({
+        kind: 'dark-book',
+        frameCount: 34,
+        occlusionFrames: [8, 9, 22],
+        backgroundVariant: 'shelf',
+        backgroundSeed: 83,
+      }),
     limits: {
       maxAnchorError: 16,
       meanAnchorError: 8.5,
@@ -128,13 +148,14 @@ export const realisticReplayScenarios = [
   },
   {
     name: 'depth book with repeated occlusion on busy moving background',
-    create: () => createPlanarBookSequence({
-      kind: 'depth-book',
-      frameCount: 40,
-      occlusionFrames: [8, 9, 27, 28],
-      backgroundVariant: 'busy',
-      backgroundSeed: 91,
-    }),
+    create: () =>
+      createPlanarBookSequence({
+        kind: 'depth-book',
+        frameCount: 40,
+        occlusionFrames: [8, 9, 27, 28],
+        backgroundVariant: 'busy',
+        backgroundSeed: 91,
+      }),
     limits: {
       maxAnchorError: 32,
       meanAnchorError: 15,
@@ -148,12 +169,13 @@ export const realisticReplayScenarios = [
   },
   {
     name: 'cylindrical can with repeated occlusion on shelf background',
-    create: () => createCylindricalCanSequence({
-      frameCount: 34,
-      occlusionFrames: [8, 9, 22],
-      backgroundVariant: 'shelf',
-      backgroundSeed: 101,
-    }),
+    create: () =>
+      createCylindricalCanSequence({
+        frameCount: 34,
+        occlusionFrames: [8, 9, 22],
+        backgroundVariant: 'shelf',
+        backgroundSeed: 101,
+      }),
     limits: {
       maxAnchorError: 15,
       meanAnchorError: 6,
@@ -189,12 +211,13 @@ export const realisticReplayScenarios = [
   },
   {
     name: 'tapered cup with early repeated occlusion on busy moving background',
-    create: () => createTexturedCupSequence({
-      frameCount: 36,
-      occlusionFrames: [10, 11, 24],
-      backgroundVariant: 'busy',
-      backgroundSeed: 111,
-    }),
+    create: () =>
+      createTexturedCupSequence({
+        frameCount: 36,
+        occlusionFrames: [10, 11, 24],
+        backgroundVariant: 'busy',
+        backgroundSeed: 111,
+      }),
     limits: {
       maxAnchorError: 22,
       meanAnchorError: 14,
@@ -250,12 +273,13 @@ export const realisticReplayScenarios = [
   },
   {
     name: 'tapered cup with late occlusion on shelf background',
-    create: () => createTexturedCupSequence({
-      frameCount: 28,
-      occlusionFrames: [18, 19],
-      backgroundVariant: 'shelf',
-      backgroundSeed: 121,
-    }),
+    create: () =>
+      createTexturedCupSequence({
+        frameCount: 28,
+        occlusionFrames: [18, 19],
+        backgroundVariant: 'shelf',
+        backgroundSeed: 121,
+      }),
     limits: {
       maxAnchorError: 27,
       meanAnchorError: 10,
@@ -302,12 +326,13 @@ export const realisticReplayScenarios = [
   {
     name: 'glossy phone with glare near window background',
     rigidPlanarPoseOwner: true,
-    create: () => createGlossyPhoneSequence({
-      frameCount: 24,
-      occlusionFrames: [8, 17],
-      backgroundVariant: 'window',
-      backgroundSeed: 67,
-    }),
+    create: () =>
+      createGlossyPhoneSequence({
+        frameCount: 24,
+        occlusionFrames: [8, 17],
+        backgroundVariant: 'window',
+        backgroundSeed: 67,
+      }),
     limits: {
       maxAnchorError: 21,
       meanAnchorError: 10,
@@ -325,12 +350,13 @@ export const realisticReplayScenarios = [
   },
   {
     name: 'label bottle on kitchen tile background',
-    create: () => createLabelBottleSequence({
-      frameCount: 24,
-      occlusionFrames: [7, 16],
-      backgroundVariant: 'kitchen',
-      backgroundSeed: 79,
-    }),
+    create: () =>
+      createLabelBottleSequence({
+        frameCount: 24,
+        occlusionFrames: [7, 16],
+        backgroundVariant: 'kitchen',
+        backgroundSeed: 79,
+      }),
     limits: {
       maxAnchorError: 30,
       meanAnchorError: 15,
@@ -379,12 +405,13 @@ export const realisticReplayScenarios = [
   },
   {
     name: 'crinkled snack pouch on busy moving background',
-    create: () => createSnackPouchSequence({
-      frameCount: 24,
-      occlusionFrames: [9, 18],
-      backgroundVariant: 'busy',
-      backgroundSeed: 97,
-    }),
+    create: () =>
+      createSnackPouchSequence({
+        frameCount: 24,
+        occlusionFrames: [9, 18],
+        backgroundVariant: 'busy',
+        backgroundSeed: 97,
+      }),
     limits: {
       maxAnchorError: 23,
       meanAnchorError: 10,
@@ -405,12 +432,13 @@ export const realisticReplayScenarios = [
 export const stressReplayScenarios = [
   {
     name: 'laminated card with glare on window background',
-    create: () => createLaminatedCardSequence({
-      frameCount: 24,
-      occlusionFrames: [8, 17],
-      backgroundVariant: 'window',
-      backgroundSeed: 109,
-    }),
+    create: () =>
+      createLaminatedCardSequence({
+        frameCount: 24,
+        occlusionFrames: [8, 17],
+        backgroundVariant: 'window',
+        backgroundSeed: 109,
+      }),
     limits: STRESS_REPLAY_LIMITS,
     qualityThresholdsByMode: {
       'sparse-reconstruction': OPTIONAL_SPARSE_RECONSTRUCTION_QUALITY,
@@ -418,12 +446,13 @@ export const stressReplayScenarios = [
   },
   {
     name: 'handled mug on kitchen tile background',
-    create: () => createHandledMugSequence({
-      frameCount: 24,
-      occlusionFrames: [8, 17],
-      backgroundVariant: 'kitchen',
-      backgroundSeed: 137,
-    }),
+    create: () =>
+      createHandledMugSequence({
+        frameCount: 24,
+        occlusionFrames: [8, 17],
+        backgroundVariant: 'kitchen',
+        backgroundSeed: 137,
+      }),
     limits: STRESS_REPLAY_LIMITS,
     qualityThresholdsByMode: {
       'sparse-reconstruction': OPTIONAL_SPARSE_RECONSTRUCTION_QUALITY,
@@ -431,12 +460,13 @@ export const stressReplayScenarios = [
   },
   {
     name: 'textured ball on busy moving background',
-    create: () => createTexturedBallSequence({
-      frameCount: 24,
-      occlusionFrames: [8, 17],
-      backgroundVariant: 'busy',
-      backgroundSeed: 149,
-    }),
+    create: () =>
+      createTexturedBallSequence({
+        frameCount: 24,
+        occlusionFrames: [8, 17],
+        backgroundVariant: 'busy',
+        backgroundSeed: 149,
+      }),
     limits: STRESS_REPLAY_LIMITS,
     qualityThresholdsByMode: {
       'sparse-reconstruction': OPTIONAL_SPARSE_RECONSTRUCTION_QUALITY,
@@ -444,8 +474,58 @@ export const stressReplayScenarios = [
   },
 ];
 
+export const captureReplayScenarios = [
+  {
+    name: 'planar book under low-light sensor noise',
+    captureCondition: 'low-light',
+    create: () =>
+      applyCaptureCondition(
+        createPlanarBookSequence({
+          kind: 'planar-book',
+          frameCount: 28,
+          occlusionFrames: [],
+          backgroundVariant: 'shelf',
+          backgroundSeed: 181,
+        }),
+        'low-light',
+      ),
+    limits: CAPTURE_REPLAY_LIMITS,
+  },
+  {
+    name: 'glossy phone under fast linear motion blur',
+    captureCondition: 'motion-blur',
+    create: () =>
+      applyCaptureCondition(
+        createGlossyPhoneSequence({
+          frameCount: 22,
+          occlusionFrames: [],
+          backgroundVariant: 'window',
+          backgroundSeed: 191,
+        }),
+        'motion-blur',
+      ),
+    limits: CAPTURE_REPLAY_LIMITS,
+  },
+  {
+    name: 'cylindrical can under horizontal rolling shutter',
+    captureCondition: 'rolling-shutter',
+    create: () =>
+      applyCaptureCondition(
+        createCylindricalCanSequence({
+          frameCount: 24,
+          occlusionFrames: [],
+          backgroundVariant: 'busy',
+          backgroundSeed: 211,
+        }),
+        'rolling-shutter',
+      ),
+    limits: CAPTURE_REPLAY_LIMITS,
+  },
+];
+
 export const reportReplayScenarios = [
   ...defaultReplayScenarios,
   ...realisticReplayScenarios,
   ...stressReplayScenarios,
+  ...captureReplayScenarios,
 ];

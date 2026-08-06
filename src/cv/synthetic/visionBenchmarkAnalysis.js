@@ -26,7 +26,7 @@ export const VISION_BENCHMARK_TARGETS = {
   },
 };
 
-const finiteMetric = value => Number.isFinite(value) ? value : null;
+const finiteMetric = (value) => (Number.isFinite(value) ? value : null);
 
 const cappedRatio = (value, target, cap = 2.5) => {
   const metric = finiteMetric(value);
@@ -40,22 +40,24 @@ const cappedDeficit = (value, target) => {
   return clamp((target - metric) / target, 0, 1);
 };
 
-const hasPostOcclusionWindows = tracking => Number.isFinite(tracking.postOcclusionWindowCount) &&
-  tracking.postOcclusionWindowCount > 0;
+const hasPostOcclusionWindows = (tracking) =>
+  Number.isFinite(tracking.postOcclusionWindowCount) && tracking.postOcclusionWindowCount > 0;
 
-const postOcclusionRecoveryDeficit = tracking => hasPostOcclusionWindows(tracking)
-  ? cappedDeficit(
-    tracking.postOcclusionRecoveryRateAt8,
-    VISION_BENCHMARK_TARGETS.tracking.minPostOcclusionRecoveryRateAt8
-  )
-  : 0;
+const postOcclusionRecoveryDeficit = (tracking) =>
+  hasPostOcclusionWindows(tracking)
+    ? cappedDeficit(
+        tracking.postOcclusionRecoveryRateAt8,
+        VISION_BENCHMARK_TARGETS.tracking.minPostOcclusionRecoveryRateAt8,
+      )
+    : 0;
 
-const postOcclusionRecoveryLatency = tracking => hasPostOcclusionWindows(tracking)
-  ? cappedRatio(
-    tracking.maxPostOcclusionRecoveryFramesAt8,
-    VISION_BENCHMARK_TARGETS.tracking.maxPostOcclusionRecoveryFramesAt8
-  )
-  : 0;
+const postOcclusionRecoveryLatency = (tracking) =>
+  hasPostOcclusionWindows(tracking)
+    ? cappedRatio(
+        tracking.maxPostOcclusionRecoveryFramesAt8,
+        VISION_BENCHMARK_TARGETS.tracking.maxPostOcclusionRecoveryFramesAt8,
+      )
+    : 0;
 
 const addWeighted = (components, name, raw, weight) => {
   const score = raw * weight;
@@ -63,7 +65,7 @@ const addWeighted = (components, name, raw, weight) => {
   return score;
 };
 
-export const scoreBenchmarkRisk = report => {
+export const scoreBenchmarkRisk = (report) => {
   const tracking = report.stages.tracking.metrics;
   const reconstruction = report.stages.reconstruction.metrics;
   const head = report.stages.headAttachment.metrics;
@@ -73,108 +75,121 @@ export const scoreBenchmarkRisk = report => {
       components,
       'tracking.meanAnchorError',
       cappedRatio(tracking.meanAnchorError, VISION_BENCHMARK_TARGETS.tracking.maxMeanAnchorError),
-      14
+      14,
     ),
     addWeighted(
       components,
       'tracking.maxAnchorError',
       cappedRatio(tracking.maxAnchorError, VISION_BENCHMARK_TARGETS.tracking.maxAnchorError),
-      7
+      7,
     ),
     addWeighted(
       components,
       'tracking.p95AnchorError',
       cappedRatio(tracking.p95AnchorError, VISION_BENCHMARK_TARGETS.tracking.maxP95AnchorError),
-      4
+      4,
     ),
     addWeighted(
       components,
       'tracking.maxFrameJump',
       cappedRatio(tracking.maxFrameJump, VISION_BENCHMARK_TARGETS.tracking.maxFrameJump),
-      5
+      5,
     ),
     addWeighted(
       components,
       'tracking.anchorAccuracyAt8',
       cappedDeficit(tracking.anchorAccuracyAt8, VISION_BENCHMARK_TARGETS.tracking.minAnchorAccuracyAt8),
-      5
+      5,
     ),
     addWeighted(
       components,
       'tracking.anchorAccuracyAt16',
       cappedDeficit(tracking.anchorAccuracyAt16, VISION_BENCHMARK_TARGETS.tracking.minAnchorAccuracyAt16),
-      2
+      2,
     ),
     addWeighted(
       components,
       'tracking.postOcclusionRecoveryRateAt8',
       postOcclusionRecoveryDeficit(tracking),
-      3
+      3,
     ),
     addWeighted(
       components,
       'tracking.postOcclusionRecoveryFramesAt8',
       postOcclusionRecoveryLatency(tracking),
-      4
+      4,
     ),
     addWeighted(
       components,
       'reconstruction.readyFrameRatio',
-      cappedDeficit(reconstruction.readyFrameRatio, VISION_BENCHMARK_TARGETS.reconstruction.minReadyFrameRatio),
-      9
+      cappedDeficit(
+        reconstruction.readyFrameRatio,
+        VISION_BENCHMARK_TARGETS.reconstruction.minReadyFrameRatio,
+      ),
+      9,
     ),
     addWeighted(
       components,
       'reconstruction.poseReadyFrameRatio',
-      cappedDeficit(reconstruction.poseReadyFrameRatio, VISION_BENCHMARK_TARGETS.reconstruction.minPoseReadyFrameRatio),
-      7
+      cappedDeficit(
+        reconstruction.poseReadyFrameRatio,
+        VISION_BENCHMARK_TARGETS.reconstruction.minPoseReadyFrameRatio,
+      ),
+      7,
     ),
     addWeighted(
       components,
       'reconstruction.meanReadyNormalError',
-      cappedRatio(reconstruction.meanReadyNormalError, VISION_BENCHMARK_TARGETS.reconstruction.maxMeanNormalError),
-      10
+      cappedRatio(
+        reconstruction.meanReadyNormalError,
+        VISION_BENCHMARK_TARGETS.reconstruction.maxMeanNormalError,
+      ),
+      10,
     ),
     addWeighted(
       components,
       'reconstruction.maxReadyNormalError',
       cappedRatio(reconstruction.maxReadyNormalError, VISION_BENCHMARK_TARGETS.reconstruction.maxNormalError),
-      8
+      8,
     ),
     addWeighted(
       components,
       'reconstruction.maxMapConfidence',
-      cappedDeficit(reconstruction.maxMapConfidence, VISION_BENCHMARK_TARGETS.reconstruction.minMapConfidence),
-      4
+      cappedDeficit(
+        reconstruction.maxMapConfidence,
+        VISION_BENCHMARK_TARGETS.reconstruction.minMapConfidence,
+      ),
+      4,
     ),
     addWeighted(
       components,
       'headAttachment.maxWorldPositionError',
       cappedRatio(head.maxWorldPositionError, VISION_BENCHMARK_TARGETS.headAttachment.maxWorldPositionError),
-      10
+      10,
     ),
     addWeighted(
       components,
       'headAttachment.maxRotationError',
       cappedRatio(head.maxRotationError, VISION_BENCHMARK_TARGETS.headAttachment.maxRotationError),
-      4
+      4,
     ),
     addWeighted(
       components,
       'headAttachment.maxScaleLogError',
       cappedRatio(head.maxScaleLogError, VISION_BENCHMARK_TARGETS.headAttachment.maxScaleLogError),
-      2
+      2,
     ),
     addWeighted(
       components,
       'headAttachment.maxHeadJumpExcess',
       cappedRatio(head.maxHeadJumpExcess, VISION_BENCHMARK_TARGETS.headAttachment.maxHeadJumpExcess),
-      2
+      2,
     ),
   ].reduce((sum, value) => sum + value, 0);
 
-  const sortedComponents = components
-    .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name));
+  const sortedComponents = components.sort(
+    (left, right) => right.score - left.score || left.name.localeCompare(right.name),
+  );
 
   return {
     score,
@@ -184,20 +199,22 @@ export const scoreBenchmarkRisk = report => {
   };
 };
 
-export const riskBandForScore = score => {
+export function riskBandForScore(score) {
   if (score >= 58) return 'severe';
   if (score >= 36) return 'high';
   if (score >= 20) return 'moderate';
   return 'low';
-};
+}
 
 const increment = (counts, key) => {
   counts[key] = (counts[key] || 0) + 1;
 };
 
-const targetClassFor = report => report.axes.targetClass || 'missing-target-class';
+const targetClassFor = (report) => report.axes.targetClass || 'missing-target-class';
+const captureFor = (report) => report.axes.capture || 'nominal';
+const eventFor = (report) => report.axes.event || 'continuous';
 
-const compactMetricsFor = report => {
+const compactMetricsFor = (report) => {
   const tracking = report.stages.tracking.metrics;
   const reconstruction = report.stages.reconstruction.metrics;
   const head = report.stages.headAttachment.metrics;
@@ -215,8 +232,16 @@ const compactMetricsFor = report => {
     postOcclusionRecoveryRateAt8: finiteMetric(tracking.postOcclusionRecoveryRateAt8),
     maxPostOcclusionRecoveryFramesAt8: finiteMetric(tracking.maxPostOcclusionRecoveryFramesAt8),
     meanPostOcclusionRecoveryFramesAt8: finiteMetric(tracking.meanPostOcclusionRecoveryFramesAt8),
+    targetLossWindowCount: finiteMetric(tracking.targetLossWindowCount),
+    targetAbsentFrameCount: finiteMetric(tracking.targetAbsentFrameCount),
+    targetPresentAbsentDisplayFrames: finiteMetric(tracking.targetPresentAbsentDisplayFrames),
+    falseTrackedAbsentAdmittedFrames: finiteMetric(tracking.falseTrackedAbsentAdmittedFrames),
+    targetLossRecoveredAt8: finiteMetric(tracking.targetLossRecoveredAt8),
+    targetLossRecoveryRateAt8: finiteMetric(tracking.targetLossRecoveryRateAt8),
+    maxTargetLossRecoveryFramesAt8: finiteMetric(tracking.maxTargetLossRecoveryFramesAt8),
     maxFrameJump: finiteMetric(tracking.maxFrameJump),
     objectSupportCorrectionFrames: finiteMetric(tracking.objectSupportCorrectionFrames),
+    objectSupportFrameStepLimitedFrames: finiteMetric(tracking.objectSupportFrameStepLimitedFrames),
     objectSupportRecoveryFrames: finiteMetric(tracking.objectSupportRecoveryFrames),
     maxObjectSupportPositionStep: finiteMetric(tracking.maxObjectSupportPositionStep),
     maxObjectSupportAnchorError: finiteMetric(tracking.maxObjectSupportAnchorError),
@@ -231,7 +256,7 @@ const compactMetricsFor = report => {
   };
 };
 
-const compactReport = report => ({
+const compactReport = (report) => ({
   name: report.name,
   mode: report.mode,
   axes: report.axes,
@@ -275,40 +300,42 @@ const addToGroup = (groups, key, report) => {
   groups[key] = group;
 };
 
-const rankedWeaknesses = weaknesses => Object.entries(weaknesses)
-  .map(([weakness, count]) => ({ weakness, count }))
-  .sort((left, right) => right.count - left.count || left.weakness.localeCompare(right.weakness))
-  .slice(0, 4);
+const rankedWeaknesses = (weaknesses) =>
+  Object.entries(weaknesses)
+    .map(([weakness, count]) => ({ weakness, count }))
+    .sort((left, right) => right.count - left.count || left.weakness.localeCompare(right.weakness))
+    .slice(0, 4);
 
-const finalizeGroups = groups => Object.entries(groups)
-  .map(([name, group]) => ({
-    name,
-    count: group.count,
-    meanRiskScore: group.scoreSum / group.count,
-    maxRiskScore: group.maxRiskScore,
-    severe: group.severe,
-    high: group.high,
-    fail: group.fail,
-    topPrimaryWeaknesses: rankedWeaknesses(group.primaryWeaknesses),
-    topFailedPrimaryWeaknesses: rankedWeaknesses(group.failedPrimaryWeaknesses),
-    topHighRiskPrimaryWeaknesses: rankedWeaknesses(group.highRiskPrimaryWeaknesses),
-    worst: group.worst,
-  }))
-  .sort((left, right) => (
-    right.meanRiskScore - left.meanRiskScore ||
-    right.maxRiskScore - left.maxRiskScore ||
-    left.name.localeCompare(right.name)
-  ));
+const finalizeGroups = (groups) =>
+  Object.entries(groups)
+    .map(([name, group]) => ({
+      name,
+      count: group.count,
+      meanRiskScore: group.scoreSum / group.count,
+      maxRiskScore: group.maxRiskScore,
+      severe: group.severe,
+      high: group.high,
+      fail: group.fail,
+      topPrimaryWeaknesses: rankedWeaknesses(group.primaryWeaknesses),
+      topFailedPrimaryWeaknesses: rankedWeaknesses(group.failedPrimaryWeaknesses),
+      topHighRiskPrimaryWeaknesses: rankedWeaknesses(group.highRiskPrimaryWeaknesses),
+      worst: group.worst,
+    }))
+    .sort(
+      (left, right) =>
+        right.meanRiskScore - left.meanRiskScore ||
+        right.maxRiskScore - left.maxRiskScore ||
+        left.name.localeCompare(right.name),
+    );
 
 const interactionKey = (...values) => values.join(' / ');
 
-const recoveryMetricsFor = report => report.stages.tracking.metrics;
+const recoveryMetricsFor = (report) => report.stages.tracking.metrics;
 
-const recoveryWindowCount = metrics => Number.isFinite(metrics.postOcclusionWindowCount)
-  ? metrics.postOcclusionWindowCount
-  : 0;
+const recoveryWindowCount = (metrics) =>
+  Number.isFinite(metrics.postOcclusionWindowCount) ? metrics.postOcclusionWindowCount : 0;
 
-const recoveredWindowCount = metrics => {
+const recoveredWindowCount = (metrics) => {
   if (Number.isFinite(metrics.postOcclusionRecoveredAt8)) {
     return metrics.postOcclusionRecoveredAt8;
   }
@@ -318,25 +345,25 @@ const recoveredWindowCount = metrics => {
   return 0;
 };
 
-const failedRecoveryWindowCount = metrics => {
+const failedRecoveryWindowCount = (metrics) => {
   if (Number.isFinite(metrics.postOcclusionFailedWindowsAt8)) {
     return metrics.postOcclusionFailedWindowsAt8;
   }
   return recoveryWindowCount(metrics) - recoveredWindowCount(metrics);
 };
 
-const recoveryRateAt8 = metrics => {
+const recoveryRateAt8 = (metrics) => {
   const windows = recoveryWindowCount(metrics);
   return windows ? recoveredWindowCount(metrics) / windows : 1;
 };
 
-const maxRecoveryFramesAt8 = metrics => Number.isFinite(metrics.maxPostOcclusionRecoveryFramesAt8)
-  ? metrics.maxPostOcclusionRecoveryFramesAt8
-  : 0;
+const maxRecoveryFramesAt8 = (metrics) =>
+  Number.isFinite(metrics.maxPostOcclusionRecoveryFramesAt8) ? metrics.maxPostOcclusionRecoveryFramesAt8 : 0;
 
-const meanRecoveryFramesAt8 = metrics => Number.isFinite(metrics.meanPostOcclusionRecoveryFramesAt8)
-  ? metrics.meanPostOcclusionRecoveryFramesAt8
-  : 0;
+const meanRecoveryFramesAt8 = (metrics) =>
+  Number.isFinite(metrics.meanPostOcclusionRecoveryFramesAt8)
+    ? metrics.meanPostOcclusionRecoveryFramesAt8
+    : 0;
 
 const createRecoveryAccumulator = () => ({
   reportCount: 0,
@@ -386,7 +413,7 @@ const recoveryReportComparator = (left, right) => {
   );
 };
 
-const summarizeRecoveryAccumulator = group => ({
+const summarizeRecoveryAccumulator = (group) => ({
   reportCount: group.reportCount,
   windowCount: group.windowCount,
   recoveredAt8: group.recoveredAt8,
@@ -397,70 +424,112 @@ const summarizeRecoveryAccumulator = group => ({
   meanRecoveryFramesAt8: group.windowCount ? group.recoveryFrameSum / group.windowCount : 0,
 });
 
-const finalizeRecoveryGroups = groups => Object.entries(groups)
-  .map(([name, group]) => ({
-    name,
-    ...summarizeRecoveryAccumulator(group),
-    worstReports: [...group.reports]
-      .sort(recoveryReportComparator)
-      .slice(0, 6)
-      .map(compactReport),
-  }))
-  .sort((left, right) => (
-    right.failedWindowsAt8 - left.failedWindowsAt8 ||
-    left.recoveryRateAt8 - right.recoveryRateAt8 ||
-    right.maxRecoveryFramesAt8 - left.maxRecoveryFramesAt8 ||
-    right.windowCount - left.windowCount ||
-    left.name.localeCompare(right.name)
-  ));
+const finalizeRecoveryGroups = (groups) =>
+  Object.entries(groups)
+    .map(([name, group]) => ({
+      name,
+      ...summarizeRecoveryAccumulator(group),
+      worstReports: [...group.reports].sort(recoveryReportComparator).slice(0, 6).map(compactReport),
+    }))
+    .sort(
+      (left, right) =>
+        right.failedWindowsAt8 - left.failedWindowsAt8 ||
+        left.recoveryRateAt8 - right.recoveryRateAt8 ||
+        right.maxRecoveryFramesAt8 - left.maxRecoveryFramesAt8 ||
+        right.windowCount - left.windowCount ||
+        left.name.localeCompare(right.name),
+    );
 
-const createPostOcclusionRecoverySummary = reports => {
+const createPostOcclusionRecoverySummary = (reports) => {
   const aggregate = createRecoveryAccumulator();
   const groups = {
     byMode: {},
     byObject: {},
     byTargetClass: {},
     byOcclusion: {},
+    byCapture: {},
+    byEvent: {},
     byModeOcclusion: {},
     byObjectOcclusion: {},
     byTargetClassOcclusion: {},
   };
 
-  reports.forEach(report => {
+  reports.forEach((report) => {
     addRecoveryToAccumulator(aggregate, report);
     addRecoveryToGroup(groups.byMode, report.mode, report);
     addRecoveryToGroup(groups.byObject, report.axes.object, report);
     addRecoveryToGroup(groups.byTargetClass, targetClassFor(report), report);
     addRecoveryToGroup(groups.byOcclusion, report.axes.occlusion, report);
+    addRecoveryToGroup(groups.byCapture, captureFor(report), report);
+    addRecoveryToGroup(groups.byEvent, eventFor(report), report);
     addRecoveryToGroup(groups.byModeOcclusion, interactionKey(report.mode, report.axes.occlusion), report);
-    addRecoveryToGroup(groups.byObjectOcclusion, interactionKey(report.axes.object, report.axes.occlusion), report);
+    addRecoveryToGroup(
+      groups.byObjectOcclusion,
+      interactionKey(report.axes.object, report.axes.occlusion),
+      report,
+    );
     addRecoveryToGroup(
       groups.byTargetClassOcclusion,
       interactionKey(targetClassFor(report), report.axes.occlusion),
-      report
+      report,
     );
   });
 
   return {
     aggregate: summarizeRecoveryAccumulator(aggregate),
-    worstReports: [...aggregate.reports]
-      .sort(recoveryReportComparator)
-      .slice(0, 12)
-      .map(compactReport),
-    ...Object.fromEntries(Object.entries(groups).map(([name, group]) => [name, finalizeRecoveryGroups(group)])),
+    worstReports: [...aggregate.reports].sort(recoveryReportComparator).slice(0, 12).map(compactReport),
+    ...Object.fromEntries(
+      Object.entries(groups).map(([name, group]) => [name, finalizeRecoveryGroups(group)]),
+    ),
   };
 };
 
-export const createVisionBenchmarkAnalysis = reports => {
-  const scoredReports = reports.map(report => ({
+const createTargetLossRecoverySummary = (reports) => {
+  const targetLossReports = reports.filter(
+    (report) => report.stages.tracking.metrics.targetLossWindowCount > 0,
+  );
+  const totals = targetLossReports.reduce(
+    (summary, report) => {
+      const metrics = report.stages.tracking.metrics;
+      summary.windowCount += metrics.targetLossWindowCount;
+      summary.absentFrameCount += metrics.targetAbsentFrameCount;
+      summary.targetPresentAbsentDisplayFrames += metrics.targetPresentAbsentDisplayFrames;
+      summary.falseTrackedAbsentAdmittedFrames += metrics.falseTrackedAbsentAdmittedFrames;
+      summary.recoveredAt8 += metrics.targetLossRecoveredAt8;
+      summary.failedWindowsAt8 += metrics.targetLossFailedWindowsAt8;
+      summary.maxRecoveryFramesAt8 = Math.max(
+        summary.maxRecoveryFramesAt8,
+        metrics.maxTargetLossRecoveryFramesAt8,
+      );
+      return summary;
+    },
+    {
+      reportCount: targetLossReports.length,
+      windowCount: 0,
+      absentFrameCount: 0,
+      targetPresentAbsentDisplayFrames: 0,
+      falseTrackedAbsentAdmittedFrames: 0,
+      recoveredAt8: 0,
+      failedWindowsAt8: 0,
+      maxRecoveryFramesAt8: 0,
+    },
+  );
+  return {
+    ...totals,
+    recoveryRateAt8: totals.windowCount ? totals.recoveredAt8 / totals.windowCount : 1,
+  };
+};
+
+export const createVisionBenchmarkAnalysis = (reports) => {
+  const scoredReports = reports.map((report) => ({
     ...report,
     risk: scoreBenchmarkRisk(report),
   }));
   const aggregate = {
     total: scoredReports.length,
-    meanRiskScore: scoredReports.reduce((sum, report) => sum + report.risk.score, 0) /
-      Math.max(1, scoredReports.length),
-    maxRiskScore: Math.max(...scoredReports.map(report => report.risk.score), 0),
+    meanRiskScore:
+      scoredReports.reduce((sum, report) => sum + report.risk.score, 0) / Math.max(1, scoredReports.length),
+    maxRiskScore: Math.max(...scoredReports.map((report) => report.risk.score), 0),
     byRiskBand: {},
     byStatus: {},
   };
@@ -473,13 +542,17 @@ export const createVisionBenchmarkAnalysis = reports => {
     byLighting: {},
     byMotion: {},
     byOcclusion: {},
+    byCapture: {},
+    byEvent: {},
     byModeObject: {},
     byObjectOcclusion: {},
     byObjectBackground: {},
     byModeOcclusion: {},
+    byModeCapture: {},
+    byModeEvent: {},
   };
 
-  scoredReports.forEach(report => {
+  scoredReports.forEach((report) => {
     increment(aggregate.byRiskBand, report.risk.band);
     increment(aggregate.byStatus, report.overallStatus);
     addToGroup(groups.byMode, report.mode, report);
@@ -490,16 +563,23 @@ export const createVisionBenchmarkAnalysis = reports => {
     addToGroup(groups.byLighting, report.axes.lighting, report);
     addToGroup(groups.byMotion, report.axes.motion, report);
     addToGroup(groups.byOcclusion, report.axes.occlusion, report);
+    addToGroup(groups.byCapture, captureFor(report), report);
+    addToGroup(groups.byEvent, eventFor(report), report);
     addToGroup(groups.byModeObject, interactionKey(report.mode, report.axes.object), report);
     addToGroup(groups.byObjectOcclusion, interactionKey(report.axes.object, report.axes.occlusion), report);
     addToGroup(groups.byObjectBackground, interactionKey(report.axes.object, report.axes.background), report);
     addToGroup(groups.byModeOcclusion, interactionKey(report.mode, report.axes.occlusion), report);
+    addToGroup(groups.byModeCapture, interactionKey(report.mode, captureFor(report)), report);
+    addToGroup(groups.byModeEvent, interactionKey(report.mode, eventFor(report)), report);
   });
 
   return {
     aggregate,
-    weakPoints: Object.fromEntries(Object.entries(groups).map(([name, group]) => [name, finalizeGroups(group)])),
+    weakPoints: Object.fromEntries(
+      Object.entries(groups).map(([name, group]) => [name, finalizeGroups(group)]),
+    ),
     postOcclusionRecovery: createPostOcclusionRecoverySummary(scoredReports),
+    targetLossRecovery: createTargetLossRecoverySummary(scoredReports),
     worstReports: scoredReports
       .sort((left, right) => right.risk.score - left.risk.score || left.name.localeCompare(right.name))
       .slice(0, 16)

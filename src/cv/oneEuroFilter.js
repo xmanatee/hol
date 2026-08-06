@@ -29,7 +29,7 @@ class LowPassFilter {
   }
 }
 
-const timestampDeltaToSeconds = delta => delta > 10 ? delta / 1000 : delta;
+const timestampDeltaToSeconds = (delta) => (delta > 10 ? delta / 1000 : delta);
 
 export class OneEuroFilter {
   constructor(freq, minCutOff = 1.0, beta = 0.0, dCutOff = 1.0) {

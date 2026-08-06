@@ -3,6 +3,313 @@ import assert from 'node:assert/strict';
 import { AnchorManager } from './AnchorManager.js';
 import { createObjectSupportMask, isPointInsideObjectSupport } from '../cv/objectSupportMask.js';
 
+const createDeferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
+const waitForTask = () =>
+  new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+
+const createTapMask = () =>
+  createObjectSupportMask({
+    width: 20,
+    height: 20,
+    data: new Uint8Array(20 * 20).fill(255),
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 10, y: 10 },
+    createdAtFrame: 0,
+    updatedAtFrame: 0,
+  });
+
+test('anchor manager ignores a duplicate tracking-mode selection', () => {
+  let childUpdates = 0;
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {
+        childUpdates++;
+      },
+    },
+    interactiveSegmenterService: {},
+  });
+  let publications = 0;
+  manager.addListener(() => {
+    publications++;
+  });
+
+  manager.setTrackingMode('sparse-reconstruction');
+
+  assert.equal(childUpdates, 1);
+  assert.equal(publications, 0);
+});
+
+const createTapFrame = () => ({
+  width: 20,
+  height: 20,
+  data: new Uint8ClampedArray(20 * 20 * 4),
+});
+
+test('anchor manager initialization is single-flight', async () => {
+  const initialization = createDeferred();
+  let initializationCount = 0;
+  let listenerCount = 0;
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      initialize: () => {
+        initializationCount++;
+        return initialization.promise;
+      },
+      addListener: () => {
+        listenerCount++;
+      },
+    },
+    interactiveSegmenterService: {},
+  });
+
+  const first = manager.initialize(null, 320, 240, 63);
+  const second = manager.initialize(null, 320, 240, 63);
+  initialization.resolve();
+
+  await Promise.all([first, second]);
+  assert.equal(first, second);
+  assert.equal(initializationCount, 1);
+  assert.equal(listenerCount, 1);
+  assert.equal(manager.initialized, true);
+});
+
+test('anchor manager disposal wins initialization already in flight', async () => {
+  const initialization = createDeferred();
+  let imageAnchorDisposals = 0;
+  let segmenterDisposals = 0;
+  let listenerCount = 0;
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      initialize: () => initialization.promise,
+      addListener: () => {
+        listenerCount++;
+      },
+      dispose: () => {
+        imageAnchorDisposals++;
+      },
+    },
+    interactiveSegmenterService: {
+      dispose: () => {
+        segmenterDisposals++;
+      },
+    },
+  });
+
+  const pending = manager.initialize(null, 320, 240, 63);
+  manager.dispose();
+  initialization.resolve();
+
+  await assert.rejects(pending, /disposed during initialization/);
+  assert.equal(imageAnchorDisposals, 2);
+  assert.equal(segmenterDisposals, 1);
+  assert.equal(listenerCount, 0);
+  assert.deepEqual(manager.getState(), {
+    mode: 'selection',
+    activeAnchor: null,
+    anchorState: null,
+    segmentationRefresh: {
+      status: 'idle',
+      trigger: null,
+      outcomeReason: null,
+      maskSource: null,
+    },
+    trackingMode: 'sparse-reconstruction',
+    initialized: false,
+  });
+});
+
+test('anchor manager disposal cleans up initialization that rejects late', async () => {
+  const initialization = createDeferred();
+  let imageAnchorDisposals = 0;
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      initialize: () => initialization.promise,
+      dispose: () => {
+        imageAnchorDisposals++;
+      },
+    },
+    interactiveSegmenterService: {
+      dispose: () => {},
+    },
+  });
+
+  const pending = manager.initialize(null, 320, 240, 63);
+  manager.dispose();
+  initialization.reject(new Error('child initialization aborted'));
+
+  await assert.rejects(pending, (error) => {
+    assert.match(error.message, /disposed during initialization/);
+    assert.equal(error.cause.message, 'child initialization aborted');
+    return true;
+  });
+  assert.equal(imageAnchorDisposals, 2);
+  assert.equal(manager.initialized, false);
+});
+
+test('anchor manager disposal cancels tap creation before image-anchor work starts', async () => {
+  const segmentation = createDeferred();
+  let createAnchorCount = 0;
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      createAnchor: async () => {
+        createAnchorCount++;
+        return { success: false };
+      },
+      dispose: () => {},
+    },
+    interactiveSegmenterService: {
+      segmentTap: () => segmentation.promise,
+      dispose: () => {},
+    },
+  });
+  manager.initialized = true;
+
+  const pending = manager.createAnchorFromTap({ x: 10, y: 10 }, createTapFrame());
+  manager.dispose();
+  segmentation.resolve(createTapMask());
+
+  await assert.rejects(pending, /disposed during anchor creation/);
+  assert.equal(createAnchorCount, 0);
+  assert.equal(manager.mode, 'selection');
+  assert.equal(manager.activeAnchor, null);
+});
+
+test('anchor manager disposal rejects a late image-anchor creation result', async () => {
+  const creation = createDeferred();
+  let imageAnchorDisposals = 0;
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      createAnchor: () => creation.promise,
+      dispose: () => {
+        imageAnchorDisposals++;
+      },
+    },
+    interactiveSegmenterService: {
+      segmentTap: async () => createTapMask(),
+      dispose: () => {},
+    },
+  });
+  manager.initialized = true;
+
+  const pending = manager.createAnchorFromTap({ x: 10, y: 10 }, createTapFrame());
+  await Promise.resolve();
+  await Promise.resolve();
+  manager.dispose();
+  creation.resolve({
+    success: true,
+    position: { x: 10, y: 10, z: 0 },
+    keypoints: 16,
+    quality: 0.8,
+    method: 'GFTT',
+    state: 'tracking',
+    objectSupportMaskSource: 'tap-local',
+  });
+
+  await assert.rejects(pending, /disposed during anchor creation/);
+  assert.equal(imageAnchorDisposals, 2);
+  assert.equal(manager.mode, 'selection');
+  assert.equal(manager.activeAnchor, null);
+});
+
+test('anchor manager disposal rejects a late tracking result', async () => {
+  const update = createDeferred();
+  let imageAnchorDisposals = 0;
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      updateAnchor: () => update.promise,
+      dispose: () => {
+        imageAnchorDisposals++;
+      },
+    },
+    interactiveSegmenterService: {
+      dispose: () => {},
+    },
+  });
+  manager.initialized = true;
+  manager.mode = 'anchor';
+
+  const pending = manager.updateAnchor(createTapFrame());
+  manager.dispose();
+  update.resolve({ success: true });
+
+  await assert.rejects(pending, /disposed during anchor update/);
+  assert.equal(imageAnchorDisposals, 2);
+  assert.equal(manager.mode, 'selection');
+  assert.equal(manager.activeAnchor, null);
+});
+
+test('anchor manager disposal ignores a queued child state callback', async () => {
+  let childListener = null;
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      initialize: async () => {},
+      addListener: (listener) => {
+        childListener = listener;
+      },
+      dispose: () => {},
+    },
+    interactiveSegmenterService: {
+      dispose: () => {},
+    },
+  });
+
+  await manager.initialize(null, 320, 240, 63);
+  manager.dispose();
+  childListener({
+    anchored: true,
+    state: 'tracking',
+    position: { x: 10, y: 10, z: 0 },
+    metrics: {},
+  });
+
+  assert.equal(manager.anchorState, null);
+  assert.equal(manager.activeAnchor, null);
+  assert.equal(manager.mode, 'selection');
+});
+
+test('anchor manager disposes every runtime it owns', () => {
+  let imageAnchorDisposals = 0;
+  let segmenterDisposals = 0;
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      dispose: () => {
+        imageAnchorDisposals++;
+      },
+    },
+    interactiveSegmenterService: {
+      dispose: () => {
+        segmenterDisposals++;
+      },
+    },
+  });
+
+  manager.dispose();
+
+  assert.equal(imageAnchorDisposals, 1);
+  assert.equal(segmenterDisposals, 1);
+  assert.equal(manager.initialized, false);
+});
+
 test('anchor manager attaches tap-time segmenter mask before creating image anchor', async () => {
   const maskData = new Uint8Array(100 * 80);
   for (let y = 8; y < 72; y++) {
@@ -20,11 +327,11 @@ test('anchor manager attaches tap-time segmenter mask before creating image anch
     createdAtFrame: 0,
     updatedAtFrame: 0,
   });
-  let receivedDetection = null;
+  let receivedSelectionRegion = null;
   const imageAnchorService = {
     setTrackingMode: () => {},
-    createAnchor: async (imageData, tapPosition, detection) => {
-      receivedDetection = detection;
+    createAnchor: async (imageData, tapPosition, selectionRegion) => {
+      receivedSelectionRegion = selectionRegion;
       return {
         success: true,
         position: tapPosition,
@@ -33,7 +340,7 @@ test('anchor manager attaches tap-time segmenter mask before creating image anch
         method: 'GFTT',
         state: 'tracking',
         trackingMode: 'object-pose',
-        objectSupportMaskSource: detection.objectSupportMask.source,
+        objectSupportMaskSource: selectionRegion.objectSupportMask.source,
       };
     },
   };
@@ -47,20 +354,19 @@ test('anchor manager attaches tap-time segmenter mask before creating image anch
   };
   const manager = new AnchorManager({ imageAnchorService, interactiveSegmenterService });
   manager.initialized = true;
-  manager.mode = 'detection';
-  manager.detections = [{ x1: 20, y1: 10, x2: 80, y2: 70, class: 'cup', confidence: 0.93 }];
+  manager.mode = 'selection';
 
   const result = await manager.createAnchorFromTap(
     { x: 50, y: 40 },
-    { width: 100, height: 80, data: new Uint8ClampedArray(100 * 80 * 4) }
+    { width: 100, height: 80, data: new Uint8ClampedArray(100 * 80 * 4) },
   );
 
   assert.equal(result.success, true);
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'interactive-segmenter');
-  assert.deepEqual(receivedDetection.objectSupportMask.bbox, { x: 6, y: 8, width: 88, height: 64 });
+  assert.deepEqual(receivedSelectionRegion.objectSupportMask.bbox, { x: 6, y: 8, width: 88, height: 64 });
 });
 
-test('anchor manager creates a free-tap anchor when segmentation succeeds outside detections', async () => {
+test('anchor manager creates a free-tap anchor when segmentation succeeds', async () => {
   const objectSupportMask = createObjectSupportMask({
     width: 100,
     height: 80,
@@ -80,7 +386,7 @@ test('anchor manager creates a free-tap anchor when segmentation succeeds outsid
   const manager = new AnchorManager({
     imageAnchorService: {
       setTrackingMode: () => {},
-      createAnchor: async (imageData, tapPosition, detection) => ({
+      createAnchor: async (imageData, tapPosition, selectionRegion) => ({
         success: true,
         position: tapPosition,
         keypoints: 9,
@@ -91,13 +397,13 @@ test('anchor manager creates a free-tap anchor when segmentation succeeds outsid
         readiness: { faceReady: false, reason: 'Build more object landmarks before showing the face' },
         evidence: {
           maskCoverage: 1,
-          maskConfidence: detection.objectSupportMask.confidence,
+          maskConfidence: selectionRegion.objectSupportMask.confidence,
           templateKeypoints: 9,
           activeLandmarks: 9,
           objectOwnedLandmarks: 9,
           backgroundRejected: 0,
         },
-        objectSupportMaskSource: detection.objectSupportMask.source,
+        objectSupportMaskSource: selectionRegion.objectSupportMask.source,
       }),
     },
     interactiveSegmenterService: {
@@ -107,29 +413,29 @@ test('anchor manager creates a free-tap anchor when segmentation succeeds outsid
     },
   });
   manager.initialized = true;
-  manager.mode = 'detection';
-  manager.detections = [{ x1: 20, y1: 10, x2: 80, y2: 70, class: 'cup', confidence: 0.93 }];
+  manager.mode = 'selection';
 
   const result = await manager.createAnchorFromTap(
     { x: 10, y: 40 },
-    { width: 100, height: 80, data: new Uint8ClampedArray(100 * 80 * 4) }
+    { width: 100, height: 80, data: new Uint8ClampedArray(100 * 80 * 4) },
   );
 
   assert.equal(result.success, true);
+  assert.deepEqual(result.objectSupportSelection, { outcome: 'segmenter-mask' });
   assert.equal(manager.mode, 'anchor');
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'interactive-segmenter');
-  assert.equal(manager.activeAnchor.sourceDetection.class, 'segmented-object');
-  assert.equal(manager.activeAnchor.sourceDetection.x1, 4);
-  assert.equal(manager.activeAnchor.sourceDetection.y1, 24);
-  assert.equal(manager.activeAnchor.sourceDetection.x2, 37);
-  assert.equal(manager.activeAnchor.sourceDetection.y2, 57);
+  assert.equal('surfaceHint' in manager.activeAnchor.selectionRegion, false);
+  assert.equal(manager.activeAnchor.selectionRegion.x1, 4);
+  assert.equal(manager.activeAnchor.selectionRegion.y1, 24);
+  assert.equal(manager.activeAnchor.selectionRegion.x2, 37);
+  assert.equal(manager.activeAnchor.selectionRegion.y2, 57);
 });
 
-test('anchor manager creates tap-local anchor without detections or segmentation', async () => {
+test('anchor manager creates tap-local anchor without segmentation', async () => {
   const manager = new AnchorManager({
     imageAnchorService: {
       setTrackingMode: () => {},
-      createAnchor: async (imageData, tapPosition, detection) => ({
+      createAnchor: async (imageData, tapPosition, selectionRegion) => ({
         success: true,
         position: tapPosition,
         keypoints: 6,
@@ -140,13 +446,13 @@ test('anchor manager creates tap-local anchor without detections or segmentation
         readiness: { faceReady: false, reason: 'Build more object landmarks before showing the face' },
         evidence: {
           maskCoverage: 1,
-          maskConfidence: detection.objectSupportMask.confidence,
+          maskConfidence: selectionRegion.objectSupportMask.confidence,
           templateKeypoints: 6,
           activeLandmarks: 6,
           objectOwnedLandmarks: 6,
           backgroundRejected: 0,
         },
-        objectSupportMaskSource: detection.objectSupportMask.source,
+        objectSupportMaskSource: selectionRegion.objectSupportMask.source,
       }),
     },
     interactiveSegmenterService: {
@@ -154,26 +460,29 @@ test('anchor manager creates tap-local anchor without detections or segmentation
     },
   });
   manager.initialized = true;
-  manager.mode = 'detection';
-  manager.detections = [];
+  manager.mode = 'selection';
 
   const result = await manager.createAnchorFromTap(
     { x: 10, y: 40 },
-    { width: 100, height: 80, data: new Uint8ClampedArray(100 * 80 * 4) }
+    { width: 100, height: 80, data: new Uint8ClampedArray(100 * 80 * 4) },
   );
 
   assert.equal(result.success, true);
+  assert.deepEqual(result.objectSupportSelection, { outcome: 'empty-mask' });
   assert.equal(manager.mode, 'anchor');
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'tap-local');
-  assert.equal(manager.activeAnchor.sourceDetection.class, 'segmented-object');
-  assert.equal(isPointInsideObjectSupport(manager.activeAnchor.sourceDetection.objectSupportMask, { x: 10, y: 40 }), true);
+  assert.equal('surfaceHint' in manager.activeAnchor.selectionRegion, false);
+  assert.equal(
+    isPointInsideObjectSupport(manager.activeAnchor.selectionRegion.objectSupportMask, { x: 10, y: 40 }),
+    true,
+  );
 });
 
 test('anchor manager falls back to tap-local support when tap segmentation fails', async () => {
   const manager = new AnchorManager({
     imageAnchorService: {
       setTrackingMode: () => {},
-      createAnchor: async (imageData, tapPosition, detection) => ({
+      createAnchor: async (imageData, tapPosition, selectionRegion) => ({
         success: true,
         position: tapPosition,
         keypoints: 3,
@@ -190,7 +499,7 @@ test('anchor manager falls back to tap-local support when tap segmentation fails
           objectOwnedLandmarks: 3,
           backgroundRejected: 0,
         },
-        objectSupportMaskSource: detection.objectSupportMask.source,
+        objectSupportMaskSource: selectionRegion.objectSupportMask.source,
       }),
     },
     interactiveSegmenterService: {
@@ -200,15 +509,18 @@ test('anchor manager falls back to tap-local support when tap segmentation fails
     },
   });
   manager.initialized = true;
-  manager.mode = 'detection';
-  manager.detections = [{ x1: 20, y1: 10, x2: 80, y2: 70, class: 'cup', confidence: 0.93 }];
+  manager.mode = 'selection';
 
   const result = await manager.createAnchorFromTap(
     { x: 50, y: 40 },
-    { width: 100, height: 80, data: new Uint8ClampedArray(100 * 80 * 4) }
+    { width: 100, height: 80, data: new Uint8ClampedArray(100 * 80 * 4) },
   );
 
   assert.equal(result.success, true);
+  assert.deepEqual(result.objectSupportSelection, {
+    outcome: 'segmenter-unavailable',
+    error: 'segmenter unavailable',
+  });
   assert.equal(manager.mode, 'anchor');
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'tap-local');
 });
@@ -216,7 +528,7 @@ test('anchor manager falls back to tap-local support when tap segmentation fails
 test('anchor manager builds an explicit weak tap-local support mask when tap segmentation is empty', async () => {
   const imageAnchorService = {
     setTrackingMode: () => {},
-    createAnchor: async (imageData, tapPosition, detection) => ({
+    createAnchor: async (imageData, tapPosition, selectionRegion) => ({
       success: true,
       position: tapPosition,
       keypoints: 4,
@@ -233,7 +545,7 @@ test('anchor manager builds an explicit weak tap-local support mask when tap seg
         objectOwnedLandmarks: 4,
         backgroundRejected: 0,
       },
-      objectSupportMaskSource: detection.objectSupportMask.source,
+      objectSupportMaskSource: selectionRegion.objectSupportMask.source,
     }),
   };
   const manager = new AnchorManager({
@@ -243,27 +555,27 @@ test('anchor manager builds an explicit weak tap-local support mask when tap seg
     },
   });
   manager.initialized = true;
-  manager.mode = 'detection';
-  manager.detections = [{ x1: 20, y1: 10, x2: 80, y2: 70, class: 'cup', confidence: 0.93 }];
+  manager.mode = 'selection';
 
   const result = await manager.createAnchorFromTap(
     { x: 50, y: 40 },
-    { width: 100, height: 80, data: new Uint8ClampedArray(100 * 80 * 4) }
+    { width: 100, height: 80, data: new Uint8ClampedArray(100 * 80 * 4) },
   );
 
   assert.equal(result.success, true);
+  assert.deepEqual(result.objectSupportSelection, { outcome: 'empty-mask' });
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'tap-local');
-  assert.ok(manager.activeAnchor.sourceDetection.objectSupportMask.bbox.width <= 57);
-  assert.ok(manager.activeAnchor.sourceDetection.objectSupportMask.bbox.height <= 57);
+  assert.ok(manager.activeAnchor.selectionRegion.objectSupportMask.bbox.width <= 57);
+  assert.ok(manager.activeAnchor.selectionRegion.objectSupportMask.bbox.height <= 57);
 });
 
-test('anchor manager never lets a broad debug detection shape fallback support', async () => {
+test('anchor manager keeps fallback support tap-local', async () => {
   let supportMask = null;
   const manager = new AnchorManager({
     imageAnchorService: {
       setTrackingMode: () => {},
-      createAnchor: async (imageData, tapPosition, detection) => {
-        supportMask = detection.objectSupportMask;
+      createAnchor: async (imageData, tapPosition, selectionRegion) => {
+        supportMask = selectionRegion.objectSupportMask;
         return {
           success: true,
           position: tapPosition,
@@ -275,13 +587,13 @@ test('anchor manager never lets a broad debug detection shape fallback support',
           readiness: { faceReady: false, reason: 'Build more object landmarks before showing the face' },
           evidence: {
             maskCoverage: 0.18,
-            maskConfidence: detection.objectSupportMask.confidence,
+            maskConfidence: selectionRegion.objectSupportMask.confidence,
             templateKeypoints: 8,
             activeLandmarks: 8,
             objectOwnedLandmarks: 8,
             backgroundRejected: 0,
           },
-          objectSupportMaskSource: detection.objectSupportMask.source,
+          objectSupportMaskSource: selectionRegion.objectSupportMask.source,
         };
       },
     },
@@ -290,19 +602,11 @@ test('anchor manager never lets a broad debug detection shape fallback support',
     },
   });
   manager.initialized = true;
-  manager.mode = 'detection';
-  manager.detections = [{
-    x1: 110,
-    y1: 40,
-    x2: 310,
-    y2: 430,
-    class: 'person',
-    confidence: 0.96,
-  }];
+  manager.mode = 'selection';
 
   const result = await manager.createAnchorFromTap(
     { x: 205, y: 92 },
-    { width: 420, height: 480, data: new Uint8ClampedArray(420 * 480 * 4) }
+    { width: 420, height: 480, data: new Uint8ClampedArray(420 * 480 * 4) },
   );
 
   assert.equal(result.success, true);
@@ -354,6 +658,36 @@ test('anchor manager propagates live object mask preview into active-anchor diag
   assert.deepEqual(manager.activeAnchor.diagnostics.objectSupportMaskPreview, preview);
 });
 
+test('anchor manager records overlay readiness once and never regresses it during pose loss', () => {
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+    },
+    interactiveSegmenterService: {},
+  });
+  manager.mode = 'anchor';
+  manager.activeAnchor = {
+    position: { x: 20, y: 30, z: 0 },
+    overlaySceneReady: false,
+  };
+
+  manager._onAnchorUpdate({
+    anchored: true,
+    state: 'tracking',
+    position: { x: 20, y: 30, z: 0 },
+    metrics: { readiness: { faceReady: true } },
+  });
+  assert.equal(manager.activeAnchor.overlaySceneReady, true);
+
+  manager._onAnchorUpdate({
+    anchored: true,
+    state: 'lost',
+    position: { x: 20, y: 30, z: 0 },
+    metrics: { readiness: { faceReady: false } },
+  });
+  assert.equal(manager.activeAnchor.overlaySceneReady, true);
+});
+
 test('anchor manager refreshes segmentation when object-owned landmark ratio drops', async () => {
   const refreshedMask = createObjectSupportMask({
     width: 160,
@@ -403,13 +737,16 @@ test('anchor manager refreshes segmentation when object-owned landmark ratio dro
     },
   };
 
-  assert.equal(manager.refreshSegmentationIfNeeded({
-    width: 160,
-    height: 120,
-    data: new Uint8ClampedArray(160 * 120 * 4),
-  }), true);
+  assert.equal(
+    manager.refreshSegmentationIfNeeded({
+      width: 160,
+      height: 120,
+      data: new Uint8ClampedArray(160 * 120 * 4),
+    }),
+    true,
+  );
 
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await waitForTask();
 
   assert.equal(updateReason, 'object-ownership-recovery');
   assert.ok(receivedMaxRadius > 28);
@@ -454,7 +791,7 @@ test('segmentation refresh expands tap-local fallback support when segmenter ret
   manager.activeAnchor = {
     position: { x: 80, y: 60, z: 0 },
     objectSupportMaskSource: 'tap-local',
-    sourceDetection: {
+    selectionRegion: {
       objectSupportMask: initialMask,
     },
   };
@@ -470,22 +807,31 @@ test('segmentation refresh expands tap-local fallback support when segmenter ret
   };
   manager.lastSegmentationRefreshAt = -1000;
 
-  assert.equal(manager.refreshSegmentationIfNeeded({
-    width: 160,
-    height: 120,
-    data: new Uint8ClampedArray(160 * 120 * 4),
-  }), true);
+  assert.equal(
+    manager.refreshSegmentationIfNeeded({
+      width: 160,
+      height: 120,
+      data: new Uint8ClampedArray(160 * 120 * 4),
+    }),
+    true,
+  );
 
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await waitForTask();
 
   assert.equal(updateReason, 'tap-local-support-growth');
   assert.equal(appliedMask.source, 'tap-local');
   assert.ok(appliedMask.bbox.width > initialMask.bbox.width * 2);
   assert.ok(appliedMask.bbox.height > initialMask.bbox.height * 2);
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'tap-local');
+  assert.deepEqual(manager.getState().segmentationRefresh, {
+    status: 'fallback',
+    trigger: 'periodic-segmentation-refresh',
+    outcomeReason: 'empty-mask',
+    maskSource: 'tap-local',
+  });
 });
 
-test('pose dropout requests immediate segmentation refresh and accepts overlapping support', async () => {
+test('pose dropout records accepted and service-rejected overlapping support refreshes', async () => {
   const refreshedMask = createObjectSupportMask({
     width: 180,
     height: 140,
@@ -504,13 +850,14 @@ test('pose dropout requests immediate segmentation refresh and accepts overlappi
 
   let updateReason = null;
   let receivedTap = null;
+  let applyMask = true;
   const manager = new AnchorManager({
     imageAnchorService: {
       setTrackingMode: () => {},
       updateObjectSupportMask: (mask, { reason }) => {
         assert.equal(mask, refreshedMask);
         updateReason = reason;
-        return true;
+        return applyMask;
       },
     },
     interactiveSegmenterService: {
@@ -526,8 +873,8 @@ test('pose dropout requests immediate segmentation refresh and accepts overlappi
   manager.lastSegmentationRefreshAt = performance.now();
   manager.activeAnchor = {
     position: { x: 126, y: 60, z: 0 },
-    sourceDetection: {
-      class: 'mug',
+    selectionRegion: {
+      surfaceHint: 'mug',
       objectSupportMask: {
         bbox: { x: 58, y: 44, width: 64, height: 45 },
       },
@@ -547,16 +894,45 @@ test('pose dropout requests immediate segmentation refresh and accepts overlappi
     },
   };
 
-  assert.equal(manager.refreshSegmentationIfNeeded({
-    width: 180,
-    height: 140,
-    data: new Uint8ClampedArray(180 * 140 * 4),
-  }), true);
+  assert.equal(
+    manager.refreshSegmentationIfNeeded({
+      width: 180,
+      height: 140,
+      data: new Uint8ClampedArray(180 * 140 * 4),
+    }),
+    true,
+  );
 
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await waitForTask();
 
   assert.deepEqual(receivedTap, { x: 126, y: 60, z: 0 });
   assert.equal(updateReason, 'pose-dropout-recovery');
+  assert.deepEqual(manager.getState().segmentationRefresh, {
+    status: 'accepted',
+    trigger: 'pose-dropout-recovery',
+    outcomeReason: 'mask-overlap',
+    maskSource: 'interactive-segmenter',
+  });
+
+  applyMask = false;
+  manager.lastSegmentationRefreshAt = -1000;
+  assert.equal(
+    manager.refreshSegmentationIfNeeded({
+      width: 180,
+      height: 140,
+      data: new Uint8ClampedArray(180 * 140 * 4),
+    }),
+    true,
+  );
+
+  await waitForTask();
+
+  assert.deepEqual(manager.getState().segmentationRefresh, {
+    status: 'rejected',
+    trigger: 'pose-dropout-recovery',
+    outcomeReason: 'service-rejected-mask',
+    maskSource: null,
+  });
 });
 
 test('failed recovery segmentation clears the in-flight latch for later attempts', async () => {
@@ -578,8 +954,8 @@ test('failed recovery segmentation clears the in-flight latch for later attempts
   manager.mode = 'anchor';
   manager.activeAnchor = {
     position: { x: 126, y: 60, z: 0 },
-    sourceDetection: {
-      class: 'can',
+    selectionRegion: {
+      surfaceHint: 'can',
       objectSupportMask: {
         bbox: { x: 58, y: 44, width: 64, height: 45 },
       },
@@ -598,16 +974,103 @@ test('failed recovery segmentation clears the in-flight latch for later attempts
     },
   };
 
-  assert.equal(manager.refreshSegmentationIfNeeded({
-    width: 180,
-    height: 140,
-    data: new Uint8ClampedArray(180 * 140 * 4),
-  }), true);
+  assert.equal(
+    manager.refreshSegmentationIfNeeded({
+      width: 180,
+      height: 140,
+      data: new Uint8ClampedArray(180 * 140 * 4),
+    }),
+    true,
+  );
   assert.equal(manager.segmentationRefreshInFlight, true);
+  assert.deepEqual(manager.getState().segmentationRefresh, {
+    status: 'pending',
+    trigger: 'pose-dropout-recovery',
+    outcomeReason: null,
+    maskSource: null,
+  });
 
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await waitForTask();
 
   assert.equal(manager.segmentationRefreshInFlight, false);
+  assert.deepEqual(manager.getState().segmentationRefresh, {
+    status: 'rejected',
+    trigger: 'pose-dropout-recovery',
+    outcomeReason: 'segmenter-unavailable',
+    maskSource: null,
+  });
+});
+
+test('clearing an anchor invalidates an in-flight segmentation refresh', async () => {
+  const refreshedMask = createObjectSupportMask({
+    width: 160,
+    height: 120,
+    data: new Uint8Array(160 * 120).fill(255),
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 80, y: 60 },
+    createdAtFrame: 1,
+    updatedAtFrame: 1,
+  });
+  refreshedMask.bbox = { x: 60, y: 40, width: 40, height: 40 };
+
+  let resolveSegmentation;
+  let applied = false;
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+      clearAnchor: () => {},
+      updateObjectSupportMask: () => {
+        applied = true;
+        return true;
+      },
+    },
+    interactiveSegmenterService: {
+      segmentTap: () =>
+        new Promise((resolve) => {
+          resolveSegmentation = resolve;
+        }),
+    },
+  });
+  manager.initialized = true;
+  manager.mode = 'anchor';
+  manager.activeAnchor = {
+    position: { x: 80, y: 60, z: 0 },
+    selectionRegion: {
+      objectSupportMask: refreshedMask,
+    },
+  };
+  manager.anchorState = {
+    state: 'tracking',
+    position: { x: 80, y: 60, z: 0 },
+    metrics: {
+      activeLandmarkCount: 20,
+      objectOwnedLandmarks: 8,
+    },
+  };
+
+  assert.equal(
+    manager.refreshSegmentationIfNeeded({
+      width: 160,
+      height: 120,
+      data: new Uint8ClampedArray(160 * 120 * 4),
+    }),
+    true,
+  );
+  assert.equal(manager.segmentationRefreshInFlight, true);
+
+  manager.clearAnchor();
+  resolveSegmentation(refreshedMask);
+  await waitForTask();
+
+  assert.equal(applied, false);
+  assert.equal(manager.segmentationRefreshInFlight, false);
+  assert.deepEqual(manager.getState().segmentationRefresh, {
+    status: 'idle',
+    trigger: null,
+    outcomeReason: null,
+    maskSource: null,
+  });
 });
 
 test('curved motion hold requests recovery segmentation before interval elapses', async () => {
@@ -646,8 +1109,8 @@ test('curved motion hold requests recovery segmentation before interval elapses'
   manager.lastSegmentationRefreshAt = performance.now();
   manager.activeAnchor = {
     position: { x: 126, y: 60, z: 0 },
-    sourceDetection: {
-      class: 'mug',
+    selectionRegion: {
+      surfaceHint: 'mug',
       objectSupportMask: {
         bbox: { x: 58, y: 44, width: 64, height: 45 },
       },
@@ -670,15 +1133,24 @@ test('curved motion hold requests recovery segmentation before interval elapses'
     },
   };
 
-  assert.equal(manager.refreshSegmentationIfNeeded({
-    width: 180,
-    height: 140,
-    data: new Uint8ClampedArray(180 * 140 * 4),
-  }), true);
+  assert.equal(
+    manager.refreshSegmentationIfNeeded({
+      width: 180,
+      height: 140,
+      data: new Uint8ClampedArray(180 * 140 * 4),
+    }),
+    true,
+  );
 
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await waitForTask();
 
   assert.equal(updateReason, 'curved-object-recovery');
+  assert.deepEqual(manager.getState().segmentationRefresh, {
+    status: 'accepted',
+    trigger: 'curved-object-recovery',
+    outcomeReason: 'mask-overlap',
+    maskSource: 'interactive-segmenter',
+  });
 });
 
 test('curved motion hold does not request mug recovery for textured cups', () => {
@@ -700,8 +1172,8 @@ test('curved motion hold does not request mug recovery for textured cups', () =>
   manager.lastSegmentationRefreshAt = performance.now();
   manager.activeAnchor = {
     position: { x: 126, y: 60, z: 0 },
-    sourceDetection: {
-      class: 'cup',
+    selectionRegion: {
+      surfaceHint: 'cup',
       objectSupportMask: {
         bbox: { x: 58, y: 44, width: 64, height: 45 },
       },
@@ -724,11 +1196,14 @@ test('curved motion hold does not request mug recovery for textured cups', () =>
     },
   };
 
-  assert.equal(manager.refreshSegmentationIfNeeded({
-    width: 180,
-    height: 140,
-    data: new Uint8ClampedArray(180 * 140 * 4),
-  }), false);
+  assert.equal(
+    manager.refreshSegmentationIfNeeded({
+      width: 180,
+      height: 140,
+      data: new Uint8ClampedArray(180 * 140 * 4),
+    }),
+    false,
+  );
 });
 
 test('sparse mug pose dropout skips support refresh when tracker and reconstruction agree', () => {
@@ -752,8 +1227,8 @@ test('sparse mug pose dropout skips support refresh when tracker and reconstruct
   manager.activeAnchor = {
     position: { x: 126, y: 60, z: 0 },
     trackingMode: 'sparse-reconstruction',
-    sourceDetection: {
-      class: 'mug',
+    selectionRegion: {
+      surfaceHint: 'mug',
       objectSupportMask: {
         bbox: { x: 58, y: 44, width: 64, height: 45 },
       },
@@ -777,11 +1252,61 @@ test('sparse mug pose dropout skips support refresh when tracker and reconstruct
     },
   };
 
-  assert.equal(manager.refreshSegmentationIfNeeded({
-    width: 180,
-    height: 140,
-    data: new Uint8ClampedArray(180 * 140 * 4),
-  }), false);
+  assert.equal(
+    manager.refreshSegmentationIfNeeded({
+      width: 180,
+      height: 140,
+      data: new Uint8ClampedArray(180 * 140 * 4),
+    }),
+    false,
+  );
+});
+
+test('pose dropout recovery distinguishes orientation loss from measured position loss', () => {
+  const manager = new AnchorManager({
+    imageAnchorService: {
+      setTrackingMode: () => {},
+    },
+    interactiveSegmenterService: {},
+  });
+  manager.activeAnchor = {
+    selectionRegion: { surfaceHint: 'handled mug' },
+  };
+  manager.anchorState = {
+    metrics: {
+      activeLandmarkCount: 32,
+      objectOwnedLandmarks: 32,
+      poseInliers: 0,
+      poseSource: null,
+      trackingSuccessRate: 0.9,
+    },
+  };
+
+  for (const positionRole of ['reconstruction', 'planar', 'object']) {
+    manager.anchorState.metrics.posePositionRole = positionRole;
+    assert.equal(
+      manager._hasPoseDropout(),
+      false,
+      `${positionRole} position evidence should make this an orientation-only dropout`,
+    );
+  }
+
+  manager.anchorState.metrics.posePositionRole = 'tracker';
+  assert.equal(manager._hasPoseDropout(), true);
+
+  manager.anchorState.metrics.normalPoseRejectedCandidates = {
+    'sparse-reconstruction': 'weak-normal-innovation',
+  };
+  manager.anchorState.metrics.poseObs = 0.006;
+  manager.activeAnchor.trackingMode = 'sparse-reconstruction';
+  assert.equal(manager._hasPoseDropout(), false);
+
+  manager.anchorState.metrics.poseObs = null;
+  assert.equal(manager._hasPoseDropout(), true);
+
+  manager.anchorState.metrics.posePositionRole = null;
+  manager.anchorState.metrics.normalPoseRejectedCandidates = {};
+  assert.equal(manager._hasPoseDropout(), true);
 });
 
 test('segmentation refresh radius starts local and grows with object evidence', () => {
@@ -819,7 +1344,7 @@ test('segmentation refresh radius starts local and grows with object evidence', 
   assert.ok(grownRadius > bootstrapRadius * 2);
 });
 
-test('anchor manager rejects oversized and discontinuous segmentation refresh masks', () => {
+test('anchor manager explains oversized and discontinuous segmentation refresh rejections', () => {
   const manager = new AnchorManager({
     imageAnchorService: {
       setTrackingMode: () => {},
@@ -854,6 +1379,12 @@ test('anchor manager rejects oversized and discontinuous segmentation refresh ma
     updatedAtFrame: 1,
   });
 
-  assert.equal(manager._isAcceptableSegmentationRefresh(oversizedMask, { x: 100, y: 80 }, 42), false);
-  assert.equal(manager._isAcceptableSegmentationRefresh(discontinuousMask, { x: 100, y: 80 }, 42), false);
+  assert.deepEqual(manager._evaluateSegmentationRefresh(oversizedMask, { x: 100, y: 80 }, 42), {
+    accepted: false,
+    reason: 'oversized-mask',
+  });
+  assert.deepEqual(manager._evaluateSegmentationRefresh(discontinuousMask, { x: 100, y: 80 }, 42), {
+    accepted: false,
+    reason: 'discontinuous-mask',
+  });
 });

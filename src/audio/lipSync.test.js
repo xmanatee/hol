@@ -1,47 +1,92 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import {
-  AudioAnalyzer,
-  MorphController,
-  VisemeMapper,
-  createAudioAnalysisFromFrequencyData,
-  pickVisemeFromAlignment,
-} from './lipSync.js';
+import { getCapabilityAsset } from '../runtime/capabilityPacks.js';
+import { MorphController, VisemeMapper, writeAudioAnalysisFromFrequencyData } from './lipSync.js';
 
-const createGenericArkitDictionary = () => Object.fromEntries(
-  Array.from({ length: 52 }, (_, index) => [`target_${index}`, index])
-);
+const createGenericArkitDictionary = () =>
+  Object.fromEntries(Array.from({ length: 52 }, (_, index) => [`target_${index}`, index]));
 
-test('frequency analysis maps ElevenLabs output spectrum into normalized lip-sync data', () => {
+const readBundledHeadTargetNames = () => {
+  const asset = getCapabilityAsset('face', 'hol-face-meshopt');
+  const bytes = readFileSync(new URL(asset.url));
+  const jsonLength = bytes.readUInt32LE(12);
+  const gltf = JSON.parse(
+    bytes
+      .subarray(20, 20 + jsonLength)
+      .toString()
+      .replace(/\0+$/, ''),
+  );
+  return gltf.meshes.find((mesh) => mesh.primitives?.[0]?.targets?.length === 52).extras.targetNames;
+};
+
+test('frequency analysis maps speech bands into a reusable normalized lip-sync frame', () => {
   const lowBand = new Uint8Array([0, 180, 40, 0, 0, 0, 0, 0]);
   const highBand = new Uint8Array([0, 0, 0, 0, 0, 40, 180, 0]);
+  const low = { energy: 0, centroid: 0 };
+  const high = { energy: 0, centroid: 0 };
 
-  const low = createAudioAnalysisFromFrequencyData(lowBand, 0.5);
-  const high = createAudioAnalysisFromFrequencyData(highBand, 0.5);
+  assert.equal(writeAudioAnalysisFromFrequencyData(lowBand, 0.5, low), low);
+  assert.equal(writeAudioAnalysisFromFrequencyData(highBand, 0.5, high), high);
 
   assert.ok(low.energy > 0.3);
   assert.ok(high.energy > 0.3);
   assert.ok(low.centroid < high.centroid);
-  assert.equal(low.spectrum.length, lowBand.length);
+  assert.deepEqual(Object.keys(low), ['energy', 'centroid']);
 });
 
-test('frequency analysis treats silent spectrum as silence even if output volume has floor', () => {
-  const analysis = createAudioAnalysisFromFrequencyData(new Uint8Array(128).fill(0), 0.8);
+test('frequency analysis treats silent bands as silence even if output volume has floor', () => {
+  const analysis = { energy: 1, centroid: 1 };
+  writeAudioAnalysisFromFrequencyData(new Uint8Array(128).fill(0), 0.8, analysis);
 
   assert.equal(analysis.energy, 0);
   assert.equal(analysis.centroid, 0);
 });
 
-test('agent analysis is silent without real output audio data', () => {
-  const analyzer = new AudioAnalyzer();
-  const analysis = analyzer.getAnalysis(true, 1000);
+test('morph animation resolves named targets before entering its frame loop', () => {
+  const dictionary = createGenericArkitDictionary();
+  const mapper = new VisemeMapper(dictionary);
+  const resolveBlendShapeIndex = mapper.resolveBlendShapeIndex.bind(mapper);
+  let resolutionCount = 0;
+  mapper.resolveBlendShapeIndex = (name) => {
+    resolutionCount++;
+    return resolveBlendShapeIndex(name);
+  };
+  const mesh = {
+    morphTargetDictionary: dictionary,
+    morphTargetInfluences: new Array(52).fill(0),
+  };
+  const controller = new MorphController(mesh, mapper);
+  controller.setExpression('dramatic', 1);
+  const initializationResolutionCount = resolutionCount;
 
-  assert.deepEqual(analysis, {
-    energy: 0,
-    centroid: 0,
-    spectrum: new Array(128).fill(0),
-  });
+  for (let frame = 0; frame < 30; frame++) {
+    controller.setSpeechFrame(frame % 2 === 0 ? 'A' : 'O', 0.8, true);
+    controller.update(16);
+  }
+  for (let frame = 0; frame < 30; frame++) {
+    controller.setSpeechFrame('M', 0, false);
+    controller.update(16);
+  }
+
+  assert.equal(resolutionCount, initializationResolutionCount);
+});
+
+test('morph animation rejects incomplete runtime collaborators immediately', () => {
+  const mapper = new VisemeMapper(createGenericArkitDictionary());
+
+  assert.throws(
+    () => new MorphController({ morphTargetDictionary: {}, morphTargetInfluences: null }, mapper),
+    /mesh with morph targets/,
+  );
+  assert.throws(
+    () =>
+      new MorphController(
+        { morphTargetDictionary: createGenericArkitDictionary(), morphTargetInfluences: [] },
+        null,
+      ),
+    /viseme mapper/,
+  );
 });
 
 test('generic 52-target ARKit rigs remain supported when the target order is explicit', () => {
@@ -49,32 +94,31 @@ test('generic 52-target ARKit rigs remain supported when the target order is exp
     genericTargetOrder: 'arkit',
   });
 
-  assert.ok(mapper.getMorphIndicesForViseme('A').some(morph => morph.index === 17));
-  assert.ok(mapper.getMorphIndicesForViseme('M').some(morph => morph.index === 18));
-  assert.ok(mapper.getMorphIndicesForViseme('O').some(morph => morph.index === 19));
-  assert.ok(mapper.getMorphIndicesForViseme('U').some(morph => morph.index === 20));
-  assert.ok(mapper.getMorphIndicesForViseme('I').some(morph => morph.index === 23));
+  assert.ok(mapper.getMorphIndicesForViseme('A').some((morph) => morph.index === 17));
+  assert.ok(mapper.getMorphIndicesForViseme('M').some((morph) => morph.index === 18));
+  assert.ok(mapper.getMorphIndicesForViseme('O').some((morph) => morph.index === 19));
+  assert.ok(mapper.getMorphIndicesForViseme('U').some((morph) => morph.index === 20));
+  assert.ok(mapper.getMorphIndicesForViseme('I').some((morph) => morph.index === 23));
 });
 
 test('generic target-numbered rigs use the bundled HOL head target order', () => {
   const mapper = new VisemeMapper(createGenericArkitDictionary());
 
-  assert.ok(mapper.getMorphIndicesForViseme('A').some(morph => morph.name === 'target_24'));
-  assert.ok(mapper.getMorphIndicesForViseme('M').some(morph => morph.name === 'target_25'));
-  assert.ok(mapper.getMorphIndicesForViseme('O').some(morph => morph.name === 'target_28'));
-  assert.ok(mapper.getMorphIndicesForViseme('U').some(morph => morph.name === 'target_29'));
+  assert.ok(mapper.getMorphIndicesForViseme('A').some((morph) => morph.name === 'target_24'));
+  assert.ok(mapper.getMorphIndicesForViseme('M').some((morph) => morph.name === 'target_25'));
+  assert.ok(mapper.getMorphIndicesForViseme('O').some((morph) => morph.name === 'target_28'));
+  assert.ok(mapper.getMorphIndicesForViseme('U').some((morph) => morph.name === 'target_29'));
 });
 
 test('bundled head model mouth targets are mapped for lip-sync', () => {
-  const gltf = JSON.parse(readFileSync(new URL('../../public/3d/untitled.gltf', import.meta.url), 'utf8'));
-  const targetNames = gltf.meshes.find(mesh => mesh.name === 'mesh_2').extras.targetNames;
+  const targetNames = readBundledHeadTargetNames();
   const mapper = new VisemeMapper(Object.fromEntries(targetNames.map((name, index) => [name, index])));
 
   assert.equal(targetNames.length, 52);
-  assert.ok(mapper.getMorphIndicesForViseme('A').some(morph => morph.name === 'target_24'));
-  assert.ok(mapper.getMorphIndicesForViseme('M').some(morph => morph.name === 'target_25'));
-  assert.ok(mapper.getMorphIndicesForViseme('O').some(morph => morph.name === 'target_28'));
-  assert.ok(mapper.getMorphIndicesForViseme('U').some(morph => morph.name === 'target_29'));
+  assert.ok(mapper.getMorphIndicesForViseme('A').some((morph) => morph.name === 'target_24'));
+  assert.ok(mapper.getMorphIndicesForViseme('M').some((morph) => morph.name === 'target_25'));
+  assert.ok(mapper.getMorphIndicesForViseme('O').some((morph) => morph.name === 'target_28'));
+  assert.ok(mapper.getMorphIndicesForViseme('U').some((morph) => morph.name === 'target_29'));
 });
 
 test('bundled head resolves observed eye and mouth controls instead of MediaPipe indices', () => {
@@ -90,8 +134,7 @@ test('bundled head resolves observed eye and mouth controls instead of MediaPipe
 });
 
 test('bundled head model returns to closed mouth after speech completion', () => {
-  const gltf = JSON.parse(readFileSync(new URL('../../public/3d/untitled.gltf', import.meta.url), 'utf8'));
-  const targetNames = gltf.meshes.find(mesh => mesh.name === 'mesh_2').extras.targetNames;
+  const targetNames = readBundledHeadTargetNames();
   const mesh = {
     morphTargetDictionary: Object.fromEntries(targetNames.map((name, index) => [name, index])),
     morphTargetInfluences: new Array(targetNames.length).fill(0),
@@ -100,12 +143,12 @@ test('bundled head model returns to closed mouth after speech completion', () =>
   const controller = new MorphController(mesh, mapper);
 
   controller.setPerformanceIntensity(1);
-  controller.setSpeechFrame({ viseme: 'A', energy: 1, voiceActive: true });
+  controller.setSpeechFrame('A', 1, true);
   controller.update(80);
 
   assert.ok(mesh.morphTargetInfluences[24] > 0.65);
 
-  controller.setSpeechFrame({ viseme: 'M', energy: 0, voiceActive: false });
+  controller.setSpeechFrame('M', 0, false);
   controller.update(320);
 
   assert.ok(mesh.morphTargetInfluences[24] < 0.04);
@@ -123,7 +166,7 @@ test('morph controller opens the bundled jaw quickly on voice attack', () => {
   const mapper = new VisemeMapper(mesh.morphTargetDictionary);
   const controller = new MorphController(mesh, mapper);
 
-  controller.setSpeechFrame({ viseme: 'A', energy: 0.9, voiceActive: true });
+  controller.setSpeechFrame('A', 0.9, true);
   controller.update(16);
 
   assert.ok(mesh.morphTargetInfluences[24] > 0.25);
@@ -137,7 +180,7 @@ test('morph controller drives a more pronounced open-mouth viseme', () => {
   const mapper = new VisemeMapper(mesh.morphTargetDictionary);
   const controller = new MorphController(mesh, mapper);
 
-  controller.setSpeechFrame({ viseme: 'A', energy: 1, voiceActive: true });
+  controller.setSpeechFrame('A', 1, true);
   controller.update(16);
 
   assert.ok(mesh.morphTargetInfluences[24] > 0.55);
@@ -245,11 +288,11 @@ test('rest frame releases an open vowel back to closed mouth', () => {
   const mapper = new VisemeMapper(mesh.morphTargetDictionary);
   const controller = new MorphController(mesh, mapper);
 
-  controller.setSpeechFrame({ viseme: 'A', energy: 1, voiceActive: true });
+  controller.setSpeechFrame('A', 1, true);
   controller.update(80);
   assert.ok(mesh.morphTargetInfluences[24] > 0.4);
 
-  controller.setSpeechFrame({ viseme: 'A', energy: 0, voiceActive: false });
+  controller.setSpeechFrame('A', 0, false);
   controller.update(240);
 
   assert.ok(mesh.morphTargetInfluences[24] < 0.05);
@@ -284,7 +327,7 @@ test('cartoon performance profile exaggerates jaw and vertical mouth shapes', ()
   const controller = new MorphController(mesh, mapper);
 
   controller.setPerformanceIntensity(1);
-  controller.setSpeechFrame({ viseme: 'A', energy: 1, voiceActive: true });
+  controller.setSpeechFrame('A', 1, true);
   controller.update(33);
 
   assert.ok(mesh.morphTargetInfluences[24] > 0.85);
@@ -302,7 +345,7 @@ test('emotional speech profile opens dramatic vowels more than calm speech', () 
 
   calm.setPerformanceIntensity(0.25);
   calm.setExpression('wise', 1);
-  calm.setSpeechFrame({ viseme: 'A', energy: 0.85, voiceActive: true });
+  calm.setSpeechFrame('A', 0.85, true);
   calm.update(33);
   const calmJawOpen = mesh.morphTargetInfluences[24];
 
@@ -313,7 +356,7 @@ test('emotional speech profile opens dramatic vowels more than calm speech', () 
   const dramatic = new MorphController(dramaticMesh, new VisemeMapper(dramaticMesh.morphTargetDictionary));
   dramatic.setPerformanceIntensity(1);
   dramatic.setExpression('dramatic', 1);
-  dramatic.setSpeechFrame({ viseme: 'A', energy: 0.85, voiceActive: true });
+  dramatic.setSpeechFrame('A', 0.85, true);
   dramatic.update(33);
 
   assert.ok(dramaticMesh.morphTargetInfluences[24] > calmJawOpen + 0.18);
@@ -375,17 +418,13 @@ test('mouth expression pairs stay symmetric while upper-face expression can stay
   controller.setRestPose();
   controller.update(120);
 
-  assert.equal(Number(mesh.morphTargetInfluences[30].toFixed(4)), Number(mesh.morphTargetInfluences[31].toFixed(4)));
-  assert.equal(Number(mesh.morphTargetInfluences[41].toFixed(4)), Number(mesh.morphTargetInfluences[42].toFixed(4)));
+  assert.equal(
+    Number(mesh.morphTargetInfluences[30].toFixed(4)),
+    Number(mesh.morphTargetInfluences[31].toFixed(4)),
+  );
+  assert.equal(
+    Number(mesh.morphTargetInfluences[41].toFixed(4)),
+    Number(mesh.morphTargetInfluences[42].toFixed(4)),
+  );
   assert.ok(mesh.morphTargetInfluences[3] > mesh.morphTargetInfluences[4]);
-});
-
-test('audio alignment characters resolve to the current spoken viseme', () => {
-  const viseme = pickVisemeFromAlignment({
-    chars: ['h', 'e', 'l', 'o'],
-    charStartTimesMs: [0, 80, 160, 240],
-    charDurationsMs: [80, 80, 80, 120],
-  }, 95);
-
-  assert.equal(viseme, 'E');
 });

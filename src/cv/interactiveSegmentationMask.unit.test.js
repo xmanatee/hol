@@ -5,10 +5,7 @@ import { isPointInsideObjectSupport } from './objectSupportMask.js';
 
 test('interactive segmentation confidence mask is resized and thresholded into frame support', () => {
   const mask = createInteractiveObjectSupportMask({
-    confidenceData: new Float32Array([
-      0.1, 0.9,
-      0.2, 0.8,
-    ]),
+    confidenceData: new Float32Array([0.1, 0.9, 0.2, 0.8]),
     maskWidth: 2,
     maskHeight: 2,
     frameWidth: 4,

@@ -1,14 +1,15 @@
+import { OPEN_CV_ASSET_URL } from '../runtime/capabilityPacks.js';
+
 let openCVWorkerRuntimePromise = null;
 
-const isReady = cv => (
+const isReady = (cv) =>
   typeof cv?.Mat === 'function' &&
   typeof cv.goodFeaturesToTrack === 'function' &&
   typeof cv.calcOpticalFlowPyrLK === 'function' &&
   typeof cv.findHomography === 'function' &&
-  typeof cv.matFromImageData === 'function'
-);
+  typeof cv.matFromImageData === 'function';
 
-const makePromiseSafe = cv => {
+const makePromiseSafe = (cv) => {
   if (typeof cv.then === 'function') {
     Object.defineProperty(cv, 'then', {
       value: undefined,
@@ -19,28 +20,29 @@ const makePromiseSafe = cv => {
   return cv;
 };
 
-const waitForOpenCVRuntime = ({ cv, timeoutMs, pollIntervalMs }) => new Promise((resolve, reject) => {
-  const startedAt = performance.now();
+const waitForOpenCVRuntime = ({ cv, timeoutMs, pollIntervalMs }) =>
+  new Promise((resolve, reject) => {
+    const startedAt = performance.now();
 
-  const poll = () => {
-    if (isReady(cv)) {
-      resolve(makePromiseSafe(cv));
-      return;
-    }
+    const poll = () => {
+      if (isReady(cv)) {
+        resolve(makePromiseSafe(cv));
+        return;
+      }
 
-    if (performance.now() - startedAt >= timeoutMs) {
-      reject(new Error(`Worker OpenCV runtime did not initialize within ${timeoutMs}ms`));
-      return;
-    }
+      if (performance.now() - startedAt >= timeoutMs) {
+        reject(new Error(`Worker OpenCV runtime did not initialize within ${timeoutMs}ms`));
+        return;
+      }
 
-    setTimeout(poll, pollIntervalMs);
-  };
+      setTimeout(poll, pollIntervalMs);
+    };
 
-  poll();
-});
+    poll();
+  });
 
 export const loadOpenCVRuntimeInWorker = ({
-  scriptSrc = '/opencv.js',
+  scriptSrc = OPEN_CV_ASSET_URL,
   timeoutMs = 10000,
   pollIntervalMs = 10,
 } = {}) => {
@@ -49,18 +51,18 @@ export const loadOpenCVRuntimeInWorker = ({
   }
 
   openCVWorkerRuntimePromise = fetch(scriptSrc)
-    .then(response => {
+    .then((response) => {
       if (!response.ok) {
         throw new Error(`Failed to load OpenCV worker script: ${response.status}`);
       }
       return response.text();
     })
-    .then(source => {
+    .then((source) => {
       const evaluateOpenCV = new Function(`${source}\nreturn this.cv;`);
       const cv = evaluateOpenCV.call(globalThis);
       return waitForOpenCVRuntime({ cv, timeoutMs, pollIntervalMs });
     })
-    .catch(error => {
+    .catch((error) => {
       openCVWorkerRuntimePromise = null;
       throw error;
     });

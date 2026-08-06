@@ -19,8 +19,8 @@ export class VisemeMapper {
   constructor(morphTargetDictionary, options = {}) {
     this.morphDict = morphTargetDictionary || {};
     this.genericTargetOrder = options.genericTargetOrder || 'holBundledHead';
-    this.genericBlendShapeNames = options.genericBlendShapeNames ||
-      resolveGenericTargetOrder(this.genericTargetOrder);
+    this.genericBlendShapeNames =
+      options.genericBlendShapeNames || resolveGenericTargetOrder(this.genericTargetOrder);
     this.genericNameToIndex = options.genericBlendShapeNames
       ? Object.fromEntries(this.genericBlendShapeNames.map((name, index) => [name, index]))
       : resolveGenericTargetIndexMap(this.genericTargetOrder);
@@ -29,11 +29,11 @@ export class VisemeMapper {
 
   createVisemeMapping() {
     const mapping = {};
-    Object.keys(STANDARD_VISEMES).forEach(viseme => {
+    Object.keys(STANDARD_VISEMES).forEach((viseme) => {
       mapping[viseme] = [];
     });
 
-    Object.keys(this.morphDict).forEach(morphName => {
+    Object.keys(this.morphDict).forEach((morphName) => {
       const lowerName = normalizeMorphName(morphName);
       let bestMatch = null;
       let bestScore = 0;
@@ -72,7 +72,7 @@ export class VisemeMapper {
   }
 
   addMapping(mapping, viseme, morph) {
-    const alreadyMapped = mapping[viseme].some(existing => existing.index === morph.index);
+    const alreadyMapped = mapping[viseme].some((existing) => existing.index === morph.index);
     if (!alreadyMapped) {
       mapping[viseme].push(morph);
     }
@@ -129,8 +129,10 @@ export class VisemeMapper {
 
   getAllMappedIndices() {
     const indices = new Set();
-    Object.values(this.visemeMap).forEach(morphs => {
-      morphs.forEach(morph => indices.add(morph.index));
+    Object.values(this.visemeMap).forEach((morphs) => {
+      morphs.forEach((morph) => {
+        indices.add(morph.index);
+      });
     });
     return Array.from(indices);
   }

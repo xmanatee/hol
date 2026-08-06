@@ -1,0 +1,553 @@
+{
+  "version": 9,
+  "fixtures": [
+    {
+      "id": "rgb-stacking-34",
+      "dataset": "TAP-Vid-RGB-Stacking",
+      "provenance": {
+        "video": {
+          "license": "CC-BY-4.0",
+          "attribution": "Google DeepMind TAP-Vid RGB-Stacking dataset",
+          "sourceUrl": "https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md"
+        },
+        "annotations": {
+          "license": "CC-BY-4.0",
+          "attribution": "Google DeepMind TAP-Vid annotations",
+          "sourceUrl": "https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md"
+        }
+      },
+      "sources": {
+        "sampleId": "34",
+        "video": {
+          "url": "https://storage.googleapis.com/dm-tapnet/tapvid_rgb_stacking.zip",
+          "byteLength": 187291581,
+          "sha256": "ba0cec640deb65ab510bc3920cdaf8b7a2e756fce9fb339199c557ade436b0cc"
+        },
+        "annotations": {
+          "url": "https://storage.googleapis.com/dm-tapnet/tapvid_rgb_stacking.zip",
+          "byteLength": 187291581,
+          "sha256": "ba0cec640deb65ab510bc3920cdaf8b7a2e756fce9fb339199c557ade436b0cc"
+        }
+      },
+      "frameDerivation": {
+        "kind": "identity",
+        "sourceWidth": 256,
+        "sourceHeight": 256
+      },
+      "frames": {
+        "path": "tapvid-rgb-stacking/34.rgb.gz",
+        "encoding": "rgb24-xor-delta-gzip",
+        "width": 256,
+        "height": 256,
+        "count": 250,
+        "framesPerSecond": 30,
+        "byteLength": 2077741,
+        "sha256": "850207181f01cb06a1b35448ce003dc368ac387b4bac286ac79c8ecdfa3e1283"
+      },
+      "annotations": {
+        "path": "tapvid-rgb-stacking/34.tracks.json",
+        "format": "tapvid-normalized-v1",
+        "byteLength": 352805,
+        "sha256": "ebbc97a9d0130d7b13c0be00a1b87f35b48f94fced59129e1356175a29947a30"
+      },
+      "querySets": [
+        {
+          "id": "primary",
+          "aggregateFloor": {
+            "minimumAverageJaccard": 0.28,
+            "minimumAveragePointsWithinThreshold": 0.44,
+            "minimumOcclusionAccuracy": 0.72,
+            "reDetection": {
+              "kind": "eligible",
+              "minimumAverageJaccard": 0.078,
+              "minimumStableRecall": 0.6,
+              "maximumStableLatencyMs": 467
+            }
+          },
+          "queries": [
+            {
+              "trackId": "1",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.24,
+                "minimumAveragePointsWithinThreshold": 0.295,
+                "minimumOcclusionAccuracy": 0.72,
+                "maximumP95VisiblePointError": 49,
+                "maximumFalseVisibleDurationMs": 0,
+                "maximumMissedVisibleDurationMs": 934,
+                "maximumVisibleTrackFragmentationCount": 3,
+                "reDetection": {
+                  "kind": "eligible",
+                  "minimumAverageJaccard": 0.225,
+                  "minimumStableRecall": 1,
+                  "maximumStableLatencyMs": 467
+                }
+              }
+            },
+            {
+              "trackId": "12",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.3,
+                "minimumAveragePointsWithinThreshold": 0.495,
+                "minimumOcclusionAccuracy": 0.79,
+                "maximumP95VisiblePointError": 69,
+                "maximumFalseVisibleDurationMs": 567,
+                "maximumMissedVisibleDurationMs": 0,
+                "maximumVisibleTrackFragmentationCount": 0,
+                "reDetection": {
+                  "kind": "eligible",
+                  "minimumAverageJaccard": 0.0165,
+                  "minimumStableRecall": 0.5,
+                  "maximumStableLatencyMs": 0
+                }
+              }
+            },
+            {
+              "trackId": "16",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.295,
+                "minimumAveragePointsWithinThreshold": 0.518,
+                "minimumOcclusionAccuracy": 0.72,
+                "maximumP95VisiblePointError": 69,
+                "maximumFalseVisibleDurationMs": 1000,
+                "maximumMissedVisibleDurationMs": 0,
+                "maximumVisibleTrackFragmentationCount": 0,
+                "reDetection": {
+                  "kind": "eligible",
+                  "minimumAverageJaccard": 0.0255,
+                  "minimumStableRecall": 0.5,
+                  "maximumStableLatencyMs": 0
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "occlusion-stress",
+          "aggregateFloor": {
+            "minimumAverageJaccard": 0.135,
+            "minimumAveragePointsWithinThreshold": 0.195,
+            "minimumOcclusionAccuracy": 0.58,
+            "reDetection": {
+              "kind": "eligible",
+              "minimumAverageJaccard": 0.093,
+              "minimumStableRecall": 0.333,
+              "maximumStableLatencyMs": 367
+            }
+          },
+          "queries": [
+            {
+              "trackId": "6",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.093,
+                "minimumAveragePointsWithinThreshold": 0.121,
+                "minimumOcclusionAccuracy": 0.59,
+                "maximumP95VisiblePointError": 66,
+                "maximumFalseVisibleDurationMs": 0,
+                "maximumMissedVisibleDurationMs": 1467,
+                "maximumVisibleTrackFragmentationCount": 2,
+                "reDetection": {
+                  "kind": "eligible",
+                  "minimumAverageJaccard": 0.0365,
+                  "minimumStableRecall": 0,
+                  "maximumStableLatencyMs": 534
+                }
+              }
+            },
+            {
+              "trackId": "9",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.23,
+                "minimumAveragePointsWithinThreshold": 0.368,
+                "minimumOcclusionAccuracy": 0.64,
+                "maximumP95VisiblePointError": 54,
+                "maximumFalseVisibleDurationMs": 1000,
+                "maximumMissedVisibleDurationMs": 400,
+                "maximumVisibleTrackFragmentationCount": 3,
+                "reDetection": {
+                  "kind": "eligible",
+                  "minimumAverageJaccard": 0.212,
+                  "minimumStableRecall": 1,
+                  "maximumStableLatencyMs": 367
+                }
+              }
+            },
+            {
+              "trackId": "18",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.07,
+                "minimumAveragePointsWithinThreshold": 0.124,
+                "minimumOcclusionAccuracy": 0.475,
+                "maximumP95VisiblePointError": 63,
+                "maximumFalseVisibleDurationMs": 0,
+                "maximumMissedVisibleDurationMs": 1834,
+                "maximumVisibleTrackFragmentationCount": 2,
+                "reDetection": {
+                  "kind": "eligible",
+                  "minimumAverageJaccard": 0.005,
+                  "minimumStableRecall": 0,
+                  "maximumStableLatencyMs": 1267
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tapvid-davis-shooting",
+      "dataset": "TAP-Vid-DAVIS",
+      "provenance": {
+        "video": {
+          "license": "CC-BY-3.0",
+          "attribution": "Blender Foundation, Tears of Steel (2012)",
+          "sourceUrl": "https://mango.blender.org/about/"
+        },
+        "annotations": {
+          "license": "CC-BY-4.0",
+          "attribution": "Google DeepMind TAP-Vid-DAVIS annotations",
+          "sourceUrl": "https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md"
+        }
+      },
+      "sources": {
+        "sampleId": "shooting",
+        "video": {
+          "url": "https://storage.googleapis.com/dm-tapnet/tapvid_davis.zip",
+          "byteLength": 1668710491,
+          "sha256": "60eb6239c57a9877900c269d14637c2b6eece8fa280f59e4592324c6392031b6"
+        },
+        "annotations": {
+          "url": "https://storage.googleapis.com/dm-tapnet/tapvid_davis.zip",
+          "byteLength": 1668710491,
+          "sha256": "60eb6239c57a9877900c269d14637c2b6eece8fa280f59e4592324c6392031b6"
+        }
+      },
+      "frameDerivation": {
+        "kind": "resize",
+        "sourceWidth": 1152,
+        "sourceHeight": 480,
+        "resampler": "pillow-lanczos-per-channel"
+      },
+      "frames": {
+        "path": "tapvid-davis/shooting.rgb.gz",
+        "encoding": "rgb24-xor-delta-gzip",
+        "width": 256,
+        "height": 256,
+        "count": 40,
+        "framesPerSecond": 24,
+        "byteLength": 7206138,
+        "sha256": "7915cc07515395d091b54aa6955564bba10b3762b8b462c16b2cd16a530cd1ee"
+      },
+      "annotations": {
+        "path": "tapvid-davis/shooting.tracks.json",
+        "format": "tapvid-normalized-v1",
+        "byteLength": 30861,
+        "sha256": "18ce8c7553546492bd16de220b295b4c3388ca71b33255d8baca23c200146990"
+      },
+      "querySets": [
+        {
+          "id": "real-world-motion",
+          "aggregateFloor": {
+            "minimumAverageJaccard": 0.035,
+            "minimumAveragePointsWithinThreshold": 0.088,
+            "minimumOcclusionAccuracy": 0.79,
+            "reDetection": {
+              "kind": "eligible",
+              "minimumAverageJaccard": 0.07,
+              "minimumStableRecall": 1,
+              "maximumStableLatencyMs": 209
+            }
+          },
+          "queries": [
+            {
+              "trackId": "7",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.0025,
+                "minimumAveragePointsWithinThreshold": 0.018,
+                "minimumOcclusionAccuracy": 0.87,
+                "maximumP95VisiblePointError": 30,
+                "maximumFalseVisibleDurationMs": 0,
+                "maximumMissedVisibleDurationMs": 84,
+                "maximumVisibleTrackFragmentationCount": 2,
+                "reDetection": { "kind": "not-applicable" }
+              }
+            },
+            {
+              "trackId": "0",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.057,
+                "minimumAveragePointsWithinThreshold": 0.135,
+                "minimumOcclusionAccuracy": 0.72,
+                "maximumP95VisiblePointError": 41,
+                "maximumFalseVisibleDurationMs": 292,
+                "maximumMissedVisibleDurationMs": 84,
+                "maximumVisibleTrackFragmentationCount": 1,
+                "reDetection": {
+                  "kind": "eligible",
+                  "minimumAverageJaccard": 0.072,
+                  "minimumStableRecall": 1,
+                  "maximumStableLatencyMs": 209
+                }
+              }
+            },
+            {
+              "trackId": "2",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.055,
+                "minimumAveragePointsWithinThreshold": 0.127,
+                "minimumOcclusionAccuracy": 0.77,
+                "maximumP95VisiblePointError": 42,
+                "maximumFalseVisibleDurationMs": 209,
+                "maximumMissedVisibleDurationMs": 84,
+                "maximumVisibleTrackFragmentationCount": 1,
+                "reDetection": {
+                  "kind": "eligible",
+                  "minimumAverageJaccard": 0.068,
+                  "minimumStableRecall": 1,
+                  "maximumStableLatencyMs": 167
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "occlusion-stress",
+          "aggregateFloor": {
+            "minimumAverageJaccard": 0.041,
+            "minimumAveragePointsWithinThreshold": 0.102,
+            "minimumOcclusionAccuracy": 0.64,
+            "reDetection": { "kind": "not-applicable" }
+          },
+          "queries": [
+            {
+              "trackId": "1",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.048,
+                "minimumAveragePointsWithinThreshold": 0.15,
+                "minimumOcclusionAccuracy": 0.51,
+                "maximumP95VisiblePointError": 38,
+                "maximumFalseVisibleDurationMs": 667,
+                "maximumMissedVisibleDurationMs": 84,
+                "maximumVisibleTrackFragmentationCount": 1,
+                "reDetection": { "kind": "not-applicable" }
+              }
+            },
+            {
+              "trackId": "9",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.027,
+                "minimumAveragePointsWithinThreshold": 0.068,
+                "minimumOcclusionAccuracy": 0.69,
+                "maximumP95VisiblePointError": 38,
+                "maximumFalseVisibleDurationMs": 209,
+                "maximumMissedVisibleDurationMs": 84,
+                "maximumVisibleTrackFragmentationCount": 3,
+                "reDetection": { "kind": "not-applicable" }
+              }
+            },
+            {
+              "trackId": "15",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.072,
+                "minimumAveragePointsWithinThreshold": 0.09,
+                "minimumOcclusionAccuracy": 0.72,
+                "maximumP95VisiblePointError": 30,
+                "maximumFalseVisibleDurationMs": 0,
+                "maximumMissedVisibleDurationMs": 417,
+                "maximumVisibleTrackFragmentationCount": 1,
+                "reDetection": { "kind": "not-applicable" }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "perception-test-video-5032",
+      "dataset": "Perception Test Point Tracking",
+      "provenance": {
+        "video": {
+          "license": "CC-BY-4.0",
+          "attribution": "Google DeepMind Perception Test point-tracking videos",
+          "sourceUrl": "https://github.com/google-deepmind/perception_test/blob/main/README.md"
+        },
+        "annotations": {
+          "license": "CC-BY-4.0",
+          "attribution": "Google DeepMind Perception Test point-tracking annotations",
+          "sourceUrl": "https://github.com/google-deepmind/perception_test/blob/main/README.md"
+        }
+      },
+      "sources": {
+        "sampleId": "video_5032",
+        "video": {
+          "url": "https://storage.googleapis.com/dm-perception-test/zip_data/point_tracking_train_videos.zip",
+          "byteLength": 417761668,
+          "sha256": "ae2e9f055d14d9a7773b4ed5ced39e3986a21c4544a21d3d6f13216536211ae3"
+        },
+        "annotations": {
+          "url": "https://storage.googleapis.com/dm-perception-test/zip_data/point_tracking_train_annotations.zip",
+          "byteLength": 4888108,
+          "sha256": "c8323aecac91f3ee82f64316b401b027d7b5ea9315cc704b6f47dcc4423f4fdf"
+        }
+      },
+      "frameDerivation": {
+        "kind": "resize",
+        "sourceWidth": 1280,
+        "sourceHeight": 720,
+        "resampler": "pillow-lanczos-per-channel"
+      },
+      "frames": {
+        "path": "perception-test/video_5032.rgb.gz",
+        "encoding": "rgb24-xor-delta-gzip",
+        "width": 256,
+        "height": 256,
+        "count": 333,
+        "framesPerSecond": 30,
+        "byteLength": 32183309,
+        "sha256": "22b22291f7b2f3df98ebeaacc78adc2067dfabe8ebe21e61b17feb4943795deb"
+      },
+      "annotations": {
+        "path": "perception-test/video_5032.tracks.json",
+        "format": "tapvid-normalized-v1",
+        "byteLength": 814265,
+        "sha256": "30e3ec42c0814544ba14761e01b9c94686d2934587f3c6d70795be0047d388a3"
+      },
+      "querySets": [
+        {
+          "id": "object-motion",
+          "aggregateFloor": {
+            "minimumAverageJaccard": 0.285,
+            "minimumAveragePointsWithinThreshold": 0.365,
+            "minimumOcclusionAccuracy": 0.65,
+            "reDetection": {
+              "kind": "eligible",
+              "minimumAverageJaccard": 0.115,
+              "minimumStableRecall": 0.5,
+              "maximumStableLatencyMs": 434
+            }
+          },
+          "queries": [
+            {
+              "trackId": "5",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.285,
+                "minimumAveragePointsWithinThreshold": 0.4,
+                "minimumOcclusionAccuracy": 0.86,
+                "maximumP95VisiblePointError": 130,
+                "maximumFalseVisibleDurationMs": 0,
+                "maximumMissedVisibleDurationMs": 1167,
+                "maximumVisibleTrackFragmentationCount": 1,
+                "reDetection": { "kind": "not-applicable" }
+              }
+            },
+            {
+              "trackId": "3",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.41,
+                "minimumAveragePointsWithinThreshold": 0.455,
+                "minimumOcclusionAccuracy": 0.53,
+                "maximumP95VisiblePointError": 104,
+                "maximumFalseVisibleDurationMs": 200,
+                "maximumMissedVisibleDurationMs": 4500,
+                "maximumVisibleTrackFragmentationCount": 3,
+                "reDetection": {
+                  "kind": "eligible",
+                  "minimumAverageJaccard": 0.255,
+                  "minimumStableRecall": 1,
+                  "maximumStableLatencyMs": 434
+                }
+              }
+            },
+            {
+              "trackId": "39",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.05,
+                "minimumAveragePointsWithinThreshold": 0.064,
+                "minimumOcclusionAccuracy": 0.56,
+                "maximumP95VisiblePointError": 107,
+                "maximumFalseVisibleDurationMs": 567,
+                "maximumMissedVisibleDurationMs": 2400,
+                "maximumVisibleTrackFragmentationCount": 1,
+                "reDetection": {
+                  "kind": "eligible",
+                  "minimumAverageJaccard": 0.0014,
+                  "minimumStableRecall": 0,
+                  "maximumStableLatencyMs": 667
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "occlusion-stress",
+          "aggregateFloor": {
+            "minimumAverageJaccard": 0.18,
+            "minimumAveragePointsWithinThreshold": 0.395,
+            "minimumOcclusionAccuracy": 0.5,
+            "reDetection": {
+              "kind": "eligible",
+              "minimumAverageJaccard": 0.046,
+              "minimumStableRecall": 0.5,
+              "maximumStableLatencyMs": 934
+            }
+          },
+          "queries": [
+            {
+              "trackId": "0",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.3,
+                "minimumAveragePointsWithinThreshold": 0.48,
+                "minimumOcclusionAccuracy": 0.73,
+                "maximumP95VisiblePointError": 43,
+                "maximumFalseVisibleDurationMs": 1767,
+                "maximumMissedVisibleDurationMs": 934,
+                "maximumVisibleTrackFragmentationCount": 0,
+                "reDetection": {
+                  "kind": "eligible",
+                  "minimumAverageJaccard": 0.22,
+                  "minimumStableRecall": 1,
+                  "maximumStableLatencyMs": 934
+                }
+              }
+            },
+            {
+              "trackId": "4",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.305,
+                "minimumAveragePointsWithinThreshold": 0.43,
+                "minimumOcclusionAccuracy": 0.5,
+                "maximumP95VisiblePointError": 119,
+                "maximumFalseVisibleDurationMs": 200,
+                "maximumMissedVisibleDurationMs": 2767,
+                "maximumVisibleTrackFragmentationCount": 1,
+                "reDetection": {
+                  "kind": "eligible",
+                  "minimumAverageJaccard": 0.0015,
+                  "minimumStableRecall": 0,
+                  "maximumStableLatencyMs": 2800
+                }
+              }
+            },
+            {
+              "trackId": "35",
+              "qualityFloor": {
+                "minimumAverageJaccard": 0.03,
+                "minimumAveragePointsWithinThreshold": 0.135,
+                "minimumOcclusionAccuracy": 0.245,
+                "maximumP95VisiblePointError": 45,
+                "maximumFalseVisibleDurationMs": 5167,
+                "maximumMissedVisibleDurationMs": 0,
+                "maximumVisibleTrackFragmentationCount": 0,
+                "reDetection": {
+                  "kind": "eligible",
+                  "minimumAverageJaccard": 0.0125,
+                  "minimumStableRecall": 1,
+                  "maximumStableLatencyMs": 0
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

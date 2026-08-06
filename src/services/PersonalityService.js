@@ -1,24 +1,90 @@
 import { VisionClient } from '../api/visionClient.js';
 import { LLMClient } from '../api/llmClient.js';
+import {
+  VISION_CROP_JPEG_QUALITY,
+  VISION_CROP_MIME_TYPE,
+  assertVisionImageBlob,
+  assertVisionImageData,
+  resolveVisionCrop,
+} from '../contracts/visionImage.js';
+import { assertAbortSignal } from '../utils/boundedRequest.js';
+import { assertPersonalityServiceConfig } from './personalityServiceConfig.js';
+
+const createBrowserImageBitmap = (...args) => {
+  if (typeof globalThis.createImageBitmap !== 'function') {
+    throw new Error('createImageBitmap is required for personality image cropping');
+  }
+  return globalThis.createImageBitmap(...args);
+};
+
+const createBrowserCanvas = () => document.createElement('canvas');
+
+const encodeCanvas = (canvas, signal) =>
+  new Promise((resolve, reject) => {
+    let settled = false;
+    const handleAbort = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal.removeEventListener('abort', handleAbort);
+      reject(signal.reason);
+    };
+    const settle = (callback, value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal?.removeEventListener('abort', handleAbort);
+      callback(value);
+    };
+
+    signal?.addEventListener('abort', handleAbort, { once: true });
+    canvas.toBlob(
+      (blob) => {
+        if (settled) {
+          return;
+        }
+        if (!blob) {
+          settle(reject, new Error('Failed to encode object crop'));
+          return;
+        }
+        try {
+          settle(resolve, assertVisionImageBlob(blob));
+        } catch (error) {
+          settle(reject, error);
+        }
+      },
+      VISION_CROP_MIME_TYPE,
+      VISION_CROP_JPEG_QUALITY,
+    );
+  });
 
 export class PersonalityService {
   constructor(config = {}) {
+    assertPersonalityServiceConfig(config);
     this.config = {
-      ...config
+      ...config,
     };
+    this.createImageBitmap = config.createImageBitmap ?? createBrowserImageBitmap;
+    this.createCanvas = config.createCanvas ?? createBrowserCanvas;
 
     this.visionClient = null;
     this.llmClient = null;
-    
+
     this.listeners = new Set();
     this.isProcessing = false;
     this.lastPersona = null;
+    this.activeRequest = null;
+    this.runtimeGeneration = 0;
+    this.disposed = false;
     this.metrics = {
       totalRequests: 0,
       successfulRequests: 0,
       failedRequests: 0,
+      cancelledRequests: 0,
       averageRTT: 0,
-      lastRTT: 0
+      lastRTT: 0,
     };
   }
 
@@ -28,50 +94,94 @@ export class PersonalityService {
   }
 
   emit(event, data) {
-    this.listeners.forEach(listener => {
+    this.listeners.forEach((listener) => {
       if (listener[event]) {
         listener[event](data);
       }
     });
   }
 
+  cancelRequest(request) {
+    if (!request || request.cancelled) {
+      return;
+    }
+    request.cancelled = true;
+    this.metrics.cancelledRequests++;
+    request.abortController.abort(new DOMException('Personality request retired', 'AbortError'));
+  }
+
+  ownsRequest(request) {
+    return (
+      !this.disposed &&
+      !request.cancelled &&
+      request.runtimeGeneration === this.runtimeGeneration &&
+      this.activeRequest === request
+    );
+  }
+
   async generatePersonality(imageData, bbox) {
+    if (this.disposed) {
+      return null;
+    }
+
+    this.cancelRequest(this.activeRequest);
+    const requestId = ++this.metrics.totalRequests;
+    const request = {
+      requestId,
+      runtimeGeneration: this.runtimeGeneration,
+      abortController: new AbortController(),
+      cancelled: false,
+    };
+    this.activeRequest = request;
     this.isProcessing = true;
     const startTime = performance.now();
-    
-    this.metrics.totalRequests++;
-    
-    this.emit('onPersonalityStart', { 
-      requestId: this.metrics.totalRequests 
-    });
+    this.emit('onPersonalityStart', { requestId });
 
     try {
-      const roiImageBlob = await this.extractROI(imageData, bbox);
-      const visionResult = await this.getVisionClient().identifyObject(roiImageBlob);
-      const persona = await this.getLLMClient().generatePersona(visionResult);
-      
+      const roiImageBlob = await this.extractROI(imageData, bbox, {
+        signal: request.abortController.signal,
+      });
+      if (!this.ownsRequest(request)) {
+        return null;
+      }
+      const visionResult = await this.getVisionClient().identifyObject(roiImageBlob, {
+        signal: request.abortController.signal,
+      });
+      if (!this.ownsRequest(request)) {
+        return null;
+      }
+      const persona = await this.getLLMClient().generatePersona(visionResult, {
+        signal: request.abortController.signal,
+      });
+      if (!this.ownsRequest(request)) {
+        return null;
+      }
+
       const endTime = performance.now();
       const rtt = endTime - startTime;
-      
+
       this.metrics.lastRTT = rtt;
       this.metrics.averageRTT = this.calculateMovingAverage(this.metrics.averageRTT, rtt);
       this.metrics.successfulRequests++;
-      
+
       this.lastPersona = {
         ...persona,
         visionData: visionResult,
         generatedAt: Date.now(),
-        rtt
+        rtt,
       };
 
       this.emit('onPersonalityGenerated', {
         persona: this.lastPersona,
         rtt,
-        success: true
+        success: true,
       });
 
       return this.lastPersona;
     } catch (error) {
+      if (!this.ownsRequest(request)) {
+        return null;
+      }
       const rtt = performance.now() - startTime;
       this.metrics.failedRequests++;
       this.metrics.lastRTT = rtt;
@@ -79,84 +189,77 @@ export class PersonalityService {
         persona: null,
         rtt,
         success: false,
-        error: error.message
+        error: error.message,
       });
       throw error;
     } finally {
-      this.isProcessing = false;
+      if (this.activeRequest === request) {
+        this.activeRequest = null;
+        this.isProcessing = false;
+      }
     }
   }
 
-  extractROI(imageData, bbox) {
-    const crop = this.normalizeBbox(bbox, imageData.width, imageData.height);
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    
-    // Add 15% padding around bbox
-    const padding = 0.15;
-    const paddedWidth = crop.width * (1 + padding);
-    const paddedHeight = crop.height * (1 + padding);
-    const paddedX = crop.x - (paddedWidth - crop.width) / 2;
-    const paddedY = crop.y - (paddedHeight - crop.height) / 2;
-    
-    canvas.width = Math.round(paddedWidth);
-    canvas.height = Math.round(paddedHeight);
-    
-    // Create ImageData from input
-    const sourceCanvas = document.createElement('canvas');
-    sourceCanvas.width = imageData.width;
-    sourceCanvas.height = imageData.height;
-    const sourceCtx = sourceCanvas.getContext('2d');
-    sourceCtx.putImageData(imageData, 0, 0);
-    
-    // Extract ROI
-    ctx.drawImage(
-      sourceCanvas,
-      Math.max(0, paddedX), Math.max(0, paddedY),
-      Math.min(paddedWidth, imageData.width - Math.max(0, paddedX)),
-      Math.min(paddedHeight, imageData.height - Math.max(0, paddedY)),
-      0, 0,
-      canvas.width, canvas.height
+  async extractROI(imageData, bbox, { signal } = {}) {
+    if (signal !== undefined) {
+      assertAbortSignal(signal, 'Personality crop signal');
+    }
+    signal?.throwIfAborted();
+    assertVisionImageData(imageData);
+    const crop = resolveVisionCrop(bbox, imageData.width, imageData.height);
+    const bitmap = await this.createImageBitmap(
+      imageData,
+      crop.sourceX,
+      crop.sourceY,
+      crop.sourceWidth,
+      crop.sourceHeight,
+      {
+        resizeWidth: crop.outputWidth,
+        resizeHeight: crop.outputHeight,
+        resizeQuality: 'high',
+      },
     );
-    
-    // Convert to blob for API upload
-    return new Promise((resolve, reject) => {
-      canvas.toBlob((blob) => {
-        if (blob) {
-          resolve(blob);
-        } else {
-          reject(new Error('Failed to encode object crop'));
+    if (!bitmap || typeof bitmap.close !== 'function') {
+      throw new TypeError('Personality createImageBitmap must resolve to an ImageBitmap');
+    }
+
+    let canvas = null;
+    try {
+      try {
+        signal?.throwIfAborted();
+        canvas = this.createCanvas();
+        if (!canvas || typeof canvas.getContext !== 'function' || typeof canvas.toBlob !== 'function') {
+          throw new TypeError('Personality createCanvas must return a canvas');
         }
-      }, 'image/jpeg', 0.8);
-    });
-  }
+        canvas.width = crop.outputWidth;
+        canvas.height = crop.outputHeight;
+        const context = canvas.getContext('2d', { alpha: false });
+        if (!context || typeof context.drawImage !== 'function') {
+          throw new Error('A 2D canvas context is required for personality image cropping');
+        }
+        context.drawImage(bitmap, 0, 0, crop.outputWidth, crop.outputHeight);
+      } finally {
+        bitmap.close();
+      }
 
-  normalizeBbox(bbox, imageWidth, imageHeight) {
-    const x = bbox.x ?? bbox.x1;
-    const y = bbox.y ?? bbox.y1;
-    const width = bbox.width ?? (bbox.x2 - bbox.x1);
-    const height = bbox.height ?? (bbox.y2 - bbox.y1);
-
-    const clampedX = Math.max(0, Math.min(imageWidth - 1, x));
-    const clampedY = Math.max(0, Math.min(imageHeight - 1, y));
-
-    return {
-      x: clampedX,
-      y: clampedY,
-      width: Math.max(1, Math.min(width, imageWidth - clampedX)),
-      height: Math.max(1, Math.min(height, imageHeight - clampedY))
-    };
-  }
-
-  getApiKey() {
-    return this.config.apiKey || this.config.vision?.apiKey || this.config.llm?.apiKey || import.meta.env.VITE_OPENAI_API_KEY;
+      signal?.throwIfAborted();
+      return await encodeCanvas(canvas, signal);
+    } finally {
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+    }
   }
 
   getVisionClient() {
     if (!this.visionClient) {
       this.visionClient = new VisionClient({
         ...this.config.vision,
-        apiKey: this.getApiKey()
+        baseUrl: this.config.vision?.baseUrl ?? this.config.baseUrl,
+        requestTimeoutMs: this.config.vision?.requestTimeoutMs ?? this.config.requestTimeoutMs,
+        scheduleRequestTimeout:
+          this.config.vision?.scheduleRequestTimeout ?? this.config.scheduleRequestTimeout,
       });
     }
     return this.visionClient;
@@ -166,7 +269,9 @@ export class PersonalityService {
     if (!this.llmClient) {
       this.llmClient = new LLMClient({
         ...this.config.llm,
-        apiKey: this.getApiKey()
+        baseUrl: this.config.llm?.baseUrl ?? this.config.baseUrl,
+        requestTimeoutMs: this.config.llm?.requestTimeoutMs ?? this.config.requestTimeoutMs,
+        scheduleRequestTimeout: this.config.llm?.scheduleRequestTimeout ?? this.config.scheduleRequestTimeout,
       });
     }
     return this.llmClient;
@@ -179,14 +284,30 @@ export class PersonalityService {
   getMetrics() {
     return {
       ...this.metrics,
-      successRate: this.metrics.totalRequests > 0 
-        ? (this.metrics.successfulRequests / this.metrics.totalRequests) * 100 
-        : 0
+      successRate:
+        this.metrics.totalRequests > 0
+          ? (this.metrics.successfulRequests / this.metrics.totalRequests) * 100
+          : 0,
     };
   }
 
-  dispose() {
-    this.listeners.clear();
+  resetSubject() {
+    this.runtimeGeneration++;
+    const activeRequest = this.activeRequest;
+    this.activeRequest = null;
+    this.cancelRequest(activeRequest);
     this.isProcessing = false;
+    this.lastPersona = null;
+  }
+
+  dispose() {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.resetSubject();
+    this.listeners.clear();
+    this.visionClient = null;
+    this.llmClient = null;
   }
 }

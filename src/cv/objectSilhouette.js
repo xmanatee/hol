@@ -1,21 +1,19 @@
 import { clamp } from './anchor.reconstruction.math.js';
 import { isPointInsideObjectSupport } from './objectSupportMask.js';
 
-const hasMaskPixel = (objectSupportMask, x, y) => (
+const hasMaskPixel = (objectSupportMask, x, y) =>
   x >= 0 &&
   y >= 0 &&
   x < objectSupportMask.width &&
   y < objectSupportMask.height &&
-  objectSupportMask.data[y * objectSupportMask.width + x] > 0
-);
+  objectSupportMask.data[y * objectSupportMask.width + x] > 0;
 
-const isBoundaryPixel = (objectSupportMask, x, y) => (
+const isBoundaryPixel = (objectSupportMask, x, y) =>
   hasMaskPixel(objectSupportMask, x, y) &&
   (!hasMaskPixel(objectSupportMask, x - 1, y) ||
     !hasMaskPixel(objectSupportMask, x + 1, y) ||
     !hasMaskPixel(objectSupportMask, x, y - 1) ||
-    !hasMaskPixel(objectSupportMask, x, y + 1))
-);
+    !hasMaskPixel(objectSupportMask, x, y + 1));
 
 const scanStrideForMask = (objectSupportMask, maxScanSamples) => {
   const area = objectSupportMask.bbox.width * objectSupportMask.bbox.height;
@@ -73,16 +71,17 @@ const nearestBoundaryDistance = (point, boundary) => {
   return best;
 };
 
-export const extractObjectSilhouette = (objectSupportMask, {
-  maxBoundaryPoints = 192,
-  maxSegments = 32,
-  maxScanSamples = 6000,
-} = {}) => {
+export const extractObjectSilhouette = (
+  objectSupportMask,
+  { maxBoundaryPoints = 192, maxSegments = 32, maxScanSamples = 6000 } = {},
+) => {
   const scanStride = scanStrideForMask(objectSupportMask, maxScanSamples);
   const scan = scanMask(objectSupportMask, scanStride);
-  const orderedBoundary = scan.boundary
-    .sort((left, right) => Math.atan2(left.y - scan.center.y, left.x - scan.center.x) -
-      Math.atan2(right.y - scan.center.y, right.x - scan.center.x));
+  const orderedBoundary = scan.boundary.sort(
+    (left, right) =>
+      Math.atan2(left.y - scan.center.y, left.x - scan.center.x) -
+      Math.atan2(right.y - scan.center.y, right.x - scan.center.x),
+  );
   const sampledBoundary = sampleEvenly(orderedBoundary, maxBoundaryPoints);
   const segmentPoints = sampleEvenly(sampledBoundary, Math.min(maxSegments, sampledBoundary.length));
   const contourSegments = segmentPoints.map((point, index) => ({

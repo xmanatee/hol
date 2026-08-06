@@ -12,21 +12,28 @@ import {
   needsCurvedObjectRecovery,
   shouldDeferSparseMugPoseDropoutRecovery,
 } from '../cv/curvedObjectRecovery.js';
+import { hasPosePositionDropout } from '../cv/poseDropoutRecovery.js';
 import { logger } from '../utils/logger.js';
 
-const MAX_POSE_DROPOUT_INLIERS = 12;
-const BASE_POSE_DROPOUT_INLIERS = 8;
 const TAP_SEGMENTATION_TIMEOUT_MS = 6000;
 const RECOVERY_SEGMENTATION_TIMEOUT_MS = 1400;
+const createSegmentationRefreshState = () => ({
+  status: 'idle',
+  trigger: null,
+  outcomeReason: null,
+  maskSource: null,
+});
 
 const createActiveAnchorDiagnostics = (metrics, readiness) => ({
   readiness,
+  targetPresent: metrics.targetPresent === true,
   qualityState: metrics.qualityState ?? null,
   maskCoverage: metrics.maskCoverage ?? null,
   maskConfidence: metrics.maskConfidence ?? null,
   keypointDensity: metrics.keypointDensity ?? null,
   backgroundRejected: metrics.backgroundRejected ?? 0,
-  objectSupportMaskPreview: metrics.currentObjectSupportMaskPreview ?? metrics.objectSupportMaskPreview ?? null,
+  objectSupportMaskPreview:
+    metrics.currentObjectSupportMaskPreview ?? metrics.objectSupportMaskPreview ?? null,
   activeLandmarks: metrics.activeLandmarks ?? metrics.activeLandmarkCount ?? 0,
   objectOwnedLandmarks: metrics.objectOwnedLandmarks ?? 0,
   trackingSuccessRate: metrics.trackingSuccessRate ?? null,
@@ -66,12 +73,13 @@ export class AnchorManager {
     this.trackingMode = RECONSTRUCTION_POSE_MODEL;
     this.imageAnchorService.setTrackingMode(this.trackingMode);
 
-    this.mode = 'detection';
-    this.detections = [];
+    this.mode = 'selection';
     this.activeAnchor = null;
     this.anchorState = null;
     this.listeners = new Set();
     this.initialized = false;
+    this.disposed = false;
+    this.initializationPromise = null;
 
     // Camera parameters for homography estimation
     this.cameraParams = null;
@@ -80,55 +88,42 @@ export class AnchorManager {
     this.lastRecoveryRefreshAt = 0;
     this.segmentationRefreshIntervalMs = 500;
     this.recoveryRefreshIntervalMs = 180;
+    this.segmentationRefresh = createSegmentationRefreshState();
+    this.segmentationRefreshRequestId = 0;
   }
 
-  async initialize(cv, viewportWidth, viewportHeight, fov = 63) {
-    if (!this.initialized) {
-      logger.info('AnchorManager', 'Starting initialization...');
-      this.cameraParams = HomographyEstimator.createCameraMatrix(fov, viewportWidth, viewportHeight);
-      await this.imageAnchorService.initialize(cv, this.cameraParams);
-      this.imageAnchorService.addListener(this._onAnchorUpdate.bind(this));
-      this.initialized = true;
-      logger.info('AnchorManager', 'Successfully initialized image-based anchor system');
+  initialize(cv, viewportWidth, viewportHeight, fov = 63) {
+    if (this.disposed) {
+      return Promise.reject(new Error('Anchor manager is disposed'));
     }
+    if (this.initialized) {
+      return Promise.resolve();
+    }
+    if (!this.initializationPromise) {
+      const initializationPromise = this._initialize(cv, viewportWidth, viewportHeight, fov).finally(() => {
+        if (this.initializationPromise === initializationPromise) {
+          this.initializationPromise = null;
+        }
+      });
+      this.initializationPromise = initializationPromise;
+    }
+
+    return this.initializationPromise;
+  }
+
+  async _initialize(cv, viewportWidth, viewportHeight, fov) {
+    logger.info('AnchorManager', 'Starting initialization...');
+    this.cameraParams = HomographyEstimator.createCameraMatrix(fov, viewportWidth, viewportHeight);
+    await this._settleImageAnchorInitialization(this.imageAnchorService.initialize(cv, this.cameraParams));
+    this.imageAnchorService.addListener(this._onAnchorUpdate.bind(this));
+    this.initialized = true;
+    logger.info('AnchorManager', 'Successfully initialized image-based anchor system');
   }
 
   addListener(listener) {
-    const callback = typeof listener === 'function'
-      ? listener
-      : listener.onAnchorUpdate.bind(listener);
+    const callback = typeof listener === 'function' ? listener : listener.onAnchorUpdate.bind(listener);
     this.listeners.add(callback);
     return () => this.listeners.delete(callback);
-  }
-
-  /**
-   * Process optional debug detections.
-   * @param {Array} detections - Detection results
-   * @param {ImageData} imageData - Current frame
-   * @returns {Array} Processed detections for UI display
-   */
-  processDetections(detections) {
-    if (!this.initialized || this.mode !== 'detection') {
-      return [];
-    }
-
-    this.detections = detections.map(detection => ({
-      ...detection,
-      id: `${detection.class}-${Math.round(detection.x1)}-${Math.round(detection.y1)}-${Math.round(detection.x2)}-${Math.round(detection.y2)}`
-    }));
-
-    const detectionSignature = this.detections
-      .map(detection => detection.class)
-      .sort()
-      .join('|');
-    logger.debugChanged(
-      'AnchorManager',
-      'detection-mode-summary',
-      `${this.detections.length}:${detectionSignature}`,
-      `Processed ${this.detections.length} detections in detection mode`
-    );
-    this._notifyUpdate();
-    return this.detections;
   }
 
   /**
@@ -136,12 +131,16 @@ export class AnchorManager {
    * @param {ImageData} imageData - Current frame
    * @returns {Object} Update result
    */
-  updateAnchor(imageData, depthContext = {}) {
+  async updateAnchor(imageData, depthContext = {}) {
+    if (this.disposed) {
+      throw new Error('Anchor manager is disposed');
+    }
     if (!this.initialized || this.mode !== 'anchor') {
       return { success: false, reason: 'Not in anchor mode' };
     }
 
-    const result = this.imageAnchorService.updateAnchor(imageData, depthContext);
+    const result = await this.imageAnchorService.updateAnchor(imageData, depthContext);
+    this._releaseLateImageAnchorWorkIfDisposed('anchor update');
 
     // The anchor service will notify via _onAnchorUpdate callback
     return result;
@@ -154,65 +153,74 @@ export class AnchorManager {
    * @returns {Object} Creation result
    */
   async createAnchorFromTap(tapPosition, imageData) {
-    if (!this.initialized || this.mode !== 'detection') {
-      throw new Error('Can only create anchor in detection mode');
+    if (this.disposed) {
+      throw new Error('Anchor manager is disposed');
+    }
+    if (!this.initialized || this.mode !== 'selection') {
+      throw new Error('Can only create an anchor in selection mode');
     }
 
-    const selectedDetection = this.findDetectionAtPosition(tapPosition);
-    const segmentedObjectSupportMask = await this._segmentTapObject({
+    const segmentationResult = await this._segmentTapObject({
       imageData,
       tapPosition,
       createdAtFrame: 0,
       timeoutMs: TAP_SEGMENTATION_TIMEOUT_MS,
     });
+    this._assertNotDisposedDuring('anchor creation');
 
-    const objectSupportMask = this._selectTapObjectSupportMask({
-      segmentedObjectSupportMask,
+    const { objectSupportMask, objectSupportSelection } = this._selectTapObjectSupportMask({
+      segmentationResult,
       imageData,
       tapPosition,
     });
-    const selectedObject = selectedDetection || this._createFreeTapDetection(objectSupportMask);
-    const supportedDetection = {
-      ...selectedObject,
+    const selectionRegion = {
+      ...this._createSelectionRegion(objectSupportMask),
       objectSupportMask,
     };
 
-    const result = await this.imageAnchorService.createAnchor(
-      imageData,
-      tapPosition,
-      supportedDetection
-    );
+    const result = await this.imageAnchorService.createAnchor(imageData, tapPosition, selectionRegion);
+    this._releaseLateImageAnchorWorkIfDisposed('anchor creation');
+    const creationResult = {
+      ...result,
+      objectSupportSelection,
+    };
 
-    if (result.success) {
+    if (creationResult.success) {
       this.mode = 'anchor';
-      this.detections = [];
       this.activeAnchor = {
-        position: result.position,
-        keypoints: result.keypoints,
-        quality: result.quality,
-        method: result.method,
-        state: result.state,
+        position: creationResult.position,
+        keypoints: creationResult.keypoints,
+        quality: creationResult.quality,
+        method: creationResult.method,
+        state: creationResult.state,
         trackingMode: this.trackingMode,
-        readiness: result.readiness,
-        evidence: result.evidence,
-        objectSupportMaskSource: result.objectSupportMaskSource,
-        sourceDetection: supportedDetection,
-        createdAt: Date.now()
+        readiness: creationResult.readiness,
+        overlaySceneReady: creationResult.readiness?.faceReady === true,
+        evidence: creationResult.evidence,
+        objectSupportMaskSource: creationResult.objectSupportMaskSource,
+        objectSupportSelection,
+        selectionRegion,
+        createdAt: Date.now(),
       };
 
-      logger.info('AnchorManager', `Created anchor with ${result.keypoints} keypoints (quality: ${result.quality.toFixed(2)})`);
+      logger.info(
+        'AnchorManager',
+        `Created anchor with ${creationResult.keypoints} keypoints (quality: ${creationResult.quality.toFixed(2)})`,
+      );
       this._notifyUpdate();
     }
 
-    return result;
+    return creationResult;
   }
 
   refreshSegmentationIfNeeded(imageData) {
-    if (!this.initialized ||
-        this.mode !== 'anchor' ||
-        !this.activeAnchor ||
-        !this.anchorState ||
-        this.segmentationRefreshInFlight) {
+    if (
+      !this.initialized ||
+      this.mode !== 'anchor' ||
+      !this.activeAnchor ||
+      !this.anchorState ||
+      this.segmentationRefreshInFlight
+    ) {
       return false;
     }
 
@@ -225,9 +233,16 @@ export class AnchorManager {
     const poseDropout = this._hasPoseDropout();
     const curvedObjectRecovery = this._needsCurvedObjectRecovery();
     const recovery = poseDropout || curvedObjectRecovery;
+    const trigger = poseDropout
+      ? 'pose-dropout-recovery'
+      : curvedObjectRecovery
+        ? CURVED_OBJECT_RECOVERY_REASON
+        : lowObjectOwnership
+          ? 'object-ownership-recovery'
+          : 'periodic-segmentation-refresh';
     const due = now - this.lastSegmentationRefreshAt >= this.segmentationRefreshIntervalMs;
-    const recoveryDue = this.lastRecoveryRefreshAt === 0 ||
-      now - this.lastRecoveryRefreshAt >= this.recoveryRefreshIntervalMs;
+    const recoveryDue =
+      this.lastRecoveryRefreshAt === 0 || now - this.lastRecoveryRefreshAt >= this.recoveryRefreshIntervalMs;
     const stableEnough = ['mapping', 'tracking', 'stable', 'degraded'].includes(this.anchorState.state);
     if (!stableEnough || (!due && !lowObjectOwnership && !(recovery && recoveryDue))) {
       return false;
@@ -237,7 +252,14 @@ export class AnchorManager {
     const refreshRadius = this._getSegmentationRefreshRadius(imageData);
 
     this.segmentationRefreshInFlight = true;
+    const requestId = ++this.segmentationRefreshRequestId;
     this.lastSegmentationRefreshAt = now;
+    this._setSegmentationRefresh({
+      status: 'pending',
+      trigger,
+      outcomeReason: null,
+      maskSource: null,
+    });
 
     this._segmentTapObject({
       imageData,
@@ -245,35 +267,71 @@ export class AnchorManager {
       maxRadius: refreshRadius,
       createdAtFrame: this.anchorState.metrics?.segmentationRefreshFrame || 0,
       timeoutMs: RECOVERY_SEGMENTATION_TIMEOUT_MS,
-    }).then(objectSupportMask => {
-      const acceptedMask = objectSupportMask && this._isAcceptableSegmentationRefresh(objectSupportMask, position, refreshRadius)
-        ? objectSupportMask
-        : this._createTapLocalGrowthMask({ imageData, position, radius: refreshRadius });
-      if (!acceptedMask) {
-        return;
-      }
-
-      const reason = acceptedMask === objectSupportMask
-        ? poseDropout
-          ? 'pose-dropout-recovery'
-          : curvedObjectRecovery
-            ? CURVED_OBJECT_RECOVERY_REASON
-            : lowObjectOwnership
-              ? 'object-ownership-recovery'
-              : 'periodic-segmentation-refresh'
-        : 'tap-local-support-growth';
-      const applied = this.imageAnchorService.updateObjectSupportMask(acceptedMask, { reason });
-      if (applied && this.activeAnchor) {
-        this.activeAnchor.objectSupportMaskSource = acceptedMask.source;
-        if (this.activeAnchor.sourceDetection) {
-          this.activeAnchor.sourceDetection.objectSupportMask = acceptedMask;
+    })
+      .then((segmentationResult) => {
+        if (!this._isCurrentSegmentationRefresh(requestId)) {
+          return;
         }
-      }
-    }).catch(error => {
-      logger.warn('AnchorManager', `Segmentation refresh unavailable: ${error.message}`);
-    }).finally(() => {
-      this.segmentationRefreshInFlight = false;
-    });
+
+        const { objectSupportMask, outcomeReason } = segmentationResult;
+        const evaluation = outcomeReason
+          ? { accepted: false, reason: outcomeReason }
+          : this._evaluateSegmentationRefresh(objectSupportMask, position, refreshRadius);
+        const acceptedMask = evaluation.accepted
+          ? objectSupportMask
+          : this._createTapLocalGrowthMask({ imageData, position, radius: refreshRadius });
+        if (!acceptedMask) {
+          this._setSegmentationRefresh({
+            status: 'rejected',
+            trigger,
+            outcomeReason: evaluation.reason,
+            maskSource: null,
+          });
+          return;
+        }
+
+        const reason = evaluation.accepted ? trigger : 'tap-local-support-growth';
+        const applied = this.imageAnchorService.updateObjectSupportMask(acceptedMask, { reason });
+        if (!applied) {
+          this._setSegmentationRefresh({
+            status: 'rejected',
+            trigger,
+            outcomeReason: 'service-rejected-mask',
+            maskSource: null,
+          });
+          return;
+        }
+        if (this.activeAnchor) {
+          this.activeAnchor.objectSupportMaskSource = acceptedMask.source;
+          if (this.activeAnchor.selectionRegion) {
+            this.activeAnchor.selectionRegion.objectSupportMask = acceptedMask;
+          }
+        }
+        this._setSegmentationRefresh({
+          status: evaluation.accepted ? 'accepted' : 'fallback',
+          trigger,
+          outcomeReason: evaluation.reason,
+          maskSource: acceptedMask.source,
+        });
+      })
+      .catch((error) => {
+        if (!this._isCurrentSegmentationRefresh(requestId)) {
+          return;
+        }
+
+        logger.warn('AnchorManager', `Segmentation refresh unavailable: ${error.message}`);
+        this._setSegmentationRefresh({
+          status: 'rejected',
+          trigger,
+          outcomeReason: 'refresh-error',
+          maskSource: null,
+        });
+      })
+      .finally(() => {
+        if (requestId === this.segmentationRefreshRequestId) {
+          this.segmentationRefreshInFlight = false;
+        }
+      });
 
     if (recovery) {
       this.lastRecoveryRefreshAt = now;
@@ -293,30 +351,52 @@ export class AnchorManager {
       });
 
       if (this._hasUsableObjectSupportMask(objectSupportMask)) {
-        return objectSupportMask;
+        return {
+          objectSupportMask,
+          outcomeReason: null,
+          errorMessage: null,
+        };
       }
     } catch (error) {
       logger.warn('AnchorManager', `Tap segmentation unavailable; using tap-local support: ${error.message}`);
+      return {
+        objectSupportMask: null,
+        outcomeReason: 'segmenter-unavailable',
+        errorMessage: error.message,
+      };
     }
 
-    return null;
+    return {
+      objectSupportMask: null,
+      outcomeReason: 'empty-mask',
+      errorMessage: null,
+    };
   }
 
-  _selectTapObjectSupportMask({
-    segmentedObjectSupportMask,
-    imageData,
-    tapPosition,
-  }) {
-    if (this._isAcceptableTapObjectSupportMask(segmentedObjectSupportMask, tapPosition, imageData)) {
-      return segmentedObjectSupportMask;
+  _selectTapObjectSupportMask({ segmentationResult, imageData, tapPosition }) {
+    if (
+      this._isAcceptableTapObjectSupportMask(segmentationResult.objectSupportMask, tapPosition, imageData)
+    ) {
+      return {
+        objectSupportMask: segmentationResult.objectSupportMask,
+        objectSupportSelection: { outcome: 'segmenter-mask' },
+      };
     }
 
-    return createTapLocalObjectSupportMask({
-      width: imageData.width,
-      height: imageData.height,
-      referencePoint: tapPosition,
-      createdAtFrame: 0,
-    });
+    const outcome = segmentationResult.outcomeReason || 'segmenter-mask-rejected';
+    const objectSupportSelection = segmentationResult.errorMessage
+      ? { outcome, error: segmentationResult.errorMessage }
+      : { outcome };
+
+    return {
+      objectSupportMask: createTapLocalObjectSupportMask({
+        width: imageData.width,
+        height: imageData.height,
+        referencePoint: tapPosition,
+        createdAtFrame: 0,
+      }),
+      objectSupportSelection,
+    };
   }
 
   _hasUsableObjectSupportMask(objectSupportMask) {
@@ -324,14 +404,17 @@ export class AnchorManager {
   }
 
   _isAcceptableTapObjectSupportMask(objectSupportMask, tapPosition, imageData) {
-    if (!this._hasUsableObjectSupportMask(objectSupportMask) ||
-        !isPointInsideObjectSupport(objectSupportMask, tapPosition)) {
+    if (
+      !this._hasUsableObjectSupportMask(objectSupportMask) ||
+      !isPointInsideObjectSupport(objectSupportMask, tapPosition)
+    ) {
       return false;
     }
 
     const frameArea = imageData.width * imageData.height;
     const maskArea = objectSupportMask.bbox.width * objectSupportMask.bbox.height;
-    const oversizedAxis = objectSupportMask.bbox.width > imageData.width * 0.95 ||
+    const oversizedAxis =
+      objectSupportMask.bbox.width > imageData.width * 0.95 ||
       objectSupportMask.bbox.height > imageData.height * 0.95;
     return maskArea >= 16 && maskArea <= frameArea * 0.72 && !oversizedAxis;
   }
@@ -349,27 +432,14 @@ export class AnchorManager {
 
   _hasPoseDropout() {
     const metrics = this.anchorState?.metrics || {};
-    if (this._shouldDeferSparseMugPoseDropoutRecovery(metrics)) {
-      return false;
-    }
-
-    const active = metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0;
-    const trackingRate = metrics.trackingSuccessRate ?? 0;
-    const poseInliers = metrics.poseInliers ?? 0;
-    const targetClass = this.activeAnchor?.sourceDetection?.class || metrics.targetClass || '';
-    const dropoutInlierLimit = metrics.trackingMode === 'depth-fusion' && !/mug/i.test(targetClass)
-      ? MAX_POSE_DROPOUT_INLIERS
-      : BASE_POSE_DROPOUT_INLIERS;
-
-    return active >= 8 &&
-      trackingRate >= 0.55 &&
-      poseInliers < dropoutInlierLimit &&
-      metrics.poseSource == null;
+    const targetClass = this.activeAnchor?.selectionRegion?.surfaceHint || metrics.targetClass || '';
+    const trackingMode = this.activeAnchor?.trackingMode || this.trackingMode || metrics.trackingMode;
+    return hasPosePositionDropout(metrics, { targetClass, trackingMode });
   }
 
   _needsCurvedObjectRecovery() {
     const metrics = this.anchorState?.metrics || {};
-    const targetClass = this.activeAnchor?.sourceDetection?.class || metrics.targetClass;
+    const targetClass = this.activeAnchor?.selectionRegion?.surfaceHint || metrics.targetClass;
     return needsCurvedObjectRecovery(metrics, targetClass);
   }
 
@@ -379,7 +449,7 @@ export class AnchorManager {
   }
 
   _shouldDeferSparseMugPoseDropoutRecovery(metrics) {
-    const targetClass = this.activeAnchor?.sourceDetection?.class || metrics.targetClass;
+    const targetClass = this.activeAnchor?.selectionRegion?.surfaceHint || metrics.targetClass;
     const trackingMode = this.activeAnchor?.trackingMode || this.trackingMode || metrics.trackingMode;
     return shouldDeferSparseMugPoseDropoutRecovery(metrics, targetClass, trackingMode);
   }
@@ -406,29 +476,32 @@ export class AnchorManager {
               ? 2.25
               : 1.5;
 
-    return Math.min(
-      baseRadius * growthScale,
-      Math.hypot(imageData.width, imageData.height) * 0.28
-    );
+    return Math.min(baseRadius * growthScale, Math.hypot(imageData.width, imageData.height) * 0.28);
   }
 
-  _isAcceptableSegmentationRefresh(objectSupportMask, position, continuityRadius) {
+  _evaluateSegmentationRefresh(objectSupportMask, position, continuityRadius) {
     if (!this._hasUsableObjectSupportMask(objectSupportMask)) {
-      return false;
+      return { accepted: false, reason: 'empty-mask' };
     }
 
     const frameArea = objectSupportMask.width * objectSupportMask.height;
     const maskArea = objectSupportMask.bbox.width * objectSupportMask.bbox.height;
-    if (maskArea < 16 || maskArea > frameArea * 0.72) {
-      return false;
+    if (maskArea < 16) {
+      return { accepted: false, reason: 'undersized-mask' };
+    }
+    if (maskArea > frameArea * 0.72) {
+      return { accepted: false, reason: 'oversized-mask' };
     }
 
-    const currentBounds = this.anchorState?.metrics?.currentObjectSupportMaskBounds ||
-        this.anchorState?.metrics?.objectSupportMaskBounds ||
-      this.activeAnchor?.sourceDetection?.objectSupportMask?.bbox ||
+    const currentBounds =
+      this.anchorState?.metrics?.currentObjectSupportMaskBounds ||
+      this.anchorState?.metrics?.objectSupportMaskBounds ||
+      this.activeAnchor?.selectionRegion?.objectSupportMask?.bbox ||
       null;
     if (!currentBounds) {
-      return isPointInsideObjectSupport(objectSupportMask, position);
+      return isPointInsideObjectSupport(objectSupportMask, position)
+        ? { accepted: true, reason: 'anchor-contained' }
+        : { accepted: false, reason: 'discontinuous-mask' };
     }
 
     const center = {
@@ -439,31 +512,62 @@ export class AnchorManager {
       x: currentBounds.x + currentBounds.width / 2,
       y: currentBounds.y + currentBounds.height / 2,
     };
-    const overlapX = Math.max(0, Math.min(objectSupportMask.bbox.x + objectSupportMask.bbox.width, currentBounds.x + currentBounds.width) -
-      Math.max(objectSupportMask.bbox.x, currentBounds.x));
-    const overlapY = Math.max(0, Math.min(objectSupportMask.bbox.y + objectSupportMask.bbox.height, currentBounds.y + currentBounds.height) -
-      Math.max(objectSupportMask.bbox.y, currentBounds.y));
+    const overlapX = Math.max(
+      0,
+      Math.min(
+        objectSupportMask.bbox.x + objectSupportMask.bbox.width,
+        currentBounds.x + currentBounds.width,
+      ) - Math.max(objectSupportMask.bbox.x, currentBounds.x),
+    );
+    const overlapY = Math.max(
+      0,
+      Math.min(
+        objectSupportMask.bbox.y + objectSupportMask.bbox.height,
+        currentBounds.y + currentBounds.height,
+      ) - Math.max(objectSupportMask.bbox.y, currentBounds.y),
+    );
     const overlapArea = overlapX * overlapY;
     const smallerArea = Math.min(maskArea, currentBounds.width * currentBounds.height);
-    return isPointInsideObjectSupport(objectSupportMask, position) ||
-      overlapArea / Math.max(1, smallerArea) >= 0.18 ||
-      Math.hypot(center.x - previousCenter.x, center.y - previousCenter.y) <= continuityRadius;
+    if (isPointInsideObjectSupport(objectSupportMask, position)) {
+      return { accepted: true, reason: 'anchor-contained' };
+    }
+    if (overlapArea / Math.max(1, smallerArea) >= 0.18) {
+      return { accepted: true, reason: 'mask-overlap' };
+    }
+    if (Math.hypot(center.x - previousCenter.x, center.y - previousCenter.y) <= continuityRadius) {
+      return { accepted: true, reason: 'center-continuity' };
+    }
+    return { accepted: false, reason: 'discontinuous-mask' };
+  }
+
+  _setSegmentationRefresh(segmentationRefresh) {
+    this.segmentationRefresh = segmentationRefresh;
+    this._notifyUpdate();
+  }
+
+  _isCurrentSegmentationRefresh(requestId) {
+    return (
+      requestId === this.segmentationRefreshRequestId && this.mode === 'anchor' && this.activeAnchor != null
+    );
+  }
+
+  _resetSegmentationRefresh() {
+    this.segmentationRefreshRequestId += 1;
+    this.segmentationRefreshInFlight = false;
+    this.segmentationRefresh = createSegmentationRefreshState();
   }
 
   _createTapLocalGrowthMask({ imageData, position, radius }) {
     const metrics = this.anchorState?.metrics || {};
-    const currentMask = this.activeAnchor?.sourceDetection?.objectSupportMask || null;
-    const currentSource = currentMask?.source ||
-      metrics.objectSupportMaskSource ||
-      this.activeAnchor?.objectSupportMaskSource;
+    const currentMask = this.activeAnchor?.selectionRegion?.objectSupportMask || null;
+    const currentSource =
+      currentMask?.source || metrics.objectSupportMaskSource || this.activeAnchor?.objectSupportMaskSource;
     if (currentSource !== 'tap-local') {
       return null;
     }
 
-    const currentBounds = metrics.currentObjectSupportMaskBounds ||
-      metrics.objectSupportMaskBounds ||
-      currentMask?.bbox ||
-      null;
+    const currentBounds =
+      metrics.currentObjectSupportMaskBounds || metrics.objectSupportMaskBounds || currentMask?.bbox || null;
     if (currentBounds && radius * 2 <= Math.max(currentBounds.width, currentBounds.height) + 2) {
       return null;
     }
@@ -478,53 +582,27 @@ export class AnchorManager {
     });
   }
 
-  _createFreeTapDetection(objectSupportMask) {
+  _createSelectionRegion(objectSupportMask) {
     const { bbox } = objectSupportMask;
     return {
       x1: bbox.x,
       y1: bbox.y,
       x2: bbox.x + bbox.width,
       y2: bbox.y + bbox.height,
-      class: 'segmented-object',
-      className: 'segmented object',
       confidence: objectSupportMask.confidence,
     };
   }
 
-  /**
-   * Find detection at tap position
-   * @param {Object} position - {x, y} coordinates
-   * @returns {Object|null} Detection or null
-   */
-  findDetectionAtPosition(position) {
-    let bestDetection = null;
-    let bestScore = 0;
-
-    for (const detection of this.detections) {
-      const { x1, y1, x2, y2 } = detection;
-      const isInside = position.x >= x1 && position.x <= x2 &&
-                      position.y >= y1 && position.y <= y2;
-
-      if (isInside && detection.confidence > bestScore) {
-        bestDetection = detection;
-        bestScore = detection.confidence;
-      }
-    }
-
-    return bestDetection;
-  }
-
-  /**
-   * Clear current anchor and return to detection mode
-   */
+  /** Clear the current anchor and return to tap selection. */
   clearAnchor() {
     if (this.mode === 'anchor') {
       this.imageAnchorService.clearAnchor();
-      this.mode = 'detection';
+      this.mode = 'selection';
       this.activeAnchor = null;
       this.anchorState = null;
+      this._resetSegmentationRefresh();
 
-      logger.info('AnchorManager', 'Cleared anchor, returned to detection mode');
+      logger.info('AnchorManager', 'Cleared anchor, returned to selection mode');
       this._notifyUpdate();
     }
   }
@@ -536,15 +614,19 @@ export class AnchorManager {
   getState() {
     return {
       mode: this.mode,
-      detections: this.detections,
       activeAnchor: this.activeAnchor,
       anchorState: this.anchorState,
+      segmentationRefresh: this.segmentationRefresh,
       trackingMode: this.trackingMode,
-      initialized: this.initialized
+      initialized: this.initialized,
     };
   }
 
   setTrackingMode(mode) {
+    if (this.trackingMode === mode) {
+      return;
+    }
+
     this.trackingMode = mode;
     this.imageAnchorService.setTrackingMode(mode);
     this._notifyUpdate();
@@ -555,12 +637,22 @@ export class AnchorManager {
    * @private
    */
   _onAnchorUpdate(anchorServiceState) {
-    logger.debugEvery('AnchorManager', 'anchor-service-state-update', 1000, 'Received anchor service state update:', {
-      anchored: anchorServiceState.anchored,
-      state: anchorServiceState.state,
-      position: anchorServiceState.position,
-      hasMetrics: !!anchorServiceState.metrics
-    });
+    if (this.disposed) {
+      return;
+    }
+
+    logger.debugEvery(
+      'AnchorManager',
+      'anchor-service-state-update',
+      1000,
+      'Received anchor service state update:',
+      {
+        anchored: anchorServiceState.anchored,
+        state: anchorServiceState.state,
+        position: anchorServiceState.position,
+        hasMetrics: !!anchorServiceState.metrics,
+      },
+    );
 
     const previousState = this.anchorState?.state;
     this.anchorState = anchorServiceState;
@@ -570,27 +662,38 @@ export class AnchorManager {
       this.activeAnchor.position = {
         x: anchorServiceState.position.x,
         y: anchorServiceState.position.y,
-        z: anchorServiceState.position.z ?? 0
+        z: anchorServiceState.position.z ?? 0,
       };
-      this.activeAnchor.planarTransform = anchorServiceState.planarTransform ?? this.activeAnchor.planarTransform ?? null;
+      this.activeAnchor.planarTransform =
+        anchorServiceState.planarTransform ?? this.activeAnchor.planarTransform ?? null;
       this.activeAnchor.state = anchorServiceState.state;
       this.activeAnchor.keypoints = metrics.keypointCount ?? this.activeAnchor.keypoints;
       this.activeAnchor.quality = metrics.templateQuality ?? this.activeAnchor.quality;
       this.activeAnchor.readiness = metrics.readiness ?? this.activeAnchor.readiness ?? null;
+      if (this.activeAnchor.readiness?.faceReady === true) {
+        this.activeAnchor.overlaySceneReady = true;
+      }
       this.activeAnchor.diagnostics = createActiveAnchorDiagnostics(metrics, this.activeAnchor.readiness);
-      logger.debugEvery('AnchorManager', 'active-anchor-position', 1000, 'Updated activeAnchor position:', this.activeAnchor.position);
+      logger.debugEvery(
+        'AnchorManager',
+        'active-anchor-position',
+        1000,
+        'Updated activeAnchor position:',
+        this.activeAnchor.position,
+      );
     }
 
     if (previousState !== anchorServiceState.state) {
       logger.info('AnchorManager', `Anchor state changed: ${previousState} -> ${anchorServiceState.state}`);
     }
 
-    // Handle anchor state transitions to detection mode
+    // Return to selection after the underlying tracker clears the anchor.
     if (this.mode === 'anchor' && !anchorServiceState.anchored) {
-      logger.info('AnchorManager', 'Anchor cleared - transitioning to detection mode');
-      this.mode = 'detection';
+      logger.info('AnchorManager', 'Anchor cleared - transitioning to selection mode');
+      this.mode = 'selection';
       this.activeAnchor = null;
       this.anchorState = null;
+      this._resetSegmentationRefresh();
       this._notifyUpdate();
       return;
     }
@@ -605,18 +708,59 @@ export class AnchorManager {
   _notifyUpdate() {
     const state = this.getState();
 
-    this.listeners.forEach(listener => listener(state));
+    this.listeners.forEach((listener) => {
+      listener(state);
+    });
+  }
+
+  _assertNotDisposedDuring(operation) {
+    if (this.disposed) {
+      throw new Error(`Anchor manager disposed during ${operation}`);
+    }
+  }
+
+  _settleImageAnchorInitialization(initialization) {
+    return Promise.resolve(initialization).then(
+      (result) => {
+        this._releaseLateImageAnchorWorkIfDisposed('initialization');
+        return result;
+      },
+      (error) => {
+        if (!this.disposed) {
+          throw error;
+        }
+        this.imageAnchorService.dispose();
+        throw new Error('Anchor manager disposed during initialization', { cause: error });
+      },
+    );
+  }
+
+  _releaseLateImageAnchorWorkIfDisposed(operation) {
+    if (this.disposed) {
+      this.imageAnchorService.dispose();
+      throw new Error(`Anchor manager disposed during ${operation}`);
+    }
   }
 
   dispose() {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.initializationPromise = null;
     if (this.imageAnchorService) {
       this.imageAnchorService.dispose();
     }
+    if (this.interactiveSegmenterService) {
+      this.interactiveSegmenterService.dispose();
+    }
 
     this.listeners.clear();
-    this.detections = [];
+    this.mode = 'selection';
     this.activeAnchor = null;
     this.anchorState = null;
+    this.cameraParams = null;
+    this._resetSegmentationRefresh();
     this.initialized = false;
 
     logger.info('AnchorManager', 'Disposed');

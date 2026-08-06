@@ -26,13 +26,16 @@ test('production CSP permits OpenCV embedded WASM loading', () => {
 
   assert.ok(
     connectSrc.includes('data:'),
-    'OpenCV loads its embedded WASM through fetch(data:...), so connect-src must allow data:'
+    'OpenCV loads its embedded WASM through fetch(data:...), so connect-src must allow data:',
   );
 });
 
 test('production nginx serves ONNX runtime modules as JavaScript', () => {
-  assert.match(
-    nginxConfig,
-    /location\s+~\*\s+\\\.mjs\$\s+\{[^}]*default_type\s+application\/javascript;/s
-  );
+  assert.match(nginxConfig, /application\/javascript\s+mjs;/);
+  assert.match(nginxConfig, /application\/wasm\s+wasm;/);
+});
+
+test('production nginx caches only content-hashed assets as immutable', () => {
+  assert.match(nginxConfig, /~\^\/assets\/\s+"public, max-age=31536000, immutable";/);
+  assert.match(nginxConfig, /location\s+=\s+\/sw\.js/);
 });

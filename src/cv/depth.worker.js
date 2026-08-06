@@ -4,11 +4,16 @@ import {
   postprocessDepthTensor,
   preprocessDepthImageData,
 } from './depthModelPreprocess.js';
+import {
+  DEPTH_ANYTHING_ASSET_URL,
+  ORT_JSEP_LOADER_ASSET_URL,
+  ORT_JSEP_WASM_ASSET_URL,
+} from '../runtime/capabilityPacks.js';
 
-const ortWasmMjsUrl = new URL('../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs', import.meta.url).href;
-const ortWasmUrl = new URL('../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm', import.meta.url).href;
+const ortWasmMjsUrl = ORT_JSEP_LOADER_ASSET_URL;
+const ortWasmUrl = ORT_JSEP_WASM_ASSET_URL;
 
-const DEFAULT_MODEL_URL = '/models/depth_anything_v2_small.onnx';
+const DEFAULT_MODEL_URL = DEPTH_ANYTHING_ASSET_URL;
 
 let session = null;
 let modelConfig = {
@@ -34,9 +39,7 @@ const configureRuntime = ({ crossOriginIsolated, hardwareConcurrency }) => {
 
 const createSession = async () => {
   const webgpuAvailable = typeof navigator !== 'undefined' && Boolean(navigator.gpu);
-  const providerAttempts = webgpuAvailable
-    ? [['webgpu', 'wasm'], ['wasm']]
-    : [['wasm']];
+  const providerAttempts = webgpuAvailable ? [['webgpu', 'wasm'], ['wasm']] : [['wasm']];
   let lastError = null;
 
   for (const providers of providerAttempts) {
@@ -52,7 +55,9 @@ const createSession = async () => {
   }
 
   if (!session) {
-    throw new Error(`Depth model load failed: ${lastError?.message || 'No execution provider available'}`);
+    throw new Error(`Depth model load failed: ${lastError?.message || 'No execution provider available'}`, {
+      cause: lastError,
+    });
   }
 
   modelConfig = {
@@ -62,7 +67,7 @@ const createSession = async () => {
   };
 };
 
-const initialize = async config => {
+const initialize = async (config) => {
   modelConfig = {
     ...modelConfig,
     ...config,
@@ -75,8 +80,6 @@ const initialize = async config => {
   postMessage({
     type: 'initialized',
     provider,
-    inputName: modelConfig.inputName,
-    outputName: modelConfig.outputName,
     inputSize: modelConfig.inputSize,
     modelUrl: modelConfig.modelUrl,
   });
@@ -98,33 +101,36 @@ const estimateDepth = async ({ requestId, imageData, timestamp }) => {
     outputMaxSize: modelConfig.outputMaxSize,
   });
 
-  postMessage({
-    type: 'depth',
-    requestId,
-    timestamp,
-    provider,
-    modelUrl: modelConfig.modelUrl,
-    processingTime: performance.now() - startedAt,
-    width: depthMap.width,
-    height: depthMap.height,
-    sourceWidth: depthMap.sourceWidth,
-    sourceHeight: depthMap.sourceHeight,
-    data: depthMap.data,
-  }, [depthMap.data.buffer]);
+  postMessage(
+    {
+      type: 'depth',
+      requestId,
+      timestamp,
+      provider,
+      modelUrl: modelConfig.modelUrl,
+      processingTime: performance.now() - startedAt,
+      width: depthMap.width,
+      height: depthMap.height,
+      sourceWidth: depthMap.sourceWidth,
+      sourceHeight: depthMap.sourceHeight,
+      data: depthMap.data,
+    },
+    [depthMap.data.buffer],
+  );
 };
 
-self.onmessage = event => {
+self.onmessage = (event) => {
   const message = event.data;
 
   if (message.type === 'initialize') {
-    initialize(message.config).catch(error => {
+    initialize(message.config).catch((error) => {
       postMessage({ type: 'error', stage: 'initialize', message: error.message });
     });
     return;
   }
 
   if (message.type === 'estimate') {
-    estimateDepth(message).catch(error => {
+    estimateDepth(message).catch((error) => {
       postMessage({
         type: 'error',
         stage: 'estimate',

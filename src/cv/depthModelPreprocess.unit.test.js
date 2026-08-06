@@ -16,10 +16,7 @@ test('depth preprocessing letterboxes image data into normalized NCHW tensor', (
   const imageData = {
     width: 2,
     height: 1,
-    data: new Uint8ClampedArray([
-      255, 0, 0, 255,
-      0, 255, 0, 255,
-    ]),
+    data: new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 255]),
   };
 
   const result = preprocessDepthImageData(imageData, { inputSize: 4 });
@@ -52,7 +49,10 @@ test('depth postprocessing normalizes tensor output back to source dimensions', 
 
   assert.equal(result.width, 2);
   assert.equal(result.height, 2);
-  assert.deepEqual([...result.data].map(value => Number(value.toFixed(3))), [0, 0.333, 0.667, 1]);
+  assert.deepEqual(
+    [...result.data].map((value) => Number(value.toFixed(3))),
+    [0, 0.333, 0.667, 1],
+  );
 });
 
 test('depth postprocessing can emit a compact map with source dimensions', () => {

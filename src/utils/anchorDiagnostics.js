@@ -1,8 +1,4 @@
-import { isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
-
-const POSE_RECOVERY_REASON = 'Recovering object pose before showing the face';
-
-const collectAnchorDetails = (anchorState) => {
+export const collectAnchorDetails = ({ anchorState, segmentationRefresh }) => {
   const metrics = anchorState?.metrics || {};
 
   return {
@@ -13,10 +9,12 @@ const collectAnchorDetails = (anchorState) => {
     objectOwnedLandmarks: metrics.objectOwnedLandmarks ?? 0,
     maskCoverage: metrics.maskCoverage ?? null,
     maskConfidence: metrics.maskConfidence ?? null,
-    objectSupportMaskSource: metrics.currentObjectSupportMaskSource || metrics.objectSupportMaskSource || null,
+    objectSupportMaskSource:
+      metrics.currentObjectSupportMaskSource || metrics.objectSupportMaskSource || null,
     objectSupportMaskBounds: metrics.objectSupportMaskBounds || null,
     currentObjectSupportMaskBounds: metrics.currentObjectSupportMaskBounds || null,
-    objectSupportMaskPreview: metrics.currentObjectSupportMaskPreview || metrics.objectSupportMaskPreview || null,
+    objectSupportMaskPreview:
+      metrics.currentObjectSupportMaskPreview || metrics.objectSupportMaskPreview || null,
     objectSupportMaskConfidence: metrics.objectSupportMaskConfidence ?? null,
     keypointDensity: metrics.keypointDensity ?? null,
     backgroundRejected: metrics.backgroundRejected ?? 0,
@@ -25,8 +23,17 @@ const collectAnchorDetails = (anchorState) => {
     landmarkRefreshAdded: metrics.landmarkRefreshAdded ?? 0,
     landmarkRefreshTotal: metrics.landmarkRefreshTotal ?? 0,
     landmarkRefreshRejectedByMask: metrics.landmarkRefreshRejectedByMask ?? 0,
+    landmarkRefreshCoverageBefore: metrics.landmarkRefreshCoverageBefore ?? null,
+    landmarkRefreshCoverageAfter: metrics.landmarkRefreshCoverageAfter ?? null,
+    landmarkRefreshCoverageCellCount: metrics.landmarkRefreshCoverageCellCount ?? null,
+    landmarkRefreshOccupiedBefore: metrics.landmarkRefreshOccupiedBefore ?? null,
+    landmarkRefreshOccupiedAfter: metrics.landmarkRefreshOccupiedAfter ?? null,
     segmentationRefreshReason: metrics.segmentationRefreshReason || null,
     segmentationRefreshFrame: metrics.segmentationRefreshFrame ?? null,
+    segmentationRefreshStatus: segmentationRefresh?.status || 'idle',
+    segmentationRefreshTrigger: segmentationRefresh?.trigger || null,
+    segmentationRefreshOutcomeReason: segmentationRefresh?.outcomeReason || null,
+    segmentationRefreshMaskSource: segmentationRefresh?.maskSource || null,
     templateKeypoints: metrics.templateKeypoints ?? metrics.keypointCount ?? 0,
     templateQuality: metrics.templateQuality ?? null,
     trackingRegion: metrics.trackingRegion || null,
@@ -75,8 +82,18 @@ const collectAnchorDetails = (anchorState) => {
     occlusionState: metrics.occlusionState || null,
     surfaceGrowthAllowed: metrics.surfaceGrowthAllowed ?? false,
     surfaceOcclusionReason: metrics.surfaceOcclusionReason || null,
-    poseCandidateSource: metrics.poseCandidateSource || null,
-    poseCandidateScore: metrics.poseCandidateScore ?? null,
+    poseOverlayCandidateSource: metrics.poseOverlayCandidateSource || null,
+    poseOverlayCandidateScore: metrics.poseOverlayCandidateScore ?? null,
+    poseAttachmentCandidateSource: metrics.poseAttachmentCandidateSource || null,
+    poseAttachmentCandidateScore: metrics.poseAttachmentCandidateScore ?? null,
+    posePositionCandidateSource: metrics.posePositionCandidateSource || null,
+    posePositionCandidateScore: metrics.posePositionCandidateScore ?? null,
+    posePositionRole: metrics.posePositionRole || null,
+    posePositionReason: metrics.posePositionReason || null,
+    poseNormalCandidateSource: metrics.poseNormalCandidateSource || null,
+    poseNormalRole: metrics.poseNormalRole || null,
+    poseNormalReason: metrics.poseNormalReason || null,
+    normalPoseRejectedCandidates: metrics.normalPoseRejectedCandidates || {},
     poseCandidates: metrics.poseCandidates || [],
     rejectedPoseCandidates: metrics.rejectedPoseCandidates || {},
     recoveryAttempts: metrics.recoveryAttempts ?? 0,
@@ -89,167 +106,6 @@ const collectAnchorDetails = (anchorState) => {
     qualityState: metrics.qualityState || null,
     position: anchorState?.position || null,
     normal: anchorState?.normal || null,
-    planarTransform: anchorState?.planarTransform || null
-  };
-};
-
-export const describeAnchorState = ({
-  cameraState,
-  anchorSystemState
-}) => {
-  const mode = anchorSystemState?.mode || 'detection';
-  const detections = anchorSystemState?.detections || [];
-  const serviceState = anchorSystemState?.anchorState;
-  const details = collectAnchorDetails(serviceState);
-
-  if (cameraState !== 'active') {
-    return {
-      status: 'camera',
-      severity: 'idle',
-      message: 'Camera is not active',
-      recommendation: 'Start the camera before checking anchors.',
-      details
-    };
-  }
-
-  if (anchorSystemState?.initialized === false) {
-    return {
-      status: 'initializing',
-      severity: 'warn',
-      message: 'CV services are initializing',
-      recommendation: 'Wait for detection and anchoring services to finish loading.',
-      details
-    };
-  }
-
-  if (mode === 'detection') {
-    if (detections.length > 0) {
-      return {
-        status: 'ready',
-        severity: 'good',
-        message: 'Tap an object to create an anchor',
-        recommendation: 'Use a detected outline when available, or tap the object surface directly.',
-        details
-      };
-    }
-
-    return {
-      status: 'scanning',
-      severity: 'idle',
-      message: 'Scanning for selectable objects',
-      recommendation: 'Point at the object, then tap its visible surface if no outline appears.',
-      details
-    };
-  }
-
-  if (isReconstructionMode(details.poseModel) &&
-      details.readiness?.reason === POSE_RECOVERY_REASON) {
-    return {
-      status: 'recovering',
-      severity: 'warn',
-      message: 'Recovering object pose',
-      recommendation: details.poseRejectedReason ||
-        details.reconstructionPoseRejectedReason ||
-        'Keep the object visible and move slower until pose support is rebuilt.',
-      details
-    };
-  }
-
-  if (serviceState?.state === 'stable') {
-    if (isReconstructionMode(details.poseModel) && !details.reconstructionReady) {
-      return {
-        status: 'mapping',
-        severity: 'warn',
-        message: 'Building 3D object map',
-        recommendation: 'Slowly turn and tilt the object while keeping the clicked area visible.',
-        details
-      };
-    }
-
-    return {
-      status: 'stable',
-      severity: 'good',
-      message: 'Anchor is stable',
-      recommendation: 'The face should stay attached while the object remains visible.',
-      details
-    };
-  }
-
-  if (serviceState?.state === 'candidate') {
-    return {
-      status: 'candidate',
-      severity: 'warn',
-      message: 'Object selected; building initial support',
-      recommendation: details.readiness?.reason || 'Hold the object in view while support landmarks are collected.',
-      details
-    };
-  }
-
-  if (serviceState?.state === 'mapping') {
-    return {
-      status: 'mapping',
-      severity: 'warn',
-      message: 'Building 3D object map',
-      recommendation: details.readiness?.reason || 'Slowly turn and tilt the object while keeping it visible.',
-      details
-    };
-  }
-
-  if (serviceState?.state === 'tracking') {
-    if (isReconstructionMode(details.poseModel) && !details.reconstructionReady) {
-      return {
-        status: 'mapping',
-        severity: 'warn',
-        message: 'Building 3D object map',
-        recommendation: 'Move the object through a small left/right and up/down turn before expecting the face.',
-        details
-      };
-    }
-
-    return {
-      status: 'tracking',
-      severity: 'good',
-      message: 'Anchor is tracking',
-      recommendation: 'Hold the object steady if the face drifts.',
-      details
-    };
-  }
-
-  if (serviceState?.state === 'degraded') {
-    if (isReconstructionMode(details.poseModel) && !details.reconstructionReady) {
-      return {
-        status: 'mapping',
-        severity: 'warn',
-        message: '3D map needs more stable observations',
-        recommendation: details.reconstructionFailureReason || 'Move slower and keep a textured part of the object in view.',
-        details
-      };
-    }
-
-    return {
-      status: 'weak',
-      severity: 'warn',
-      message: 'Weak lock; template recovery is active',
-      recommendation: 'Move closer to a textured label or stronger edge detail.',
-      details
-    };
-  }
-
-  if (serviceState?.state === 'lost') {
-    return {
-      status: 'recovering',
-      severity: 'bad',
-      message: `Anchor lost; recovery attempt ${details.recoveryAttempts}`,
-      recommendation: 'Bring the original object back into view or tap to reset.',
-      details
-    };
-  }
-
-  return {
-    status: 'unknown',
-    severity: 'warn',
-    message: 'Anchor state is unavailable',
-    recommendation: 'Return to detection mode and create a new anchor.',
-    details
+    planarTransform: anchorState?.planarTransform || null,
   };
 };

@@ -5,16 +5,10 @@ const IMAGENET_STD = [0.229, 0.224, 0.225];
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
-const sourceDataForImage = imageData => (
-  imageData.data instanceof Uint8ClampedArray
-    ? imageData.data
-    : new Uint8ClampedArray(imageData.data)
-);
+const sourceDataForImage = (imageData) =>
+  imageData.data instanceof Uint8ClampedArray ? imageData.data : new Uint8ClampedArray(imageData.data);
 
-export const preprocessDepthImageData = (
-  imageData,
-  { inputSize = DEPTH_MODEL_DEFAULT_INPUT_SIZE } = {}
-) => {
+export const preprocessDepthImageData = (imageData, { inputSize = DEPTH_MODEL_DEFAULT_INPUT_SIZE } = {}) => {
   const source = sourceDataForImage(imageData);
   const sourceWidth = imageData.width;
   const sourceHeight = imageData.height;
@@ -27,16 +21,9 @@ export const preprocessDepthImageData = (
 
   for (let y = 0; y < inputSize; y++) {
     for (let x = 0; x < inputSize; x++) {
-      const inImage = x >= padX &&
-        x < padX + resizedWidth &&
-        y >= padY &&
-        y < padY + resizedHeight;
-      const srcX = inImage
-        ? clamp(Math.floor((x - padX) / scale), 0, sourceWidth - 1)
-        : 0;
-      const srcY = inImage
-        ? clamp(Math.floor((y - padY) / scale), 0, sourceHeight - 1)
-        : 0;
+      const inImage = x >= padX && x < padX + resizedWidth && y >= padY && y < padY + resizedHeight;
+      const srcX = inImage ? clamp(Math.floor((x - padX) / scale), 0, sourceWidth - 1) : 0;
+      const srcY = inImage ? clamp(Math.floor((y - padY) / scale), 0, sourceHeight - 1) : 0;
       const sourceOffset = (srcY * sourceWidth + srcX) * 4;
       const targetOffset = y * inputSize + x;
       const r = inImage ? source[sourceOffset] / 255 : IMAGENET_MEAN[0];
@@ -63,7 +50,7 @@ export const preprocessDepthImageData = (
   };
 };
 
-const outputShapeForTensor = tensor => {
+const outputShapeForTensor = (tensor) => {
   const dims = tensor.dims || [];
   if (dims.length === 4) {
     return { width: dims[3], height: dims[2] };
@@ -95,7 +82,7 @@ const sampleBilinear = ({ data, width, height, x, y }) => {
   return top * (1 - ty) + bottom * ty;
 };
 
-export const normalizeDepthValues = values => {
+export const normalizeDepthValues = (values) => {
   let min = Infinity;
   let max = -Infinity;
   for (const value of values) {
@@ -115,7 +102,11 @@ export const normalizeDepthValues = values => {
   return normalized;
 };
 
-export const postprocessDepthTensor = (tensor, preprocessInfo, { outputMaxSize = Math.max(preprocessInfo.originalWidth, preprocessInfo.originalHeight) } = {}) => {
+export const postprocessDepthTensor = (
+  tensor,
+  preprocessInfo,
+  { outputMaxSize = Math.max(preprocessInfo.originalWidth, preprocessInfo.originalHeight) } = {},
+) => {
   const { width: outputWidth, height: outputHeight } = outputShapeForTensor(tensor);
   const outputData = normalizeDepthValues(tensor.data);
   const sourceWidth = preprocessInfo.originalWidth;
@@ -127,12 +118,13 @@ export const postprocessDepthTensor = (tensor, preprocessInfo, { outputMaxSize =
 
   for (let y = 0; y < targetHeight; y++) {
     for (let x = 0; x < targetWidth; x++) {
-      const sourceX = targetWidth === 1 ? (sourceWidth - 1) / 2 : x / (targetWidth - 1) * (sourceWidth - 1);
-      const sourceY = targetHeight === 1 ? (sourceHeight - 1) / 2 : y / (targetHeight - 1) * (sourceHeight - 1);
+      const sourceX = targetWidth === 1 ? (sourceWidth - 1) / 2 : (x / (targetWidth - 1)) * (sourceWidth - 1);
+      const sourceY =
+        targetHeight === 1 ? (sourceHeight - 1) / 2 : (y / (targetHeight - 1)) * (sourceHeight - 1);
       const modelX = sourceX * preprocessInfo.scale + preprocessInfo.padX;
       const modelY = sourceY * preprocessInfo.scale + preprocessInfo.padY;
-      const outputX = modelX / Math.max(preprocessInfo.inputSize - 1, 1) * Math.max(outputWidth - 1, 1);
-      const outputY = modelY / Math.max(preprocessInfo.inputSize - 1, 1) * Math.max(outputHeight - 1, 1);
+      const outputX = (modelX / Math.max(preprocessInfo.inputSize - 1, 1)) * Math.max(outputWidth - 1, 1);
+      const outputY = (modelY / Math.max(preprocessInfo.inputSize - 1, 1)) * Math.max(outputHeight - 1, 1);
       depth[y * targetWidth + x] = sampleBilinear({
         data: outputData,
         width: outputWidth,

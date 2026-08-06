@@ -1,15 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  KNOWN_LOG_TAGS,
-  TaggedLogger,
-} from './logger.js';
+import { KNOWN_LOG_TAGS, TaggedLogger } from './logger.js';
 
 const createMemoryStorage = () => {
   const values = new Map();
 
   return {
-    getItem: key => values.get(key) ?? null,
+    getItem: (key) => values.get(key) ?? null,
     setItem: (key, value) => values.set(key, value),
   };
 };
@@ -83,9 +80,7 @@ test('logger emits errors regardless of enabled tags and gates other levels by t
 
   logger.warn('ImageAnchor', 'hidden warning');
   logger.error('ImageAnchor', 'visible error');
-  assert.deepEqual(consoleTarget.entries, [
-    ['error', '[ImageAnchor]', 'visible error'],
-  ]);
+  assert.deepEqual(consoleTarget.entries, [['error', '[ImageAnchor]', 'visible error']]);
 
   logger.enableTag('ImageAnchor');
   logger.info('ImageAnchor', 'visible info');
@@ -100,15 +95,15 @@ test('logger debugChanged emits repeated state summaries only when the signature
     consoleTarget,
   });
 
-  logger.debugChanged('Detection', 'count', 0, 'Received detections:', 0);
-  logger.enableTag('Detection');
-  logger.debugChanged('Detection', 'count', 0, 'Received detections:', 0);
-  logger.debugChanged('Detection', 'count', 0, 'Received detections:', 0);
-  logger.debugChanged('Detection', 'count', 1, 'Received detections:', 1);
+  logger.debugChanged('AnchorManager', 'count', 0, 'Received landmarks:', 0);
+  logger.enableTag('AnchorManager');
+  logger.debugChanged('AnchorManager', 'count', 0, 'Received landmarks:', 0);
+  logger.debugChanged('AnchorManager', 'count', 0, 'Received landmarks:', 0);
+  logger.debugChanged('AnchorManager', 'count', 1, 'Received landmarks:', 1);
 
   assert.deepEqual(consoleTarget.entries, [
-    ['log', '[Detection]', 'Received detections:', 0],
-    ['log', '[Detection]', 'Received detections:', 1],
+    ['log', '[AnchorManager]', 'Received landmarks:', 0],
+    ['log', '[AnchorManager]', 'Received landmarks:', 1],
   ]);
 });
 

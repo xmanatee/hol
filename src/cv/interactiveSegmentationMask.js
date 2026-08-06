@@ -21,9 +21,9 @@ export const createInteractiveObjectSupportMask = ({
   let supportPixels = 0;
 
   for (let y = 0; y < frameHeight; y++) {
-    const sourceY = Math.min(maskHeight - 1, Math.floor(y * maskHeight / frameHeight));
+    const sourceY = Math.min(maskHeight - 1, Math.floor((y * maskHeight) / frameHeight));
     for (let x = 0; x < frameWidth; x++) {
-      const sourceX = Math.min(maskWidth - 1, Math.floor(x * maskWidth / frameWidth));
+      const sourceX = Math.min(maskWidth - 1, Math.floor((x * maskWidth) / frameWidth));
       const confidence = confidenceData[sourceY * maskWidth + sourceX];
       if (confidence >= threshold) {
         data[y * frameWidth + x] = 255;

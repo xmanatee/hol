@@ -1,10 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  scoreVisionPipelineQuality,
-  summarizeVisionQualityReports,
-} from './stageQualityScoring.js';
+import { scoreVisionPipelineQuality, summarizeVisionQualityReports } from './stageQualityScoring.js';
 
 const createGoodReplay = () => ({
   anchorCreated: true,
@@ -75,8 +72,8 @@ test('vision quality scorer passes a stable replay across all stages', () => {
 
   assert.equal(report.overallStatus, 'pass');
   assert.deepEqual(
-    Object.values(report.stages).map(stage => stage.status),
-    ['pass', 'pass', 'pass', 'pass']
+    Object.values(report.stages).map((stage) => stage.status),
+    ['pass', 'pass', 'pass', 'pass'],
   );
 });
 
@@ -85,7 +82,7 @@ test('vision quality scorer identifies each failing stage', () => {
     name: 'bad fixture',
     replay: {
       anchorCreated: false,
-      createFailure: 'No detection selected at tap position',
+      createFailure: 'No object selected at tap position',
       frames: [
         {
           success: false,
@@ -221,6 +218,110 @@ test('reconstruction scoring ignores transient pose dropout after the map is rea
   assert.equal(report.stages.reconstruction.metrics.minReadyPoseInliers, 18);
 });
 
+test('reconstruction scoring counts pose evidence even when attachment safety rejects pose ownership', () => {
+  const replay = createGoodReplay();
+  replay.frames = [
+    {
+      success: true,
+      anchorError: 2,
+      normalError: 1.4,
+      reconstructionNormalError: 0.3,
+      metrics: {
+        poseModel: 'parametric-surface',
+        poseSource: null,
+        reconstructionReady: true,
+        poseInliers: 12,
+        reconstructionPoseInliers: 12,
+        reconstructionPoseNormalDetached: true,
+        reconstructionMapConfidence: 0.68,
+        reconstructionDepthQuality: 0.14,
+        poseNormalReason: 'incomplete-selected-surface-prior',
+      },
+    },
+    {
+      success: true,
+      anchorError: 3,
+      normalError: 1.45,
+      reconstructionNormalError: Infinity,
+      metrics: {
+        poseModel: 'parametric-surface',
+        poseSource: null,
+        reconstructionReady: true,
+        poseInliers: 0,
+        reconstructionPoseInliers: 0,
+        reconstructionMapConfidence: 0.68,
+        reconstructionDepthQuality: 0.14,
+      },
+    },
+  ];
+
+  const report = scoreVisionPipelineQuality({
+    name: 'attachment safety fixture',
+    replay,
+    summary: {
+      ...goodSummary,
+      minPoseInliers: 0,
+    },
+    headPose: goodHeadPose,
+  });
+
+  assert.equal(report.stages.reconstruction.status, 'pass');
+  assert.equal(report.stages.reconstruction.metrics.poseReadyFrames, 1);
+  assert.equal(report.stages.reconstruction.metrics.minReadyPoseInliers, 12);
+  assert.equal(report.stages.reconstruction.metrics.meanReadyNormalError, 0.3);
+});
+
+test('reconstruction normal scoring excludes pose evidence without a normal owner', () => {
+  const replay = createGoodReplay();
+  replay.frames = [
+    {
+      success: true,
+      anchorError: 2,
+      normalError: 0.42,
+      metrics: {
+        poseModel: 'sparse-reconstruction',
+        poseSource: 'sparse-reconstruction',
+        poseNormalCandidateSource: 'sparse-reconstruction',
+        reconstructionReady: true,
+        poseInliers: 16,
+        reconstructionPoseInliers: 16,
+        reconstructionMapConfidence: 0.7,
+        reconstructionDepthQuality: 0.18,
+      },
+    },
+    {
+      success: true,
+      anchorError: 3,
+      normalError: 1.35,
+      metrics: {
+        poseModel: 'sparse-reconstruction',
+        poseSource: null,
+        poseNormalCandidateSource: null,
+        reconstructionReady: true,
+        poseInliers: 8,
+        reconstructionPoseInliers: 8,
+        reconstructionMapConfidence: 0.7,
+        reconstructionDepthQuality: 0.18,
+      },
+    },
+  ];
+
+  const report = scoreVisionPipelineQuality({
+    name: 'position-only recovery fixture',
+    replay,
+    summary: {
+      ...goodSummary,
+      minPoseInliers: 0,
+    },
+    headPose: goodHeadPose,
+  });
+
+  assert.equal(report.stages.reconstruction.status, 'pass');
+  assert.equal(report.stages.reconstruction.metrics.poseReadyFrames, 2);
+  assert.equal(report.stages.reconstruction.metrics.normalReadyFrames, 1);
+  assert.equal(report.stages.reconstruction.metrics.maxReadyNormalError, 0.42);
+});
+
 test('quality thresholds tolerate floating point boundary noise', () => {
   const report = scoreVisionPipelineQuality({
     name: 'boundary fixture',
@@ -250,8 +351,16 @@ test('tracking scoring exposes object support correction and anchor bias diagnos
       metrics: {
         poseInliers: 0,
         trackingSuccessRate: 0.8,
+        ownershipProbationLandmarks: 6,
+        landmarkRefreshProbationary: 4,
+        landmarkOwnershipPromoted: 2,
+        landmarkRefreshCoverageBefore: 0.25,
+        landmarkRefreshCoverageAfter: 0.5,
+        landmarkRefreshOccupiedBefore: 2,
+        landmarkRefreshOccupiedAfter: 4,
         objectSupportPositionCorrection: 'pose-dropout-recovery',
         objectSupportPositionStep: 6,
+        objectSupportFrameStepLimited: true,
         objectSupportAnchorUv: { u: 0.5, v: 0.5 },
         objectSupportMaskBounds: { x: 0, y: 0, width: 20, height: 20 },
         reconstructionReady: true,
@@ -270,7 +379,14 @@ test('tracking scoring exposes object support correction and anchor bias diagnos
       meanAnchorError: 1,
       maxFrameJump: 0,
       objectSupportCorrectionFrames: 1,
+      objectSupportFrameStepLimitedFrames: 1,
       objectSupportRecoveryFrames: 1,
+      maxOwnershipProbationLandmarks: 6,
+      landmarkRefreshProbationaryLandmarks: 4,
+      landmarkOwnershipPromotions: 2,
+      landmarkRefreshCoverageFrames: 1,
+      landmarkRefreshCoverageGain: 0.25,
+      landmarkRefreshNewOccupiedCells: 2,
       maxObjectSupportPositionStep: 6,
       objectSupportCorrectionCounts: {
         'pose-dropout-recovery': 1,
@@ -281,7 +397,14 @@ test('tracking scoring exposes object support correction and anchor bias diagnos
   const metrics = report.stages.tracking.metrics;
 
   assert.equal(metrics.objectSupportCorrectionFrames, 1);
+  assert.equal(metrics.objectSupportFrameStepLimitedFrames, 1);
   assert.equal(metrics.objectSupportRecoveryFrames, 1);
+  assert.equal(metrics.maxOwnershipProbationLandmarks, 6);
+  assert.equal(metrics.landmarkRefreshProbationaryLandmarks, 4);
+  assert.equal(metrics.landmarkOwnershipPromotions, 2);
+  assert.equal(metrics.landmarkRefreshCoverageFrames, 1);
+  assert.equal(metrics.landmarkRefreshCoverageGain, 0.25);
+  assert.equal(metrics.landmarkRefreshNewOccupiedCells, 2);
   assert.equal(metrics.maxObjectSupportPositionStep, 6);
   assert.equal(metrics.maxObjectSupportAnchorError, 15);
   assert.equal(metrics.meanObjectSupportAnchorError, 15);
@@ -503,7 +626,10 @@ test('quality report attributes tracking and head errors to pose sources', () =>
     },
   });
 
-  assert.equal(report.stages.tracking.metrics.byPositionSource['reference_similarity_transform'].maxAnchorError, 11);
+  assert.equal(
+    report.stages.tracking.metrics.byPositionSource['reference_similarity_transform'].maxAnchorError,
+    11,
+  );
   assert.equal(report.stages.headAttachment.metrics.byPoseSource['parametric-surface'].maxRotationError, 0.7);
 });
 
@@ -605,10 +731,17 @@ test('quality report attributes source-switch instability to transition pairs', 
   const headTransitions = report.stages.headAttachment.metrics.poseSourceTransitions;
 
   assert.equal(trackingTransitions.transitionCount, 1);
-  assert.equal(trackingTransitions.byTransition['planar-homography->reference_similarity_transform'].frameCount, 1);
   assert.equal(
-    Number(trackingTransitions.byTransition['planar-homography->reference_similarity_transform'].maxAnchorJump.toFixed(2)),
-    18.97
+    trackingTransitions.byTransition['planar-homography->reference_similarity_transform'].frameCount,
+    1,
+  );
+  assert.equal(
+    Number(
+      trackingTransitions.byTransition[
+        'planar-homography->reference_similarity_transform'
+      ].maxAnchorJump.toFixed(2),
+    ),
+    18.97,
   );
   assert.equal(headTransitions.transitionCount, 1);
   assert.equal(headTransitions.byTransition['planar-homography->parametric-surface'].maxHeadJumpExcess, 0.05);
@@ -619,6 +752,7 @@ test('vision quality summary exposes actionable failure buckets', () => {
     {
       name: 'busy background cup',
       mode: 'parametric-surface',
+      captureCondition: 'motion-blur',
       overallStatus: 'fail',
       failedStages: ['tracking', 'headAttachment'],
       stages: {
@@ -716,7 +850,41 @@ test('vision quality summary exposes actionable failure buckets', () => {
   assert.equal(summary.trackingSources.reference_similarity_transform.meanAnchorError, 12);
   assert.equal(summary.topTrackingSources[0].source, 'reference_similarity_transform');
   assert.equal(summary.headPoseSources['parametric-surface'].maxWorldPositionError, 0.18);
-  assert.equal(summary.trackingTransitions['planar-homography->reference_similarity_transform'].maxAnchorJump, 18);
+  assert.equal(
+    summary.trackingTransitions['planar-homography->reference_similarity_transform'].maxAnchorJump,
+    18,
+  );
   assert.equal(summary.headPoseTransitions['planar-homography->parametric-surface'].maxHeadJumpExcess, 0.03);
   assert.equal(summary.topFailingScenarios[0].name, 'busy background cup');
+  assert.deepEqual(summary.captureConditions['motion-blur'], {
+    total: 1,
+    byStatus: { fail: 1 },
+    failedByStage: { tracking: 1, headAttachment: 1 },
+  });
+  assert.deepEqual(summary.captureConditions.nominal, {
+    total: 1,
+    byStatus: { pass: 1 },
+    failedByStage: {},
+  });
+});
+
+test('vision quality summary reads capture condition from benchmark axes', () => {
+  const summary = summarizeVisionQualityReports([
+    {
+      name: 'compound capture case',
+      mode: 'sparse-reconstruction',
+      axes: { capture: 'handheld-night' },
+      overallStatus: 'fail',
+      failedStages: ['tracking'],
+      stages: {},
+    },
+  ]);
+
+  assert.deepEqual(summary.captureConditions, {
+    'handheld-night': {
+      total: 1,
+      byStatus: { fail: 1 },
+      failedByStage: { tracking: 1 },
+    },
+  });
 });

@@ -1,21 +1,13 @@
 import { clamp, normalizeAngle } from './anchor.reconstruction.math.js';
-import {
-  fitRobustSimilarity,
-  toActiveObservations,
-  transformPoint2,
-} from './anchor.reconstructionRobust.js';
+import { fitRobustSimilarity, toActiveObservations, transformPoint2 } from './anchor.reconstructionRobust.js';
 import { modelFromRegion } from './anchor.parametricGeometry.js';
-import {
-  calculateDepthNormal,
-  calculateDepthQuality,
-  median,
-} from './anchor.depthFusion.geometry.js';
+import { calculateDepthGeometry, calculateDepthQuality, median } from './anchor.depthFusion.geometry.js';
 import { DepthFusionSurfelMap } from './anchor.depthFusion.surfels.js';
 import { DEPTH_FUSION_POSE_MODEL } from './anchor.reconstructionModes.js';
 
 export { DEPTH_FUSION_POSE_MODEL };
 
-const depthQualityFromSurfels = surfels => {
+const depthQualityFromSurfels = (surfels) => {
   if (surfels.size < 3) return 0;
 
   const bounds = {
@@ -27,7 +19,7 @@ const depthQualityFromSurfels = surfels => {
     maxZ: -Infinity,
   };
 
-  surfels.forEach(surfel => {
+  surfels.forEach((surfel) => {
     bounds.minX = Math.min(bounds.minX, surfel.x);
     bounds.minY = Math.min(bounds.minY, surfel.y);
     bounds.minZ = Math.min(bounds.minZ, surfel.z);
@@ -39,7 +31,7 @@ const depthQualityFromSurfels = surfels => {
   return clamp(
     (bounds.maxZ - bounds.minZ) / Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, 1),
     0,
-    1
+    1,
   );
 };
 
@@ -69,6 +61,12 @@ export class DepthFusionReconstructor {
     this.cameraParams = cameraParams ? { ...cameraParams } : null;
   }
 
+  dispose() {
+    this.frames = [];
+    this.surfelMap.reset();
+    this.pendingPoseEvidence = null;
+  }
+
   reset({ anchorReference, templateRegion = { x: 0, y: 0, width: 1, height: 1 }, targetClass = null }) {
     this.anchorReference = { x: anchorReference.x, y: anchorReference.y };
     this.templateRegion = { ...templateRegion };
@@ -83,12 +81,15 @@ export class DepthFusionReconstructor {
     this.lastDepthProvider = null;
     this.lastDepthInferenceTime = 0;
     this.lastDepthTimestamp = 0;
+    this.lastConsumedDepthTimestamp = null;
+    this.pendingPoseEvidence = null;
   }
 
   updateReferenceRegion(templateRegion, targetClass = this.targetClass) {
     this.templateRegion = { ...templateRegion };
     this.targetClass = targetClass;
     this.surfaceModel = modelFromRegion(templateRegion, targetClass);
+    this.pendingPoseEvidence = null;
   }
 
   get surfels() {
@@ -96,6 +97,7 @@ export class DepthFusionReconstructor {
   }
 
   addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now(), context = {}) {
+    this.pendingPoseEvidence = null;
     const stateOptions = { includePreview: context.includePreview !== false };
     const depthFrame = context.depthFrame;
     const depthStatus = context.depthState?.state || (depthFrame ? 'ready' : this.lastDepthStatus);
@@ -121,20 +123,24 @@ export class DepthFusionReconstructor {
       return this.getState(stateOptions);
     }
 
-    const observations = toActiveObservations(trackedPoints);
-    if (observations.length < this.minPoseLandmarks) {
+    if (this.lastConsumedDepthTimestamp !== null && depthFrame.timestamp <= this.lastConsumedDepthTimestamp) {
+      return this.getState(stateOptions);
+    }
+
+    const poseEvidence = this._createPoseEvidence(trackedPoints);
+    this.pendingPoseEvidence = poseEvidence;
+    if (poseEvidence.observations.length < this.minPoseLandmarks) {
       this.lastFailureReason = 'Insufficient landmarks for depth fusion pose';
       return this.getState(stateOptions);
     }
 
-    const fit = fitRobustSimilarity(observations, {
-      minInliers: this.minPoseLandmarks,
-      threshold: 12,
-    });
+    const fit = this._completePoseEvidence(poseEvidence);
     if (!fit.success) {
       this.lastFailureReason = fit.reason;
       return this.getState(stateOptions);
     }
+
+    this.lastConsumedDepthTimestamp = depthFrame.timestamp;
 
     const fused = this.surfelMap.fuse({
       depthFrame,
@@ -167,21 +173,19 @@ export class DepthFusionReconstructor {
     this.lastDepthInferenceTime = depthFrame.processingTime || 0;
     this.lastDepthTimestamp = depthFrame.timestamp || timestamp;
     const stats = this._statistics();
-    this.state = this.frames.length >= this.minFrames && stats.mapConfidence >= 0.5
-      ? 'ready'
-      : 'mapping';
-    this.lastFailureReason = this.state === 'ready'
-      ? null
-      : 'Collecting stable depth keyframes';
-    return this.getState(stateOptions);
+    this.state = this.frames.length >= this.minFrames && stats.mapConfidence >= 0.5 ? 'ready' : 'mapping';
+    this.lastFailureReason = this.state === 'ready' ? null : 'Collecting stable depth keyframes';
+    return this._createState(stats, stateOptions);
   }
 
   estimatePoseFromTrackedPoints(trackedPoints, { includePreview = true } = {}) {
-    const observations = toActiveObservations(trackedPoints);
-    const fit = fitRobustSimilarity(observations, {
-      minInliers: this.minPoseLandmarks,
-      threshold: 12,
-    });
+    // Mapping and pose are one synchronous service transaction; the next producer invalidates this loan.
+    const poseEvidence =
+      this.pendingPoseEvidence?.trackedPoints === trackedPoints
+        ? this.pendingPoseEvidence
+        : this._createPoseEvidence(trackedPoints);
+    this.pendingPoseEvidence = null;
+    const fit = this._completePoseEvidence(poseEvidence);
     const stats = this._statistics();
 
     if (!fit.success || this.state !== 'ready') {
@@ -194,9 +198,12 @@ export class DepthFusionReconstructor {
 
     const position = transformPoint2(this.anchorReference, fit.transform);
     const frameCount = this.frames.length;
-    const points = this.surfelMap.previewPoints({ limit: this.maxSurfels, frameCount });
-    const normal = calculateDepthNormal(points);
-    const depthQuality = calculateDepthQuality(points);
+    const points = includePreview
+      ? this.surfelMap.previewPoints({ limit: this.maxSurfels, frameCount })
+      : null;
+    const { normal, depthQuality } = points
+      ? calculateDepthGeometry(points)
+      : this.surfelMap.measureGeometry();
 
     const result = {
       success: true,
@@ -224,26 +231,56 @@ export class DepthFusionReconstructor {
 
     return {
       ...result,
-      preview: this._createPreview({
-        anchor: { ...this.anchorReference, z: median(points.map(point => point.z)) },
-        current: {
-          anchor: position,
-          normal,
-          planarTransform: {
-            scale: fit.transform.scale,
-            rotation: normalizeAngle(fit.transform.rotation),
-            confidence: fit.confidence,
-            inlierCount: fit.inlierCount,
-            method: DEPTH_FUSION_POSE_MODEL,
+      preview: this._createPreview(
+        {
+          anchor: { ...this.anchorReference, z: median(points.map((point) => point.z)) },
+          current: {
+            anchor: position,
+            normal,
+            planarTransform: {
+              scale: fit.transform.scale,
+              rotation: normalizeAngle(fit.transform.rotation),
+              confidence: fit.confidence,
+              inlierCount: fit.inlierCount,
+              method: DEPTH_FUSION_POSE_MODEL,
+            },
           },
+          points: points.slice(0, this.surfelMap.previewPointLimit),
         },
-        points: points.slice(0, this.surfelMap.previewPointLimit),
-      }),
+        stats,
+      ),
     };
   }
 
-  getState({ includePreview = true } = {}) {
-    const stats = this._statistics();
+  _createPoseEvidence(trackedPoints) {
+    return {
+      trackedPoints,
+      observations: toActiveObservations(trackedPoints),
+      fit: null,
+      fitEvaluated: false,
+    };
+  }
+
+  _fitPoseObservations(observations) {
+    return fitRobustSimilarity(observations, {
+      minInliers: this.minPoseLandmarks,
+      threshold: 12,
+    });
+  }
+
+  _completePoseEvidence(evidence) {
+    if (!evidence.fitEvaluated) {
+      evidence.fit = this._fitPoseObservations(evidence.observations);
+      evidence.fitEvaluated = true;
+    }
+    return evidence.fit;
+  }
+
+  getState(options = {}) {
+    return this._createState(this._statistics(), options);
+  }
+
+  _createState(stats, { includePreview = true } = {}) {
     const frameCount = this.frames.length;
     const state = {
       state: this.state,
@@ -268,9 +305,12 @@ export class DepthFusionReconstructor {
     return {
       ...state,
       depthQuality: calculateDepthQuality(points),
-      preview: this._createPreview({
-        points: points.slice(0, this.surfelMap.previewPointLimit),
-      }),
+      preview: this._createPreview(
+        {
+          points: points.slice(0, this.surfelMap.previewPointLimit),
+        },
+        stats,
+      ),
     };
   }
 
@@ -283,13 +323,16 @@ export class DepthFusionReconstructor {
     });
   }
 
-  _createPreview({ anchor = this.anchorReference, current = null, points = null } = {}) {
+  _createPreview(
+    { anchor = this.anchorReference, current = null, points = null } = {},
+    statistics = this._statistics(),
+  ) {
     return this.surfelMap.createPreview({
       poseModel: DEPTH_FUSION_POSE_MODEL,
       anchor,
       current,
       frameCount: this.frames.length,
-      statistics: this._statistics(),
+      statistics,
       points,
     });
   }

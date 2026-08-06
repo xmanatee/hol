@@ -16,6 +16,7 @@ The point is not to make one report. The report is the steering signal for the n
 Use the smallest pass that can answer the current question.
 
 - Quick: fast regression signal after a focused code change.
+- Hard: seven exact-ground-truth rendered scenes. Six combine fast motion or repeated occlusion with low-light sensor noise, exposure blur, and rolling-shutter readout; one removes the target completely, presents a decoy without support-mask or depth leakage, then returns the target at a distant location. Use it after tracking or recovery changes.
 - Representative: broader object, background, motion, and occlusion coverage before trusting the direction.
 - Full: final evidence across all current synthetic conditions.
 

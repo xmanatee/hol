@@ -1,8 +1,7 @@
 import { clamp } from './anchor.reconstruction.math.js';
 import { createSurfacePreview } from './anchor.reconstruction.preview.js';
 import {
-  calculateDepthNormal,
-  calculateDepthQuality,
+  calculateDepthGeometry,
   colorAt,
   depthAt,
   invertSimilarityPoint,
@@ -66,13 +65,13 @@ export class DepthFusionSurfelMap {
       return { accepted: 0, rejected: 0, consistency: 0 };
     }
 
-    const centerDepth = median(samples.map(sample => sample.value));
+    const centerDepth = median(samples.map((sample) => sample.value));
     const depthScale = Math.max(templateRegion.width, templateRegion.height, 1) * 0.54;
     let accepted = 0;
     let rejected = 0;
     let residualSum = 0;
 
-    samples.forEach(sample => {
+    samples.forEach((sample) => {
       const point = this._backProjectSample({
         sample,
         fit,
@@ -97,15 +96,13 @@ export class DepthFusionSurfelMap {
     return {
       accepted,
       rejected,
-      consistency: clamp(1 - rejectionRatio - residualSum / Math.max(rejected, 1) * 0.25, 0, 1),
+      consistency: clamp(1 - rejectionRatio - (residualSum / Math.max(rejected, 1)) * 0.25, 0, 1),
     };
   }
 
   previewPoints({ limit = 180, frameCount }) {
     return [...this.surfels.values()]
-      .sort((left, right) => (
-        right.observations * right.confidence - left.observations * left.confidence
-      ))
+      .sort((left, right) => right.observations * right.confidence - left.observations * left.confidence)
       .slice(0, limit)
       .map((surfel, index) => ({
         id: index,
@@ -120,7 +117,11 @@ export class DepthFusionSurfelMap {
           g: Math.round(surfel.color.g),
           b: Math.round(surfel.color.b),
         },
-        reliability: clamp((surfel.observations / Math.max(frameCount, 1)) * 0.65 + surfel.confidence * 0.35, 0, 1),
+        reliability: clamp(
+          (surfel.observations / Math.max(frameCount, 1)) * 0.65 + surfel.confidence * 0.35,
+          0,
+          1,
+        ),
         observations: surfel.observations,
       }));
   }
@@ -131,13 +132,13 @@ export class DepthFusionSurfelMap {
       return EMPTY_STATS;
     }
 
-    const averageSupport = surfels.reduce((sum, surfel) => (
-      sum + clamp(surfel.observations / Math.max(frameCount, 1), 0, 1)
-    ), 0) / surfels.length;
-    const averageReliability = surfels.reduce((sum, surfel) => (
-      sum + surfel.confidence
-    ), 0) / surfels.length;
-    const matureLandmarks = surfels.filter(surfel => surfel.observations >= Math.max(2, minFrames - 1)).length;
+    const averageSupport =
+      surfels.reduce((sum, surfel) => sum + clamp(surfel.observations / Math.max(frameCount, 1), 0, 1), 0) /
+      surfels.length;
+    const averageReliability = surfels.reduce((sum, surfel) => sum + surfel.confidence, 0) / surfels.length;
+    const matureLandmarks = surfels.filter(
+      (surfel) => surfel.observations >= Math.max(2, minFrames - 1),
+    ).length;
     const geometricConsistency = consistency.length
       ? consistency.reduce((sum, value) => sum + value, 0) / consistency.length
       : 0;
@@ -149,17 +150,17 @@ export class DepthFusionSurfelMap {
       averageReliability,
       matureLandmarks,
       geometricConsistency,
-      mapConfidence: clamp(frameScore * 0.25 + surfelScore * 0.38 + averageReliability * 0.22 + geometricConsistency * 0.15, 0, 1),
+      mapConfidence: clamp(
+        frameScore * 0.25 + surfelScore * 0.38 + averageReliability * 0.22 + geometricConsistency * 0.15,
+        0,
+        1,
+      ),
       mappedFrames: frameCount,
     };
   }
 
-  normal({ limit, frameCount }) {
-    return calculateDepthNormal(this.previewPoints({ limit, frameCount }));
-  }
-
-  quality({ limit, frameCount }) {
-    return calculateDepthQuality(this.previewPoints({ limit, frameCount }));
+  measureGeometry() {
+    return calculateDepthGeometry(this.surfels.values());
   }
 
   createPreview({ poseModel, anchor, current = null, frameCount, statistics, points = null }) {
@@ -195,22 +196,42 @@ export class DepthFusionSurfelMap {
     const bbox = objectSupportMask.bbox;
     const sourceWidth = depthFrame.sourceWidth || depthFrame.width;
     const sourceHeight = depthFrame.sourceHeight || depthFrame.height;
-    const startX = clamp(Math.floor(bbox.x / Math.max(sourceWidth, 1) * depthFrame.width), 0, depthFrame.width - 1);
-    const startY = clamp(Math.floor(bbox.y / Math.max(sourceHeight, 1) * depthFrame.height), 0, depthFrame.height - 1);
-    const endX = clamp(Math.ceil((bbox.x + bbox.width) / Math.max(sourceWidth, 1) * depthFrame.width), 0, depthFrame.width);
-    const endY = clamp(Math.ceil((bbox.y + bbox.height) / Math.max(sourceHeight, 1) * depthFrame.height), 0, depthFrame.height);
+    const startX = clamp(
+      Math.floor((bbox.x / Math.max(sourceWidth, 1)) * depthFrame.width),
+      0,
+      depthFrame.width - 1,
+    );
+    const startY = clamp(
+      Math.floor((bbox.y / Math.max(sourceHeight, 1)) * depthFrame.height),
+      0,
+      depthFrame.height - 1,
+    );
+    const endX = clamp(
+      Math.ceil(((bbox.x + bbox.width) / Math.max(sourceWidth, 1)) * depthFrame.width),
+      0,
+      depthFrame.width,
+    );
+    const endY = clamp(
+      Math.ceil(((bbox.y + bbox.height) / Math.max(sourceHeight, 1)) * depthFrame.height),
+      0,
+      depthFrame.height,
+    );
 
     for (let depthY = startY; depthY < endY; depthY += this.sampleStride) {
       for (let depthX = startX; depthX < endX; depthX += this.sampleStride) {
-        const x = depthFrame.width === 1
-          ? (sourceWidth - 1) / 2
-          : depthX / Math.max(depthFrame.width - 1, 1) * (sourceWidth - 1);
-        const y = depthFrame.height === 1
-          ? (sourceHeight - 1) / 2
-          : depthY / Math.max(depthFrame.height - 1, 1) * (sourceHeight - 1);
+        const x =
+          depthFrame.width === 1
+            ? (sourceWidth - 1) / 2
+            : (depthX / Math.max(depthFrame.width - 1, 1)) * (sourceWidth - 1);
+        const y =
+          depthFrame.height === 1
+            ? (sourceHeight - 1) / 2
+            : (depthY / Math.max(depthFrame.height - 1, 1)) * (sourceHeight - 1);
 
-        if (!maskHasPixel(objectSupportMask, x, y, sourceWidth, sourceHeight) ||
-            !isMaskInterior(objectSupportMask, x, y, sourceWidth, sourceHeight)) {
+        if (
+          !maskHasPixel(objectSupportMask, x, y, sourceWidth, sourceHeight) ||
+          !isMaskInterior(objectSupportMask, x, y, sourceWidth, sourceHeight)
+        ) {
           continue;
         }
 
@@ -228,10 +249,10 @@ export class DepthFusionSurfelMap {
     const reference = invertSimilarityPoint(sample, fit);
     const cameraZ = clamp(1 + (sample.value - centerDepth) * 0.88, 0.2, 2.4);
     const centerZ = 1;
-    const cameraX = (sample.x - cameraParams.cx) / cameraParams.fx * cameraZ;
-    const cameraY = (sample.y - cameraParams.cy) / cameraParams.fy * cameraZ;
-    const centerCameraX = (sample.x - cameraParams.cx) / cameraParams.fx * centerZ;
-    const centerCameraY = (sample.y - cameraParams.cy) / cameraParams.fy * centerZ;
+    const cameraX = ((sample.x - cameraParams.cx) / cameraParams.fx) * cameraZ;
+    const cameraY = ((sample.y - cameraParams.cy) / cameraParams.fy) * cameraZ;
+    const centerCameraX = ((sample.x - cameraParams.cx) / cameraParams.fx) * centerZ;
+    const centerCameraY = ((sample.y - cameraParams.cy) / cameraParams.fy) * centerZ;
 
     return {
       x: reference.x + (cameraX - centerCameraX) * depthScale,
@@ -292,10 +313,8 @@ export class DepthFusionSurfelMap {
     }
 
     const sorted = [...this.surfels.values()]
-      .sort((left, right) => (
-        right.observations * right.confidence - left.observations * left.confidence
-      ))
+      .sort((left, right) => right.observations * right.confidence - left.observations * left.confidence)
       .slice(0, this.maxSurfels);
-    this.surfels = new Map(sorted.map(surfel => [surfel.id, surfel]));
+    this.surfels = new Map(sorted.map((surfel) => [surfel.id, surfel]));
   }
 }

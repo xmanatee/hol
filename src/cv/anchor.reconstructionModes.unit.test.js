@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  RECONSTRUCTION_MODES,
-} from './anchor.reconstructionModes.js';
+import { RECONSTRUCTION_MODES } from './anchor.reconstructionModes.js';
 import { createReconstructionEngine } from './anchor.reconstructionEngineFactory.js';
 import {
   modelFromRegion,
@@ -29,7 +27,7 @@ const createCylinderShape = () => {
   let id = 0;
   for (let row = -3; row <= 3; row++) {
     for (let column = -5; column <= 5; column++) {
-      const theta = column / 5 * Math.PI * 0.42;
+      const theta = (column / 5) * Math.PI * 0.42;
       const radius = 52;
       points.push({
         id: id++,
@@ -42,21 +40,22 @@ const createCylinderShape = () => {
   return points;
 };
 
-const trackedPointsForPose = (shape, pose, slidingIds = new Set()) => shape.map(point => {
-  const original = transformPoint(point, referencePose);
-  const current = transformPoint(point, pose);
-  const slide = slidingIds.has(point.id) ? 34 : 0;
+const trackedPointsForPose = (shape, pose, slidingIds = new Set()) =>
+  shape.map((point) => {
+    const original = transformPoint(point, referencePose);
+    const current = transformPoint(point, pose);
+    const slide = slidingIds.has(point.id) ? 34 : 0;
 
-  return {
-    id: point.id,
-    original,
-    current: { x: current.x, y: current.y + slide },
-    response: 1,
-    status: 'active',
-    age: 28,
-    stabilityScore: slidingIds.has(point.id) ? 0.18 : 0.9,
-  };
-});
+    return {
+      id: point.id,
+      original,
+      current: { x: current.x, y: current.y + slide },
+      response: 1,
+      status: 'active',
+      age: 28,
+      stabilityScore: slidingIds.has(point.id) ? 0.18 : 0.9,
+    };
+  });
 
 const projectCameraPoint = ({ point, pose, camera }) => {
   const cy = Math.cos(pose.yaw);
@@ -85,13 +84,13 @@ const projectCameraPoint = ({ point, pose, camera }) => {
   const z = rotated.z + pose.distance;
 
   return {
-    x: camera.cx + camera.fx * x / z,
-    y: camera.cy + camera.fy * y / z,
+    x: camera.cx + (camera.fx * x) / z,
+    y: camera.cy + (camera.fy * y) / z,
   };
 };
 
 const cylinderTrackedPointsForCameraPose = ({ referencePoints, anchorReference, pose, camera, bounds }) => {
-  const points = referencePoints.map(reference => {
+  const points = referencePoints.map((reference) => {
     const modelPoint = pointForSurfaceModel(reference, bounds, 'cylinder');
     return {
       id: reference.id,
@@ -124,12 +123,10 @@ const createGrayImage = (width, height, frameIndex) => {
 };
 
 test('reconstruction mode registry exposes selectable engines', () => {
-  assert.deepEqual(RECONSTRUCTION_MODES.map(mode => mode.id), [
-    'sparse-reconstruction',
-    'parametric-surface',
-    'direct-photometric',
-    'depth-fusion',
-  ]);
+  assert.deepEqual(
+    RECONSTRUCTION_MODES.map((mode) => mode.id),
+    ['sparse-reconstruction', 'parametric-surface', 'direct-photometric', 'depth-fusion'],
+  );
 
   for (const mode of RECONSTRUCTION_MODES) {
     const engine = createReconstructionEngine(mode.id);
@@ -138,9 +135,11 @@ test('reconstruction mode registry exposes selectable engines', () => {
     assert.equal(typeof engine.addFrameFromTrackedPoints, 'function');
     assert.equal(typeof engine.estimatePoseFromTrackedPoints, 'function');
     assert.equal(typeof engine.getState, 'function');
+    assert.equal(typeof engine.dispose, 'function');
+    engine.dispose();
   }
 
-  assert.equal(RECONSTRUCTION_MODES.find(mode => mode.id === 'depth-fusion').requiresDepthFrame, true);
+  assert.equal(RECONSTRUCTION_MODES.find((mode) => mode.id === 'depth-fusion').requiresDepthFrame, true);
 });
 
 test('reconstruction engines update object reference region without resetting mapped observations', () => {
@@ -167,6 +166,16 @@ test('reconstruction engines reset cleanly during anchor disposal', () => {
     engine.reset({ anchorReference: { x: 0, y: 0 } });
     assert.equal(engine.getState().poseModel, mode.id);
   }
+});
+
+test('lazy depth fusion disposes an implementation that resolves after its owner', async () => {
+  const engine = createReconstructionEngine('depth-fusion');
+
+  engine.dispose();
+
+  assert.equal(await engine.ready, null);
+  assert.equal(engine.impl, null);
+  assert.equal(engine.state, 'inactive');
 });
 
 test('parametric surface engine uses target class before crop aspect fallback', () => {
@@ -217,7 +226,7 @@ test('ellipsoid surface prior exposes curved 3D points and closed preview faces'
   assert.ok(Math.abs(centerPoint.z) < 1e-6);
   assert.ok(sidePoint.z < -18);
   assert.ok(topPoint.z < -18);
-  assert.ok(mesh.points.some(point => point.z < -40));
+  assert.ok(mesh.points.some((point) => point.z < -40));
   assert.ok(mesh.faces.length >= 96);
 });
 
@@ -260,13 +269,17 @@ test('parametric surface engine fits a stable cylinder despite sliding stripe ou
       tx: 240 + frame * 3,
       ty: 170 + frame * 1.2,
     };
-    const slidingIds = new Set(shape.filter(point => point.id % 7 === frame % 7).map(point => point.id));
+    const slidingIds = new Set(shape.filter((point) => point.id % 7 === frame % 7).map((point) => point.id));
     engine.addFrameFromTrackedPoints(trackedPointsForPose(shape, pose, slidingIds), 1000 + frame * 33);
   }
 
   const targetPose = { scale: 1.42, rotation: 0.22, tx: 272, ty: 187 };
   const result = engine.estimatePoseFromTrackedPoints(
-    trackedPointsForPose(shape, targetPose, new Set(shape.filter(point => point.id % 6 === 0).map(point => point.id)))
+    trackedPointsForPose(
+      shape,
+      targetPose,
+      new Set(shape.filter((point) => point.id % 6 === 0).map((point) => point.id)),
+    ),
   );
   const state = engine.getState();
 
@@ -297,14 +310,17 @@ test('parametric surface engine projects off-center curved anchors from the PnP 
     for (let column = 0; column < 10; column++) {
       referencePoints.push({
         id: id++,
-        x: bounds.min.x + column * (bounds.max.x - bounds.min.x) / 9,
-        y: bounds.min.y + row * (bounds.max.y - bounds.min.y) / 7,
+        x: bounds.min.x + (column * (bounds.max.x - bounds.min.x)) / 9,
+        y: bounds.min.y + (row * (bounds.max.y - bounds.min.y)) / 7,
       });
     }
   }
   const anchorReference = { x: 276, y: 204 };
   const engine = createReconstructionEngine('parametric-surface');
   engine.configure({ cv, cameraParams: camera });
+  const pnpWorkspace = engine.pnp;
+  assert.ok(pnpWorkspace);
+  const nativeHandles = Object.values(pnpWorkspace);
   engine.reset({
     anchorReference,
     templateRegion: {
@@ -318,7 +334,7 @@ test('parametric surface engine projects off-center curved anchors from the PnP 
 
   for (let frame = 0; frame < 7; frame++) {
     const pose = {
-      yaw: (-0.12 + frame * 0.055),
+      yaw: -0.12 + frame * 0.055,
       pitch: 0.02 + frame * 0.01,
       roll: -0.03 + frame * 0.01,
       tx: 6 + frame * 1.4,
@@ -355,7 +371,24 @@ test('parametric surface engine projects off-center curved anchors from the PnP 
   assert.equal(result.success, true);
   assert.ok(result.pnpInlierCount >= 36);
   assert.ok(result.pnpAverageResidual < 3.5);
-  assert.ok(Math.hypot(result.position.x - targetFrame.anchor.x, result.position.y - targetFrame.anchor.y) < 3.5);
+  assert.ok(
+    Math.hypot(result.position.x - targetFrame.anchor.x, result.position.y - targetFrame.anchor.y) < 3.5,
+  );
+  assert.equal(engine.pnp, pnpWorkspace);
+  assert.deepEqual(Object.values(engine.pnp), nativeHandles);
+
+  let deleteCount = 0;
+  nativeHandles.forEach((handle) => {
+    const deleteHandle = handle.delete.bind(handle);
+    handle.delete = () => {
+      deleteCount++;
+      deleteHandle();
+    };
+  });
+  engine.dispose();
+
+  assert.equal(deleteCount, nativeHandles.length);
+  assert.equal(engine.pnp, null);
 });
 
 test('direct photometric engine grows a surfel map from stable gradient samples', () => {
@@ -375,14 +408,22 @@ test('direct photometric engine grows a surfel map from stable gradient samples'
       tx: 238 + frame * 2.5,
       ty: 169 + frame,
     };
-    const trackedPoints = trackedPointsForPose(shape, pose, new Set(shape.filter(point => point.id % 9 === 0).map(point => point.id)));
-    const state = engine.addFrameFromTrackedPoints(trackedPoints, 1000 + frame * 33, createGrayImage(420, 320, frame));
-    confidence.push(state.statistics.mapConfidence);
+    const trackedPoints = trackedPointsForPose(
+      shape,
+      pose,
+      new Set(shape.filter((point) => point.id % 9 === 0).map((point) => point.id)),
+    );
+    const frameState = engine.addFrameFromTrackedPoints(
+      trackedPoints,
+      1000 + frame * 33,
+      createGrayImage(420, 320, frame),
+    );
+    confidence.push(frameState.statistics.mapConfidence);
   }
 
   const result = engine.estimatePoseFromTrackedPoints(
     trackedPointsForPose(shape, { scale: 1.36, rotation: 0.16, tx: 270, ty: 184 }),
-    createGrayImage(420, 320, 11)
+    createGrayImage(420, 320, 11),
   );
   const state = engine.getState();
 
@@ -410,7 +451,7 @@ test('surface reconstruction engines reject cup-like sliding tracks instead of g
     });
 
     for (let frame = 0; frame < 9; frame++) {
-      const trackedPoints = shape.map(point => {
+      const trackedPoints = shape.map((point) => {
         const original = transformPoint(point, referencePose);
         const stripe = Math.round(original.x / 12);
         return {
@@ -430,25 +471,31 @@ test('surface reconstruction engines reject cup-like sliding tracks instead of g
     }
 
     const state = engine.getState();
-    const result = engine.estimatePoseFromTrackedPoints(shape.map(point => {
-      const original = transformPoint(point, referencePose);
-      const stripe = Math.round(original.x / 12);
-      return {
-        id: point.id,
-        original,
-        current: {
-          x: original.x + 22 + Math.sin(stripe * 1.6) * 18,
-          y: original.y + 12 + Math.sin(stripe * 2.4) * 42,
-        },
-        response: 1,
-        status: 'active',
-        age: 30,
-        stabilityScore: 0.9,
-      };
-    }), createGrayImage(420, 320, 12));
+    const result = engine.estimatePoseFromTrackedPoints(
+      shape.map((point) => {
+        const original = transformPoint(point, referencePose);
+        const stripe = Math.round(original.x / 12);
+        return {
+          id: point.id,
+          original,
+          current: {
+            x: original.x + 22 + Math.sin(stripe * 1.6) * 18,
+            y: original.y + 12 + Math.sin(stripe * 2.4) * 42,
+          },
+          response: 1,
+          status: 'active',
+          age: 30,
+          stabilityScore: 0.9,
+        };
+      }),
+      createGrayImage(420, 320, 12),
+    );
 
     assert.equal(state.ready, false, mode);
-    assert.ok(state.statistics.mapConfidence < 0.4, `${mode} confidence ${state.statistics.mapConfidence.toFixed(3)}`);
+    assert.ok(
+      state.statistics.mapConfidence < 0.4,
+      `${mode} confidence ${state.statistics.mapConfidence.toFixed(3)}`,
+    );
     assert.equal(result.success, false, mode);
   }
 });

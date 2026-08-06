@@ -1,9 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  computeEyeGazeRotation,
-  computeHeadLocalRotation
-} from './headPose.js';
+import { computeHeadLocalRotation, writeEyeGazeRotation } from './headPose.js';
 
 test('anchored head local rotation keeps manual offsets instead of camera look-at', () => {
   const manualRotation = { x: 0.11, y: -0.2, z: 0.04 };
@@ -12,12 +9,8 @@ test('anchored head local rotation keeps manual offsets instead of camera look-a
 });
 
 test('eye gaze rotates toward the camera while clamping extreme angles', () => {
-  const gaze = computeEyeGazeRotation({
-    eyePosition: { x: 0, y: 0, z: 0 },
-    cameraPosition: { x: 4, y: 2, z: 3 },
-    maxYaw: 0.32,
-    maxPitch: 0.2
-  });
+  const gaze = { x: 1, y: 1, z: 1 };
+  assert.equal(writeEyeGazeRotation({ x: 0, y: 0, z: 0 }, { x: 4, y: 2, z: 3 }, gaze, 0.32, 0.2), gaze);
 
   assert.equal(gaze.y, 0.32);
   assert.equal(gaze.x, -0.2);

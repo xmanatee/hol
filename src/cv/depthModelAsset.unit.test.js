@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { stat } from 'node:fs/promises';
+import { getCapabilityAsset } from '../runtime/capabilityPacks.js';
 
-const DEPTH_MODEL_MIN_BYTES = 50_000_000;
-const DEPTH_MODEL_PATH = new URL('../../public/models/depth_anything_v2_small.onnx', import.meta.url);
+test('quantized browser depth model matches its capability manifest', async () => {
+  const asset = getCapabilityAsset('depth', 'depth-anything-v2-small-q4');
+  const model = await stat(new URL(asset.url));
 
-test('browser depth-fusion model asset is installed', async () => {
-  const model = await stat(DEPTH_MODEL_PATH);
-
-  assert.ok(model.size >= DEPTH_MODEL_MIN_BYTES);
+  assert.equal(model.size, asset.bytes);
+  assert.equal(asset.revision, 'f7421df');
 });

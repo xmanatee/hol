@@ -1,19 +1,15 @@
-import { logger } from '../utils/logger.js';
 import {
+  REST_MOUTH_WEIGHTS,
   getExpressionLayerWeights,
   getPerformanceProfile,
-  getRestMouthWeights,
   getSpeechBlendShapeScale,
   performanceGain,
   resolveFacialExpression,
   speechEnvelope,
   speechGain,
 } from './facialPerformance.js';
-import {
-  normalizeMorphName,
-} from './facialRig.js';
 
-const clamp01 = value => Math.max(0, Math.min(1, value));
+const clamp01 = (value) => Math.max(0, Math.min(1, value));
 
 const BILATERAL_MOUTH_BLENDSHAPE_PAIRS = [
   ['mouthSmileLeft', 'mouthSmileRight'],
@@ -24,14 +20,27 @@ const BILATERAL_MOUTH_BLENDSHAPE_PAIRS = [
   ['mouthLowerDownLeft', 'mouthLowerDownRight'],
   ['mouthUpperUpLeft', 'mouthUpperUpRight'],
 ];
+const BLINK_NAME_PATTERNS = ['blink', 'eyelid', 'eye_close', 'eyes_close'];
 
 export class MorphController {
   constructor(mesh, visemeMapper) {
+    if (!mesh?.morphTargetDictionary || !Array.isArray(mesh.morphTargetInfluences)) {
+      throw new TypeError('MorphController requires a mesh with morph targets.');
+    }
+    if (!visemeMapper) {
+      throw new TypeError('MorphController requires a viseme mapper.');
+    }
     this.mesh = mesh;
     this.visemeMapper = visemeMapper;
-    this.currentInfluences = {};
-    this.targetInfluences = {};
-    this.expressionInfluences = {};
+    this.targetCount = mesh.morphTargetInfluences.length;
+    this.currentInfluences = new Array(this.targetCount).fill(0);
+    this.targetInfluences = new Array(this.targetCount).fill(0);
+    this.expressionInfluences = new Array(this.targetCount).fill(0);
+    this.blendShapeIndexCache = new Map();
+    this.bilateralMouthTargetPairs = [];
+    this.blinkTargetIndices = [];
+    this.restTargets = [];
+    this.speechAccentTargets = [];
     this.maxInfluence = 1.0;
     this.performanceIntensity = 0.65;
     this.activeExpression = 'neutral';
@@ -42,62 +51,85 @@ export class MorphController {
     this.isBlinking = false;
     this.blinkDuration = 200;
 
-    if (!mesh || !mesh.morphTargetInfluences) {
-      logger.error('MorphController', 'Mesh has no morphTargetInfluences array!');
-      return;
-    }
-
     this.initializeInfluences();
+    this.initializeStaticTargets();
+    this.rebuildProfileTargets();
   }
 
   initializeInfluences() {
-    if (!this.mesh?.morphTargetInfluences) {
-      return;
-    }
-
-    for (let i = 0; i < this.mesh.morphTargetInfluences.length; i++) {
+    for (let i = 0; i < this.targetCount; i++) {
       this.mesh.morphTargetInfluences[i] = 0;
-      this.currentInfluences[i] = 0;
-      this.targetInfluences[i] = 0;
-      this.expressionInfluences[i] = 0;
     }
   }
 
   resolveBlendShapeIndex(blendShapeName) {
-    const morphDict = this.mesh.morphTargetDictionary;
-    const mapperIndex = this.visemeMapper?.resolveBlendShapeIndex?.(blendShapeName);
+    if (this.blendShapeIndexCache.has(blendShapeName)) {
+      return this.blendShapeIndexCache.get(blendShapeName);
+    }
+    const mapperIndex = this.visemeMapper.resolveBlendShapeIndex(blendShapeName);
+    const resolvedIndex = Number.isInteger(mapperIndex) ? mapperIndex : null;
+    this.blendShapeIndexCache.set(blendShapeName, resolvedIndex);
+    return resolvedIndex;
+  }
 
-    if (Number.isInteger(mapperIndex)) {
-      return mapperIndex;
+  initializeStaticTargets() {
+    for (const [leftBlendShape, rightBlendShape] of BILATERAL_MOUTH_BLENDSHAPE_PAIRS) {
+      const leftIndex = this.resolveBlendShapeIndex(leftBlendShape);
+      const rightIndex = this.resolveBlendShapeIndex(rightBlendShape);
+      if (Number.isInteger(leftIndex) && Number.isInteger(rightIndex)) {
+        this.bilateralMouthTargetPairs.push([leftIndex, rightIndex]);
+      }
     }
 
-    const normalizedBlendShape = normalizeMorphName(blendShapeName);
-    const matchingEntry = Object.entries(morphDict).find(([morphName]) => {
-      return normalizeMorphName(morphName) === normalizedBlendShape;
-    });
+    const blinkTargetIndices = new Set([
+      this.resolveBlendShapeIndex('eyeBlinkLeft'),
+      this.resolveBlendShapeIndex('eyeBlinkRight'),
+    ]);
+    for (const [morphName, index] of Object.entries(this.mesh.morphTargetDictionary)) {
+      const lowerName = morphName.toLowerCase();
+      if (BLINK_NAME_PATTERNS.some((pattern) => lowerName.includes(pattern))) {
+        blinkTargetIndices.add(index);
+      }
+    }
+    blinkTargetIndices.delete(null);
+    this.blinkTargetIndices = Array.from(blinkTargetIndices);
+  }
 
-    return matchingEntry ? matchingEntry[1] : null;
+  rebuildProfileTargets() {
+    this.restTargets = [];
+    for (const [blendShapeName, weight] of REST_MOUTH_WEIGHTS) {
+      const index = this.resolveBlendShapeIndex(blendShapeName);
+      if (Number.isInteger(index)) {
+        this.restTargets.push([index, clamp01(weight * this.expressionProfile.restClosure)]);
+      }
+    }
+
+    this.speechAccentTargets = [];
+    for (const [blendShapeName, weight] of this.expressionProfile.speechAccentWeights) {
+      const index = this.resolveBlendShapeIndex(blendShapeName);
+      if (Number.isInteger(index)) {
+        this.speechAccentTargets.push([index, weight]);
+      }
+    }
   }
 
   applyExpressionTargets() {
-    Object.keys(this.targetInfluences).forEach(index => {
-      this.targetInfluences[index] = this.expressionInfluences[index] || 0;
-    });
+    for (let index = 0; index < this.targetCount; index++) {
+      this.targetInfluences[index] = this.expressionInfluences[index];
+    }
   }
 
   rebuildExpressionInfluences() {
-    Object.keys(this.expressionInfluences).forEach(index => {
-      this.expressionInfluences[index] = 0;
-    });
+    this.expressionInfluences.fill(0);
 
     const weights = getExpressionLayerWeights(this.activeExpression);
     const expressionGain = performanceGain(this.performanceIntensity);
-    weights.forEach(([blendShapeName, weight]) => {
+    for (const [blendShapeName, weight] of weights) {
       const index = this.resolveBlendShapeIndex(blendShapeName);
       if (Number.isInteger(index)) {
         this.expressionInfluences[index] = clamp01(weight * this.expressionIntensity * expressionGain);
       }
-    });
+    }
 
     this.applyExpressionTargets();
   }
@@ -111,21 +143,17 @@ export class MorphController {
     this.activeExpression = resolveFacialExpression(expression);
     this.expressionProfile = getPerformanceProfile(this.activeExpression);
     this.expressionIntensity = clamp01(intensity);
+    this.rebuildProfileTargets();
     this.rebuildExpressionInfluences();
-  }
-
-  setBlendShapeTarget(blendShapeName, value) {
-    const index = this.resolveBlendShapeIndex(blendShapeName);
-    if (Number.isInteger(index)) {
-      this.targetInfluences[index] = Math.max(this.targetInfluences[index] || 0, clamp01(value));
-    }
   }
 
   setRestPose() {
     this.applyExpressionTargets();
-    getRestMouthWeights(this.expressionProfile).forEach(([blendShapeName, weight]) => {
-      this.setBlendShapeTarget(blendShapeName, weight);
-    });
+    for (let targetIndex = 0; targetIndex < this.restTargets.length; targetIndex++) {
+      const target = this.restTargets[targetIndex];
+      const index = target[0];
+      this.targetInfluences[index] = Math.max(this.targetInfluences[index], target[1]);
+    }
   }
 
   getMorphBlendShapeName(morph) {
@@ -133,17 +161,19 @@ export class MorphController {
       return morph.blendShapeName;
     }
 
-    return this.visemeMapper?.getBlendShapeNameForMorph?.(morph.name) || morph.name;
+    return this.visemeMapper.getBlendShapeNameForMorph(morph.name);
   }
 
   applySpeechAccent(envelope) {
     const accentGain = envelope * (0.6 + this.performanceIntensity * 0.4);
-    this.expressionProfile.speechAccentWeights.forEach(([blendShapeName, weight]) => {
-      this.setBlendShapeTarget(blendShapeName, weight * accentGain);
-    });
+    for (let targetIndex = 0; targetIndex < this.speechAccentTargets.length; targetIndex++) {
+      const target = this.speechAccentTargets[targetIndex];
+      const index = target[0];
+      this.targetInfluences[index] = Math.max(this.targetInfluences[index], clamp01(target[1] * accentGain));
+    }
   }
 
-  setSpeechFrame({ viseme, energy, voiceActive }) {
+  setSpeechFrame(viseme, energy, voiceActive) {
     if (!voiceActive || energy <= 0) {
       this.setRestPose();
       return;
@@ -154,12 +184,16 @@ export class MorphController {
     const morphs = this.visemeMapper.getMorphIndicesForViseme(viseme);
     const envelope = speechEnvelope(energy);
     const voiceGain = speechGain(this.performanceIntensity);
-    morphs.forEach(morph => {
+    for (let morphIndex = 0; morphIndex < morphs.length; morphIndex++) {
+      const morph = morphs[morphIndex];
       const blendShapeName = this.getMorphBlendShapeName(morph);
       const shapeScale = getSpeechBlendShapeScale(blendShapeName, this.expressionProfile);
-      const visemeInfluence = Math.min(this.maxInfluence, clamp01(envelope * morph.weight * voiceGain * shapeScale));
-      this.targetInfluences[morph.index] = Math.max(this.targetInfluences[morph.index] || 0, visemeInfluence);
-    });
+      const visemeInfluence = Math.min(
+        this.maxInfluence,
+        clamp01(envelope * morph.weight * voiceGain * shapeScale),
+      );
+      this.targetInfluences[morph.index] = Math.max(this.targetInfluences[morph.index], visemeInfluence);
+    }
 
     this.applySpeechAccent(envelope);
   }
@@ -180,13 +214,13 @@ export class MorphController {
 
     if (this.isBlinking) {
       const blinkProgress = this.blinkTimer / this.blinkDuration;
-      
+
       if (blinkProgress >= 1.0) {
         this.isBlinking = false;
         this.setBlinkInfluence(0);
       } else {
         const blinkValue = this._naturalBlinkValue(blinkProgress) * this.expressionProfile.blinkStrength;
-        
+
         this.setBlinkInfluence(blinkValue);
       }
     }
@@ -194,72 +228,48 @@ export class MorphController {
 
   _naturalBlinkValue(progress) {
     if (progress < 0.28) {
-      const t = progress / 0.28;
-      return 1 - Math.pow(1 - t, 3);
+      const closeProgress = progress / 0.28;
+      return 1 - Math.pow(1 - closeProgress, 3);
     }
     if (progress < 0.38) {
       return 1;
     }
-    const t = (progress - 0.38) / 0.62;
-    return Math.pow(1 - t, 2.4);
+    const openProgress = (progress - 0.38) / 0.62;
+    return Math.pow(1 - openProgress, 2.4);
   }
 
   setBlinkInfluence(value) {
-    const morphDict = this.mesh.morphTargetDictionary;
-    const blinkPatterns = ['blink', 'eyelid', 'eye_close', 'eyes_close'];
-    const genericBlinkIndices = [
-      this.resolveBlendShapeIndex('eyeBlinkLeft'),
-      this.resolveBlendShapeIndex('eyeBlinkRight'),
-    ].filter(Number.isInteger);
-    
-    genericBlinkIndices.forEach(index => {
+    for (let targetIndex = 0; targetIndex < this.blinkTargetIndices.length; targetIndex++) {
+      const index = this.blinkTargetIndices[targetIndex];
       this.targetInfluences[index] = value;
-    });
-
-    Object.keys(morphDict).forEach(morphName => {
-      const lowerName = morphName.toLowerCase();
-      const isBlinkMorph = blinkPatterns.some(pattern => lowerName.includes(pattern));
-      
-      if (isBlinkMorph) {
-        const index = morphDict[morphName];
-        this.targetInfluences[index] = value;
-      }
-    });
+    }
   }
 
   balanceBilateralMouthTargets() {
-    BILATERAL_MOUTH_BLENDSHAPE_PAIRS.forEach(([leftBlendShape, rightBlendShape]) => {
-      const leftIndex = this.resolveBlendShapeIndex(leftBlendShape);
-      const rightIndex = this.resolveBlendShapeIndex(rightBlendShape);
-      if (!Number.isInteger(leftIndex) || !Number.isInteger(rightIndex)) {
-        return;
-      }
-
-      const balanced = Math.max(this.targetInfluences[leftIndex] || 0, this.targetInfluences[rightIndex] || 0);
+    for (let pairIndex = 0; pairIndex < this.bilateralMouthTargetPairs.length; pairIndex++) {
+      const pair = this.bilateralMouthTargetPairs[pairIndex];
+      const leftIndex = pair[0];
+      const rightIndex = pair[1];
+      const balanced = Math.max(this.targetInfluences[leftIndex], this.targetInfluences[rightIndex]);
       this.targetInfluences[leftIndex] = balanced;
       this.targetInfluences[rightIndex] = balanced;
-    });
+    }
   }
 
   update(deltaTimeMs) {
-    if (!this.mesh?.morphTargetInfluences) {
-      logger.error('MorphController', 'Cannot update - no morphTargetInfluences array');
-      return;
-    }
-    
     this.updateBlink(deltaTimeMs);
     this.balanceBilateralMouthTargets();
 
-    Object.keys(this.targetInfluences).forEach(index => {
+    const attackBlend = 1 - Math.exp(-deltaTimeMs / 16);
+    const releaseBlend = 1 - Math.exp(-deltaTimeMs / 80);
+    for (let index = 0; index < this.targetCount; index++) {
       const target = this.targetInfluences[index];
-      const current = this.currentInfluences[index] || 0;
-      const attackBlend = 1 - Math.exp(-deltaTimeMs / 16);
-      const releaseBlend = 1 - Math.exp(-deltaTimeMs / 80);
+      const current = this.currentInfluences[index];
       const blend = target > current ? attackBlend : releaseBlend;
       const blended = current + blend * (target - current);
 
       this.currentInfluences[index] = blended;
       this.mesh.morphTargetInfluences[index] = blended;
-    });
+    }
   }
 }

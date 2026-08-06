@@ -13,7 +13,7 @@ test('OpenCV critical feature check reports missing runtime explicitly', () => {
 });
 
 test('OpenCV critical feature check validates the required image-anchor symbols', () => {
-  const cv = Object.fromEntries(getRequiredFeatures().map(feature => [feature, () => {}]));
+  const cv = Object.fromEntries(getRequiredFeatures().map((feature) => [feature, () => {}]));
   const result = checkCriticalFeatures(cv);
 
   assert.equal(result.allAvailable, true);
@@ -24,8 +24,8 @@ test('OpenCV critical feature check validates the required image-anchor symbols'
 test('OpenCV critical feature check reports missing symbols without probing optional APIs', () => {
   const cv = Object.fromEntries(
     getRequiredFeatures()
-      .filter(feature => feature !== 'findHomography')
-      .map(feature => [feature, () => {}])
+      .filter((feature) => feature !== 'findHomography')
+      .map((feature) => [feature, () => {}]),
   );
   const result = checkCriticalFeatures(cv);
 

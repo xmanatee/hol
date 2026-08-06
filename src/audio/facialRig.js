@@ -200,11 +200,11 @@ export const STANDARD_VISEME_WEIGHTS = {
 };
 
 export const ARKIT_NAME_TO_INDEX = Object.fromEntries(
-  ARKIT_52_BLENDSHAPES.map((name, index) => [name, index])
+  ARKIT_52_BLENDSHAPES.map((name, index) => [name, index]),
 );
 
 export const MEDIAPIPE_MODEL_CARD_NAME_TO_INDEX = Object.fromEntries(
-  MEDIAPIPE_MODEL_CARD_52_BLENDSHAPES.map((name, index) => [name, index])
+  MEDIAPIPE_MODEL_CARD_52_BLENDSHAPES.map((name, index) => [name, index]),
 );
 
 export const GENERIC_TARGET_ORDERS = {
@@ -235,4 +235,4 @@ export const resolveGenericTargetIndexMap = (order = 'holBundledHead') => {
   return resolved;
 };
 
-export const normalizeMorphName = name => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+export const normalizeMorphName = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '');

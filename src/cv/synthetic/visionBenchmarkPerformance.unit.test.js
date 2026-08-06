@@ -19,6 +19,14 @@ const report = ({
   maxProcessingTimeMs,
   p95ProcessingTimeMs,
   stageTimings = null,
+  sourceFrameCount = frameCount,
+  admittedUpdateCount = frameCount,
+  heldFrameCount = sourceFrameCount - admittedUpdateCount,
+  displayFrameCount = sourceFrameCount,
+  updateIntervalMs = 1000 / 15,
+  presentationPredictionFrameCount = 0,
+  meanPresentationPredictionTimeMs = null,
+  maxPresentationPredictionTimeMs = null,
 }) => ({
   name,
   mode,
@@ -32,13 +40,156 @@ const report = ({
     occlusion: 'clean',
   },
   runtime: {
-    wallTimeMs,
-    frameCount,
-    meanProcessingTimeMs,
-    p95ProcessingTimeMs,
-    maxProcessingTimeMs,
+    replayWallTimeMs: wallTimeMs,
+    meanActiveUpdateTimeMs: meanProcessingTimeMs,
+    p95ActiveUpdateTimeMs: p95ProcessingTimeMs,
+    maxActiveUpdateTimeMs: maxProcessingTimeMs,
     stageTimings,
+    sourceFrameCount,
+    admittedUpdateCount,
+    heldFrameCount,
+    displayFrameCount,
+    updateIntervalMs,
+    presentationPredictionFrameCount,
+    meanPresentationPredictionTimeMs,
+    maxPresentationPredictionTimeMs,
   },
+});
+
+test('benchmark performance separates active update latency from display-amortized cost and pose cadence', () => {
+  const summary = summarizeVisionBenchmarkPerformance([
+    report({
+      name: 'one production second',
+      mode: 'direct-photometric',
+      object: 'mug',
+      wallTimeMs: 240,
+      frameCount: 15,
+      sourceFrameCount: 30,
+      admittedUpdateCount: 15,
+      heldFrameCount: 15,
+      displayFrameCount: 60,
+      meanProcessingTimeMs: 12,
+      p95ProcessingTimeMs: 70,
+      maxProcessingTimeMs: 74,
+      updateIntervalMs: 1000 / 15,
+      presentationPredictionFrameCount: 30,
+      meanPresentationPredictionTimeMs: 0.02,
+      maxPresentationPredictionTimeMs: 0.04,
+    }),
+  ]);
+
+  assert.equal(summary.aggregate.sourceFrameCount, 30);
+  assert.equal(summary.aggregate.admittedUpdateCount, 15);
+  assert.equal(summary.aggregate.heldFrameCount, 15);
+  assert.equal(summary.aggregate.displayFrameCount, 60);
+  assert.equal(summary.aggregate.admissionRatio, 0.5);
+  assert.equal(summary.aggregate.meanActiveUpdateTimeMs, 12);
+  assert.equal(summary.aggregate.displayAmortizedUpdateTimeMs, 3);
+  assert.equal(summary.aggregate.ownedStageTimeMs, 0);
+  assert.equal(summary.aggregate.timingCoverageRatio, 0);
+  assert.equal(summary.aggregate.unattributedUpdateTimeMs, 180);
+  assert.equal(summary.aggregate.displayAmortizedUnattributedUpdateTimeMs, 3);
+  assert.equal(summary.aggregate.presentationPredictionFrameCount, 30);
+  assert.equal(summary.aggregate.meanPresentationPredictionTimeMs, 0.02);
+  assert.equal(summary.aggregate.displayAmortizedPresentationPredictionTimeMs, 0.01);
+  assert.equal(summary.aggregate.maxPresentationPredictionTimeMs, 0.04);
+  assert.equal(summary.aggregate.budget.displayAmortizedUpdateOverBudget, false);
+  assert.equal(summary.aggregate.budget.cadenceLatencyOverageCount, 1);
+});
+
+test('benchmark stage ownership subtracts inclusive child timings exactly once', () => {
+  const summary = summarizeVisionBenchmarkPerformance([
+    report({
+      name: 'one keyframe extraction',
+      mode: 'direct-photometric',
+      object: 'book',
+      wallTimeMs: 80,
+      frameCount: 15,
+      sourceFrameCount: 30,
+      admittedUpdateCount: 15,
+      heldFrameCount: 15,
+      displayFrameCount: 60,
+      meanProcessingTimeMs: 4,
+      maxProcessingTimeMs: 60,
+      stageTimings: {
+        keyframeStoreMs: { meanMs: 60, maxMs: 60, frameCount: 1 },
+        keyframeFeatureExtractionMs: { meanMs: 54, maxMs: 54, frameCount: 1 },
+      },
+    }),
+  ]);
+
+  assert.equal(summary.aggregate.stageTimings.keyframeStoreMs.exclusiveMeanMs, 6);
+  assert.equal(summary.aggregate.stageTimings.keyframeFeatureExtractionMs.exclusiveMeanMs, 54);
+  assert.equal(summary.aggregate.ownedStageTimeMs, 60);
+  assert.equal(summary.aggregate.displayAmortizedOwnedStageTimeMs, 1);
+  assert.deepEqual(
+    summary.aggregate.budget.stageSpikeOverages.map((item) => item.stage),
+    ['keyframeFeatureExtractionMs'],
+  );
+});
+
+test('benchmark timing coverage attributes nested keypoint phases without overlap', () => {
+  const summary = summarizeVisionBenchmarkPerformance([
+    report({
+      name: 'fully attributed update',
+      mode: 'parametric-surface',
+      object: 'book',
+      wallTimeMs: 180,
+      frameCount: 15,
+      sourceFrameCount: 30,
+      admittedUpdateCount: 15,
+      heldFrameCount: 15,
+      displayFrameCount: 60,
+      meanProcessingTimeMs: 12,
+      maxProcessingTimeMs: 12,
+      stageTimings: {
+        keypointUpdateMs: { meanMs: 12, maxMs: 12, frameCount: 15 },
+        trackingValidationMs: { meanMs: 4, maxMs: 4, frameCount: 15 },
+        landmarkMetricsMs: { meanMs: 1, maxMs: 1, frameCount: 15 },
+        preliminaryAttachmentEvidenceMs: { meanMs: 2, maxMs: 2, frameCount: 15 },
+        poseEstimationMs: { meanMs: 6, maxMs: 6, frameCount: 15 },
+        objectPoseMs: { meanMs: 1, maxMs: 1, frameCount: 15 },
+        planarPoseMs: { meanMs: 4, maxMs: 4, frameCount: 15 },
+        poseSelectionMs: { meanMs: 2, maxMs: 2, frameCount: 15 },
+        trackerAttachmentResolveMs: { meanMs: 1, maxMs: 1, frameCount: 15 },
+      },
+    }),
+  ]);
+
+  assert.equal(summary.aggregate.stageTimings.trackingValidationMs.exclusiveMeanMs, 1);
+  assert.equal(summary.aggregate.stageTimings.poseEstimationMs.exclusiveMeanMs, 1);
+  assert.equal(summary.aggregate.stageTimings.poseSelectionMs.exclusiveMeanMs, 1);
+  assert.equal(summary.aggregate.ownedStageTimeMs, 180);
+  assert.equal(summary.aggregate.timingCoverageRatio, 1);
+  assert.equal(summary.aggregate.unattributedUpdateTimeMs, 0);
+  assert.equal(summary.aggregate.displayAmortizedUnattributedUpdateTimeMs, 0);
+});
+
+test('benchmark timing coverage excludes keypoint recovery nested in template updates', () => {
+  const summary = summarizeVisionBenchmarkPerformance([
+    report({
+      name: 'template recovery',
+      mode: 'parametric-surface',
+      object: 'book',
+      wallTimeMs: 120,
+      frameCount: 10,
+      sourceFrameCount: 20,
+      admittedUpdateCount: 10,
+      heldFrameCount: 10,
+      displayFrameCount: 40,
+      meanProcessingTimeMs: 12,
+      maxProcessingTimeMs: 18,
+      stageTimings: {
+        templateUpdateMs: { meanMs: 12, maxMs: 18, frameCount: 10 },
+        keypointRefreshMs: { meanMs: 2, maxMs: 2, frameCount: 4 },
+        keypointReinitializationMs: { meanMs: 6, maxMs: 6, frameCount: 2 },
+      },
+    }),
+  ]);
+
+  assert.equal(summary.aggregate.stageTimings.templateUpdateMs.exclusiveTimeMs, 100);
+  assert.equal(summary.aggregate.ownedStageTimeMs, 120);
+  assert.equal(summary.aggregate.timingCoverageRatio, 1);
 });
 
 test('benchmark performance summary ranks slow modes and reports weighted frame processing', () => {
@@ -64,12 +215,12 @@ test('benchmark performance summary ranks slow modes and reports weighted frame 
   ]);
 
   assert.equal(summary.aggregate.count, 2);
-  assert.equal(summary.aggregate.totalWallTimeMs, 400);
+  assert.equal(summary.aggregate.totalReplayWallTimeMs, 400);
   assert.equal(summary.aggregate.meanReplayWallTimeMs, 200);
-  assert.equal(summary.aggregate.meanFrameWallTimeMs, 8);
-  assert.equal(summary.aggregate.meanFrameProcessingTimeMs, 3.8);
+  assert.equal(summary.aggregate.meanSourceFrameWallTimeMs, 8);
+  assert.equal(summary.aggregate.meanActiveUpdateTimeMs, 3.8);
   assert.equal(summary.byMode[0].name, 'direct-photometric');
-  assert.equal(summary.byMode[0].maxFrameProcessingTimeMs, 14);
+  assert.equal(summary.byMode[0].maxActiveUpdateTimeMs, 14);
   assert.equal(summary.slowestReports[0].name, 'slow direct');
 });
 
@@ -109,8 +260,8 @@ test('benchmark performance summary groups runtime by target class', () => {
 
   assert.equal(summary.byTargetClass[0].name, 'book');
   assert.equal(summary.byTargetClass[0].count, 2);
-  assert.equal(summary.byTargetClass[0].meanFrameProcessingTimeMs, 4);
-  assert.equal(summary.byTargetClass[0].maxFrameProcessingTimeMs, 18);
+  assert.equal(summary.byTargetClass[0].meanActiveUpdateTimeMs, 4);
+  assert.equal(summary.byTargetClass[0].maxActiveUpdateTimeMs, 18);
   assert.equal(summary.byTargetClass[1].name, 'mug');
 });
 
@@ -153,11 +304,11 @@ test('benchmark performance summary groups runtime by geometry and lighting', ()
 
   assert.equal(summary.byGeometry[0].name, 'planar-glossy');
   assert.equal(summary.byGeometry[0].count, 2);
-  assert.equal(summary.byGeometry[0].meanFrameProcessingTimeMs, 6);
-  assert.equal(summary.byGeometry[0].maxFrameProcessingTimeMs, 20);
+  assert.equal(summary.byGeometry[0].meanActiveUpdateTimeMs, 6);
+  assert.equal(summary.byGeometry[0].maxActiveUpdateTimeMs, 20);
   assert.equal(summary.byLighting[0].name, 'high-contrast-backlight');
   assert.equal(summary.byLighting[0].count, 2);
-  assert.equal(summary.byLighting[0].meanFrameProcessingTimeMs, 6);
+  assert.equal(summary.byLighting[0].meanActiveUpdateTimeMs, 6);
   assert.equal(summary.byLighting[1].name, 'soft-desk');
 });
 
@@ -196,10 +347,10 @@ test('benchmark performance summary exposes localized mode interaction bottlenec
   ]);
 
   assert.equal(summary.byModeObject[0].name, 'direct-photometric / handled-mug');
-  assert.equal(summary.byModeObject[0].meanFrameProcessingTimeMs, 8);
-  assert.equal(summary.byModeObject[0].maxFrameProcessingTimeMs, 24);
+  assert.equal(summary.byModeObject[0].meanActiveUpdateTimeMs, 8);
+  assert.equal(summary.byModeObject[0].maxActiveUpdateTimeMs, 24);
   assert.equal(summary.byModeGeometry[0].name, 'direct-photometric / handled-tapered-cylinder');
-  assert.equal(summary.byModeGeometry[0].meanFrameProcessingTimeMs, 8);
+  assert.equal(summary.byModeGeometry[0].meanActiveUpdateTimeMs, 8);
   assert.equal(summary.byModeGeometry[1].name, 'sparse-reconstruction / handled-tapered-cylinder');
 });
 
@@ -268,11 +419,11 @@ test('benchmark performance summary separates stage coverage from amortized fram
   ]);
 
   assert.equal(summary.aggregate.stageTimings.reconstructionUpdateMs.frameCount, 20);
-  assert.equal(summary.aggregate.stageTimings.reconstructionUpdateMs.coverageRatio, 20 / 30);
-  assert.equal(summary.aggregate.stageTimings.reconstructionUpdateMs.amortizedMeanMs, 100 / 30);
+  assert.equal(summary.aggregate.stageTimings.reconstructionUpdateMs.sourceCoverageRatio, 20 / 30);
+  assert.equal(summary.aggregate.stageTimings.reconstructionUpdateMs.sourceAmortizedMeanMs, 100 / 30);
   assert.equal(summary.aggregate.stageTimings.relocalizationMs.frameCount, 2);
-  assert.equal(summary.aggregate.stageTimings.relocalizationMs.coverageRatio, 2 / 30);
-  assert.equal(summary.aggregate.stageTimings.relocalizationMs.amortizedMeanMs, 60 / 30);
+  assert.equal(summary.aggregate.stageTimings.relocalizationMs.sourceCoverageRatio, 2 / 30);
+  assert.equal(summary.aggregate.stageTimings.relocalizationMs.sourceAmortizedMeanMs, 60 / 30);
   assert.equal(summary.aggregate.stageTimings.reconstructionUpdateMs.meanMs, 5);
   assert.equal(summary.aggregate.stageTimings.relocalizationMs.meanMs, 30);
 });
@@ -317,17 +468,18 @@ test('benchmark performance budget separates sustained stages from rare spikes a
     }),
   ]);
 
-  assert.deepEqual(summary.aggregate.budget.stageOverages.map(item => item.stage), [
-    'reconstructionUpdateMs',
-  ]);
-  assert.deepEqual(summary.aggregate.budget.stageSpikeOverages.map(item => item.stage), [
-    'relocalizationMs',
-    'templateUpdateMs',
-  ]);
-  assert.deepEqual(summary.aggregate.budget.excludedStageTimings.map(item => item.stage), [
-    'totalMs',
-    'keypointUpdateMs',
-  ]);
+  assert.deepEqual(
+    summary.aggregate.budget.stageOverages.map((item) => item.stage),
+    ['reconstructionUpdateMs'],
+  );
+  assert.deepEqual(
+    summary.aggregate.budget.stageSpikeOverages.map((item) => item.stage),
+    ['relocalizationMs'],
+  );
+  assert.deepEqual(
+    summary.aggregate.budget.excludedStageTimings.map((item) => item.stage),
+    ['totalMs', 'keypointUpdateMs'],
+  );
 });
 
 test('benchmark performance summary reports missing runtime instead of scoring it as zero cost', () => {
@@ -357,9 +509,15 @@ test('benchmark performance summary reports missing runtime instead of scoring i
   assert.equal(summary.aggregate.count, 2);
   assert.equal(summary.aggregate.invalidRuntimeCount, 1);
   assert.equal(summary.aggregate.missingProcessingReports, 1);
-  assert.equal(summary.aggregate.meanFrameProcessingTimeMs, 4);
-  assert.equal(summary.byMode.find(group => group.name === 'direct-photometric').meanFrameProcessingTimeMs, null);
-  assert.equal(summary.byMode.find(group => group.name === 'direct-photometric').maxFrameProcessingTimeMs, null);
+  assert.equal(summary.aggregate.meanActiveUpdateTimeMs, 4);
+  assert.equal(
+    summary.byMode.find((group) => group.name === 'direct-photometric').meanActiveUpdateTimeMs,
+    null,
+  );
+  assert.equal(
+    summary.byMode.find((group) => group.name === 'direct-photometric').maxActiveUpdateTimeMs,
+    null,
+  );
 });
 
 test('benchmark performance summary flags mobile frame budget overages by report and stage', () => {
@@ -383,17 +541,25 @@ test('benchmark performance summary flags mobile frame budget overages by report
     }),
   ]);
 
-  assert.equal(summary.aggregate.budget.meanFrameProcessingOverBudget, true);
-  assert.equal(summary.aggregate.budget.maxFrameProcessingOverBudget, true);
+  assert.equal(summary.aggregate.budget.displayAmortizedUpdateOverBudget, true);
+  assert.equal(summary.aggregate.budget.cadenceLatencyOverageCount, 0);
   assert.deepEqual(summary.aggregate.budget.stageOverages, [
     {
       stage: 'reconstructionUpdateMs',
+      ownership: 'owned',
       meanMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs + 0.5,
+      exclusiveMeanMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs + 0.5,
       maxMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs + 4,
       frameCount: 30,
-      coverageRatio: 1,
-      amortizedMeanMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs + 0.5,
+      sourceCoverageRatio: 1,
+      admittedCoverageRatio: 1,
+      sourceAmortizedMeanMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs + 0.5,
+      displayAmortizedMeanMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs + 0.5,
+      displayAmortizedExclusiveMeanMs: VISION_PERFORMANCE_BUDGETS.opencvStageBudgetMs + 0.5,
     },
   ]);
-  assert.equal(summary.slowestReports[0].runtime.maxProcessingTimeMs, VISION_PERFORMANCE_BUDGETS.frameBudgetMs + 3);
+  assert.equal(
+    summary.slowestReports[0].runtime.maxActiveUpdateTimeMs,
+    VISION_PERFORMANCE_BUDGETS.frameBudgetMs + 3,
+  );
 });

@@ -11,9 +11,9 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+  release-gates:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,48 +21,47 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version-file: '.nvmrc'
           cache: npm
 
-      - name: Install dependencies
+      - name: Install exact dependencies
         run: npm ci
 
-      - name: Lint
-        run: npm run lint
+      - name: Verify release and deterministic vision contracts
+        run: npm run verify:release
 
-      - name: Test
-        run: npm test
+      - name: Install mobile browser runtimes
+        run: npx playwright install --with-deps chromium webkit
 
-      - name: Build
-        env:
-          VITE_ELEVENLABS_AGENT_ID: ${{ github.event_name != 'pull_request' && vars.VITE_ELEVENLABS_AGENT_ID || '' }}
-          VITE_OPENAI_API_KEY: ""
-        run: npm run build
+      - name: Test production mobile runtime
+        run: npm run test:browser
 
-      - name: Verify build output
-        run: |
-          test -d dist
-          test -f nginx.conf
-          test -f dist/index.html
-          test -f dist/opencv.js
-          test -f dist/models/yolo11n_480.onnx
-          test -f dist/3d/untitled.gltf
-          if grep -R -E "sk-(proj|live|test)-" dist; then
-            echo "Refusing to upload a public artifact containing OpenAI key material."
-            exit 1
-          fi
-
-      - name: Upload artifact
+      - name: Upload production artifact
         uses: actions/upload-artifact@v4
         with:
           name: hol-dist
           path: |
             dist/
             nginx.conf
+            LICENSE
+            NOTICE
+            THIRD_PARTY_NOTICES.md
+            artifacts/sbom.cdx.json
           retention-days: 30
 
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hol-browser-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   dispatch-deploy:
-    needs: build
+    needs: release-gates
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:

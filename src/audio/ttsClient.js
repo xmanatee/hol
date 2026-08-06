@@ -1,36 +1,65 @@
-import { Conversation } from '@elevenlabs/client';
-import { createAudioAnalysisFromFrequencyData } from './lipSync.js';
-import { buildExpressivePrompt } from './ttsPerformance.js';
+import { writeAudioAnalysisFromFrequencyData } from './lipSync.js';
+import { buildSpeechInstructions } from './speechPerformance.js';
+import { LocalAIClient } from '../api/localAIClient.js';
+import { readViteEnv } from '../api/viteEnv.js';
 import { logger } from '../utils/logger.js';
+import { normalizeSpeechPerformance } from '../contracts/objectPerformance.js';
+import { SPEECH_INPUT_MAX_CHARACTERS, readBoundedText } from '../contracts/objectContent.js';
 
 export class TTSClient {
   constructor(config = {}) {
     this.config = {
-      agentId: config.agentId || import.meta.env.VITE_ELEVENLABS_AGENT_ID,
-      ...config
+      model: config.model ?? readViteEnv('VITE_LOCAL_AI_TTS_MODEL'),
+      voice: config.voice ?? readViteEnv('VITE_LOCAL_AI_TTS_VOICE'),
+      responseFormat: config.responseFormat ?? 'wav',
     };
-    
-    this.conversation = null;
-    this.conversationPromise = null;
+    if (
+      typeof this.config.model !== 'string' ||
+      this.config.model.trim().length === 0 ||
+      typeof this.config.voice !== 'string' ||
+      this.config.voice.trim().length === 0
+    ) {
+      throw new Error(
+        'Set VITE_LOCAL_AI_TTS_MODEL and VITE_LOCAL_AI_TTS_VOICE to enable local speech synthesis.',
+      );
+    }
+    if (typeof this.config.responseFormat !== 'string' || this.config.responseFormat.trim().length === 0) {
+      throw new TypeError('Speech response format must be a non-empty string.');
+    }
+    this.config.model = this.config.model.trim();
+    this.config.voice = this.config.voice.trim();
+    this.config.responseFormat = this.config.responseFormat.trim();
+
+    if (Object.hasOwn(config, 'aiClient') && typeof config.aiClient?.createSpeech !== 'function') {
+      throw new TypeError('Speech aiClient must implement createSpeech.');
+    }
+    this.aiClient = Object.hasOwn(config, 'aiClient')
+      ? config.aiClient
+      : new LocalAIClient({
+          ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
+          ...(Object.hasOwn(config, 'fetchImpl') ? { fetchImpl: config.fetchImpl } : {}),
+          ...(config.requestTimeoutMs !== undefined ? { requestTimeoutMs: config.requestTimeoutMs } : {}),
+          ...(Object.hasOwn(config, 'scheduleRequestTimeout')
+            ? { scheduleRequestTimeout: config.scheduleRequestTimeout }
+            : {}),
+        });
+    this.AudioContextClass = config.AudioContextClass ?? null;
     this.audioContext = null;
-    this.audioAnalysisInterval = null;
-    this.isConnected = false;
-    this.isPlaying = false;
-    this.micPermissionGranted = false;
+    this.sourceNode = null;
+    this.analyserNode = null;
+    this.frequencyData = null;
+    this.latestFrame = { energy: 0, centroid: 0 };
+    this.currentAbortController = null;
     this.currentRequest = null;
-    this.speechStartedAt = null;
-    this.lastOutputActivityAt = null;
-    this.outputSilenceEnergyThreshold = config.outputSilenceEnergyThreshold ?? 0.018;
-    this.outputSilenceCompletionMs = config.outputSilenceCompletionMs ?? 1200;
-    this.minimumOutputDurationMs = config.minimumOutputDurationMs ?? 420;
-    
+    this.isPlaying = false;
+    this.disposed = false;
+    this.runtimeGeneration = 0;
     this.listeners = new Set();
-    
     this.metrics = {
       totalRequests: 0,
       successfulRequests: 0,
       averageLatency: 0,
-      lastLatency: 0
+      lastLatency: 0,
     };
   }
 
@@ -40,311 +69,219 @@ export class TTSClient {
   }
 
   emit(event, data) {
-    this.listeners.forEach(listener => {
-      if (listener[event]) {
-        listener[event](data);
-      }
+    this.listeners.forEach((listener) => {
+      listener[event]?.(data);
     });
   }
 
-  async initialize() {
+  initialize() {
+    if (this.disposed) {
+      return false;
+    }
     if (!this.audioContext) {
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      logger.info('TTSClient', 'AudioContext created, state:', this.audioContext.state);
+      const AudioContextClass = this.AudioContextClass || window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) {
+        throw new Error('AudioContext is required for speech playback.');
+      }
+      this.audioContext = new AudioContextClass();
     }
-
-    logger.info('TTSClient', 'Initialized successfully');
-  }
-
-  async _ensureAudioContextReady() {
-    await this.initialize();
-
-    if (this.audioContext && this.audioContext.state === 'suspended') {
-      await this.audioContext.resume();
-      logger.info('TTSClient', 'AudioContext resumed for user gesture');
-    }
-  }
-
-  async requestMicrophoneAccess() {
-    if (this.micPermissionGranted) {
-      return;
-    }
-
-    logger.info('TTSClient', 'Requesting microphone access...');
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    
-    // Stop the stream immediately - we just needed permission
-    stream.getTracks().forEach(track => track.stop());
-    
-    this.micPermissionGranted = true;
-    logger.info('TTSClient', 'Microphone access granted');
-  }
-
-  buildExpressivePrompt(text, voiceStyle = 'cheerful', emotionalDelivery = '') {
-    return buildExpressivePrompt(text, voiceStyle, emotionalDelivery);
-  }
-
-  async synthesizeSpeech(text, voiceStyle = 'cheerful', emotionalDelivery = '') {
-    const startTime = performance.now();
-    this.metrics.totalRequests++;
-
-    await this._ensureAudioContextReady();
-
-    this.emit('onSynthesisStart', { 
-      text: text,
-      voiceStyle: voiceStyle,
-      emotionalDelivery,
-      requestId: this.metrics.totalRequests 
-    });
-
-    logger.info('TTSClient', 'Starting agent conversation:', { text, voiceStyle, emotionalDelivery, agentId: this.config.agentId });
-
-    const conversation = await this.startConversation();
-
-    const messageWithContext = this.buildExpressivePrompt(text, voiceStyle, emotionalDelivery);
-    
-    // Start timing for first audio
-    this.currentRequestStart = startTime;
-    this.currentRequest = { text, voiceStyle, emotionalDelivery };
-    
-    logger.info('TTSClient', 'Sending message to agent:', messageWithContext);
-    conversation.sendUserMessage(messageWithContext);
     return true;
   }
 
-  _buildSessionOptions() {
-    return {
-      agentId: this.config.agentId,
-      connectionType: 'webrtc',
-      preferHeadphonesForIosDevices: true,
-      onConnect: () => {
-        logger.info('TTSClient', 'Connected to agent');
-        this.isConnected = true;
-        this.emit('onConnect');
-      },
-      onDisconnect: (details) => {
-        logger.info('TTSClient', 'Disconnected from agent:', details);
-        if (this.isPlaying) {
-          this._completePlayback();
-        } else {
-          this._stopAudioAnalysisLoop();
-        }
-        this.isConnected = false;
-        this.conversation = null;
-        this.conversationPromise = null;
-        this.emit('onDisconnected', { details });
-      },
-      onMessage: (message) => {
-        logger.info('TTSClient', 'Received message from agent:', message);
-        this.handleAgentMessage(message);
-      },
-      onError: (error, context) => {
-        logger.error('TTSClient', 'Agent error:', error, context);
-        if (this.isPlaying) {
-          this._completePlayback();
-        } else {
-          this._stopAudioAnalysisLoop();
-        }
-        this.emit('onError', { error: error.message || String(error) });
-      },
-      onAudioAlignment: (alignment) => {
-        this.emit('onAudioAlignment', {
-          ...alignment,
-          receivedAt: performance.now()
-        });
-      },
-      onStatusChange: ({ status }) => {
-        logger.info('TTSClient', 'Status changed:', status);
-      },
-      onModeChange: ({ mode }) => {
-        this._handleModeChange(mode);
+  async _ensureAudioContextReady(runtimeGeneration) {
+    const initialized = await this.initialize();
+    if (!initialized || this.disposed || this.runtimeGeneration !== runtimeGeneration) {
+      return false;
+    }
+
+    const audioContext = this.audioContext;
+    if (audioContext.state === 'suspended') {
+      const resumed = await audioContext.resume().then(
+        () => true,
+        (error) => {
+          if (
+            this.disposed ||
+            this.runtimeGeneration !== runtimeGeneration ||
+            this.audioContext !== audioContext
+          ) {
+            return false;
+          }
+          throw error;
+        },
+      );
+      if (!resumed) {
+        return false;
       }
-    };
+    }
+    return (
+      !this.disposed && this.runtimeGeneration === runtimeGeneration && this.audioContext === audioContext
+    );
   }
 
-  async startConversation() {
-    if (this.conversation) {
-      return this.conversation;
-    }
-
-    if (this.conversationPromise) {
-      return this.conversationPromise;
-    }
-
-    if (!this.config.agentId) {
-      throw new Error('Set VITE_ELEVENLABS_AGENT_ID to enable voice playback.');
-    }
-
-    logger.info('TTSClient', 'Starting conversation session...');
-    this.conversationPromise = this._openConversationSession()
-      .catch(error => {
-        this.conversationPromise = null;
-        throw error;
-      });
-    return this.conversationPromise;
+  _ownsRequest(requestId, runtimeGeneration) {
+    return (
+      !this.disposed &&
+      this.runtimeGeneration === runtimeGeneration &&
+      this.currentRequest?.requestId === requestId
+    );
   }
 
-  async _openConversationSession() {
-    await this._ensureAudioContextReady();
-    await this.requestMicrophoneAccess();
+  async synthesizeSpeech(text, voiceStyle, emotionalDelivery) {
+    const input = readBoundedText(text, {
+      label: 'Speech input',
+      maxCharacters: SPEECH_INPUT_MAX_CHARACTERS,
+    });
+    const speechPerformance = normalizeSpeechPerformance(voiceStyle, emotionalDelivery);
 
-    const conversation = await Conversation.startSession(this._buildSessionOptions());
-    this.conversation = conversation;
-    logger.info('TTSClient', 'Conversation session started successfully');
-    return conversation;
+    if (this.disposed) {
+      return false;
+    }
+    const runtimeGeneration = this.runtimeGeneration;
+    if (!(await this._ensureAudioContextReady(runtimeGeneration))) {
+      return false;
+    }
+    this.stopCurrentAudio();
+
+    const startedAt = performance.now();
+    const requestId = ++this.metrics.totalRequests;
+    const abortController = new AbortController();
+    this.currentAbortController = abortController;
+    this.currentRequest = { requestId, text: input, ...speechPerformance, startedAt };
+    this.emit('onSynthesisStart', { requestId, text: input, ...speechPerformance });
+
+    try {
+      const encodedAudio = await this.aiClient.createSpeech(
+        {
+          model: this.config.model,
+          voice: this.config.voice,
+          input,
+          instructions: buildSpeechInstructions(
+            speechPerformance.voiceStyle,
+            speechPerformance.emotionalDelivery,
+          ),
+          response_format: this.config.responseFormat,
+        },
+        { signal: abortController.signal },
+      );
+      if (!this._ownsRequest(requestId, runtimeGeneration)) {
+        return false;
+      }
+      const audioBuffer = await this.audioContext.decodeAudioData(encodedAudio);
+      if (!this._ownsRequest(requestId, runtimeGeneration)) {
+        return false;
+      }
+
+      this._startPlayback(audioBuffer, startedAt);
+      return true;
+    } catch (error) {
+      if (!this._ownsRequest(requestId, runtimeGeneration)) {
+        return false;
+      }
+      this.currentRequest = null;
+      this.currentAbortController = null;
+      this.emit('onError', { error: error.message });
+      throw error;
+    }
   }
 
-  _handleModeChange(mode) {
-    logger.info('TTSClient', 'Mode changed:', mode);
+  _startPlayback(audioBuffer, startedAt) {
+    const sourceNode = this.audioContext.createBufferSource();
+    const analyserNode = this.audioContext.createAnalyser();
+    analyserNode.fftSize = 256;
+    sourceNode.buffer = audioBuffer;
+    sourceNode.connect(analyserNode);
+    analyserNode.connect(this.audioContext.destination);
+    sourceNode.onended = () => this._completePlayback();
+    this.sourceNode = sourceNode;
+    this.analyserNode = analyserNode;
+    this.frequencyData = new Uint8Array(analyserNode.frequencyBinCount);
+    this.isPlaying = true;
 
-    if (mode === 'speaking') {
-      this.isPlaying = true;
-      const now = performance.now();
-      this.speechStartedAt = now;
-      this.lastOutputActivityAt = now;
-      const requestStart = this.currentRequestStart || now;
-      const latencyToFirstAudio = now - requestStart;
+    const latencyToFirstAudio = performance.now() - startedAt;
+    this.emit('onAudioStart', { latencyToFirstAudio });
+    sourceNode.start();
+  }
 
-      this.emit('onAudioStart', {
-        latencyToFirstAudio: latencyToFirstAudio
-      });
-      this._startAudioAnalysisLoop();
-
-      logger.info('TTSClient', 'Agent started speaking, latency:', latencyToFirstAudio, 'ms');
-    } else if (mode === 'listening' && this.isPlaying) {
-      this._completePlayback();
+  readFrame() {
+    if (!this.isPlaying) {
+      return this.latestFrame;
     }
+    this.analyserNode.getByteFrequencyData(this.frequencyData);
+    return writeAudioAnalysisFromFrequencyData(this.frequencyData, 1, this.latestFrame);
   }
 
   _completePlayback() {
+    if (!this.isPlaying && !this.currentRequest) {
+      return;
+    }
+
+    const request = this.currentRequest;
     this.isPlaying = false;
-    this._stopAudioAnalysisLoop();
-    const requestStart = this.currentRequestStart || performance.now();
-    const totalLatency = performance.now() - requestStart;
-
-    this.metrics.successfulRequests++;
-    this.metrics.lastLatency = totalLatency;
-    this.metrics.averageLatency = this.calculateMovingAverage(this.metrics.averageLatency, totalLatency);
-
-    this.emit('onPlaybackComplete');
-    this.emit('onSynthesisComplete', {
-      text: this.currentRequest?.text,
-      voiceStyle: this.currentRequest?.voiceStyle,
-      emotionalDelivery: this.currentRequest?.emotionalDelivery,
-      latency: totalLatency
-    });
+    this.sourceNode = null;
+    this.analyserNode = null;
+    this.frequencyData = null;
+    this.latestFrame.energy = 0;
+    this.latestFrame.centroid = 0;
+    this.currentAbortController = null;
     this.currentRequest = null;
-    this.speechStartedAt = null;
-    this.lastOutputActivityAt = null;
+    this.emit('onPlaybackComplete');
 
-    logger.info('TTSClient', 'Agent finished speaking, total latency:', totalLatency, 'ms');
-  }
-
-  _handleOutputAnalysis(analysis, timestamp = performance.now()) {
-    this.emit('onAudioAnalysis', analysis);
-
-    if (!this.isPlaying) {
-      return;
-    }
-
-    const energy = Number.isFinite(analysis.energy) ? analysis.energy : 0;
-    if (energy >= this.outputSilenceEnergyThreshold) {
-      this.lastOutputActivityAt = timestamp;
-      return;
-    }
-
-    const speechStartedAt = this.speechStartedAt ?? timestamp;
-    const lastOutputActivityAt = this.lastOutputActivityAt ?? speechStartedAt;
-    const longEnoughToBeSpeech = timestamp - speechStartedAt >= this.minimumOutputDurationMs;
-    const silentLongEnough = timestamp - lastOutputActivityAt >= this.outputSilenceCompletionMs;
-
-    if (longEnoughToBeSpeech && silentLongEnough) {
-      logger.info('TTSClient', 'Completing playback after sustained output silence');
-      this._completePlayback();
+    if (request) {
+      const latency = performance.now() - request.startedAt;
+      this.metrics.successfulRequests++;
+      this.metrics.lastLatency = latency;
+      this.metrics.averageLatency = this.calculateMovingAverage(this.metrics.averageLatency, latency);
+      this.emit('onSynthesisComplete', {
+        text: request.text,
+        voiceStyle: request.voiceStyle,
+        emotionalDelivery: request.emotionalDelivery,
+        latency,
+      });
     }
   }
 
-  _handleOutputAnalysisError(error) {
-    if (this.isPlaying) {
-      this._completePlayback();
-    } else {
-      this._stopAudioAnalysisLoop();
-    }
-    this.emit('onError', { error: error.message || String(error) });
-  }
-
-  _startAudioAnalysisLoop() {
-    this._stopAudioAnalysisLoop();
-
-    this.audioAnalysisInterval = window.setInterval(async () => {
-      if (!this.conversation || !this.isPlaying) {
-        return;
-      }
-
-      try {
-        const frequencyData = await this.conversation.getOutputByteFrequencyData();
-        const volume = await this.conversation.getOutputVolume();
-        if (!frequencyData) {
-          this._handleOutputAnalysis({ energy: 0, centroid: 0, spectrum: [] });
-          return;
-        }
-        this._handleOutputAnalysis(createAudioAnalysisFromFrequencyData(frequencyData, volume));
-      } catch (error) {
-        this._handleOutputAnalysisError(error);
-      }
-    }, 33);
-  }
-
-  _stopAudioAnalysisLoop() {
-    if (this.audioAnalysisInterval) {
-      window.clearInterval(this.audioAnalysisInterval);
-      this.audioAnalysisInterval = null;
-    }
-  }
-
-  handleAgentMessage(message) {
-    logger.info('TTSClient', 'Agent message:', message);
-    this.emit('onMessage', message);
-  }
-
-  calculateMovingAverage(currentAvg, newValue, alpha = 0.15) {
-    return currentAvg === 0 ? newValue : currentAvg + alpha * (newValue - currentAvg);
+  calculateMovingAverage(currentAverage, newValue, alpha = 0.15) {
+    return currentAverage === 0 ? newValue : currentAverage + alpha * (newValue - currentAverage);
   }
 
   stopCurrentAudio() {
-    if (this.conversation && this.isPlaying) {
-      logger.info('TTSClient', 'Stopping current speech...');
+    this.currentAbortController?.abort();
+    this.currentAbortController = null;
+    if (this.sourceNode && this.isPlaying) {
+      const sourceNode = this.sourceNode;
+      this.sourceNode = null;
+      sourceNode.onended = null;
+      sourceNode.stop();
       this._completePlayback();
-    }
-  }
-
-  async endConversation() {
-    if (this.conversation) {
-      this._stopAudioAnalysisLoop();
-      await this.conversation.endSession();
-      logger.info('TTSClient', 'Conversation session ended');
-      this.conversation = null;
-      this.conversationPromise = null;
-      this.isConnected = false;
+    } else if (this.currentRequest) {
+      this.currentRequest = null;
+      this.emit('onPlaybackComplete');
     }
   }
 
   getMetrics() {
     return {
       ...this.metrics,
-      successRate: this.metrics.totalRequests > 0 
-        ? (this.metrics.successfulRequests / this.metrics.totalRequests) * 100 
-        : 0
+      successRate:
+        this.metrics.totalRequests > 0
+          ? (this.metrics.successfulRequests / this.metrics.totalRequests) * 100
+          : 0,
     };
   }
 
   async dispose() {
-    await this.endConversation();
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.runtimeGeneration++;
     this.stopCurrentAudio();
     this.listeners.clear();
-    
-    if (this.audioContext && this.audioContext.state !== 'closed') {
-      this.audioContext.close();
+    const audioContext = this.audioContext;
+    this.audioContext = null;
+    if (audioContext && audioContext.state !== 'closed') {
+      await audioContext.close();
     }
+    logger.info('TTSClient', 'Local speech runtime disposed');
   }
 }

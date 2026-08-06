@@ -1,12 +1,16 @@
-import {
-  InteractiveSegmenter,
-} from '@mediapipe/tasks-vision';
-import visionWasmBinaryPath from '../../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_module_internal.wasm?url';
-import visionWasmLoaderPath from '../../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_module_internal.js?url';
+import { InteractiveSegmenter } from '@mediapipe/tasks-vision';
 import { createInteractiveObjectSupportMask } from './interactiveSegmentationMask.js';
+import {
+  MAGIC_TOUCH_ASSET_URL,
+  MEDIAPIPE_LOADER_ASSET_URL,
+  MEDIAPIPE_WASM_ASSET_URL,
+} from '../runtime/capabilityPacks.js';
 
-const MODEL_PATH = '/models/ptm_512_hdt_ptm_woid.tflite';
+const MODEL_PATH = MAGIC_TOUCH_ASSET_URL;
+const visionWasmBinaryPath = MEDIAPIPE_WASM_ASSET_URL;
+const visionWasmLoaderPath = MEDIAPIPE_LOADER_ASSET_URL;
 const MASK_THRESHOLD = 0.5;
+const FOREGROUND_MASK_INDEX = 1;
 const WASM_FILESET = {
   wasmLoaderPath: visionWasmLoaderPath,
   wasmBinaryPath: visionWasmBinaryPath,
@@ -14,7 +18,7 @@ const WASM_FILESET = {
 
 let segmenterPromise = null;
 
-const getSegmenter = async () => {
+const getSegmenter = () => {
   if (!segmenterPromise) {
     segmenterPromise = InteractiveSegmenter.createFromOptions(WASM_FILESET, {
       baseOptions: {
@@ -29,7 +33,7 @@ const getSegmenter = async () => {
   return segmenterPromise;
 };
 
-const segmentFrame = async message => {
+const segmentFrame = async (message) => {
   const segmenter = await getSegmenter();
   const image = new ImageData(message.imageData.data, message.imageData.width, message.imageData.height);
   const result = segmenter.segment(image, {
@@ -39,7 +43,7 @@ const segmentFrame = async message => {
     },
   });
   try {
-    const confidenceMask = result.confidenceMasks[0];
+    const confidenceMask = result.confidenceMasks[FOREGROUND_MASK_INDEX];
     const confidenceData = confidenceMask.getAsFloat32Array();
     const objectSupportMask = createInteractiveObjectSupportMask({
       confidenceData,
@@ -53,19 +57,22 @@ const segmentFrame = async message => {
       maxRadius: message.maxRadius,
     });
 
-    self.postMessage({
-      type: 'segment-result',
-      requestId: message.requestId,
-      objectSupportMask,
-    }, [objectSupportMask.data.buffer]);
+    self.postMessage(
+      {
+        type: 'segment-result',
+        requestId: message.requestId,
+        objectSupportMask,
+      },
+      [objectSupportMask.data.buffer],
+    );
   } finally {
     result.close();
   }
 };
 
-self.onmessage = event => {
+self.onmessage = (event) => {
   if (event.data.type === 'segment') {
-    segmentFrame(event.data).catch(error => {
+    segmentFrame(event.data).catch((error) => {
       self.postMessage({
         type: 'segment-error',
         requestId: event.data.requestId,

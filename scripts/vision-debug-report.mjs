@@ -14,10 +14,8 @@ import {
 } from '../src/cv/synthetic/anchorReplayHarness.js';
 import { scoreHeadPoseReplay } from '../src/cv/synthetic/headPoseReplayHarness.js';
 import { createVisionBenchmarkMatrix } from '../src/cv/synthetic/visionBenchmarkMatrix.js';
-import {
-  VISION_QUALITY_THRESHOLDS,
-  scoreVisionPipelineQuality,
-} from '../src/cv/stageQualityScoring.js';
+import { VISION_QUALITY_THRESHOLDS, scoreVisionPipelineQuality } from '../src/cv/stageQualityScoring.js';
+import { ANCHOR_TRACKING_INTERVAL_MS } from '../src/utils/cvScheduling.js';
 import {
   filterVisionBenchmarkRuns,
   parseVisionBenchmarkArgs,
@@ -31,13 +29,14 @@ import { RECONSTRUCTION_MODES } from '../src/cv/anchor.reconstructionModes.js';
 const REPORT_PATH = '/tmp/hol-vision-debug-report.html';
 const SYNTHETIC_OBJECT_SUPPORT = 'synthetic-object-mask';
 
-const escapeHtml = value => String(value)
-  .replaceAll('&', '&amp;')
-  .replaceAll('<', '&lt;')
-  .replaceAll('>', '&gt;')
-  .replaceAll('"', '&quot;');
+const escapeHtml = (value) =>
+  String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
 
-const round = (value, digits = 3) => Number.isFinite(value) ? value.toFixed(digits) : 'n/a';
+const round = (value, digits = 3) => (Number.isFinite(value) ? value.toFixed(digits) : 'n/a');
 
 const metric = (label, value, digits = 3) => `
   <span class="metric"><strong>${escapeHtml(label)}</strong>${escapeHtml(round(value, digits))}</span>
@@ -60,11 +59,11 @@ const vectorLine = ({ point, normal, color, label }) => {
   `;
 };
 
-const sampledCornerMarkers = corners => {
+const sampledCornerMarkers = (corners) => {
   const step = Math.max(1, Math.ceil(corners.length / 48));
   return corners
     .filter((_, index) => index % step === 0)
-    .map(point => `<circle cx="${point.x}" cy="${point.y}" r="2.2" fill="#7dd3fc" opacity="0.62" />`)
+    .map((point) => `<circle cx="${point.x}" cy="${point.y}" r="2.2" fill="#7dd3fc" opacity="0.62" />`)
     .join('');
 };
 
@@ -96,10 +95,11 @@ const frameSvg = ({ sequence, replayFrame, scoreFrame }) => {
   `;
 };
 
-const worstTrackingFrames = replay => [...replay.frames]
-  .filter(frame => Number.isFinite(frame.anchorError))
-  .sort((left, right) => right.anchorError - left.anchorError)
-  .slice(0, 6);
+const worstTrackingFrames = (replay) =>
+  [...replay.frames]
+    .filter((frame) => Number.isFinite(frame.anchorError))
+    .sort((left, right) => right.anchorError - left.anchorError)
+    .slice(0, 6);
 
 const selectedFrameIndexes = (replay, headPose) => {
   return selectedDebugFrameIndexes({
@@ -110,14 +110,16 @@ const selectedFrameIndexes = (replay, headPose) => {
 };
 
 const sequenceSection = ({ title, sequence, replay, rawSummary, headPose, quality }) => {
-  const framesByIndex = new Map(replay.frames.map(frame => [frame.index, frame]));
-  const scoresByIndex = new Map(headPose.frames.map(frame => [frame.index, frame]));
+  const framesByIndex = new Map(replay.frames.map((frame) => [frame.index, frame]));
+  const scoresByIndex = new Map(headPose.frames.map((frame) => [frame.index, frame]));
   const selected = selectedFrameIndexes(replay, headPose)
-    .map(index => frameSvg({
-      sequence,
-      replayFrame: framesByIndex.get(index),
-      scoreFrame: scoresByIndex.get(index),
-    }))
+    .map((index) =>
+      frameSvg({
+        sequence,
+        replayFrame: framesByIndex.get(index),
+        scoreFrame: scoresByIndex.get(index),
+      }),
+    )
     .join('');
 
   return `
@@ -142,7 +144,7 @@ const sequenceSection = ({ title, sequence, replay, rawSummary, headPose, qualit
 const legacyDebugRuns = () => [
   {
     title: 'sparse-reconstruction / planar-book',
-    mode: RECONSTRUCTION_MODES.find(mode => mode.id === 'sparse-reconstruction'),
+    mode: RECONSTRUCTION_MODES.find((mode) => mode.id === 'sparse-reconstruction'),
     sequence: createPlanarBookSequence({
       kind: 'planar-book',
       frameCount: 32,
@@ -151,7 +153,7 @@ const legacyDebugRuns = () => [
   },
   {
     title: 'sparse-reconstruction / dark-book',
-    mode: RECONSTRUCTION_MODES.find(mode => mode.id === 'sparse-reconstruction'),
+    mode: RECONSTRUCTION_MODES.find((mode) => mode.id === 'sparse-reconstruction'),
     sequence: createPlanarBookSequence({
       kind: 'dark-book',
       frameCount: 32,
@@ -160,7 +162,7 @@ const legacyDebugRuns = () => [
   },
   {
     title: 'sparse-reconstruction / cylindrical-can',
-    mode: RECONSTRUCTION_MODES.find(mode => mode.id === 'sparse-reconstruction'),
+    mode: RECONSTRUCTION_MODES.find((mode) => mode.id === 'sparse-reconstruction'),
     sequence: createCylindricalCanSequence({
       frameCount: 30,
       occlusionFrames: [12, 13, 14],
@@ -168,7 +170,7 @@ const legacyDebugRuns = () => [
   },
   {
     title: 'sparse-reconstruction / rigid-box',
-    mode: RECONSTRUCTION_MODES.find(mode => mode.id === 'sparse-reconstruction'),
+    mode: RECONSTRUCTION_MODES.find((mode) => mode.id === 'sparse-reconstruction'),
     sequence: createRigidBoxSequence({
       frameCount: 28,
       occlusionFrames: [10, 11, 12],
@@ -183,34 +185,44 @@ const benchmarkDebugRuns = ({ size, filters }) => {
     filters,
   });
 
-  return scenarios.flatMap(scenario => modes.map(mode => ({
-    title: `${mode.id} / ${scenario.name}`,
-    mode,
-    scenario,
-    sequence: scenario.create(),
-    targetClassOverride: scenario.targetClassOverride,
-  })));
+  return scenarios.flatMap((scenario) => {
+    const sequence = scenario.create();
+    return modes.map((mode) => ({
+      title: `${mode.id} / ${scenario.name}`,
+      mode,
+      scenario,
+      sequence,
+      targetClassOverride: scenario.targetClassOverride,
+      replayOptions: scenario.replayOptions,
+    }));
+  });
 };
 
-const debugRunsFor = ({ size, filters }) => (
+const debugRunsFor = ({ size, filters }) =>
   debugReportUsesBenchmarkMatrix({ size, filters })
     ? benchmarkDebugRuns({ size, filters })
-    : legacyDebugRuns()
-);
+    : legacyDebugRuns();
 
-const qualityForRun = ({ title, replay, rawSummary, headPose }) => scoreVisionPipelineQuality({
-  name: title,
-  replay,
-  summary: rawSummary,
-  headPose,
-  thresholds: VISION_QUALITY_THRESHOLDS,
-});
+const qualityForRun = ({ title, replay, rawSummary, headPose }) =>
+  scoreVisionPipelineQuality({
+    name: title,
+    replay,
+    summary: rawSummary,
+    headPose,
+    thresholds: VISION_QUALITY_THRESHOLDS,
+  });
 
 const args = parseVisionBenchmarkArgs(process.argv.slice(2));
 const reportPath = args.outputPath || REPORT_PATH;
 const cv = await loadOpenCvForNode();
 const sections = [];
 const runs = debugRunsFor(args);
+
+const depthFrameFactoryFor = (run) => {
+  if (!run.mode.requiresDepthFrame) return null;
+  if (!run.replayOptions?.suppressDepthWhenTargetAbsent) return createSyntheticDepthFrame;
+  return (options) => (options.frame.targetVisible === false ? null : createSyntheticDepthFrame(options));
+};
 
 for (const run of runs) {
   const replay = await replayImageAnchorSequence({
@@ -219,8 +231,9 @@ for (const run of runs) {
     trackingMode: run.mode.id,
     targetClassOverride: run.targetClassOverride,
     useObjectSupportMask: true,
-    refreshObjectSupportMask: true,
-    depthFrameForFrame: run.mode.requiresDepthFrame ? createSyntheticDepthFrame : null,
+    refreshObjectSupportMask: run.replayOptions?.refreshObjectSupportMask ?? true,
+    depthFrameForFrame: depthFrameFactoryFor(run),
+    updateIntervalMs: ANCHOR_TRACKING_INTERVAL_MS,
   });
   const rawSummary = summarizeReplay(replay);
   const headPose = scoreHeadPoseReplay({ replay, sequence: run.sequence });
@@ -230,14 +243,16 @@ for (const run of runs) {
     rawSummary,
     headPose,
   });
-  sections.push(sequenceSection({
-    title: run.title,
-    sequence: run.sequence,
-    replay,
-    rawSummary,
-    headPose,
-    quality,
-  }));
+  sections.push(
+    sequenceSection({
+      title: run.title,
+      sequence: run.sequence,
+      replay,
+      rawSummary,
+      headPose,
+      quality,
+    }),
+  );
 }
 
 const html = `<!doctype html>

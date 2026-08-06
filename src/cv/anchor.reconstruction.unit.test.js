@@ -36,7 +36,7 @@ const projectPoint = (point, pose) => {
   };
 };
 
-const expectedFrontNormal = pose => {
+const expectedFrontNormal = (pose) => {
   const normal = rotatePoint({ x: 0, y: 0, z: 1 }, pose);
   const length = Math.hypot(normal.x, normal.y, normal.z);
   return {
@@ -59,7 +59,7 @@ const createShape = () => {
     for (let column = 0; column < 8; column++) {
       const x = (column - 3.5) * 18;
       const y = (row - 2) * 16;
-      const z = Math.sin(column / 7 * Math.PI) * 26 + Math.cos(row / 4 * Math.PI) * 8;
+      const z = Math.sin((column / 7) * Math.PI) * 26 + Math.cos((row / 4) * Math.PI) * 8;
       points.push({ id: id++, x, y, z });
     }
   }
@@ -75,7 +75,7 @@ const createCanShape = () => {
 
   for (let row = 0; row < 6; row++) {
     for (let column = 0; column < 11; column++) {
-      const angle = -Math.PI * 0.46 + column / 10 * Math.PI * 0.92;
+      const angle = -Math.PI * 0.46 + (column / 10) * Math.PI * 0.92;
       points.push({
         id: id++,
         x: Math.sin(angle) * radius,
@@ -98,9 +98,9 @@ const referencePose = {
 };
 
 const trackedPointsForPose = (shape, pose, ids = null, outlierIds = new Set()) => {
-  const selected = ids ? shape.filter(point => ids.includes(point.id)) : shape;
+  const selected = ids ? shape.filter((point) => ids.includes(point.id)) : shape;
 
-  return selected.map(point => {
+  return selected.map((point) => {
     const reference = projectPoint(point, referencePose);
     const current = projectPoint(point, pose);
     const outlierOffset = outlierIds.has(point.id) ? { x: 80, y: -55 } : { x: 0, y: 0 };
@@ -129,16 +129,13 @@ test('surface-prior sparse targets build from shorter occlusion-tolerant tracks'
     targetClass: 'cup',
   });
 
-  assert.equal(reconstructor.minFrames, 4);
+  assert.equal(reconstructor.minFrames, 3);
   assert.equal(reconstructor.minLandmarks, 14);
   assert.equal(reconstructor.minPoseLandmarks, 8);
   assert.equal(reconstructor.maxBuildFrames, 8);
   assert.equal(reconstructor.minObservationRatio, 0.46);
 
-  reconstructor.updateReferenceRegion(
-    { x: 130, y: 100, width: 160, height: 110 },
-    'book'
-  );
+  reconstructor.updateReferenceRegion({ x: 130, y: 100, width: 160, height: 110 }, 'book');
 
   assert.equal(reconstructor.minFrames, 6);
   assert.equal(reconstructor.minLandmarks, 18);
@@ -165,7 +162,7 @@ const buildReconstructor = () => {
     { yaw: 0.14, pitch: 0.07, roll: 0.04, scale: 1.18, tx: 214, ty: 163 },
     { yaw: 0.26, pitch: -0.05, roll: 0.08, scale: 1.2, tx: 219, ty: 165 },
     { yaw: 0.38, pitch: 0.09, roll: 0.12, scale: 1.22, tx: 224, ty: 168 },
-  ].forEach(pose => {
+  ].forEach((pose) => {
     reconstructor.addFrameFromTrackedPoints(trackedPointsForPose(shape, pose));
   });
 
@@ -195,12 +192,193 @@ const buildCanReconstructor = () => {
     { yaw: 0.18, pitch: 0.04, roll: 0.02, scale: 1.2, tx: 214, ty: 163 },
     { yaw: 0.34, pitch: -0.03, roll: 0.05, scale: 1.24, tx: 219, ty: 165 },
     { yaw: 0.48, pitch: 0.06, roll: 0.08, scale: 1.27, tx: 224, ty: 168 },
-  ].forEach(pose => {
+  ].forEach((pose) => {
     reconstructor.addFrameFromTrackedPoints(trackedPointsForPose(shape, pose));
   });
 
   return { shape, reconstructor, anchorPoint };
 };
+
+test('surface-prior reconstruction bootstraps from three geometrically distinct views', () => {
+  const shape = createCanShape();
+  const reconstructor = new SparseObjectReconstructor();
+  const anchorPoint = { x: 0, y: 0, z: 0 };
+  const anchorReference = projectPoint(anchorPoint, referencePose);
+
+  reconstructor.reset({
+    anchorReference,
+    templateRegion: { x: anchorReference.x - 75, y: anchorReference.y - 110, width: 150, height: 220 },
+    targetClass: 'can',
+  });
+
+  [
+    { yaw: -0.3, pitch: -0.05, roll: -0.04, scale: 1.08, tx: 202, ty: 158 },
+    { yaw: 0, pitch: 0.04, roll: 0, scale: 1.15, tx: 210, ty: 160 },
+    { yaw: 0.3, pitch: -0.03, roll: 0.04, scale: 1.22, tx: 219, ty: 165 },
+  ].forEach((pose, frameIndex) => {
+    const visibleIds = shape.filter((point) => point.id % 3 !== frameIndex).map((point) => point.id);
+    reconstructor.addFrameFromTrackedPoints(trackedPointsForPose(shape, pose, visibleIds));
+  });
+
+  const state = reconstructor.getState();
+  const targetPose = {
+    yaw: 0.5,
+    pitch: 0.06,
+    roll: 0.08,
+    scale: 1.28,
+    tx: 230,
+    ty: 172,
+  };
+  const expectedAnchor = projectPoint(anchorPoint, targetPose);
+  const result = reconstructor.estimatePoseFromTrackedPoints(trackedPointsForPose(shape, targetPose));
+
+  assert.equal(state.ready, true);
+  assert.equal(state.frameCount, 3);
+  assert.equal(result.success, true);
+  assert.ok(Math.hypot(result.position.x - expectedAnchor.x, result.position.y - expectedAnchor.y) < 8);
+});
+
+test('surface-prior reconstruction defers a fully observed three-view stream', () => {
+  const shape = createCanShape();
+  const reconstructor = new SparseObjectReconstructor();
+  const anchorReference = projectPoint({ x: 0, y: 0, z: 0 }, referencePose);
+  const poses = [
+    { yaw: -0.3, pitch: -0.05, roll: -0.04, scale: 1.08, tx: 202, ty: 158 },
+    { yaw: 0, pitch: 0.04, roll: 0, scale: 1.15, tx: 210, ty: 160 },
+    { yaw: 0.3, pitch: -0.03, roll: 0.04, scale: 1.22, tx: 219, ty: 165 },
+    { yaw: 0.46, pitch: 0.06, roll: 0.07, scale: 1.26, tx: 225, ty: 169 },
+  ];
+
+  reconstructor.reset({
+    anchorReference,
+    templateRegion: { x: anchorReference.x - 75, y: anchorReference.y - 110, width: 150, height: 220 },
+    targetClass: 'can',
+  });
+
+  poses.slice(0, 3).forEach((pose) => {
+    reconstructor.addFrameFromTrackedPoints(trackedPointsForPose(shape, pose));
+  });
+
+  assert.equal(reconstructor.getState().ready, false);
+  assert.equal(reconstructor.getState().lastFailureReason, 'Move object through more views');
+
+  reconstructor.addFrameFromTrackedPoints(trackedPointsForPose(shape, poses[3]));
+
+  assert.equal(reconstructor.getState().ready, true);
+  assert.equal(reconstructor.getState().frameCount, 4);
+});
+
+test('surface-prior reconstruction rejects three views without directional diversity', () => {
+  const shape = createCanShape();
+  const reconstructor = new SparseObjectReconstructor();
+  const anchorReference = projectPoint({ x: 0, y: 0, z: 0 }, referencePose);
+
+  reconstructor.reset({
+    anchorReference,
+    templateRegion: { x: anchorReference.x - 75, y: anchorReference.y - 110, width: 150, height: 220 },
+    targetClass: 'can',
+  });
+
+  for (let frame = 0; frame < 3; frame++) {
+    const visibleIds = shape.filter((point) => point.id % 3 !== frame).map((point) => point.id);
+    reconstructor.addFrameFromTrackedPoints(trackedPointsForPose(shape, referencePose, visibleIds));
+  }
+
+  const state = reconstructor.getState();
+
+  assert.equal(state.ready, false);
+  assert.equal(state.lastFailureReason, 'Calibration motion lacks stable depth');
+});
+
+test('surface-prior reconstruction rejects a noisy three-view factorization without a rank-3 gap', () => {
+  const shape = createCanShape();
+  const reconstructor = new SparseObjectReconstructor();
+  const anchorReference = projectPoint({ x: 0, y: 0, z: 0 }, referencePose);
+
+  reconstructor.reset({
+    anchorReference,
+    templateRegion: { x: anchorReference.x - 75, y: anchorReference.y - 110, width: 150, height: 220 },
+    targetClass: 'can',
+  });
+
+  [
+    { yaw: -0.24, pitch: -0.04, roll: -0.03, scale: 1.1, tx: 204, ty: 158 },
+    { yaw: 0, pitch: 0.04, roll: 0, scale: 1.15, tx: 210, ty: 160 },
+    { yaw: 0.24, pitch: -0.03, roll: 0.03, scale: 1.2, tx: 217, ty: 164 },
+  ].forEach((pose, frameIndex) => {
+    const visibleIds = shape.filter((point) => point.id % 3 !== frameIndex).map((point) => point.id);
+    const trackedPoints = trackedPointsForPose(shape, pose, visibleIds).map((point) => ({
+      ...point,
+      current: {
+        x: point.current.x + Math.sin(point.id * 0.71 + frameIndex * 1.3) * 10,
+        y: point.current.y + Math.cos(point.id * 0.53 - frameIndex * 1.1) * 10,
+      },
+    }));
+    reconstructor.addFrameFromTrackedPoints(trackedPoints);
+  });
+
+  const state = reconstructor.getState();
+
+  assert.equal(state.ready, false);
+  assert.equal(state.lastFailureReason, 'Calibration motion lacks stable depth');
+});
+
+test('surface-prior landmark support relaxes only during the three-view bootstrap', () => {
+  const reconstructor = new SparseObjectReconstructor();
+
+  reconstructor.reset({
+    anchorReference: { x: 210, y: 160 },
+    templateRegion: { x: 140, y: 50, width: 140, height: 220 },
+    targetClass: 'can',
+  });
+
+  const frames = Array.from({ length: 4 }, (_, frameIndex) => {
+    const ids = [
+      ...Array.from({ length: 14 }, (__, id) => id),
+      ...(frameIndex < 2 ? Array.from({ length: 14 }, (__, id) => id + 100) : []),
+    ];
+    const observations = ids.map((id) => ({
+      id,
+      reference: { x: id, y: id * 0.5 },
+      current: { x: id + frameIndex, y: id * 0.5 + frameIndex },
+      quality: 2,
+    }));
+    reconstructor.frameIndex = frameIndex + 1;
+    reconstructor._updateLandmarkStats(observations, frameIndex + 1);
+    return { observations };
+  });
+
+  assert.deepEqual(
+    reconstructor._supportedIds(frames).sort((left, right) => left - right),
+    [...Array.from({ length: 14 }, (__, id) => id)],
+  );
+});
+
+test('surface-prior three-view bootstrap keeps the full spatial landmark floor', () => {
+  const shape = createCanShape();
+  const reconstructor = new SparseObjectReconstructor();
+  const anchorReference = projectPoint({ x: 0, y: 0, z: 0 }, referencePose);
+  const ids = shape.slice(0, 14).map((point) => point.id);
+
+  reconstructor.reset({
+    anchorReference,
+    templateRegion: { x: anchorReference.x - 75, y: anchorReference.y - 110, width: 150, height: 220 },
+    targetClass: 'can',
+  });
+
+  [
+    { yaw: -0.3, pitch: -0.05, roll: -0.04, scale: 1.08, tx: 202, ty: 158 },
+    { yaw: 0, pitch: 0.04, roll: 0, scale: 1.15, tx: 210, ty: 160 },
+    { yaw: 0.3, pitch: -0.03, roll: 0.04, scale: 1.22, tx: 219, ty: 165 },
+  ].forEach((pose) => {
+    reconstructor.addFrameFromTrackedPoints(trackedPointsForPose(shape, pose, ids));
+  });
+
+  const state = reconstructor.getState();
+
+  assert.equal(state.ready, false);
+  assert.equal(state.lastFailureReason, 'Move slower: too few persistent landmarks');
+});
 
 test('sparse object reconstructor builds a 3D map from guided view changes', () => {
   const { reconstructor } = buildReconstructor();
@@ -295,7 +473,7 @@ test('sparse object reconstructor projects the clicked local surface normal, not
   };
   reconstructor.state = 'ready';
 
-  const trackedPoints = [...landmarks.values()].map(landmark => ({
+  const trackedPoints = [...landmarks.values()].map((landmark) => ({
     id: landmark.id,
     status: 'active',
     current: {
@@ -322,11 +500,13 @@ test('sparse object reconstructor keeps pose stable with missing landmarks and b
     tx: 188,
     ty: 151,
   };
-  const ids = shape.slice(0, 31).map(point => point.id);
+  const ids = shape.slice(0, 31).map((point) => point.id);
   const outlierIds = new Set(ids.slice(0, 5));
   const expectedAnchor = projectPoint({ x: 0, y: 0, z: 24 }, targetPose);
 
-  const result = reconstructor.estimatePoseFromTrackedPoints(trackedPointsForPose(shape, targetPose, ids, outlierIds));
+  const result = reconstructor.estimatePoseFromTrackedPoints(
+    trackedPointsForPose(shape, targetPose, ids, outlierIds),
+  );
 
   assert.equal(result.success, true);
   assert.ok(result.inlierCount >= 20);
@@ -384,7 +564,7 @@ test('sparse object reconstructor can return hot-path state without rebuilding p
       ty: 174,
     }),
     1200,
-    { includePreview: false }
+    { includePreview: false },
   );
 
   assert.equal('preview' in state, false);
@@ -407,14 +587,56 @@ test('sparse object reconstructor can estimate hot-path pose without live previe
     return { points: [] };
   };
 
-  const result = reconstructor.estimatePoseFromTrackedPoints(
-    trackedPointsForPose(shape, targetPose),
-    { includePreview: false }
-  );
+  const result = reconstructor.estimatePoseFromTrackedPoints(trackedPointsForPose(shape, targetPose), {
+    includePreview: false,
+  });
 
   assert.equal(result.success, true);
   assert.equal('preview' in result, false);
   assert.equal(previewCount, 0);
+});
+
+test('sparse object reconstructor prepares one reference observation snapshot for mapping and pose', () => {
+  const { shape, reconstructor } = buildCanReconstructor();
+  const trackedPoints = trackedPointsForPose(shape, {
+    yaw: 0.42,
+    pitch: 0.06,
+    roll: 0.04,
+    scale: 1.28,
+    tx: 226,
+    ty: 171,
+  });
+  const activeReferenceObservations = reconstructor._activeReferenceObservations.bind(reconstructor);
+  let preparationCount = 0;
+  reconstructor._activeReferenceObservations = (points) => {
+    preparationCount++;
+    return activeReferenceObservations(points);
+  };
+
+  reconstructor.addFrameFromTrackedPoints(trackedPoints, 1300, { includePreview: false });
+  const pose = reconstructor.estimatePoseFromTrackedPoints(trackedPoints, { includePreview: false });
+
+  assert.equal(pose.success, true);
+  assert.equal(preparationCount, 1);
+});
+
+test('sparse object reconstructor releases a prepared snapshot when pose has no map consumer', () => {
+  const shape = createCanShape();
+  const reconstructor = new SparseObjectReconstructor();
+  const trackedPoints = trackedPointsForPose(shape, referencePose);
+
+  reconstructor.reset({
+    anchorReference: { x: 210, y: 160 },
+    templateRegion: { x: 140, y: 50, width: 140, height: 220 },
+    targetClass: 'can',
+  });
+  reconstructor.addFrameFromTrackedPoints(trackedPoints, 1000, { includePreview: false });
+
+  assert.ok(reconstructor.frameObservationCache);
+  const pose = reconstructor.estimatePoseFromTrackedPoints(trackedPoints, { includePreview: false });
+
+  assert.equal(pose.success, false);
+  assert.equal(reconstructor.frameObservationCache, null);
 });
 
 test('sparse object reconstructor grows from statistically supported partial landmark tracks', () => {
@@ -437,10 +659,10 @@ test('sparse object reconstructor grows from statistically supported partial lan
     { yaw: 0.34, pitch: 0.1, roll: 0.1, scale: 1.22, tx: 223, ty: 168 },
     { yaw: 0.44, pitch: 0.05, roll: 0.12, scale: 1.24, tx: 228, ty: 170 },
   ].forEach((pose, frameIndex) => {
-    const visibleIds = shape
-      .filter(point => (point.id + frameIndex) % 5 !== 0)
-      .map(point => point.id);
-    reconstructor.addFrameFromTrackedPoints(trackedPointsForPose(shape, pose, visibleIds));
+    const frameVisibleIds = shape
+      .filter((point) => (point.id + frameIndex) % 5 !== 0)
+      .map((point) => point.id);
+    reconstructor.addFrameFromTrackedPoints(trackedPointsForPose(shape, pose, frameVisibleIds));
   });
 
   const state = reconstructor.getState();
@@ -458,10 +680,10 @@ test('sparse object reconstructor grows from statistically supported partial lan
     tx: 240,
     ty: 176,
   };
-  const visibleIds = shape
-    .filter(point => point.id % 4 !== 0)
-    .map(point => point.id);
-  const result = reconstructor.estimatePoseFromTrackedPoints(trackedPointsForPose(shape, targetPose, visibleIds));
+  const visibleIds = shape.filter((point) => point.id % 4 !== 0).map((point) => point.id);
+  const result = reconstructor.estimatePoseFromTrackedPoints(
+    trackedPointsForPose(shape, targetPose, visibleIds),
+  );
 
   assert.equal(result.success, true);
   assert.ok(result.inlierCount >= 22);
@@ -481,9 +703,9 @@ test('sparse object reconstructor completes hidden mapped landmarks from coheren
   const mappedVisible = trackedPointsForPose(
     shape,
     targetPose,
-    shape.slice(0, 7).map(point => point.id)
+    shape.slice(0, 7).map((point) => point.id),
   );
-  const unmappedLiveTracks = shape.slice(7, 34).map(point => {
+  const unmappedLiveTracks = shape.slice(7, 34).map((point) => {
     const reference = projectPoint(point, referencePose);
     const current = projectPoint(point, targetPose);
 
@@ -499,10 +721,7 @@ test('sparse object reconstructor completes hidden mapped landmarks from coheren
   });
   const expectedAnchor = projectPoint({ x: 0, y: 0, z: 24 }, targetPose);
 
-  const result = reconstructor.estimatePoseFromTrackedPoints([
-    ...mappedVisible,
-    ...unmappedLiveTracks,
-  ]);
+  const result = reconstructor.estimatePoseFromTrackedPoints([...mappedVisible, ...unmappedLiveTracks]);
 
   assert.equal(result.success, true);
   assert.ok(result.completedLandmarkCount >= 12);
@@ -518,7 +737,7 @@ test('sparse object reconstructor preview exposes a surface model instead of onl
   assert.ok(state.preview.surface.edges.length >= state.preview.points.length);
   assert.ok(state.preview.surface.hull.length >= 3);
   assert.ok(state.preview.surface.faces.length >= 12);
-  assert.ok(state.preview.points.every(point => point.reliability > 0 && point.reliability <= 1));
+  assert.ok(state.preview.points.every((point) => point.reliability > 0 && point.reliability <= 1));
   assert.ok(state.preview.statistics.matureLandmarks >= 18);
   assert.ok(state.preview.statistics.mapConfidence > 0.5);
 });
@@ -559,7 +778,7 @@ test('sparse curved target pose uses refreshed live tracks even when mapped ids 
     tx: 190,
     ty: 153,
   };
-  const refreshedTracks = shape.map(point => {
+  const refreshedTracks = shape.map((point) => {
     const reference = projectPoint(point, referencePose);
     const current = projectPoint(point, targetPose);
 
@@ -594,7 +813,7 @@ test('sparse curved target pose keeps the 3D anchor when 2D references are stale
     tx: 232,
     ty: 170,
   };
-  const staleReferenceTracks = trackedPointsForPose(shape, targetPose).map(point => ({
+  const staleReferenceTracks = trackedPointsForPose(shape, targetPose).map((point) => ({
     ...point,
     original: {
       x: point.original.x + 42,
@@ -620,7 +839,7 @@ test('sparse curved target pose falls back to tracked attachment when the 3D fit
     tx: 220,
     ty: 166,
   };
-  const noisyTracks = trackedPointsForPose(shape, targetPose).map(point => ({
+  const noisyTracks = trackedPointsForPose(shape, targetPose).map((point) => ({
     ...point,
     current: {
       x: point.current.x + Math.sin(point.id * 2.13) * 18,
@@ -633,7 +852,9 @@ test('sparse curved target pose falls back to tracked attachment when the 3D fit
 
   assert.equal(result.success, true);
   assert.equal(result.planarTransform.method, 'reference_similarity_transform');
-  assert.ok(Math.hypot(result.position.x - expectedTrackedAnchor.x, result.position.y - expectedTrackedAnchor.y) < 18);
+  assert.ok(
+    Math.hypot(result.position.x - expectedTrackedAnchor.x, result.position.y - expectedTrackedAnchor.y) < 18,
+  );
 });
 
 test('curved surface anchor replaces weak tracked fit when the map pose is coherent', () => {
@@ -656,22 +877,28 @@ test('curved surface anchor replaces weak tracked fit when the map pose is coher
     averageResidual: 6.4,
   };
 
-  assert.equal(reconstructor._shouldUseProjectedSurfaceAnchor({
-    pose,
-    trackedFit,
-    projectedAnchor: { x: 318, y: 230 },
-    trackedAnchor: { x: 303, y: 226 },
-  }), true);
+  assert.equal(
+    reconstructor._shouldUseProjectedSurfaceAnchor({
+      pose,
+      trackedFit,
+      projectedAnchor: { x: 318, y: 230 },
+      trackedAnchor: { x: 303, y: 226 },
+    }),
+    true,
+  );
 
-  assert.equal(reconstructor._shouldUseProjectedSurfaceAnchor({
-    pose,
-    trackedFit: {
-      ...trackedFit,
-      inlierCount: 18,
-    },
-    projectedAnchor: { x: 318, y: 230 },
-    trackedAnchor: { x: 303, y: 226 },
-  }), false);
+  assert.equal(
+    reconstructor._shouldUseProjectedSurfaceAnchor({
+      pose,
+      trackedFit: {
+        ...trackedFit,
+        inlierCount: 18,
+      },
+      projectedAnchor: { x: 318, y: 230 },
+      trackedAnchor: { x: 303, y: 226 },
+    }),
+    false,
+  );
 });
 
 test('sparse object reconstructor rejects cup-like sliding tracks that do not preserve object geometry', () => {
@@ -686,7 +913,7 @@ test('sparse object reconstructor rejects cup-like sliding tracks that do not pr
   });
 
   for (let frame = 0; frame < 8; frame++) {
-    const points = shape.map(point => {
+    const points = shape.map((point) => {
       const reference = projectPoint(point, referencePose);
       const stripe = Math.round(reference.x / 18);
       return {
@@ -706,25 +933,30 @@ test('sparse object reconstructor rejects cup-like sliding tracks that do not pr
   }
 
   const state = reconstructor.getState();
-  const result = reconstructor.estimatePoseFromTrackedPoints(shape.map(point => {
-    const reference = projectPoint(point, referencePose);
-    const stripe = Math.round(reference.x / 18);
-    return {
-      id: point.id,
-      original: reference,
-      current: {
-        x: reference.x + 24 + Math.sin(stripe * 1.7) * 16,
-        y: reference.y + 12 + Math.sin(stripe * 2.1) * 42,
-      },
-      response: 1,
-      status: 'active',
-      age: 30,
-      stabilityScore: 0.9,
-    };
-  }));
+  const result = reconstructor.estimatePoseFromTrackedPoints(
+    shape.map((point) => {
+      const reference = projectPoint(point, referencePose);
+      const stripe = Math.round(reference.x / 18);
+      return {
+        id: point.id,
+        original: reference,
+        current: {
+          x: reference.x + 24 + Math.sin(stripe * 1.7) * 16,
+          y: reference.y + 12 + Math.sin(stripe * 2.1) * 42,
+        },
+        response: 1,
+        status: 'active',
+        age: 30,
+        stabilityScore: 0.9,
+      };
+    }),
+  );
 
   assert.equal(state.ready, false);
-  assert.ok(state.statistics.mapConfidence < 0.4, `map confidence ${state.statistics.mapConfidence.toFixed(3)}`);
+  assert.ok(
+    state.statistics.mapConfidence < 0.4,
+    `map confidence ${state.statistics.mapConfidence.toFixed(3)}`,
+  );
   assert.equal(result.success, false);
 });
 

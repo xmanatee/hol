@@ -2,7 +2,7 @@ const LogLevel = {
   ERROR: 0,
   WARN: 1,
   INFO: 2,
-  DEBUG: 3
+  DEBUG: 3,
 };
 
 export const KNOWN_LOG_TAGS = Object.freeze([
@@ -11,7 +11,6 @@ export const KNOWN_LOG_TAGS = Object.freeze([
   'CameraService',
   'CameraSystem',
   'CameraView',
-  'Detection',
   'HeadAnchor',
   'HomographyEstimator',
   'ImageAnchor',
@@ -31,14 +30,13 @@ export const LOG_TAG_PRESETS = Object.freeze({
   },
   core: {
     label: 'Core',
-    tags: ['CameraService', 'CameraSystem', 'CameraView', 'AnchorManager', 'ImageAnchor', 'Detection'],
+    tags: ['CameraService', 'CameraSystem', 'CameraView', 'AnchorManager', 'ImageAnchor'],
   },
   vision: {
     label: 'Vision',
     tags: [
       'AnchorManager',
       'AnchorPersistenceSystem',
-      'Detection',
       'HomographyEstimator',
       'ImageAnchor',
       'KeypointDetector',
@@ -82,7 +80,9 @@ export class TaggedLogger {
       if (saved) {
         const enabledArray = JSON.parse(saved);
         this.enabledTags = new Set(enabledArray);
-        enabledArray.forEach(tag => this.discoveredTags.add(tag));
+        enabledArray.forEach((tag) => {
+          this.discoveredTags.add(tag);
+        });
       }
     } catch (error) {
       this.consoleTarget.warn('Failed to load logger settings:', error);
@@ -107,7 +107,7 @@ export class TaggedLogger {
   }
 
   notifyListeners() {
-    this.listeners.forEach(callback => {
+    this.listeners.forEach((callback) => {
       try {
         callback(this.getAllTags(), this.getEnabledTags());
       } catch (error) {
@@ -149,7 +149,9 @@ export class TaggedLogger {
 
   setEnabledTags(tags) {
     this.enabledTags = new Set(tags);
-    tags.forEach(tag => this.discoveredTags.add(tag));
+    tags.forEach((tag) => {
+      this.discoveredTags.add(tag);
+    });
     this.saveSettings();
     this.notifyListeners();
   }
@@ -173,13 +175,11 @@ export class TaggedLogger {
 
   log(level, tag, ...args) {
     this.discoverTag(tag);
-    
+
     if (level === LogLevel.ERROR || this.isTagEnabled(tag)) {
       const prefix = `[${tag}]`;
-      const method = level === LogLevel.ERROR ? 'error' :
-                   level === LogLevel.WARN ? 'warn' :
-                   'log';
-      
+      const method = level === LogLevel.ERROR ? 'error' : level === LogLevel.WARN ? 'warn' : 'log';
+
       this.consoleTarget[method](prefix, ...args);
     }
   }

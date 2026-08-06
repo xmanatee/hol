@@ -19,7 +19,7 @@ Before broad work, read parent `AGENTS.md` files up to the mono root; nearest sc
 
 ## Performance Budget (per frame @ 60 FPS = 16.67ms)
 
-- Detection (every 4th): 2-4ms amortized
+- Tap selection: one-shot worker task; no steady-state frame cost
 - Tracking/CV: ≤4ms
 - OpenCV operations: ≤6ms
 - R3F render + lip-sync: ≤6ms

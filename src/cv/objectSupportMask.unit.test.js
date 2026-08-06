@@ -13,6 +13,42 @@ import {
   warpObjectSupportMask,
 } from './objectSupportMask.js';
 
+const referenceWarpObjectSupportMask = (objectSupportMask, { position, scale, rotation, updatedAtFrame }) => {
+  const data = new Uint8Array(objectSupportMask.width * objectSupportMask.height);
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+
+  for (let y = 0; y < objectSupportMask.height; y++) {
+    for (let x = 0; x < objectSupportMask.width; x++) {
+      const dx = (x - position.x) / scale;
+      const dy = (y - position.y) / scale;
+      const sourceX = Math.round(objectSupportMask.referencePoint.x + cos * dx + sin * dy);
+      const sourceY = Math.round(objectSupportMask.referencePoint.y - sin * dx + cos * dy);
+
+      if (
+        sourceX >= 0 &&
+        sourceY >= 0 &&
+        sourceX < objectSupportMask.width &&
+        sourceY < objectSupportMask.height &&
+        objectSupportMask.data[sourceY * objectSupportMask.width + sourceX] > 0
+      ) {
+        data[y * objectSupportMask.width + x] = 255;
+      }
+    }
+  }
+
+  return createObjectSupportMask({
+    width: objectSupportMask.width,
+    height: objectSupportMask.height,
+    data,
+    source: 'warped-mask',
+    confidence: objectSupportMask.confidence,
+    referencePoint: { ...position },
+    createdAtFrame: objectSupportMask.createdAtFrame,
+    updatedAtFrame,
+  });
+};
+
 test('object support bounds are derived from positive mask pixels', () => {
   const data = new Uint8Array(12 * 10);
   for (let y = 3; y <= 6; y++) {
@@ -32,6 +68,8 @@ test('object support bounds are derived from positive mask pixels', () => {
     updatedAtFrame: 4,
   });
 
+  assert.notStrictEqual(mask.data, data);
+  assert.equal(mask.pixelCount, 20);
   assert.deepEqual(mask.bbox, { x: 4, y: 3, width: 5, height: 4 });
   assert.deepEqual(getObjectSupportBounds(mask), { x: 4, y: 3, width: 5, height: 4 });
   assert.equal(isPointInsideObjectSupport(mask, { x: 6, y: 5 }), true);
@@ -135,6 +173,50 @@ test('object support mask fills scaled-up support instead of leaving sparse forw
   assert.equal(isPointInsideObjectSupport(warped, { x: 20, y: 21 }), true);
   assert.ok(getObjectSupportBounds(warped).width > referenceMask.bbox.width);
   assert.ok(getObjectSupportBounds(warped).height > referenceMask.bbox.height);
+});
+
+test('bounded object support warp is byte-identical to full-frame inverse mapping', () => {
+  const width = 63;
+  const height = 47;
+  const data = new Uint8Array(width * height);
+  for (let y = 9; y <= 35; y++) {
+    for (let x = 14; x <= 49; x++) {
+      const dx = (x - 31) / 18;
+      const dy = (y - 22) / 13;
+      if (dx * dx + dy * dy <= 1 && !(x > 29 && x < 35 && y > 20)) {
+        data[y * width + x] = 255;
+      }
+    }
+  }
+
+  const referenceMask = createObjectSupportMask({
+    width,
+    height,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.87,
+    referencePoint: { x: 30.5, y: 22.25 },
+    createdAtFrame: 3,
+    updatedAtFrame: 3,
+  });
+  const transforms = [
+    { position: { x: 32, y: 23 }, scale: 1, rotation: 0 },
+    { position: { x: 38.4, y: 17.6 }, scale: 1.7, rotation: 0.63 },
+    { position: { x: 5.2, y: 41.3 }, scale: 0.58, rotation: -1.12 },
+    { position: { x: 60.8, y: 2.4 }, scale: 1.21, rotation: Math.PI / 2 },
+  ];
+
+  transforms.forEach((transform, index) => {
+    const options = { ...transform, updatedAtFrame: 10 + index };
+    const expected = referenceWarpObjectSupportMask(referenceMask, options);
+    const actual = warpObjectSupportMask(referenceMask, options);
+
+    assert.deepEqual(actual.data, expected.data);
+    assert.deepEqual(actual.bbox, expected.bbox);
+    assert.equal(actual.pixelCount, expected.pixelCount);
+    assert.deepEqual(actual.referencePoint, expected.referencePoint);
+    assert.equal(actual.updatedAtFrame, expected.updatedAtFrame);
+  });
 });
 
 test('object support mask keeps only the connected component containing the tap point', () => {
@@ -241,8 +323,14 @@ test('object support preview samples mask boundary instead of rectangular backgr
   assert.deepEqual(preview.bbox, { x: 4, y: 4, width: 15, height: 15 });
   assert.ok(preview.points.length > 0);
   assert.ok(preview.points.length <= 80);
-  assert.equal(preview.points.some(point => point.x === 12 && point.y === 14), false);
-  assert.equal(preview.points.every(point => isPointInsideObjectSupport(mask, point)), true);
+  assert.equal(
+    preview.points.some((point) => point.x === 12 && point.y === 14),
+    false,
+  );
+  assert.equal(
+    preview.points.every((point) => isPointInsideObjectSupport(mask, point)),
+    true,
+  );
 });
 
 test('region OpenCV mask clamps frame-edge and narrow support lookups', () => {

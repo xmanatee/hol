@@ -1,10 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  createVisionBenchmarkAnalysis,
-  scoreBenchmarkRisk,
-} from './visionBenchmarkAnalysis.js';
+import { createVisionBenchmarkAnalysis, scoreBenchmarkRisk } from './visionBenchmarkAnalysis.js';
 
 const createReport = ({
   name,
@@ -25,6 +22,14 @@ const createReport = ({
   postOcclusionRecoveryRateAt8 = 1,
   maxPostOcclusionRecoveryFramesAt8 = 0,
   meanPostOcclusionRecoveryFramesAt8 = 0,
+  targetLossWindowCount = 0,
+  targetAbsentFrameCount = 0,
+  targetPresentAbsentDisplayFrames = 0,
+  falseTrackedAbsentAdmittedFrames = 0,
+  targetLossRecoveredAt8 = 0,
+  targetLossFailedWindowsAt8 = 0,
+  targetLossRecoveryRateAt8 = 1,
+  maxTargetLossRecoveryFramesAt8 = 0,
   maxFrameJump = 4,
   objectSupportCorrectionFrames = 0,
   objectSupportRecoveryFrames = 0,
@@ -62,6 +67,14 @@ const createReport = ({
         postOcclusionRecoveryRateAt8,
         maxPostOcclusionRecoveryFramesAt8,
         meanPostOcclusionRecoveryFramesAt8,
+        targetLossWindowCount,
+        targetAbsentFrameCount,
+        targetPresentAbsentDisplayFrames,
+        falseTrackedAbsentAdmittedFrames,
+        targetLossRecoveredAt8,
+        targetLossFailedWindowsAt8,
+        targetLossRecoveryRateAt8,
+        maxTargetLossRecoveryFramesAt8,
         maxFrameJump,
         objectSupportCorrectionFrames,
         objectSupportRecoveryFrames,
@@ -91,31 +104,35 @@ const createReport = ({
 });
 
 test('benchmark risk ranks anchor spikes and missing reconstruction support as severe', () => {
-  const lowRisk = scoreBenchmarkRisk(createReport({
-    name: 'stable',
-    mode: 'depth-fusion',
-    axes: { object: 'planar-book' },
-  }));
-  const highRisk = scoreBenchmarkRisk(createReport({
-    name: 'bad cup',
-    mode: 'direct-photometric',
-    axes: { object: 'textured-cup' },
-    meanAnchorError: 31,
-    maxAnchorError: 82,
-    anchorAccuracyAt8: 0.12,
-    anchorAccuracyAt16: 0.35,
-    maxFrameJump: 18,
-    readyFrameRatio: 0.05,
-    poseReadyFrameRatio: 0,
-    meanReadyNormalError: 1.1,
-    maxReadyNormalError: 1.8,
-    maxWorldPositionError: 0.22,
-  }));
+  const lowRisk = scoreBenchmarkRisk(
+    createReport({
+      name: 'stable',
+      mode: 'depth-fusion',
+      axes: { object: 'planar-book' },
+    }),
+  );
+  const highRisk = scoreBenchmarkRisk(
+    createReport({
+      name: 'bad cup',
+      mode: 'direct-photometric',
+      axes: { object: 'textured-cup' },
+      meanAnchorError: 31,
+      maxAnchorError: 82,
+      anchorAccuracyAt8: 0.12,
+      anchorAccuracyAt16: 0.35,
+      maxFrameJump: 18,
+      readyFrameRatio: 0.05,
+      poseReadyFrameRatio: 0,
+      meanReadyNormalError: 1.1,
+      maxReadyNormalError: 1.8,
+      maxWorldPositionError: 0.22,
+    }),
+  );
 
   assert.equal(lowRisk.band, 'low');
   assert.equal(highRisk.band, 'severe');
   assert.ok(highRisk.score > lowRisk.score);
-  assert.ok(highRisk.components.some(component => component.name === 'tracking.meanAnchorError'));
+  assert.ok(highRisk.components.some((component) => component.name === 'tracking.meanAnchorError'));
 });
 
 test('benchmark risk penalizes missing required evidence instead of scoring it as zero error', () => {
@@ -224,126 +241,234 @@ test('benchmark analysis groups weak points by mode and condition axes', () => {
   assert.equal(analysis.worstReports[0].metrics.maxObjectSupportAnchorError, 44);
 });
 
+test('benchmark analysis exposes capture weakness and post-occlusion recovery groups', () => {
+  const reports = [
+    createReport({
+      name: 'nominal book',
+      mode: 'sparse-reconstruction',
+      axes: {
+        object: 'planar-book',
+        targetClass: 'book',
+        geometry: 'planar',
+        background: 'desk',
+        lighting: 'soft-desk',
+        motion: 'fast',
+        occlusion: 'repeated',
+        capture: 'nominal',
+      },
+      postOcclusionWindowCount: 2,
+      postOcclusionRecoveredAt8: 2,
+    }),
+    createReport({
+      name: 'night mug',
+      mode: 'sparse-reconstruction',
+      axes: {
+        object: 'handled-mug',
+        targetClass: 'mug',
+        geometry: 'handled-tapered-cylinder',
+        background: 'kitchen',
+        lighting: 'tiled-specular-clutter',
+        motion: 'fast',
+        occlusion: 'repeated',
+        capture: 'handheld-night',
+      },
+      overallStatus: 'fail',
+      failedStages: ['tracking'],
+      meanAnchorError: 28,
+      postOcclusionWindowCount: 2,
+      postOcclusionRecoveredAt8: 0,
+      postOcclusionFailedWindowsAt8: 2,
+      postOcclusionRecoveryRateAt8: 0,
+      maxPostOcclusionRecoveryFramesAt8: 24,
+    }),
+  ];
+
+  const analysis = createVisionBenchmarkAnalysis(reports);
+
+  assert.equal(analysis.weakPoints.byCapture[0].name, 'handheld-night');
+  assert.equal(analysis.weakPoints.byModeCapture[0].name, 'sparse-reconstruction / handheld-night');
+  assert.equal(analysis.postOcclusionRecovery.byCapture[0].name, 'handheld-night');
+  assert.equal(analysis.postOcclusionRecovery.byCapture[0].failedWindowsAt8, 2);
+});
+
+test('benchmark analysis aggregates full-loss false locks and recovery outcomes', () => {
+  const analysis = createVisionBenchmarkAnalysis([
+    createReport({
+      name: 'full loss sparse',
+      mode: 'sparse-reconstruction',
+      axes: { object: 'laminated-card', event: 'full-loss-reentry' },
+      targetLossWindowCount: 1,
+      targetAbsentFrameCount: 12,
+      targetPresentAbsentDisplayFrames: 9,
+      falseTrackedAbsentAdmittedFrames: 8,
+      targetLossRecoveredAt8: 1,
+      targetLossRecoveryRateAt8: 1,
+      maxTargetLossRecoveryFramesAt8: 3,
+    }),
+    createReport({
+      name: 'full loss direct',
+      mode: 'direct-photometric',
+      axes: { object: 'laminated-card', event: 'full-loss-reentry' },
+      targetLossWindowCount: 1,
+      targetAbsentFrameCount: 12,
+      targetPresentAbsentDisplayFrames: 13,
+      falseTrackedAbsentAdmittedFrames: 12,
+      targetLossFailedWindowsAt8: 1,
+      targetLossRecoveryRateAt8: 0,
+      maxTargetLossRecoveryFramesAt8: 14,
+    }),
+  ]);
+
+  assert.deepEqual(analysis.targetLossRecovery, {
+    reportCount: 2,
+    windowCount: 2,
+    absentFrameCount: 24,
+    targetPresentAbsentDisplayFrames: 22,
+    falseTrackedAbsentAdmittedFrames: 20,
+    recoveredAt8: 1,
+    failedWindowsAt8: 1,
+    maxRecoveryFramesAt8: 14,
+    recoveryRateAt8: 0.5,
+  });
+  assert.equal(analysis.weakPoints.byEvent[0].name, 'full-loss-reentry');
+});
+
 test('benchmark risk includes thresholded anchor accuracy without inflating total tracking weight', () => {
-  const highAccuracy = scoreBenchmarkRisk(createReport({
-    name: 'accurate frames',
-    mode: 'sparse-reconstruction',
-    axes: { object: 'planar-book' },
-    meanAnchorError: 2,
-    maxAnchorError: 12,
-    maxFrameJump: 4,
-    anchorAccuracyAt4: 0.6,
-    anchorAccuracyAt8: 0.9,
-    anchorAccuracyAt16: 1,
-  }));
-  const lowAccuracy = scoreBenchmarkRisk(createReport({
-    name: 'many marginal frames',
-    mode: 'sparse-reconstruction',
-    axes: { object: 'planar-book' },
-    meanAnchorError: 2,
-    maxAnchorError: 12,
-    maxFrameJump: 4,
-    anchorAccuracyAt4: 0.15,
-    anchorAccuracyAt8: 0.2,
-    anchorAccuracyAt16: 0.9,
-  }));
+  const highAccuracy = scoreBenchmarkRisk(
+    createReport({
+      name: 'accurate frames',
+      mode: 'sparse-reconstruction',
+      axes: { object: 'planar-book' },
+      meanAnchorError: 2,
+      maxAnchorError: 12,
+      maxFrameJump: 4,
+      anchorAccuracyAt4: 0.6,
+      anchorAccuracyAt8: 0.9,
+      anchorAccuracyAt16: 1,
+    }),
+  );
+  const lowAccuracy = scoreBenchmarkRisk(
+    createReport({
+      name: 'many marginal frames',
+      mode: 'sparse-reconstruction',
+      axes: { object: 'planar-book' },
+      meanAnchorError: 2,
+      maxAnchorError: 12,
+      maxFrameJump: 4,
+      anchorAccuracyAt4: 0.15,
+      anchorAccuracyAt8: 0.2,
+      anchorAccuracyAt16: 0.9,
+    }),
+  );
 
   assert.equal(lowAccuracy.primaryWeakness, 'tracking.anchorAccuracyAt8');
   assert.ok(lowAccuracy.score > highAccuracy.score);
 });
 
 test('benchmark risk includes p95 anchor error without inflating total tracking weight', () => {
-  const lowTail = scoreBenchmarkRisk(createReport({
-    name: 'stable tail',
-    mode: 'sparse-reconstruction',
-    axes: { object: 'planar-book' },
-    meanAnchorError: 2,
-    maxAnchorError: 30,
-    p50AnchorError: 2,
-    p95AnchorError: 8,
-    maxFrameJump: 3,
-    anchorAccuracyAt8: 0.96,
-    anchorAccuracyAt16: 1,
-  }));
-  const highTail = scoreBenchmarkRisk(createReport({
-    name: 'unstable tail',
-    mode: 'sparse-reconstruction',
-    axes: { object: 'planar-book' },
-    meanAnchorError: 2,
-    maxAnchorError: 30,
-    p50AnchorError: 2,
-    p95AnchorError: 24,
-    maxFrameJump: 3,
-    anchorAccuracyAt8: 0.96,
-    anchorAccuracyAt16: 1,
-  }));
-  const saturatedTrackingOnly = scoreBenchmarkRisk(createReport({
-    name: 'saturated tracking',
-    mode: 'sparse-reconstruction',
-    axes: { object: 'planar-book' },
-    meanAnchorError: 15,
-    maxAnchorError: 45,
-    p50AnchorError: 12,
-    p95AnchorError: 30,
-    maxFrameJump: 20,
-    anchorAccuracyAt8: 0,
-    anchorAccuracyAt16: 0,
-    postOcclusionWindowCount: 1,
-    postOcclusionRecoveryRateAt8: 0,
-    maxPostOcclusionRecoveryFramesAt8: 15,
-    readyFrameRatio: 1,
-    poseReadyFrameRatio: 1,
-    meanReadyNormalError: 0,
-    maxReadyNormalError: 0,
-    maxMapConfidence: 1,
-    maxWorldPositionError: 0,
-    maxRotationError: 0,
-    maxScaleLogError: 0,
-    maxHeadJumpExcess: 0,
-  }));
+  const lowTail = scoreBenchmarkRisk(
+    createReport({
+      name: 'stable tail',
+      mode: 'sparse-reconstruction',
+      axes: { object: 'planar-book' },
+      meanAnchorError: 2,
+      maxAnchorError: 30,
+      p50AnchorError: 2,
+      p95AnchorError: 8,
+      maxFrameJump: 3,
+      anchorAccuracyAt8: 0.96,
+      anchorAccuracyAt16: 1,
+    }),
+  );
+  const highTail = scoreBenchmarkRisk(
+    createReport({
+      name: 'unstable tail',
+      mode: 'sparse-reconstruction',
+      axes: { object: 'planar-book' },
+      meanAnchorError: 2,
+      maxAnchorError: 30,
+      p50AnchorError: 2,
+      p95AnchorError: 24,
+      maxFrameJump: 3,
+      anchorAccuracyAt8: 0.96,
+      anchorAccuracyAt16: 1,
+    }),
+  );
+  const saturatedTrackingOnly = scoreBenchmarkRisk(
+    createReport({
+      name: 'saturated tracking',
+      mode: 'sparse-reconstruction',
+      axes: { object: 'planar-book' },
+      meanAnchorError: 15,
+      maxAnchorError: 45,
+      p50AnchorError: 12,
+      p95AnchorError: 30,
+      maxFrameJump: 20,
+      anchorAccuracyAt8: 0,
+      anchorAccuracyAt16: 0,
+      postOcclusionWindowCount: 1,
+      postOcclusionRecoveryRateAt8: 0,
+      maxPostOcclusionRecoveryFramesAt8: 15,
+      readyFrameRatio: 1,
+      poseReadyFrameRatio: 1,
+      meanReadyNormalError: 0,
+      maxReadyNormalError: 0,
+      maxMapConfidence: 1,
+      maxWorldPositionError: 0,
+      maxRotationError: 0,
+      maxScaleLogError: 0,
+      maxHeadJumpExcess: 0,
+    }),
+  );
 
   assert.ok(highTail.score > lowTail.score);
   assert.ok(Math.abs(saturatedTrackingOnly.score - 44) < 1e-9);
-  assert.ok(highTail.components.some(component => component.name === 'tracking.p95AnchorError'));
+  assert.ok(highTail.components.some((component) => component.name === 'tracking.p95AnchorError'));
 });
 
 test('benchmark risk scores post-occlusion recovery without penalizing clean runs', () => {
-  const clean = scoreBenchmarkRisk(createReport({
-    name: 'clean stable run',
-    mode: 'depth-fusion',
-    axes: { object: 'planar-book', occlusion: 'clean' },
-    meanAnchorError: 2,
-    maxAnchorError: 6,
-    maxFrameJump: 3,
-    anchorAccuracyAt8: 0.96,
-    anchorAccuracyAt16: 1,
-  }));
-  const cleanWithRecoveryPlaceholders = scoreBenchmarkRisk(createReport({
-    name: 'clean stable run with empty recovery fields',
-    mode: 'depth-fusion',
-    axes: { object: 'planar-book', occlusion: 'clean' },
-    meanAnchorError: 2,
-    maxAnchorError: 6,
-    maxFrameJump: 3,
-    anchorAccuracyAt8: 0.96,
-    anchorAccuracyAt16: 1,
-    postOcclusionWindowCount: 0,
-    postOcclusionRecoveryRateAt8: 0,
-    maxPostOcclusionRecoveryFramesAt8: 24,
-  }));
-  const slowRecovery = scoreBenchmarkRisk(createReport({
-    name: 'slow recovery after occlusion',
-    mode: 'depth-fusion',
-    axes: { object: 'handled-mug', occlusion: 'repeated' },
-    meanAnchorError: 2,
-    maxAnchorError: 6,
-    maxFrameJump: 3,
-    anchorAccuracyAt8: 0.96,
-    anchorAccuracyAt16: 1,
-    postOcclusionWindowCount: 2,
-    postOcclusionRecoveryRateAt8: 0.25,
-    maxPostOcclusionRecoveryFramesAt8: 18,
-  }));
+  const clean = scoreBenchmarkRisk(
+    createReport({
+      name: 'clean stable run',
+      mode: 'depth-fusion',
+      axes: { object: 'planar-book', occlusion: 'clean' },
+      meanAnchorError: 2,
+      maxAnchorError: 6,
+      maxFrameJump: 3,
+      anchorAccuracyAt8: 0.96,
+      anchorAccuracyAt16: 1,
+    }),
+  );
+  const cleanWithRecoveryPlaceholders = scoreBenchmarkRisk(
+    createReport({
+      name: 'clean stable run with empty recovery fields',
+      mode: 'depth-fusion',
+      axes: { object: 'planar-book', occlusion: 'clean' },
+      meanAnchorError: 2,
+      maxAnchorError: 6,
+      maxFrameJump: 3,
+      anchorAccuracyAt8: 0.96,
+      anchorAccuracyAt16: 1,
+      postOcclusionWindowCount: 0,
+      postOcclusionRecoveryRateAt8: 0,
+      maxPostOcclusionRecoveryFramesAt8: 24,
+    }),
+  );
+  const slowRecovery = scoreBenchmarkRisk(
+    createReport({
+      name: 'slow recovery after occlusion',
+      mode: 'depth-fusion',
+      axes: { object: 'handled-mug', occlusion: 'repeated' },
+      meanAnchorError: 2,
+      maxAnchorError: 6,
+      maxFrameJump: 3,
+      anchorAccuracyAt8: 0.96,
+      anchorAccuracyAt16: 1,
+      postOcclusionWindowCount: 2,
+      postOcclusionRecoveryRateAt8: 0.25,
+      maxPostOcclusionRecoveryFramesAt8: 18,
+    }),
+  );
 
   assert.equal(clean.score, cleanWithRecoveryPlaceholders.score);
   assert.equal(slowRecovery.primaryWeakness, 'tracking.postOcclusionRecoveryFramesAt8');
@@ -483,7 +608,7 @@ test('benchmark analysis separates all-run and failed-run primary weaknesses', (
   ];
 
   const analysis = createVisionBenchmarkAnalysis(reports);
-  const mugGroup = analysis.weakPoints.byObject.find(group => group.name === 'handled-mug');
+  const mugGroup = analysis.weakPoints.byObject.find((group) => group.name === 'handled-mug');
 
   assert.equal(mugGroup.topPrimaryWeaknesses[0].weakness, 'tracking.meanAnchorError');
   assert.equal(mugGroup.topPrimaryWeaknesses[0].count, 2);

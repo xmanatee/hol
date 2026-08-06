@@ -12,7 +12,11 @@ export const modelFromRegion = (region = { width: 1, height: 1 }, targetClass = 
     return SURFACE_MODEL_BOX;
   }
   if (/face|head|portrait|mask/.test(label)) return SURFACE_MODEL_ELLIPSOID;
-  if (/book|notebook|paper|document|poster|photo|picture|painting|card|ticket|label|badge|laptop|keyboard|cell phone|smartphone|phone|tablet|tv|screen|sign|whiteboard/.test(label)) {
+  if (
+    /book|notebook|paper|document|poster|photo|picture|painting|card|ticket|label|badge|laptop|keyboard|cell phone|smartphone|phone|tablet|tv|screen|sign|whiteboard/.test(
+      label,
+    )
+  ) {
     return SURFACE_MODEL_PLANE;
   }
   if (/cup|mug|vase/.test(label)) return SURFACE_MODEL_TAPERED_CYLINDER;
@@ -68,9 +72,7 @@ const cylinderPoint = (reference, bounds, model) => {
   const v = clamp((reference.y - bounds.min.y) / height, 0, 1);
   const angle = (u - 0.5) * Math.PI * 0.92;
   const baseRadius = width * 0.34;
-  const radius = model === SURFACE_MODEL_TAPERED_CYLINDER
-    ? baseRadius * (0.86 + v * 0.28)
-    : baseRadius;
+  const radius = model === SURFACE_MODEL_TAPERED_CYLINDER ? baseRadius * (0.86 + v * 0.28) : baseRadius;
 
   return {
     x: Math.sin(angle) * radius,
@@ -180,7 +182,7 @@ export const normalForSurfaceModel = (reference, bounds, model) => {
   };
 };
 
-export const depthQualityForSurfaceModel = model => {
+export const depthQualityForSurfaceModel = (model) => {
   if (model === SURFACE_MODEL_PLANE) return 0.02;
   if (model === SURFACE_MODEL_ELLIPSOID) return 0.32;
   if (model === SURFACE_MODEL_BOX) return 0.14;
@@ -199,8 +201,8 @@ export const surfaceMeshForModel = (bounds, model) => {
     for (let column = 0; column < columns; column++) {
       const id = row * columns + column;
       const reference = {
-        x: bounds.min.x + (bounds.max.x - bounds.min.x) * column / (columns - 1),
-        y: bounds.min.y + (bounds.max.y - bounds.min.y) * row / (rows - 1),
+        x: bounds.min.x + ((bounds.max.x - bounds.min.x) * column) / (columns - 1),
+        y: bounds.min.y + ((bounds.max.y - bounds.min.y) * row) / (rows - 1),
       };
       points.push({
         id,

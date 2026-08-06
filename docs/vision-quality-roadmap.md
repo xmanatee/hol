@@ -1,371 +1,1206 @@
-# Vision Quality Roadmap
+# Vision quality and model-adoption policy
 
-The user-visible goal is not "create an anchor". The goal is:
+## Production baseline
 
-1. Select the intended object.
-2. Preserve that object's identity through motion, occlusion, rotation, and scale change.
-3. Build a trustworthy object-local surface or pose model.
-4. Attach the head to that object-local model so it moves with the object and hides when the model is not trustworthy.
+HOL uses tap-prompted object segmentation, object-owned Shi-Tomasi landmarks, pyramidal Lucas-Kanade optical flow, ORB keyframe recovery, geometric pose estimation, and optional reconstruction engines. This stack remains the reference until another approach wins the same tests on the primary mobile target.
 
-"Perfect" quality has to mean perfect on a measured acceptance suite, not a universal guarantee on arbitrary camera video. The current architecture can pass tests while still looking poor because it does not yet score each stage independently.
+The selection model runs at tap time and during bounded recovery refreshes. It is not part of every frame. Monocular depth runs only in depth-fusion mode at a cadence of at least 260 ms. Full-resolution mask and CV state stays in workers.
 
-## Current Diagnosis
+## Why no general detector
 
-### Object Detection
+The user already supplies the strongest selection signal: the tap. A class detector adds download, inference, label-set, and box-geometry costs without solving arbitrary object selection. Prompted segmentation plus a tap-local fallback supports unknown objects and keeps class labels out of attachment geometry.
 
-Current runtime uses a YOLO box detector in `src/cv/detector.worker.js` with `public/models/yolo11n_480.onnx`, filtered by `TARGET_CLASS_NAMES` in `src/cv/cocoClasses.js`.
+## Measured decisions
 
-The target filter now keeps COCO classes that match the intended selectable object set where COCO has coverage:
+### Tap-segmentation output contract
 
-- `person`
-- `sports ball`
-- `bottle`
-- `wine glass`
-- `cup`
-- `bowl`
-- `tv`
-- `laptop`
-- `mouse`
-- `remote`
-- `keyboard`
-- `cell phone`
-- `book`
-- `clock`
-- `vase`
+The pinned MagicTouch model has two confidence channels. Its official [model card](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20MagicTouch.pdf) defines channel 0 as background and channel 1 as foreground after softmax. The production worker previously consumed channel 0, so a successful inference could attach tracking to the scene around the tapped object. The worker now consumes the single authoritative foreground channel; no inversion heuristic, alternate model path, or compatibility branch remains.
 
-COCO still cannot directly cover every intended object. Posters/signs, cans, mugs, and arbitrary printed objects need the free-tap segmentation path or a future custom/open-vocabulary detector. This is a recall boundary before tracking or reconstruction starts.
+- A deterministic production-browser RED contract exposed the failure as 13,780 positive pixels out of 19,200, a full-frame bounding box, and an excluded tap point.
+- Mobile Chromium and WebKit now execute the emitted 146.30 KB module worker, local 18.0 MB TFLite model, MediaPipe loader, and 11.2 MB WASM and require a bounded non-empty foreground mask containing the prompt point.
+- The RGBA frame buffer is transferred into the worker, and the mask buffer is transferred back. The synchronous inference stays outside the main thread, matching the official [MediaPipe web guidance](https://developers.google.com/edge/mediapipe/solutions/vision/interactive_segmenter/web_js).
+- Worker runtime errors, response deserialization errors, and reported inference failures now share terminal cleanup. Every pending request rejects immediately, the failed worker is terminated, and a retry creates one fresh runtime.
+- Physical iPhone cold/warm latency, memory, orientation, thermal behavior, and coexistence with the active WebGL scene remain target-device measurements; desktop browser compatibility is not used as a performance claim.
 
-The detector is also box-first. Boxes are acceptable for drawing selectable regions, but they are weak ownership masks because they include textured background around the object.
+### Depth quantization
 
-### Object Tracking
+Depth Anything V2 Small Q4 was adopted in place of the FP32 model.
 
-Current anchoring uses:
+- Asset size: 99 MB to 27.4 MB.
+- Random-input comparison against the previous FP32 export: correlation 0.9835, MAE 0.1287, RMSE 0.1453.
+- Real ONNX Runtime WASM loading and inference are release-tested in Node. The mobile Chromium/WebKit matrix additionally imports the emitted depth service, resolves its hashed module worker, model, JSEP loader and WASM, transfers an owned frame, runs finite normalized inference at a bounded diagnostic input size, and verifies service disposal.
+- The tested INT8 export was rejected because ONNX Runtime Web WASM did not support its ConvInteger graph.
 
-- MediaPipe Interactive Segmenter at tap time.
-- A selected-object support mask.
-- Shi-Tomasi/GFTT keypoints.
-- Lucas-Kanade optical flow.
-- Mask-based landmark rejection.
-- Patch-descriptor keyframe relocalization.
-- Template recovery.
-- Reference homography attachment when the tracked point set supports a coherent perspective transform.
+Q4 is still optional because desktop browser compatibility at a bounded diagnostic input size is not evidence for production-size iPhone WebGPU latency, peak memory, or thermal stability.
 
-This is a reasonable mobile-web baseline. The weak spots are predictable:
+### Face asset
 
-- Low-texture and glossy objects do not produce enough stable corners.
-- Background corners inside the detection box can be stronger than object corners.
-- LK drifts under large viewpoint changes, fast motion, motion blur, specular highlights, and 90-degree turns.
-- Reference-similarity fallback is still the dominant measured tracking-error source when reconstruction pose is unavailable or not yet trusted.
-- The current mask is mostly propagated from geometry; there is no periodic learned object-mask correction.
-- Bootstrap/grid points help start tracking, but they are not enough to recover object identity after real appearance change.
+The source glTF, external binary, and unused texture were replaced by one 375 KB Meshopt-compressed GLB. Release verification checks the glTF header, required compression extension, and all 52 named facial morph targets.
 
-### Object 3D Reconstruction
+### Learned relocalization
 
-Current reconstruction modes are:
+HOL ships the official Apache-2.0 [XFeat](https://github.com/verlab/accelerated_features) backbone as a recovery-only complement to ORB. It is not a steady-state tracker and it is not a general ORB replacement. Whenever a classical keyframe is available, ORB runs first. Semantic rigid planes and classless/generic MediaPipe masks whose fill ratio and aspect provide conservative rectangular evidence may warm XFeat at tap time. Unknown/generic free taps build a bounded two-view learned memory from the first and third accepted mature ORB keyframes; learned inference then runs on at most every second admitted failed-ORB update. Known curved classes retain their class-specific recovery.
 
-- Sparse landmark reconstruction.
-- Parametric surface fitting.
-- Direct photometric surfel tracking.
+[LightGlue](https://openaccess.thecvf.com/content/ICCV2023/html/Lindenberger_LightGlue_Local_Feature_Matching_at_Light_Speed_ICCV_2023_paper.html) was not adopted. Its matcher adds a second learned stage, while the practical SuperPoint deployment chain did not provide the same simple permissive code-and-weight provenance as the selected XFeat asset. XFeat-only replacement was also rejected because it recovered fewer pairs and had worse tail error than ORB in the project bake-off.
 
-This is best understood as object-local pose and surface-prior estimation, not full dense object reconstruction. That is the right near-term mobile path, but readiness must be scored honestly:
+### Shared frame motion envelope
 
-- How many object-owned landmarks are mature?
-- How much view baseline has been observed?
-- How stable is depth or surface normal?
-- Is the pose residual bounded?
-- Is the map confidence calibrated against head-attachment drift?
+Tracking, reconstruction, and asynchronous support refreshes share one per-frame position limit. A support correction can use only the motion budget left after the tracked pose update, so segmentation recovery cannot create a second independent jump in the same displayed frame.
 
-The current class priors cover the common mobile targets:
+- Strict replay pass count: 53/72 to 63/72.
+- Tracking failures: 17 to 6; reconstruction failures remain 3.
+- Ten previously failing reports now pass, with no new failures.
+- Conflicting support corrections are reported through `objectSupportFrameStepLimitedFrames`.
 
-- Flat targets: books, posters, phones, cards, labels, documents, screens.
-- Curved targets: cans, bottles, jars, cups, mugs, vases.
-- Ellipsoid targets: faces, heads, balls.
-- Shallow box targets: shelves, bookcases, cabinets, drawers, crates, boxes.
+### Role-specific recovery landmark admission
 
-The current synthetic tests allow errors that are visibly bad: many scenarios permit double-digit pixel anchor error, large frame jumps, and rotation errors near a radian. The tests verify robustness, but not polished attachment quality.
+Fresh landmarks extracted from a pose-dropout support refresh no longer enter every geometry role at once. In depth-fusion cup recovery they may restore 2D tracking after two consecutive in-mask observations, but reconstruction and relocalization require four. Previously established LK and ORB landmarks retain their verified ownership, and routine refreshes keep the low-latency path.
 
-### Head Merge
+- Strict replay pass count: 63/72 to 64/72.
+- Tracking failures: 6 to 5; reconstruction failures remain 3.
+- The early repeated-occlusion depth-cup maximum anchor error fell from 31.07 px to 25.60 px.
+- One previously failing report now passes, with no new failures.
+- Replay diagnostics expose maximum ownership probation, probationary refresh admissions, and ownership promotions.
 
-The head must not be a mostly screen-space overlay that follows a smoothed projected center. It must be attached to an object-local surface state:
+### Centralized normal-capability arbitration
 
-- `localPoint`: object-space attachment point.
-- `localNormal`: object-space surface normal.
-- `localTangent`: stable roll reference.
-- `objectPose`: current object-to-camera transform.
-- `confidence`: readiness for rendering and voice.
+Position evidence no longer implies orientation ownership. Every reconstruction, planar, local-pose, object-pose, and tracker hypothesis now enters one capability record with independent position, transform, attachment, overlay, and normal eligibility. A single pure precedence table chooses normal ownership; the previous service-level normal cascade and its fallback helpers were deleted. Rigid planar targets reject affine normals after planar ownership is established, planar normals require independent confidence, and weak reconstruction normals cannot rotate curved attachments while their position disagrees with the tracker. Rejected candidates remain available to the position and recovery layers and expose explicit per-frame reasons from the same arbitration result.
 
-At 90-degree turns, the correct behavior is not to keep forcing a face to stay visible. If the attachment surface becomes back-facing, self-occluded, or poorly constrained, the head should hide or fade until the object-local transform is trustworthy again.
+- Strict replay pass count: 64/72 to 66/72.
+- Reconstruction failures: 3 to 1; tracking failures remain 5.
+- Laminated-card maximum ready normal error fell from 1.480 rad to 1.146 rad.
+- Handled-mug maximum ready normal error fell from 1.324 rad to 1.047 rad.
+- Pose-ready orientation remains available on at least half of frames in both recovered stress scenarios.
+- Two previously failing reports now pass, with no new failures.
 
-## Research Conclusions
+### Consensus-gated persistent-map recovery
 
-### Keep In The Mobile Frame Loop
+A mature parametric handled-mug map now survives repeated occlusion instead of being reset when the remaining LK landmarks cannot estimate a reference transform. A recent support-mask recovery may supply the accepted attachment similarity as a bounded relocalization prior, but it cannot create landmarks. The tracker reactivates only previously confirmed map IDs, requires at least eight unique matches, caps median reference residual, and requires two-dimensional reference coverage before committing the batch. A rejected batch leaves both the map and optical-flow baseline unchanged.
 
-- Cheap detector at cadence.
-- Tap-time object segmentation.
-- LK optical flow for short-term motion.
-- Mask-warp ownership checks.
-- Lightweight geometric pose and parametric surface fits.
-- Low-cadence relocalization and correction in workers.
+Pose readiness and normal ownership are also measured independently. Reconstruction inliers count even when attachment safety intentionally rejects pose ownership; orientation thresholds use only the selected reconstruction/planar normal owner, or the explicit detached parametric candidate. The numerical thresholds were not relaxed.
 
-### Evaluate As Near-Term Replacements Or Additions
+- Strict replay pass count: 66/72 to 67/72.
+- Reconstruction failures: 1 to 0; tracking failures remain 5.
+- The handled-mug recovery accepted 12 established landmarks, added 0 unverified landmarks, kept the map ready, and restored a 17-inlier parametric pose on the next frame.
+- Parametric handled-mug pose-ready ratio is 14/23 with 12 minimum inliers and 1.049 rad maximum ready normal error.
+- Sparse handled-mug normal ownership is explicit on 12/23 frames with 1.047 rad maximum ready normal error.
+- All handled-mug modes pass without new assets, model weights, compatibility paths, or threshold changes.
 
-- YOLO segmentation ONNX for known selectable classes. This can improve tap masks for bottles, cups, books, phones, people, and other COCO-covered objects.
-- XFeat ONNX for degraded/lost relocalization. It is designed for lightweight image matching and should be tested only on recovery cadence first, not every frame.
-- A free-tap segmentation path. If no detection box is selected, run tap segmentation and derive the object box from the mask.
-- LightGlue-style learned matching only belongs in the same low-cadence recovery bucket unless an in-browser benchmark proves it fits the mobile budget.
+### Quality-gated planar position ownership
 
-### Use As Benchmarks, Teachers, Or Offline References
+A tracker position that remains numerically available after occlusion is no longer allowed to hold position ownership merely because it exists. For a rigid planar target with established planar dominance, the position arbiter releases its reconstruction hold when the tracker has already failed the shared position-quality gate. A validated reconstruction can then relocalize the attachment against its mature object map. Curved targets retain the tracker-spine policy, and the tracker remains the final fallback when no stronger position candidate is available.
 
-- TAPIR, TAPNext, CoTracker, and LocoTrack-style point trackers: use as tracking-quality references and dataset/evaluation guides, not as default mobile-browser frame-loop dependencies.
-- SAM 2, Cutie, XMem, and AOT-style video object segmentation: excellent references for object memory and reappearance, but too heavy and complex for the default iPhone browser frame loop.
-- VGGT, DUSt3R/MASt3R, and BundleSDF: important 3D references, but not immediate in-browser dependencies. Use them offline to score captured clips or generate pseudo-ground-truth.
+- Strict replay pass count: 67/72 to 69/72.
+- Tracking failures: 5 to 3; reconstruction failures remain 0.
+- Direct-photometric depth-book mean anchor error fell from 9.57 px to 5.77 px.
+- Depth-fusion depth-book mean anchor error fell from 8.39 px to 6.15 px.
+- Both recovered reports keep maximum frame jump at 9.96 px.
+- Two previously failing reports now pass, with no new failures.
+- No assets, model weights, compatibility paths, or numerical acceptance thresholds changed.
 
-### Current Attachment Gate
+### Depth-owned curved dropout bridge
 
-The face overlay is intentionally more conservative than tracking. `reconstructionReady` means the map has enough evidence to estimate pose; it does not by itself mean the head can be rendered. Runtime readiness now separates:
+A mature depth-fusion map for a tapered cylindrical target may now own position when its pose remains geometrically valid and the reference-similarity tracker has already failed the shared quality gate. If a high-support reference then becomes geometrically incoherent while the depth pose drops out, the last accepted curved-map motion bridges only the existing bounded prediction window. Coherent and low-support recovery tracking retain their previous paths. The former blanket exclusion for tapered depth targets was replaced by this evidence gate.
 
-- `poseReady`: there is a usable current pose source.
-- `poseQualityReady`: pose inliers, confidence, and residual are good enough for rendering.
-- `surfaceReady`: the selected reconstruction or planar pose can describe the attachment surface.
-- `attachmentSourceReady`: the current attachment position comes from the same object-local source, not a screen-space tracker fallback.
-- `attachmentReady`: all of the above pass, so the face may render.
+- Strict replay pass count: 69/72 to 70/72.
+- Tracking failures: 3 to 2; reconstruction failures remain 0.
+- Late-occlusion depth-cup mean anchor error fell from 8.73 px to 1.74 px.
+- Its maximum anchor error fell from 30.95 px to 6.74 px while maximum frame jump remained below 12 px.
+- Low-support early and repeated-occlusion depth-cup recovery retains its previous behavior and remains passing.
+- One previously failing report now passes, with no new failures.
+- No new per-frame CV work, assets, model weights, compatibility paths, or numerical acceptance-threshold changes were introduced.
 
-Tracking and rendering now have deliberately different contracts. A weak planar homography can keep an object tracked, but the face waits for stronger planar inlier support. A reconstruction pose can keep the map alive, but the face waits for a tighter render residual. A recent mature reconstruction source can also suppress a one-frame planar normal takeover so source churn does not produce a visible head snap.
+### Score-weighted planar position consensus
 
-### Current Feedback Loop
+A parametric plane keeps attachment ownership while combining its 2D position with a reference-similarity position that has passed the shared geometry gate. The existing arbiter position scores provide normalized weights, so the consensus adds no mode-specific confidence or residual threshold. A weak tracker is excluded instead of diluting the reconstruction pose, and planar homography remains the first choice whenever its direct evidence is usable.
 
-`npm run vision:quality` now emits compact failure buckets in addition to per-scenario records:
+- Strict replay pass count: 70/72 to 71/72.
+- Tracking failures: 2 to 1; reconstruction failures remain 0.
+- Dark-book parametric maximum anchor error fell from 16.16 px to 14.43 px.
+- Mean anchor error fell from 7.32 px to 6.95 px and maximum frame jump from 7.54 px to 7.12 px.
+- Parametric pose remains the reported position and attachment owner on all consensus frames.
+- One previously failing report now passes, with no new failures or acceptance-threshold changes.
 
-- `failedByMode`
-- `failedByScenario`
-- `trackingSources`
-- `headPoseSources`
-- `trackingTransitions`
-- `headPoseTransitions`
-- `topFailingScenarios`
-- `topTrackingSources`
-- `topHeadPoseSources`
-- `topTrackingTransitions`
-- `topHeadPoseTransitions`
+### Support-only sparse tapered recovery
 
-This makes each pass measurable without manual camera testing. The current tracked baseline after the planar-ownership, face-readiness, sparse 3D-anchor, curved-dropout recovery, sparse-only centroid fallback, rigid-planar motion cap, book-specific planar cap, planar pose-filter, planar mirror-rejection, and low-lag tracker passes is:
+A segmentation refresh for a sparse tapered target updates object ownership, tracking bounds, and recovery landmarks without treating a fixed coordinate inside the axis-aligned mask bounds as measured anchor position. That coordinate is not invariant under perspective changes of a curved silhouette. Depth and handled-mug modes retain their independently validated correction policies.
 
-- 54 scenario/mode combinations.
-- 30 pass, 24 fail.
-- Failed stages: tracking 21, reconstruction 6.
-- No strict head-attachment failures remain in the replay matrix.
-- No remaining head-pose source transition exceeds the strict world-error or rotation-error transition limits.
-- Rigid planar selected-reconstruction normals are no longer trusted as external normal corrections, so book/card targets do not let a face-on reconstruction collapse a real planar turn.
-- High-confidence, low-residual reference-similarity tracker positions can bypass smoothing lag outside sparse reconstruction, while weak tracker and sparse-recovery paths still stay smoothed and step-limited.
+- Strict replay pass count: 71/72 to 72/72.
+- Tracking failures: 1 to 0; reconstruction failures remain 0.
+- Early repeated-occlusion sparse-cup maximum anchor error fell from 25.85 px to 21.82 px.
+- Mean anchor error fell from 12.37 px to 5.56 px while maximum frame jump remained 9.60 px.
+- Recovery segmentation refreshes remain active; only unsupported 2D recentering was removed.
+- No new per-frame CV work, assets, model weights, compatibility paths, or threshold changes were introduced.
 
-Measured deltas from the prior tracked baseline:
+### Evidence-gated rigid planar map growth
 
-- Aggregate: 13 pass / 41 fail -> 30 pass / 24 fail.
-- Head attachment failures: 19 -> 0.
-- Tracking failures: 34 -> 21.
-- Reconstruction failures: 6 -> 6.
-- Worst sparse-reconstruction head rotation source bucket: 2.28rad -> 0.64rad.
-- Worst planar-homography world-position source bucket: 0.40 -> 0.12 after low-inlier planar render gating.
-- Worst planar-homography anchor source bucket: 51.89px -> 22.95px after low-support planar homographies stopped owning the tapped attachment and planar pose updates became less laggy.
-- Worst reference-similarity anchor source bucket: 49.23px -> 36.13px after centroid dropout was limited to sparse reconstruction.
+Low-support landmark growth for a mature rigid planar map now requires direct homography evidence. When the current frame has no accepted planar inliers, the established map is preserved and weak reference geometry triggers the existing ORB relocalizer using the same measurement-quality contract as pose arbitration. Bootstrap growth, curved targets, and observed planar recovery retain their previous paths.
 
-Interpretation: overlay gating now avoids visibly bad face renders in the strict replay matrix. Book targets no longer let the one-euro position filter introduce vertical lag after occlusion; they use raw object-local candidates with the tighter book step cap. High-quality tracker measurements also avoid unnecessary lag before reconstruction takes over, but sparse reconstruction keeps smoothing during dropout-heavy recovery because that path is more vulnerable to reference-transform overshoot. The remaining product gap is tracking/relocalization: many high-error frames still report success through `reference_similarity_transform` after curved objects rotate or recover from occlusion, the high-support `curved-centroid-position` recovery bucket still has large anchor error on hard rotations, and several reconstruction failures are consensus dropouts rather than missing keypoints. The most useful next algorithmic target is low-cadence recovery that re-establishes object-owned correspondences before falling back to 2D reference similarity.
+- The 20-run representative laminated-card benchmark mean risk fell from 34.32 to 33.36 with the same 7 passing and 13 failing strict reports.
+- Fast repeated-occlusion maximum anchor error fell from 48.50 px to 24.52 px in sparse reconstruction and about 21.32 px in the other three modes.
+- Mean anchor error for that scenario fell by 4.84–5.62 px and p95 error by 22.68–25.80 px across all four modes.
+- Clean, early, mid, and late pass/fail states were preserved.
+- The curated strict matrix remains 72/72 with unchanged metrics.
+- The decision reuses the existing map-growth boundary and arbiter geometry policy; no new acceptance threshold, per-frame CV stage, asset, model weight, or compatibility path was added.
 
-## Stage Scoring
+### Transactional planar PnP branch arbitration
 
-### 1. Object Detection And Segmentation
+Rigid planar pose now treats the two coplanar PnP orientations as competing measurements instead of allowing the iterative solver to silently switch branches. Every frame first computes the fresh OpenCV pose. A second candidate seeded by the last committed extrinsic pose is evaluated only when the fresh tilt opposes the committed tilt; temporal continuity selects between the mirrored branches. The narrow and wide correspondence attempts are transactional: neither can mutate history, and only the arbiter-approved winner is committed. A geometric dropout or rejected planar normal clears continuity so reacquisition starts fresh. Deformable planar targets never retain the rigid prior.
 
-Primary score:
+- The 20-run representative laminated-card benchmark improved from 7/20 to 11/20 passing reports.
+- Mean risk fell from 33.36 to 30.71, maximum risk from 56.69 to 56.10, and high-risk reports from 10 to 6.
+- All four clean wide-turn modes changed from fail to pass.
+- Clean maximum normal error fell from 1.828–1.843 rad to 0.533–0.619 rad; maximum head-rotation error fell from 1.860–1.867 rad to 0.443–0.479 rad.
+- Clean anchor-position metrics are unchanged, repeated-occlusion risk remains at baseline, and deformable-pouch metrics are unchanged.
+- The curated strict matrix remains 72/72. No acceptance threshold, model asset, compatibility path, or duplicate pose pipeline was introduced.
 
-- Tap success rate: a tap on the intended object creates a candidate object.
-- Detection recall by class on the app object set.
-- Mask IoU where annotation exists.
-- Tap component correctness: selected connected component contains the tap and mostly covers the object.
-- Runtime: raw inference time and amortized time.
+### Geometry-scoped ORB recovery
 
-Immediate failures to expose:
+Rigid planar targets store one ORB keyframe from the trusted tap-time object landmarks, before occlusion can contaminate the map. Geometry-degradation checks query descriptors inside the current padded tracking region and translate ROI keypoints back into full-frame coordinates before matching. Complete LK loss still searches the full frame. Parametric and direct planar engines rebuild refreshed tracking bounds from the current support mask instead of accumulating padding from earlier refreshes; sparse and depth engines retain broad map support. Curved and non-convex targets keep mature keyframes and full-frame recovery because a single affine ROI does not represent their viewpoint change.
 
-- No detection for phone, wine glass, laptop/tablet/screen, poster/sign, can-like object, mug, and box.
-- Detection box exists but tap mask is empty or dominated by background.
-- Segmentation succeeds but the mask does not contain the tap component.
+- The 20-run representative laminated-card benchmark keeps 11/20 strict passes while mean risk falls from 30.71 to 29.08; maximum risk remains 56.10.
+- Fast repeated-occlusion maximum anchor error falls from 21.32 px to 12.11 px in parametric and direct modes, from 21.32 px to 16.26 px in depth fusion, and from 24.52 px to 16.02 px in sparse reconstruction.
+- Mean ORB relocalization time falls from 23.72 ms to 19.14 ms per recovery call; feature extraction falls from 20.39 ms to 14.34 ms.
+- Amortized relocalization cost falls from 0.864 ms to 0.666 ms per frame. LK tracking remains unchanged and the recovery path runs on 3.48% of benchmark frames.
+- The real-OpenCV vision suite remains 82/82 across planar, curved, glossy, non-convex, and all four reconstruction modes.
+- No numerical acceptance threshold, model asset, compatibility path, or steady-state CV stage was added. Recovery spikes still require measurement on the primary iPhone target.
 
-Target next state:
+### Mature-map descriptor validation
 
-- Broaden the detector target set to all relevant COCO classes.
-- Add free-tap segmentation when no detection is found.
-- Add YOLO-seg as an alternate detector profile and compare against MediaPipe Interactive Segmenter.
-- Report mask coverage, mask confidence, mask source, and class recall in the HUD/debug report.
+A rigid planar LK map can remain internally coherent after occlusion even when most of its mature landmarks have disappeared. Residual-only gating misses that state because the surviving subset agrees with itself. When a mature map contains at least 70 stored landmarks but fewer than 18 remain active, the existing local ORB keyframe now validates the reference geometry before LK declares complete failure. Bootstrap maps, curved targets, strong active support, and full-frame loss recovery retain their existing paths.
 
-### 2. Object Tracking
+- The representative laminated-card benchmark improves from 11/20 to 12/20 strict passes; mean risk falls from 29.0654 to 28.9745.
+- The recovered slow mid-occlusion parametric run falls from 8.09 px to 7.84 px mean anchor error and ends at 4.47 px.
+- The fixed strict matrix remains 84/84, including all low-light, motion-blur, and rolling-shutter reports.
+- Dark-book remains 18/20 with 100% post-occlusion recovery; only one extra descriptor validation runs across its 604 measured frames.
+- Laminated-card ORB coverage rises from 21/604 to 26/604 frames. Amortized relocalization cost rises from 0.659 ms to 0.774 ms; mean cost per call falls from 18.97 ms to 17.97 ms.
+- The 300-run representative matrix has 186 passes, 114 failures, 86% recovery at 8 px, and 24.3946 mean risk. Only the rigid-planar groups capable of satisfying the mature-map gate changed.
+- Bypassing homography smoothing and lowering the mature-map threshold were both rejected because they reduced the laminated-card pass count. No rejected branch, threshold profile, asset, or provider remains.
 
-Primary score:
+### Bounded object-support projection
 
-- TAP-style point tracking accuracy on object-owned points.
-- Object mask agreement over time.
-- Anchor drift in pixels.
-- Anchor jump by position-source transition.
-- Frame-to-frame head-root jump after readiness.
-- Lost/recovered count and relocalization latency.
-- Background landmark rejection rate.
+The tap or recovery mask is immutable reference evidence. Its current-frame mask is derived from the selected position, scale, and rotation with nearest-neighbor inverse mapping. Projection now visits only the transformed source-mask bounding box, records bounds and pixel count while writing the owned destination buffer, and reuses the result when the same source and transform are requested again in one frame. This preserves the inverse-sampling semantics documented for [OpenCV affine warps](https://docs.opencv.org/4.13.0/da/d54/group__imgproc__transform.html) without introducing an additional OpenCV `Mat` lifecycle.
 
-Immediate failures to expose:
+- A byte-parity test compares the bounded implementation with the former full-frame inverse mapper across translation, rotation, scale, and frame-edge clipping.
+- A 640×480 Node microbenchmark falls from 2.301 ms to 0.673 ms per projection, a 70.8% reduction.
+- Across the identical 84-report quick benchmark, amortized `landmarkMetricsMs` falls from 4.743 ms to 0.106 ms and mean profiled frame processing falls from 41.50 ms to 34.82 ms.
+- Quality output is exactly unchanged: 45 passes, 39 failures, the same failed stages, and 24.5888419 mean risk.
+- The fixed strict matrix remains 84/84, including all capture-degradation conditions.
+- These are Node replay measurements rather than an iPhone performance claim. No threshold, model, asset, worker protocol, or recovery decision changed.
 
-- Landmarks with high stability that live outside the object mask.
-- Bootstrap points promoted to pose inliers before surviving enough frames.
-- Background texture replacing object texture during refresh.
-- Recovery that snaps to the wrong repeated texture.
+### Full-path ORB keyframe storage telemetry
 
-Target next state:
+Periodic relocalization-keyframe storage previously disappeared inside `keypointUpdateMs` or `templateUpdateMs`, even though it can run full-frame OpenCV [`Feature2D.detectAndCompute`](https://docs.opencv.org/4.x/d0/d13/classcv_1_1Feature2D.html). The service now measures every admission and storage attempt as `keyframeStoreMs`, including early exits, and separately accumulates actual extraction as `keyframeFeatureExtractionMs`. Both timings travel through the existing per-update diagnostics object; profiling remains disabled in production unless explicitly requested.
 
-- Keep LK as fast path.
-- Add a correction path that periodically refreshes object ownership with segmentation or detector masks.
-- Add XFeat ONNX as a worker-backed recovery experiment.
-- Promote landmarks through states: bootstrap, candidate, object-owned, pose-eligible, mature.
-- Store descriptor/keyframe memory only for object-owned landmarks.
+- RED service coverage proves that the same frame-profile object receives full store wall time and extractor-owned time.
+- The identical 84-report quick matrix remains exactly at 45 passes, 39 failures, and 24.58884 mean risk, with the same failed stages, failed scenarios, maximum risk, and risk bands.
+- `keyframeStoreMs` costs 5.130 ms amortized across all frames and reaches 24.732 ms. ORB extraction runs on 707/2,716 frames (26.0%), costs 5.051 ms amortized, averages 19.405 ms when active, and reaches 24.412 ms.
+- Aggregate mean processing is unchanged within measurement noise between the adjacent Node runs (32.735 ms before and 32.727 ms after). The telemetry exposes a bottleneck; it is not presented as a speedup.
+- Cropped extraction was rejected because it created two strict failures by changing the ORB pyramid and descriptors. Translation-residual admission was also rejected: its broad matrix looked stable, but the isolated sparse-cylinder strict case regressed from 5.76 px to 8.15 px mean anchor error. Both experiments and their API surfaces were removed completely.
+- The fixed strict matrix remains 84/84. These are Node replay measurements rather than an iPhone performance claim. No model, asset, worker protocol, recovery decision, duplicate path, or compatibility branch was added.
 
-### 3. Object 3D Reconstruction
+### Indexed ORB landmark association
 
-Primary score:
+Keyframe storage still runs OpenCV [`Feature2D.detectAndCompute`](https://docs.opencv.org/4.12.0/d0/d13/classcv_1_1Feature2D.html) over the complete image so ORB retains its detector-selected orientation, pyramid octave, and descriptor semantics. Only the JS post-processing changed. Extracted keypoints are indexed in association-radius cells, landmark queries visit intersecting cells in original feature order, and descriptor views are materialized only for the selected one-to-one matches. The ordering preserves the previous exhaustive search's nearest-distance, equal-distance, and feature-ownership decisions exactly.
 
-- Pose residual and inlier ratio.
-- Normal angular error in synthetic and annotated fixtures.
-- Scale/depth consistency.
-- View coverage and baseline.
-- Map confidence calibration.
-- For real 3D data: object pose error and Chamfer/point-cloud consistency where available.
+- A randomized 1,000-feature/96-landmark contract compares the spatial selector with the former ordered exhaustive reference, including duplicate-coordinate ties, and requires identical association indexes.
+- On that fixed Node microbenchmark, association falls from 0.789 ms to 0.127 ms per storage call; avoiding unused descriptor views removes another 0.049 ms, for 0.711 ms total isolated JS savings.
+- The identical 84-report quick matrix remains exactly at 45 passes, 39 failures, 24.5888419 mean risk, 60.5829777 maximum risk, and the same failed stages, scenarios, and risk bands.
+- The fixed strict matrix remains 84/84, and the affected relocalization/service suite remains 172/172.
+- One adjacent end-to-end replay was slower because full ORB/WASM extraction varied more than the post-processing savings. The isolated operation establishes this optimization; the run is not presented as an aggregate or iPhone speedup.
+- A 500-feature storage cap was rejected after reducing extractor cost by 8.3% but changing quick quality from 45/39 to 43/41. Provided-keypoint descriptors were rejected because OpenCV.js retained missing LK orientation/octave evidence, and a landmark mask was 5.9–7.8% slower in the six-fixture detector microbenchmark. All three experiments were removed completely.
+- No feature cap, detector input, descriptor, matching threshold, recovery decision, model, asset, worker protocol, alternate path, or compatibility branch changed.
 
-Immediate failures to expose:
+### Same-frame ORB extraction reuse
 
-- Reconstruction marked ready with little view baseline.
-- Curved object treated as planar under a 90-degree turn.
-- Planar object allowed to hallucinate depth and rotate the head incorrectly.
-- Sparse map grows with background points.
+OpenCV [`Feature2D.detectAndCompute`](https://docs.opencv.org/doc/doxygen/html/d0/d13/classcv_1_1Feature2D.html) produces detected keypoints and a descriptor matrix whose rows correspond to those keypoints. Any full-frame relocalization with enough detector output for storage now exposes that exact point/response order and descriptor buffer to keyframe storage later in the same update. Match or geometric-consensus failure does not invalidate the detector result. Reuse is eligible only when query and storage feature budgets match; ROI queries and different detector budgets retain independent extraction.
 
-Target next state:
+- Real-OpenCV contracts instrument the ORB detector and require both successful and failed full-frame relocalization followed by same-frame storage to perform two extractions rather than three. Service contracts preserve the evidence through match failure, insufficient LK restoration, relocalization growth, and ordinary landmark refresh.
+- In the identical 84-report quick matrix, relocalization remains at 185 calls, including 183 full-frame queries. Storage extraction falls from 719 to 675 calls with no remaining same-frame duplicate; profiled update-frame extraction falls from 707 to 663 calls.
+- At the baseline active extraction mean of 21.386 ms, the 44 structurally removed calls equal 0.346 ms amortized per benchmark frame. Adjacent `keyframeFeatureExtractionMs` falls from 5.567 ms to 4.734 ms amortized, but the remaining difference includes run-to-run OpenCV/WASM timing variance and is not attributed entirely to reuse.
+- Quick quality is exactly unchanged at 45 passes, 39 failures, 24.5888419 mean risk, 60.5829777 maximum risk, and the same failed stages, scenarios, and risk bands. The fixed strict matrix remains 84/84.
+- The snapshot is plain same-update JS data and is not retained in relocalizer state. It does not survive the frame, cache a `cv.Mat`, or add a lifecycle, threshold, model, asset, fallback, or alternate descriptor path.
 
-- Separate "pose ready", "surface ready", and "attachment ready".
-- Require view-coverage evidence before enabling non-planar attachment.
-- Use class/mask shape to select plane, cylinder, tapered cylinder, box, ellipsoid, or unknown.
-- Use offline VGGT/DUSt3R/MASt3R/CO3D-style validation to benchmark captured clips, not as the runtime default.
+### Feasibility-first keyframe admission
 
-### 4. Head Merge
+Keyframe association owns each detector feature at most once, so a stored keyframe can never contain more entries than the eligible landmark set presented to association. Storage now derives one entry quorum as `max(minMatches, minKeyframeEntries)` and rejects an undersized landmark set before full-frame ORB extraction. The same quorum governs post-association acceptance and whether same-frame relocalization evidence is reusable for storage, removing three subtly different feasibility rules.
 
-Primary score:
+- A real-OpenCV contract supplies six mature, object-owned landmarks against the eight-entry storage quorum and proves that no ORB detector is constructed.
+- In the identical 84-report quick matrix, storage attempts remain exactly 918 and successful insertions remain 664. Standalone storage extraction falls from 675 to 629 calls; update-profiled extraction falls from 663 to 617 calls. All 46 removed calls previously failed after extraction and none could have reached the one-to-one entry quorum.
+- At the paired baseline active extraction mean of 19.927 ms, the 46 structurally removed calls equal 0.338 ms amortized per benchmark frame. Adjacent wall-clock timings also improve, but only the eliminated call count is attributed to this change because OpenCV/WASM timing varies between runs.
+- Quick quality is byte-for-byte unchanged at 45 passes, 39 failures, 24.5888419 mean risk, 60.5829777 maximum risk, and the same failed stages, scenarios, and risk bands.
+- The fixed strict matrix remains 84/84, including low-light, motion-blur, rolling-shutter, and repeated-occlusion cases; the full release suite remains 577/577.
+- Storage cadence now consumes a completed feasibility evaluation through the explicit `storageEvaluated` result. This preserves the original retry schedule while separating storage semantics from whether feature extraction happened; the former `featuresEvaluated` field was removed rather than aliased.
+- No threshold value, detector input, descriptor evidence, insertion result, recovery cadence, model, asset, worker protocol, fallback, compatibility branch, or alternate path changed.
 
-- Object-local attachment drift.
-- Projected head-root error.
-- Normal angular error.
-- Scale jitter.
-- Rotation jitter.
-- Head jump and rotation error by pose-source transition.
-- Bounded jump after occlusion/reappearance.
-- Correct hide/fade when the surface is back-facing or not reconstructed.
+### Compact ORB descriptor ownership
 
-Immediate failures to expose:
+OpenCV ORB produces one native descriptor matrix with one 32-byte row per detected keypoint. Keyframe storage previously copied that complete matrix into JavaScript before association, then retained selected row views whose shared backing buffer kept every unselected row alive. The synchronous feature owner now matches and associates against the native matrix view, copies a complete JavaScript snapshot only when exact same-frame reuse needs one, and otherwise materializes only the selected rows into one compact keyframe buffer. Both native descriptor and keypoint handles are released at the consumer boundary.
 
-- Head follows a 2D anchor while the object rotates in depth.
-- Head remains visible after object identity is lost.
-- Head jumps when pose source changes from tracker to reconstruction.
-- Head uses detector box scale instead of object-local scale.
+- RED assertions expose the former retention directly: both representative keyframes retained 13,440 bytes for 96 stored descriptors instead of the required 3,072 bytes. They now require the backing buffer to equal `descriptorCount * 32` exactly, including the same-frame reuse path.
+- A full quick-matrix audit found 626 successful stores among 629 fresh extractions, with a typical accepted keyframe selecting 22 of 1,000 detector rows. Typical retained descriptor payload therefore falls from 32,000 to 704 bytes (97.8%); the 96-entry maximum falls to 3,072 bytes (90.4%), or about 192 KB to 18 KB across six full keyframes. These figures exclude JavaScript object overhead.
+- The fixed isolated copy benchmark improves from a seven-run median of 1.359 to 0.845 microseconds (37.8%). In the adjacent 84-report Node replay, `keyframeStoreMs` falls from 4.561 to 4.437 ms amortized (2.7%) and the extraction count remains exactly 617. Total-frame movement is not attributed to this change because OpenCV/WASM variance is larger than the isolated copy.
+- Quick quality, benchmark outputs, failure stages, and risk structures are byte-for-byte unchanged at 45 passes and 39 diagnostic failures. The fixed strict matrix remains 84/84; affected relocalization/service tests pass 173/173; eight focused real-OpenCV recovery cases pass; release verification passes 580/580; and the mobile browser matrix passes seven tests with three browser-specific skips.
+- Reusing the ORB detector and output workspace preserved exact descriptors but produced no meaningful timing gain, so no native cache or lifecycle was added. Increasing global or rigid-planar keyframe intervals reduced extraction count but regressed repeated-texture, occlusion, or mature-map recovery. Those candidates were removed completely. This preserves keyframe insertion as recovery evidence, consistent with the robustness role described by the original [ORB-SLAM keyframe policy](https://doi.org/10.1109/TRO.2015.2463671).
+- These are Node measurements, not an iPhone memory or frame-budget claim. No cadence, threshold, descriptor format, matcher, keyframe result, model, asset, worker protocol, fallback, compatibility branch, or migration path changed.
 
-Target next state:
+### Stable reconstruction reference fit
 
-- Add `HeadAttachmentState` as a first-class model.
-- Derive head transform from `objectToCamera * objectLocalAttachment`.
-- Keep the existing overlay gate, but make the readiness reason stage-specific.
-- Hide the head in candidate/mapping and on back-facing or low-confidence surfaces.
+Direct-photometric and parametric-surface reconstruction keep a bounded window of recent observations, but their attachment scale and rotation are expressed relative to the session's reference geometry. The engines previously keyed their cached reference fit to `frames[0]`; once the bounded window evicted its oldest frame, the next retained observation silently became a new normalization base even though the map and anchor coordinate system were not rebased. Each same-model tracking-region refresh also discarded the fit despite leaving its estimator model unchanged.
 
-## Implementation Order
+- Both engines now retain the first reference-fit evaluation, including an unavailable result, across observation-window eviction and same-model region updates. Reset still clears it, and an actual surface-model change invalidates it before the next pose.
+- RED contracts replace the oldest retained frame and resize the reference region, prove that the fit remains single-evaluation evidence, then switch from a curved model to a plane and require one explicit recomputation.
+- In the 21-report direct-photometric profile, robust attachment-fit calls fall from 746 to 584. Reference-fit ownership falls from 703.1 ms to 164.9 ms total, or 0.818 ms per processed reconstruction frame; mean pose estimation falls from 5.361 ms to 4.621 ms.
+- In the 21-report parametric-surface profile, attachment-fit calls fall from 769 to 594. Reference-fit ownership falls from 755.2 ms to 141.4 ms total, or 0.918 ms per processed reconstruction frame; mean pose estimation falls from 6.160 ms to 5.393 ms.
+- The combined 84-report quick matrix keeps exactly 45 passes, 39 failures, the same 30 tracking / eight reconstruction / four head-attachment failure buckets, the same risk bands, and the same 60.58298 maximum risk. Mean risk improves from 24.58884 to 24.57129.
+- The fixed strict matrix remains 84/84. Direct/parametric repeated-occlusion, mug reacquisition, glossy-can rejection, and cross-engine object cases pass.
+- Timings are Node replay measurements, not iPhone budget claims. No observation, map, threshold, estimator, pose gate, model, asset, worker protocol, fallback, compatibility branch, or alternate path was added.
 
-### Stage 0: Make Quality Measurable
+### Exact same-frame reconstruction consensus reuse
 
-Add a `vision:quality` report that emits one JSON record per replay and one aggregate score per stage:
+Direct-photometric and parametric-surface reconstruction consume the same tracked frame twice in sequence: mapping first validates coherent object geometry, then ready-state pose estimation validates it again. The second consumer now reuses the completed robust consensus only when the ordered observation objects and every estimator option are identical. A changed object, order, model, threshold, inlier requirement, sample limit, or coverage policy creates a fresh evaluation. Failed consensus is completed evidence and is reused under the same contract.
 
-- detection: class recall, tap success, mask health.
-- tracking: anchor drift, point survival, relocalization, background rejection.
-- reconstruction: pose residual, normal error, map confidence, view coverage.
-- head: local drift, projected error, jitter, visibility correctness.
+- RED integration contracts prove mapping-to-pose reuse in both engines. Focused cache contracts prove that reorder, cloned observations, and an option change invalidate the evaluation, while an identical failed evaluation is retained.
+- Across the 84-report quick matrix, direct-photometric reuses 280 of 550 ready-pose consensus evaluations and parametric-surface reuses 484 of 562. The other calls retain independent evidence because pose eligibility or estimator requirements changed.
+- Direct reconstruction falls from 12.625 ms to 10.942 ms amortized per direct frame. Parametric reconstruction falls from 10.021 ms to 7.316 ms per parametric frame. Across all four modes, `reconstructionUpdateMs` falls from 8.259 ms to 7.337 ms amortized.
+- Quick quality is numerically unchanged at 45 passes, 39 diagnostic failures, 24.571289 mean risk, 60.582978 maximum risk, and the same failure stages and risk bands. The fixed strict matrix remains 84/84.
+- Timings are adjacent Node replay measurements, not iPhone budget claims. The cache retains one frame of plain JS observations and result data; it stores no `cv.Mat` and adds no threshold, estimator, map, asset, model, worker message, fallback, feature flag, compatibility field, or alternate path.
 
-This should run against synthetic fixtures first and real cached datasets when available. It should fail on current loose thresholds so improvements have direction.
+### Shared affine multi-RHS solve
 
-### Stage 1: Fix Selection Recall
+Every production affine fit estimates image X and Y from the same design matrix. Those axes previously built the same regularized normal matrix twice and repeated identical pivot selection and elimination. The least-squares core now accumulates both right-hand sides together and performs one shared elimination, matching the established multiple-RHS contract in [LAPACK `DGESV`](https://www.netlib.org/lapack/explore-html/d8/d72/dgesv_8f_source.html). Robust 2D consensus, affine camera fitting, and sparse map completion all use this single implementation; the former single-RHS wrapper was removed.
 
-Broaden `TARGET_CLASS_IDS` and add per-class detection tests for the intended selectable object list. Then add a free-tap segmentation path for objects not detected by YOLO.
+- RED contracts pin the exact independent-solver outputs for a well-conditioned system and a regularized rank-deficient system. A separate deterministic corpus of 80 robust-affine cases produces byte-identical JSON before and after the replacement, including the same SHA-256.
+- The fixed 35-observation robust-affine microbenchmark improves from a five-run median of 6.040 ms to 5.387 ms per fit, a 10.8% reduction.
+- Across the identical 84-report quick matrix, amortized `reconstructionUpdateMs` falls from 7.337 ms to 6.172 ms (15.9%). Sparse reconstruction improves 19.2%, direct photometric 15.2%, parametric surface 15.0%, and depth fusion 9.4%. Mean profiled frame processing falls from 32.753 ms to 30.220 ms in the adjacent Node runs.
+- Quick quality and risk are numerically identical at 45 passes, 39 diagnostic failures, and 24.571289 mean risk. The fixed strict matrix remains 84/84, five selected real-OpenCV reconstruction/recovery cases pass, and the full release suite passes 579/579.
+- These are Node measurements, not an iPhone budget claim. The change adds no dependency, alternate solver, fallback, threshold, model, asset, worker message, compatibility branch, or migration path.
 
-Do this before adding heavier tracking models. If the wrong object is selected or no object can be selected, tracking quality cannot recover the UX.
+### Allocation-free robust consensus scoring
 
-### Stage 2: Strengthen Object Ownership
+RANSAC ranks every hypothesis by thresholded reprojection residuals; [OpenCV documents](https://docs.opencv.org/master/d9/d0c/group__calib3d.html) the same inlier-count and reprojection-threshold contract. HOL previously materialized a projected point and residual record for every observation, then allocated filtered and remapped arrays for every affine or similarity hypothesis. Both scorers now traverse observations once, append only accepted observation references, and accumulate the accepted residual sum in the original order. Similarity scoring also computes the hypothesis's sine and cosine once rather than once per observation.
 
-Introduce explicit landmark states and promotion rules:
+- Full-precision characterization contracts pin affine and similarity transforms, ordered inlier identities, ratios, residuals, and confidence. Separate 80-case affine and 80-case similarity corpora retain byte-identical result artifacts and SHA-256 values.
+- On fixed 35-observation Node microbenchmarks, affine fit improves from a five-run median of 5.345 ms to 5.088 ms (4.8%), while similarity fit improves from 0.696 ms to 0.474 ms (31.9%).
+- Across the identical 84-report quick matrix, amortized `reconstructionUpdateMs` falls from 6.172 ms to 5.978 ms (3.1%). Every reconstruction mode improves; the adjacent full-frame mean changes by +0.3% because unrelated planar/OpenCV timing is noisier than the scorer saving and is not claimed as an improvement.
+- Quick quality and risk structures are exactly identical, the fixed strict matrix remains 84/84, five selected real-OpenCV reconstruction/recovery cases pass, and the full release suite passes 579/579.
+- The materialized-residual implementation and unused scorer export were removed. No estimator, sampler, threshold, hypothesis order, refinement rule, fallback, dependency, model, asset, worker message, compatibility branch, or migration path was added.
 
-- `bootstrap`: seeded by grid or weak keypoint extraction.
-- `candidate`: tracked in one or more frames but not pose-eligible.
-- `object-owned`: repeatedly inside object mask and geometrically coherent.
-- `pose-eligible`: object-owned with enough age, low residual, and descriptor agreement.
-- `mature`: stable through motion/occlusion and eligible for reconstruction.
+### Consuming paired least-squares workspace
 
-Refresh should add only object-owned candidates, and background points should never replace mature object points.
+The paired least-squares caller creates a regularized normal matrix solely for the immediately following solve. The former generic solver copied that private matrix into an augmented matrix and wrapped the two right-hand sides in generic containers before elimination. The solver now makes its ownership explicit: it appends both right-hand sides to the fresh normal matrix and consumes that workspace in place. The generic matrix/value-set layer was removed rather than retained as a second path.
 
-### Stage 3: Add Low-Cadence Relocalization
+- Exact contracts pin well-conditioned and regularized rank-deficient three-column fits plus a four-column camera fit. A separate 240-case paired-solver corpus is byte-identical before and after the replacement, with SHA-256 `f7394305b38faa77cce9a5a8794e7fb5ddd6ca955bc44a23e723b2b1309ad982`.
+- Five-run Node medians improve from 0.827 to 0.512 microseconds for a three-row affine hypothesis, from 2.230 to 1.017 microseconds for a 31-row affine refinement, and from 3.098 to 1.504 microseconds for a 32-row four-column camera fit. The fixed 35-observation robust-affine fit improves from 5.088 ms to 4.467 ms, or 12.2%.
+- Across the identical 84-report quick matrix, amortized `reconstructionUpdateMs` falls from 5.978 ms to 5.446 ms (8.9%). The affected sparse, direct, and parametric modes improve by 12.1%, 8.0%, and 10.2%, respectively. Depth fusion changes by +2.7%, total frame time by +0.2%, and the unrelated planar stage by +1.0%; those adjacent-run movements are treated as noise, not claimed improvements.
+- Quick quality and risk structures remain exactly identical, the fixed strict matrix remains 84/84, five selected real-OpenCV reconstruction/recovery cases pass, and the full release suite passes 580/580.
+- These are Node measurements, not an iPhone budget claim. The change preserves accumulation, regularization, pivot selection, elimination, and result order and adds no dependency, alternate solver, fallback, threshold, model, asset, worker message, feature flag, compatibility branch, or migration path.
 
-Evaluate XFeat ONNX in a worker as a degraded/lost recovery path. Keep current patch relocalization as the baseline until the score report proves XFeat improves occlusion, 90-degree turns, blur, or repeated texture cases within budget.
+### Bounded deterministic homography consensus
 
-### Stage 4: Rebuild Readiness Around Attachment
+Planar pose retains the single seeded OpenCV [`findHomography`](https://docs.opencv.org/4.13.0/d9/d0c/group__calib3d.html) RANSAC path, its 2.5 px reprojection threshold, and 0.99 confidence. Only the documented maximum-iteration bound changes from 2,000 to 1,250. A real-OpenCV unit contract fixes all four robust-estimator parameters so a future backend or budget change cannot enter without an explicit quality bake-off.
 
-Split readiness into:
+- The identical 84-report quick matrix keeps 45 passes, 39 failures, the same 30 tracking, eight reconstruction, and four head-attachment failures, the same 30 low / 42 moderate / 11 high / one severe risk bands, and exactly the same 24.58884 mean and 60.58298 maximum risk.
+- Mean planar-pose cost falls from 4.496 ms to 4.274 ms and amortized cost from 4.442 ms to 4.222 ms. Mean profiled frame processing falls from 34.885 ms to 33.169 ms, and maximum p95 falls from 141.052 ms to 125.638 ms.
+- The adjacent candidate run's single maximum planar and frame samples were noisier and worse, so this change is not presented as a maximum-spike improvement or as meeting the mobile budget.
+- The fixed strict matrix remains 84/84, and the affected homography/service suite remains 167/167.
+- Bounds of 500, 1,000, and 1,050 iterations passed the broad aggregate but were rejected after the narrower repeated-occlusion rigid-planar release replay regressed to 16.59–31.01 px maximum anchor error. Although 1,100 passed that fixture, 1,250 retains another 150 iterations of observed headroom. All rejected budgets and contracts were removed.
+- `USAC_DEFAULT`, `USAC_ACCURATE`, and `USAC_MAGSAC` were rejected after full quick-matrix runs. Although faster, they changed estimator consensus and increased severe risk, mean risk, or head-attachment failures. Their code and test contracts were removed completely.
+- These are deterministic Node replay measurements, not an iPhone timing claim. The runtime keeps one homography estimator, one backend, one threshold set, and no feature flag, fallback, dependency, model, asset, or compatibility path.
 
-- `selectionReady`: object candidate exists.
-- `trackingReady`: object identity is stable.
-- `poseReady`: pose is usable.
-- `surfaceReady`: object-local surface is usable.
-- `attachmentReady`: head local point and normal are stable.
+### Inlier-only homography residual ownership
 
-The head renders only when `attachmentReady` is true or when a strong planar pose provides an equivalent local surface.
+OpenCV [`findHomography`](https://docs.opencv.org/4.13.0/d9/d0c/group__calib3d.html) returns the robust-estimator mask that owns downstream geometric evidence. HOL previously projected every accepted and rejected correspondence, created residual records for all of them, then allocated filtered correspondence and residual arrays. Post-processing now traverses the mask once after the quorum check, projects only inliers, and accumulates the ordered inlier references, residual sum, and maximum directly.
 
-### Stage 5: Real Data And Offline Teachers
+- A 60-case deterministic real-OpenCV corpus preserves the exact homography matrix, ordered inliers, inlier ratio, condition metric, average residual, and maximum residual, retaining SHA-256 `180febaa2c94a7f5a5fbbf4f42c276eeb07d009da6097737f50c0493d34dc2a0`.
+- A persistent unit contract independently recomputes the residual summary from returned ordered inliers. On the fixed 96-correspondence/85-inlier post-processing benchmark, the seven-run median falls from 2.949 to 1.672 microseconds, or 43.3%.
+- The 84-report quick quality, benchmark, and coverage JSON structures are exactly unchanged at 45 passes, 39 diagnostic failures, and 24.571289 mean risk. The fixed strict matrix remains 84/84.
+- Complete-estimator and adjacent quick timings moved with native RANSAC/OpenCV variance that was larger than this JS saving. The quick replay was slower in planar, reconstruction, ORB storage, and total stages simultaneously, so no complete-estimator or aggregate speedup is claimed.
+- The unused `transformTemplateCenter` native allocation path was removed; production already transforms homography points from the retained matrix directly. Release verification passes 581/581 and the mobile browser matrix passes seven tests with three browser-specific skips.
+- RANSAC method, seed, threshold, iteration bound, confidence, mask interpretation, projection arithmetic, inlier order, PnP input, model, asset, dependency, worker protocol, fallback, compatibility branch, and migration path remain unchanged.
 
-Use fetch/cache scripts, not vendored blobs, for:
+### Session-owned planar PnP camera inputs
 
-- DAVIS and YouTube-VOS: segmentation and occlusion quality.
-- TAP-Vid and TAPVid-3D: point tracking and 3D trajectory quality.
-- CO3D: object-centric multi-view reconstruction checks.
-- App-captured clips: exact target UX with phones, cups, cans, books, posters, bottles, and faces.
+OpenCV [`solvePnP`](https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html) defines the camera matrix and distortion coefficients as input arrays, while rotation and translation are its output arrays. HOL's camera intrinsics and zero-distortion assumption are immutable for one calibrated anchor-worker session, but the planar solver previously rebuilt and deleted both native inputs for every pose candidate. `HomographyEstimator` now owns those two matrices from `initialize` through reinitialization or `dispose`, and every PnP call consumes the same handles.
 
-Real fixture manifests are now schema-validated before fetch or replay validation. A fixture may declare `tasks` such as `segmentation`, `pointTracking`, `pose3d`, `reconstruction`, or `detection`, plus annotation files such as masks, tracks, cameras, or pose metadata. The local validator rejects unsafe paths, unknown task labels, missing source URLs during fetch, and missing annotation files in the cache.
+- A real-OpenCV lifecycle contract verifies the exact intrinsic and distortion values, identity reuse across consecutive solves, replacement on recalibration, and native deletion on both reinitialization and disposal.
+- A deterministic 60-case PnP corpus preserves every reported pose, branch selection, residual, confidence, foreshortening, and spread byte-for-byte with SHA-256 `c5b8b120b567862314fb49fe7afff0817b222a5ceee5d9311229e102f76f2561`.
+- The removed camera-input allocation/deallocation pair costs a nine-run Node median of 1.841 microseconds. In an 11-pair alternating complete-PnP benchmark, the median falls from 97.432 to 95.126 microseconds, or 2.4%.
+- The 84-report quick matrix remains at 45 passes, 39 diagnostic failures, and 24.571289 mean risk. The fixed strict matrix remains 84/84.
+- Release verification passes 581/581 tests, production build, 24 asset checks, eight bundle budgets, flow audit, SBOM, 205-component license audit, and vulnerability audit. The mobile browser matrix passes seven tests with three browser-specific skips.
+- These are Node measurements, not an iPhone frame-budget claim. The change adds no cache keyed by correspondence count, pool, alternate solver, dependency, model, asset, worker message, flag, fallback, compatibility branch, or migration path.
 
-Use SAM 2, Cutie, VGGT, DUSt3R/MASt3R, and BundleSDF as references to score what "good" looks like on clips, then copy the smallest viable runtime idea into the mobile architecture.
+### Session-owned planar PnP solve workspace
 
-## Acceptance Gates
+The remaining planar solve matrices now follow the same calibrated worker-session ownership as the camera inputs. OpenCV [`Mat.create`](https://docs.opencv.org/4.x/d3/d63/classcv_1_1Mat.html) returns immediately when shape and type already match, while [`solvePnP`](https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html) writes rotation and translation through output arrays. One workspace therefore owns object points, image points, rotation vector, translation, and rotation matrix across fresh and temporal candidates. Correspondences are written directly into the native typed views, residuals use the original validated correspondences, and reference spread is accumulated in one pass.
 
-The next implementation milestone should not be considered good until:
+- A real-OpenCV lifecycle contract exercises 35, 20, and 35 correspondence shapes, forces both fresh and temporal candidates, verifies identity reuse for all five matrices, and proves deletion on recalibration and disposal.
+- The regular fresh solve creates zero Mat handles, down from three constructors and two `matFromArray` results. The old per-call construction and cleanup path and its two temporary JavaScript point arrays were removed completely.
+- The deterministic 60-case pose corpus remains byte-identical with SHA-256 `c5b8b120b567862314fb49fe7afff0817b222a5ceee5d9311229e102f76f2561`.
+- In an 11-pair alternating Node benchmark that isolates workspace ownership, per-call workspace construction measures 96.106 microseconds and session reuse measures 91.416 microseconds, a 4.9% improvement. The adjacent production-shaped benchmark moves from the preceding 97.034-microsecond baseline to 91.357 microseconds, or 5.9%.
+- Quick quality, benchmark, and coverage structures are byte-for-byte unchanged at 45 passes, 39 diagnostic failures, and 24.571289 mean risk. The fixed strict matrix remains 84/84.
+- Adjacent quick planar and total-frame timings were both slower in the candidate run, alongside unrelated stages, so no aggregate pipeline improvement is claimed. These are Node mechanism measurements, not an iPhone budget claim.
+- Release verification passes 582/582 tests, production build, 24 asset checks, eight bundle budgets, flow audit, SBOM, 205-component license audit, and vulnerability audit. The mobile browser matrix passes seven tests with three browser-specific skips.
+- No pool, maximum-correspondence assumption, alternate solver, dependency, model, asset, worker message, feature flag, fallback, compatibility branch, or migration path was added.
 
-- Tapping any supported object enters candidate/mapping immediately.
-- Detector recall covers the intended class list or free-tap segmentation takes over.
-- Candidate progress visibly increases when new object-owned landmarks are found.
-- Weak candidate/mapping never renders the head.
-- Ready head attachment has bounded local drift and bounded projected jitter.
-- A 90-degree left/right/up/down object turn hides or rotates correctly instead of sliding the head.
-- Reappearance after occlusion restores the same object-local attachment, not just any similar texture.
-- The quality report identifies the failing stage when live testing looks bad.
-- The quality report identifies the failing source transition when the head jumps or rotates during a source handoff.
-- Real-data cache validation confirms dataset/task/annotation coverage before any real replay score is trusted.
+### Allocation-stable Lucas-Kanade tracking
 
-## Sources
+Pyramidal Lucas-Kanade tracking runs on every anchored frame, but the tracker previously constructed and deleted four OpenCV matrices per call, materialized per-point flow records after the five-frame motion-consensus window, formatted disabled debug samples, and replaced every bounded landmark history array. The tracker now owns one variable-shape native workspace for its session, resizes it with OpenCV [`Mat.create`](https://docs.opencv.org/4.x/d3/d63/classcv_1_1Mat.html), and keeps steady-state landmark history updates in existing storage.
 
-- MediaPipe Interactive Segmenter: https://developers.google.com/edge/mediapipe/solutions/vision/interactive_segmenter
-- MediaPipe Interactive Segmenter Web JS: https://ai.google.dev/edge/mediapipe/solutions/vision/interactive_segmenter/web_js
-- Ultralytics instance segmentation and ONNX export: https://docs.ultralytics.com/tasks/segment
-- XFeat paper: https://arxiv.org/abs/2404.19174
-- XFeat repository: https://github.com/verlab/accelerated_features
-- XFeat ONNX repository: https://github.com/DavideCatto/XFeat-ONNX
-- TAP-Vid benchmark: https://tapvid.github.io/
-- TAPVid-3D benchmark: https://tapvid3d.github.io/
-- BOP benchmark tasks and pose metrics: https://bop.felk.cvut.cz/tasks/
-- SAM 2: https://ai.meta.com/research/sam2/
-- SAM 2 repository: https://github.com/facebookresearch/sam2
-- Cutie repository: https://github.com/hkchengrex/Cutie
-- VGGT repository: https://github.com/facebookresearch/vggt
-- BundleSDF: https://bundlesdf.github.io/
-- DAVIS benchmark: https://davischallenge.org/
-- YouTube-VOS benchmark: https://youtube-vos.org/
-- CO3D dataset: https://ai.meta.com/datasets/co3d-dataset/
+- RED lifecycle coverage verifies the same four native handles across 80- and 32-point shapes, their replacement on reinitialization, and deletion on disposal. A real-OpenCV translated-noise fixture proves `calcOpticalFlowPyrLK` writes accurate flow through those retained handles.
+- Initial motion-consensus still receives the same candidate records for the first five frames. Later frames read native result views directly. Disabled diagnostics no longer create five formatted point snapshots or their payload objects.
+- Ten-sample landmark histories now evict one oldest entry in place. Landmark-quality averaging uses a single numeric traversal, and outlier filtering stores numeric residuals rather than per-point records plus a temporary ID set.
+- In isolated 80-point Node measurements, four native matrices improve from 3.294 to 0.858 microseconds per update, bounded histories from 1.857 to 0.586 microseconds, quality scanning from 1.447 to 0.827 microseconds, steady-state flow metadata from 0.501 to 0.117 microseconds, and outlier residual ownership from 5.321 to 3.604 microseconds.
+- Quick coverage, quality, and benchmark structures are byte-for-byte unchanged, with SHA-256 values `83aa11a7bfc4d932903d1cedcbcdac5964e4380f32b4bb526e34f2d56488e9dc`, `d7e02f69062b13203096fc9b07c269f60217733eb7bfb90b4cca1b81e8a51505`, and `19b5f95398b709bcb78591b875bbe73ddd640cc1b2fd4176d418acb02bceb94e`. The matrix remains at 45 passes, 39 diagnostic failures, and 24.571289 mean risk; the fixed strict matrix remains 84/84.
+- In adjacent 84-report runs, mean `keypointTrackMs` falls from 1.839 to 1.785 ms, or 2.9%. The maximum sample rises from 12.331 to 13.626 ms, so no maximum-spike or iPhone frame-budget improvement is claimed.
+- Release verification passes 585/585 tests, production build, 24 asset checks, eight bundle budgets, flow audit, SBOM, 205-component license audit, and vulnerability audit. The mobile Chromium/WebKit matrix passes seven tests with three browser-specific skips.
+- The removed per-call ownership path was not retained. No pool, maximum-point assumption, threshold, estimator, model, asset, dependency, worker message, flag, fallback, compatibility branch, or migration path was added.
+
+### Session-owned homography consensus workspaces
+
+Planar pose and tracker attachment use separate seeded `findHomography` evaluations, but both previously constructed source points, destination points, and the output inlier mask for every call. A shared workspace primitive now gives each sequential owner three session-lifetime OpenCV handles. Source and destination shapes follow the current evidence through [`Mat.create`](https://docs.opencv.org/4.x/d3/d63/classcv_1_1Mat.html); the native call resizes and overwrites its retained mask output.
+
+- RED real-OpenCV contracts exercise 35, 20, and 35 planar correspondences plus 24, 12, and 24 tracker correspondences. They verify exact handle identity at `findHomography`, replacement during estimator reinitialization, and deletion during both owner disposals.
+- Point values are written directly through one cached `data32F` view per Mat. The previous two JavaScript point arrays, two `matFromArray` results, one mask constructor, and their cleanup path are removed from each call. A typical eligible frame therefore avoids nine input/output Mat handle constructions across two planar attempts and one tracker attachment fit.
+- The tracker accumulates reference-homography residuals directly instead of materializing a residual array. The estimator evicts its bounded history in place and reads the retained inlier mask through one cached byte view.
+- A production-shaped alternating 14/27-point Node benchmark improves from 102.869 to 100.352 microseconds per call, or 2.45%. A fixed 44-point benchmark improves from 88.750 to 86.122 microseconds, or 2.96%.
+- One workspace per owner is deliberate. Two alternating workspaces measured 100.167 microseconds, only 0.18% beyond the single-workspace result while doubling native state, so that design was rejected and not retained. Repeated property access to `mat.data32F` was also rejected after it made the candidate 39% slower; production caches each typed view once.
+- Local and wide planar attempts remain independent. In 677 production-shaped sparse-reconstruction updates, the local set was always a strict prefix of the wide set but was identical zero times; mean sizes were 13.7 and 27.2. Removing either RANSAC would discard distinct geometric evidence.
+- Quick coverage, quality, and benchmark structures remain byte-for-byte identical at the established three SHA-256 values, 45 passes, 39 diagnostic failures, and 24.571289 mean risk. The fixed strict matrix remains 84/84.
+- Release verification passes 586/586 tests, production build, 24 asset checks, eight bundle budgets, flow audit, SBOM, 205-component license audit, and vulnerability audit. Mobile Chromium/WebKit passes seven tests with three browser-specific skips.
+- The adjacent final quick run was slower simultaneously in planar pose, LK, reconstruction, and ORB extraction, so it supports no aggregate latency claim. No seed, threshold, confidence, iteration bound, correspondence order, mask rule, estimator, fallback, feature flag, compatibility branch, or migration path changed.
+
+### Consumer-audited tracker similarity fitting
+
+The attachment tracker previously computed a complete local and broad robust similarity position inside `trackFrame` only to store it in a 30-frame stability history. Repository-wide consumer tracing found no production reader for that history, its `getStabilityMetrics` method, or the returned `statistics` payload. The unused history, method, payload, and per-frame position fit are removed together. The remaining robust similarity estimator keeps identical arithmetic while replacing per-point centroid objects, residual records, filter/map chains, and the refined-residual array with scalar accumulation and numeric storage.
+
+- A four-mode production-shaped profile of the same clean 23-frame sequence observed identical pre-change call counts in every mode: 69 anchor evaluations, 70 local fits, 163 robust reference fits, and 326 similarity fits. The retained path uses 46, 47, 117, and 234 respectively: 33.3% fewer anchor evaluations, 32.9% fewer local fits, and 28.2% fewer robust/reference fits.
+- A paired 35-point Node benchmark improves the robust fit from a 15-batch median of 4.579 to 2.604 microseconds, or 43.1%. A deterministic 100-case result corpus remains byte-identical with SHA-256 `a69ce6a666a528a74cbd403912631e35f01fde9a21fd2e6f7f27a2bc8b4065af`.
+- RED coverage proves steady-state LK no longer evaluates the unconsumed anchor diagnostic or returns its unused nested statistics object. A full-precision consensus characterization locks transform, inlier, residual, and confidence semantics.
+- Quick coverage, quality, and benchmark structures remain byte-for-byte identical at SHA-256 `83aa11a7bfc4d932903d1cedcbcdac5964e4380f32b4bb526e34f2d56488e9dc`, `d7e02f69062b13203096fc9b07c269f60217733eb7bfb90b4cca1b81e8a51505`, and `19b5f95398b709bcb78591b875bbe73ddd640cc1b2fd4176d418acb02bceb94e`. The matrix remains at 45 passes, 39 diagnostic failures, and 24.571289 mean risk; all 84 curated strict reports pass.
+- Release verification passes 586/586 tests, production build, 24 asset checks, eight bundle budgets, an 83-file flow audit with zero omissions/defaults/missing diagnostics, SBOM generation, 205-component license verification, and zero vulnerabilities. Mobile Chromium/WebKit passes seven tests with three browser-specific skips.
+- No history replacement, compatibility shim, cache, flag, alternate estimator, threshold, model, asset, worker protocol, dependency, migration, or legacy API remains. The measurements are Node evidence for mechanism and call volume, not an iPhone frame-budget claim.
+- Captured-device fixtures were not installed at `/Users/xmanatee/.cache/hol-real-vision/manifest.json`; the external-fixture gate skipped cleanly rather than substituting synthetic evidence.
+
+### Update-scoped attachment evidence
+
+The tracked update previously asked for an attachment position before descriptor-recovery policy and then recomputed the same local and broad robust-similarity candidates when OpenCV homography became available later in the same update. The tracker now creates one explicit evaluation for the current immutable point snapshot. Its preliminary position and final homography arbitration share the already-computed similarity evidence; a successful descriptor restore discards that evaluation because it replaces the underlying point geometry.
+
+- A four-mode profile covered all 2,683 preliminary/final pairs in the fixed quick matrix. Evidence was unchanged for 2,595 pairs (96.72%): 150 ORB-reference evaluations and 2,445 attachment evaluations. All 88 changed pairs followed successful descriptor restoration; zero pairs changed without that mutation, establishing the invalidation boundary from observed production-shaped control flow.
+- RED contracts prove one evaluation supplies preliminary policy and final OpenCV resolution, while a descriptor restore forces a fresh evaluation. Consumers that need a single position retain the one-shot `getAnchorPosition` path; there is no persistent cache or second estimator.
+- On the clean fixed 23-frame replay, robust similarity fits fall from the preceding 234 to 142 and reference-transform evaluations from 117 to 71, both 39.3% reductions. Local fits fall from 47 to 24, or 48.9%. Across the two consecutive tracker optimizations, similarity fits fall from the original 326 to 142, or 56.4%; homography evidence remains unchanged.
+- An alternating production-shaped 35-point Node benchmark improves a preliminary-plus-final pair from 14.974 to 7.620 microseconds, or 49.1%, with exact JSON output parity.
+- Quick coverage, quality, and benchmark structures remain byte-for-byte identical at SHA-256 `83aa11a7bfc4d932903d1cedcbcdac5964e4380f32b4bb526e34f2d56488e9dc`, `d7e02f69062b13203096fc9b07c269f60217733eb7bfb90b4cca1b81e8a51505`, and `19b5f95398b709bcb78591b875bbe73ddd640cc1b2fd4176d418acb02bceb94e`. The matrix remains at 45 passes, 39 diagnostic failures, and 24.571289 mean risk; all 84 curated strict reports pass.
+- Release verification passes 588/588 tests, production build, 24 asset checks, eight bundle budgets, an 83-file flow audit with zero omissions/defaults/missing diagnostics, SBOM generation, 205-component license verification, and zero vulnerabilities. Mobile Chromium/WebKit passes seven tests with three browser-specific skips.
+- No cross-frame cache, evidence fingerprint, generation counter, compatibility shim, alternate estimator, feature flag, dependency, model, asset, worker protocol, migration, or legacy path was added. These are Node mechanism and call-volume measurements, not an iPhone frame-budget claim.
+- Captured-device fixtures were not installed at `/Users/xmanatee/.cache/hol-real-vision/manifest.json`; the external-fixture gate skipped cleanly rather than substituting synthetic evidence.
+
+### Allocation-stable robust affine hypotheses
+
+Curved reconstruction and ORB geometry evaluate thousands of ordered three-point affine hypotheses inside one bounded robust fit. Each hypothesis previously built a match array, three least-squares row arrays, two value arrays, a normal matrix, two right-hand sides, a transform object, and a complete inlier array. The solver now owns one invocation-local numeric workspace, performs the same regularized paired normal-equation elimination in place, and records only inlier count plus residual sum while searching. It materializes the winning inliers once before the unchanged refinement solve.
+
+- The search space, spatial/quality sampling order, triangle-degeneracy gate, `1e-6` regularization, partial-pivot order, residual thresholds, tie-break, refinement threshold, confidence equation, and returned observation identities are unchanged.
+- A deterministic 100-case corpus covers both quality-ranked and spatially balanced samples, varying point counts, sample caps, thresholds, and outlier layouts. All 100 fits succeed and retain exact SHA-256 `db6c2d4b01610427b010a26a3b3ad204ddd207c26d7a6b404b606effcd40a878` across transforms, ordered inlier IDs, residuals, ratios, and confidence.
+- An alternating production-shaped 36-point Node benchmark improves from 5.001 to 2.365 ms per robust affine fit, or 52.7%.
+- Across the same 84-report quick matrix, mean `reconstructionUpdateMs` falls from 5.934 to 4.273 ms, or 28.0%. Sparse reconstruction falls from 6.307 to 4.252 ms, parametric surface from 5.706 to 3.847 ms, and direct photometric from 9.742 to 7.071 ms. Similarity-only depth fusion moves only from 2.098 to 2.004 ms, providing a useful control against a blanket timing attribution.
+- Adjacent mean total update timing falls from 32.466 to 28.964 ms, or 10.8%, but this host-level result includes unrelated OpenCV/WASM stages and is supporting evidence rather than an iPhone frame-budget claim.
+- Quick coverage, quality, and benchmark structures remain byte-for-byte identical at SHA-256 `83aa11a7bfc4d932903d1cedcbcdac5964e4380f32b4bb526e34f2d56488e9dc`, `d7e02f69062b13203096fc9b07c269f60217733eb7bfb90b4cca1b81e8a51505`, and `19b5f95398b709bcb78591b875bbe73ddd640cc1b2fd4176d418acb02bceb94e`. The matrix remains at 45 passes, 39 diagnostic failures, and 24.571289 mean risk; all 84 curated strict reports pass.
+- Release verification passes 589/589 tests, production build, 24 asset checks, eight bundle budgets, an 84-file flow audit with zero omissions/defaults/missing diagnostics, SBOM generation, 205-component license verification, and zero vulnerabilities. Mobile Chromium/WebKit passes seven tests with three browser-specific skips.
+- The workspace is created and discarded inside one synchronous fit. No session cache, shared mutable solver, sample reduction, early-exit branch, alternate estimator, threshold, feature flag, dependency, model, asset, worker protocol, compatibility shim, migration, or legacy path was added.
+- Captured-device fixtures were not installed at `/Users/xmanatee/.cache/hol-real-vision/manifest.json`; the external-fixture gate skipped cleanly rather than substituting synthetic evidence.
+
+### Columnar ORB keyframe association
+
+Keyframe storage keeps the exact full-frame [OpenCV ORB](https://docs.opencv.org/4.12.0/db/d95/classcv_1_1ORB.html) detector output and its documented maximum-feature ranking. The storage path now reads native keypoint coordinates and responses once into numeric columns, indexes cells with nested numeric maps, and tracks one-to-one feature ownership with a byte array. It no longer materializes every detector candidate as a nested JavaScript object, constructs string cell keys, or maintains a `Set` for selected indexes. Fresh extraction and exact same-frame feature reuse converge on this one association path.
+
+- A deterministic 1,002-feature/97-landmark contract, including an equal-distance tie, remains bit-exact with ordered exhaustive association. Candidate indexes are restored to detector order before distance comparison, preserving the existing later-index tie-break.
+- A production-shaped 1,000-feature/96-landmark 15-batch Node benchmark improves the complete materialization-plus-association slice from a median 0.145 to 0.060 ms, or 58.3%.
+- The fixed 84-report quick matrix remains exactly at 45 passes, 39 diagnostic failures, 24.571289 mean risk, and 60.582978 maximum risk.
+- In adjacent matrix runs, invoked `keyframeFeatureExtractionMs` falls from 20.184 to 19.040 ms, or 5.7%, and its maximum falls from 33.373 to 26.884 ms. Amortized `keyframeStoreMs` falls from 4.668 to 4.385 ms, or 6.1%. These are Node/OpenCV-WASM measurements; primary iPhone Safari and Chromium still own the mobile budget claim.
+- Cropped extraction was rejected and removed after seven focused replay regressions despite a much larger raw speedup. A full-frame [Feature2D mask](https://docs.opencv.org/doc/doxygen/html/d0/d13/classcv_1_1Feature2D.html) was also rejected and removed after four of those regressions remained. Both changed detector evidence; the retained optimization changes only post-detection representation.
+- All 84 fixed strict reports pass. Release verification passes 589/589 tests, production build, 24 asset checks, eight bundle budgets, an 84-file flow audit with zero omissions/defaults/missing diagnostics, SBOM generation, 205-component license verification, and zero vulnerabilities. Mobile Chromium/WebKit passes seven tests with three browser-specific skips.
+- ORB parameters, full-frame pixels, keypoints, descriptor bytes, association radius, feature order, one-to-one ownership, keyframe cadence, matching, geometric consensus, model, asset, dependency, worker protocol, fallback, flag, compatibility branch, migration, and legacy path are unchanged.
+- Captured-device fixtures were not installed at `/Users/xmanatee/.cache/hol-real-vision/manifest.json`; the external-fixture gate skipped cleanly rather than substituting synthetic evidence.
+
+### Axis-bounded robust residual scoring
+
+Every observation inside a Euclidean residual threshold must also be inside the corresponding axis-aligned square. Affine and similarity scoring now reject an observation when either coordinate residual already exceeds the threshold, and evaluate the unchanged `Math.hypot` residual only for the remaining candidates. The circular inlier test, accepted residual values, accumulation order, hypothesis ranking, and refinement remain unchanged.
+
+- A RED contract verifies that coordinate-rejected observations do not evaluate a Euclidean norm while accepted and diagonal boundary candidates still use the exact circular test. The existing deterministic 100-case affine corpus retains SHA-256 `db6c2d4b01610427b010a26a3b3ad204ddd207c26d7a6b404b606effcd40a878`.
+- On a fixed rejected 36-observation hypothesis, the 15-run Node median falls from 0.567 to 0.090 microseconds, or 84.1%. The complete production-shaped robust affine fit falls from 2.228 to 2.016 ms, or 9.5%.
+- Across the same 84-report quick matrix, mean `reconstructionUpdateMs` falls from 4.024 to 3.664 ms and amortized cost from 3.975 to 3.619 ms, both 8.9%. Its maximum sample falls from 23.989 to 21.894 ms. Adjacent total-frame and native OpenCV/WASM timings moved upward together, so no aggregate frame-time improvement is claimed from that run.
+- Quick coverage, quality, and compact benchmark structures remain byte-for-byte identical at SHA-256 `83aa11a7bfc4d932903d1cedcbcdac5964e4380f32b4bb526e34f2d56488e9dc`, `d7e02f69062b13203096fc9b07c269f60217733eb7bfb90b4cca1b81e8a51505`, and `19b5f95398b709bcb78591b875bbe73ddd640cc1b2fd4176d418acb02bceb94e`. The matrix remains at 45 passes, 39 diagnostic failures, and 24.571289 mean risk; all 84 fixed strict reports pass.
+- Reusing the first completed frame-consensus fit as the final attachment fit was rejected and left no code path. On a deterministic 96-case characterization, the required second affine refinement changed the transform in 19 quality-sampled and 18 spatially sampled cases, with a maximum coefficient/translation delta of 4.164; similarity changed in eight cases. Removing it would discard real estimator evidence.
+- Focused reconstruction and relocalization coverage passes 63/63, the strict vision suite passes 90/90, release verification passes 590/590, and mobile Chromium/WebKit passes seven tests with three browser-specific skips.
+- Thresholds, hypothesis sets and order, regularization, pivoting, tie-breaks, inlier order, estimator ownership, models, assets, dependencies, worker messages, fallbacks, flags, compatibility branches, migrations, and legacy paths are unchanged. Captured-device fixtures were not installed at `/Users/xmanatee/.cache/hol-real-vision/manifest.json`; the external gate skipped cleanly.
+
+### Allocation-stable robust similarity hypotheses
+
+Similarity consensus evaluates every ordered pair in its bounded quality-ranked sample. The search previously created source and target delta objects, a transform object, an inlier array, and a rich score object for every viable pair. It now keeps one invocation-local numeric transform and score workspace, copies only the current winner, and materializes ordered inlier objects once before the unchanged least-squares refinement.
+
+- Pair order, distance gates, scale limits, angle normalization, projection arithmetic, axis-bound rejection, circular residual test, score tie-break, refinement threshold, inlier order, confidence equation, and returned object shape remain unchanged.
+- A deterministic 120-case corpus spans 12–48 observations, varying sample caps, transforms, noise, outlier layouts, and thresholds. All 120 cases succeed and retain exact SHA-256 `39538f2177bf36ac1e0bb742127d6ff55270f1e097b6407c6135f1766871c337` across transforms, ordered inlier IDs, residuals, ratios, and confidence.
+- In a 21-pair alternating same-process 35-observation Node benchmark, the median complete fit falls from 0.344779 to 0.326233 ms, or 5.38%. Separate-process medians initially differed by only 0.5%, demonstrating why paired measurement is required for small V8 hot-loop changes.
+- Across the same 84-report quick matrix, mean `reconstructionUpdateMs` falls from 3.663824 to 3.369800 ms, or 8.0%, and its maximum falls from 21.894 to 21.152 ms. Sparse reconstruction improves by 8.1%, direct photometric by 6.3%, parametric surface by 7.6%, and similarity-heavy depth fusion by 14.6%.
+- Total processing and relocalization timings also improve in the adjacent run, but both contain unrelated native OpenCV/WASM work and are not attributed entirely to this JavaScript change. These are Node measurements, not an iPhone budget claim.
+- Quick coverage, quality, and compact benchmark structures remain byte-for-byte identical at SHA-256 `83aa11a7bfc4d932903d1cedcbcdac5964e4380f32b4bb526e34f2d56488e9dc`, `d7e02f69062b13203096fc9b07c269f60217733eb7bfb90b4cca1b81e8a51505`, and `19b5f95398b709bcb78591b875bbe73ddd640cc1b2fd4176d418acb02bceb94e`. The matrix remains at 45 passes, 39 diagnostic failures, and 24.571289 mean risk; all 84 fixed strict reports pass.
+- Focused similarity, reconstruction, depth, surface, and relocalization coverage passes 73/73; the strict vision suite passes 90/90; release verification passes 592/592; and mobile Chromium/WebKit passes seven tests with three browser-specific skips.
+- The workspace is created and discarded inside one synchronous fit. The previous per-hypothesis object path is removed; no session cache, shared mutable state, pool, alternate estimator, threshold, dependency, model, asset, worker message, flag, fallback, compatibility branch, migration, or legacy path remains. Captured-device fixtures were unavailable at `/Users/xmanatee/.cache/hol-real-vision/manifest.json`, so that gate skipped cleanly.
+
+### Explicit segmentation-refresh outcomes
+
+Tap-prompted recovery now reports one manager-owned decision record instead of forcing the UI to infer success from the last mask applied by the tracking service. The record separates the trigger, lifecycle status, outcome reason, and applied mask source. It distinguishes an empty model result from an unavailable segmenter, preserves the model-mask rejection reason when tap-local growth succeeds, and reports a downstream service rejection independently.
+
+- Status is one of `idle`, `pending`, `accepted`, `fallback`, or `rejected`.
+- Triggers identify pose dropout, curved-object recovery, low object ownership, or a periodic refresh.
+- Acceptance explains anchor containment, mask overlap, or center continuity; rejection explains empty, undersized, oversized, discontinuous, unavailable, errored, or service-rejected results.
+- Clearing or disposing an anchor invalidates the in-flight request, so a late worker result cannot mutate the next anchor session.
+- The field diagnostics drawer exposes the same decision record and keeps the service's last-applied refresh reason as a separate historical measurement.
+- This changes no CV geometry, acceptance threshold, per-frame work, asset, or model weight.
+
+### Coverage-balanced landmark map growth
+
+Deliberate `mapping-growth` and `map-growth` refreshes now fill under-covered object-mask cells before adding more landmarks to already dense cells. The selector uses the same mask-aligned grid as `ObjectSurfaceModel`, distributes real Shi-Tomasi corners across the least occupied cells, and admits synthetic bootstrap points only after real corners. Recovery, relocalization, and occlusion-support refreshes retain response order because their job is to re-establish trusted correspondence, not reshape the map.
+
+This scope follows the spatial-distribution motivation behind [adaptive non-maximal suppression](https://courses.cs.washington.edu/courses/cse455/14au/notes/brown_cvpr05.pdf), while keeping HOL's existing [OpenCV goodFeaturesToTrack](https://docs.opencv.org/4.11.0/dd/d1a/group__imgproc__feature.html) and LK pipeline. It adds no model, descriptor extraction, or steady-state frame stage.
+
+- Across the fixed 72-report matrix, mean final mask-cell coverage rose from 0.36003 to 0.36544 and mean frame coverage from 0.41082 to 0.41147.
+- Refresh volume is identical: 3,009 landmarks across 110 refresh frames before and after.
+- All 72 strict quality reports pass. The broader experiment that also reordered occlusion-support refreshes was rejected and removed after it created two quality failures.
+- The representative 20-run laminated-card benchmark remains 11/20 strict passes with 2 high-risk reports; mean risk improves slightly from 29.0847 to 29.0654 and maximum risk remains 56.1003.
+- Replay and stage-quality summaries now expose refresh coverage-frame count, accumulated coverage gain, and newly occupied cells. Field diagnostics expose the before/after occupied-cell count for the current growth refresh.
+- A Node microbenchmark with 300 candidates and 96 existing landmarks averaged 0.335 ms for ordering; this is refresh-only work and is not presented as an iPhone timing claim.
+- The selection work runs only during bounded landmark refresh. It adds no asset, model weight, compatibility path, or duplicate coverage implementation.
+
+### Camera coordinate-space lifecycle
+
+Camera continuity and vision-calibration continuity are now separate contracts. The camera service observes the HTML video element's intrinsic `resize` event, the standardized signal that its natural dimensions changed, rather than inferring source geometry from viewport orientation. An active source-dimension change invalidates the anchor worker's camera matrix and in-flight coordinate state, then restarts vision initialization with the new dimensions. A generation token prevents an older asynchronous initialization from committing after that reset. The camera stream itself remains active.
+
+Media track interruptions follow the [Media Capture and Streams](https://www.w3.org/TR/mediacapture-streams/) lifecycle: `mute` is reversible and preserves the session; `unmute` republishes active intrinsic dimensions; unexpected `ended` is terminal for that capture session and releases its camera, anchor, depth, personality, microphone, and speech resources before exposing a clean restart. The worker's non-terminal reset preserves state subscribers and the selected tracking mode, while full disposal remains terminal.
+
+- Unit coverage exercises intrinsic dimension changes, `mute`/`unmute`, unexpected `ended`, worker recalibration, and lifecycle-action ownership.
+- Mobile browser coverage rotates an active fake-camera session between landscape and portrait, verifies the canvas remains interactive, injects an unexpected track end, and verifies a second user gesture creates a working session.
+- The browser helper waits for both active canvas semantics and a bound `MediaStream`, preventing a merely mounted canvas or transient requesting state from satisfying the release test.
+- Lifecycle observation is event-driven and adds no polling, model asset, CV stage, or steady-state per-frame work.
+
+### Capture-degradation evidence
+
+The strict replay gate now distinguishes scene appearance and frame cadence from camera formation artifacts. A dark object is not treated as a low-light sensor sample, and fewer rendered poses are not treated as exposure blur. One deterministic capture adapter owns three post-render degradations:
+
+- Low light converts sRGB samples to a linear signal domain, reduces exposure, and adds signal-dependent shot-noise approximation plus signal-independent read and row noise before quantization. This follows the noise-source separation in the [physics-based CMOS noise formation model](https://openaccess.thecvf.com/content_CVPR_2020/html/Wei_A_Physics-Based_Noise_Formation_Model_for_Extreme_Low-Light_Raw_Denoising_CVPR_2020_paper.html), without claiming calibration to a specific iPhone sensor.
+- Motion blur integrates seven samples along a velocity-derived line point-spread function, matching the [linear motion PSF](https://docs.opencv.org/4.x/d1/dfd/tutorial_motion_deblur_filter.html). The blur length is capped at 10 pixels and the source image remains immutable.
+- Rolling shutter applies a constant-velocity horizontal scanline warp centered on the middle row. Image pixels, object masks, corners, bounding boxes, tap position, and per-frame anchor truth use the same mapping. This implements the row-time image formation described by [rolling-shutter reconstruction research](https://openaccess.thecvf.com/content/ICCV2021/html/Fan_Inverting_a_Rolling_Shutter_Camera_Bring_Rolling_Shutter_Images_to_ICCV_2021_paper.html), while leaving ideal mid-exposure orientation as the pose truth.
+
+The gate expands from 72 to 84 reports: 72 nominal, four low-light, four motion-blur, and four rolling-shutter reports across all reconstruction modes. All 84 pass with no failing stage. Shared capture limits are stricter than the earlier stress envelope: 18 px maximum anchor error, 8 px mean error, 12 px frame jump, 0.2 scale error, 1.2 rad head rotation error, 0.09 world-position error, and 0.06 head-jump excess.
+
+- Measured capture worst cases are 15.32 px maximum anchor error, 7.21 px mean error, 11.60 px frame jump, 0.181 scale error, 1.132 rad head rotation error, 0.074 world-position error, and 0.045 head-jump excess.
+- Quality summaries group status and failed stages by `nominal`, `low-light`, `motion-blur`, and `rolling-shutter`, so a future regression cannot hide inside aggregate pass counts.
+- Unit coverage verifies deterministic sensor noise, blur energy and direction, scanline pixel/point consistency, source immutability, scenario coverage, and report grouping.
+- The adapter exists only in the synthetic evaluation layer. It changes no production asset, runtime frame stage, worker protocol, model, or acceptance policy.
+
+### Single planar pose solver
+
+Planar attachment now has one pose path: seeded OpenCV homography consensus supplies ordered inliers to the session-owned iterative planar PnP solver. The estimator no longer carries an approximate hand-written homography decomposition fallback, a ten-entry homography history, an unconsumed stability method, or a diagonal-dominance value labelled as a condition number.
+
+- Repository-wide consumer tracing found one production `estimatePose` call, and it always supplies the tapped anchor reference required by planar PnP. The API now accepts that reference directly instead of an optional options object.
+- An instrumented complete quick matrix observed zero decomposition-fallback calls across 84 reports and 2,683 tracked updates. Removing the branch therefore discards no exercised pose evidence.
+- A RED architecture contract requires the duplicate solver and unused history API to be absent. Homography results retain the matrix, ordered inliers, ratios, and residual summaries consumed by planar PnP and attachment projection.
+- Quick coverage, quality, and compact benchmark projections remain byte-identical at SHA-256 `83aa11a7bfc4d932903d1cedcbcdac5964e4380f32b4bb526e34f2d56488e9dc`, `d7e02f69062b13203096fc9b07c269f60217733eb7bfb90b4cca1b81e8a51505`, and `19b5f95398b709bcb78591b875bbe73ddd640cc1b2fd4176d418acb02bceb94e`. The diagnostic matrix remains at 45 passes, 39 failures, and 24.571289 mean risk; all 84 curated strict reports pass.
+- Strict vision passes 90/90. Release verification passes 592/592 tests, production build, 24 asset checks, eight bundle budgets, an 85-file flow audit with zero omissions/defaults/missing diagnostics, SBOM generation, 205-component license verification, and zero vulnerabilities. Mobile Chromium/WebKit passes seven tests with three browser-specific skips.
+- A columnar coordinate snapshot for affine/similarity search was rejected and removed after exact focused tests passed but the complete warmed benchmark showed no repeatable gain and a slight spatial-sampling slowdown. No duplicate solver, history replacement, diagnostic alias, compatibility shim, feature flag, migration, or legacy path remains.
+- Captured-device fixtures were unavailable at `/Users/xmanatee/.cache/hol-real-vision/manifest.json`; the external gate skipped cleanly rather than substituting synthetic evidence. Node/OpenCV-WASM timing variation is not used as a mobile performance claim.
+
+### Direct affine hypothesis assembly
+
+Every robust affine candidate contains exactly three observations, so its regularized `3 x 5` augmented normal-equation system has a fixed shape. The hot hypothesis path now reads those 12 coordinates once and writes the 15 augmented coefficients directly. It no longer stages a three-element match array, a reusable row, a separate normal matrix, or two right-hand-side vectors before the same partial-pivot elimination.
+
+- Sampling and hypothesis order, the triangle-degeneracy gate, left-to-right floating-point accumulation, `1e-6` regularization, pivot selection and elimination, axis and circular residual tests, score tie-break, winning-model refinement, and returned result shape are unchanged. A RED ownership contract pins the workspace to the augmented system, current solution, best solution, and two-value score.
+- The deterministic 100-case quality/spatial affine corpus remains byte-identical at SHA-256 `db6c2d4b01610427b010a26a3b3ad204ddd207c26d7a6b404b606effcd40a878`.
+- In a 21-pair alternating same-process production-shaped Node benchmark, median complete affine search falls from 1.723008 to 1.519494 ms, or 11.8%, with the exact same winning score `[30, 0.8725697820403402]`.
+- Across the same 84-report quick matrix, mean `reconstructionUpdateMs` falls from 3.360317 to 3.185373 ms and amortized cost from 3.319488 to 3.146670 ms, both 5.2%. Sparse reconstruction falls 8.5%, direct photometric 3.7%, parametric surface 6.5%, and depth fusion 2.1%. Adjacent mean total-frame timing falls from 26.751531 to 26.393359 ms, but it includes unrelated native OpenCV/WASM work and is supporting evidence only.
+- Quick coverage, quality, and compact benchmark structures remain byte-for-byte identical at SHA-256 `83aa11a7bfc4d932903d1cedcbcdac5964e4380f32b4bb526e34f2d56488e9dc`, `d7e02f69062b13203096fc9b07c269f60217733eb7bfb90b4cca1b81e8a51505`, and `19b5f95398b709bcb78591b875bbe73ddd640cc1b2fd4176d418acb02bceb94e`. The diagnostic matrix remains at 45 passes, 39 failures, and 24.571289 mean risk; all 84 curated strict reports pass.
+- Focused affected coverage passes 67/67, strict vision passes 90/90, release verification passes 593/593 tests plus production build and all asset, bundle-budget, flow, SBOM, license, and vulnerability gates, and mobile Chromium/WebKit passes seven tests with three browser-specific skips.
+- The [OpenCV solver contract](https://raw.githubusercontent.com/opencv/opencv/4.x/modules/calib3d/include/opencv2/calib3d.hpp) motivated trials of IPPE and SQPnP. IPPE was faster but less accurate in the wide synthetic sweep. SQPnP was faster in the isolated solve, then failed the strict low-light planar-book replay with `0.116` head-world error. Adding `solvePnPRefineLM` recovered residual quality but made the path about 17% slower than the retained iterative solver. Every experimental solver branch and test was removed; iterative planar PnP remains the sole pose path.
+- The retained workspace is invocation-local. No alternate solver, scratch representation, fallback, threshold, cache, shared mutable state, dependency, model, asset, worker message, flag, compatibility branch, migration, or legacy path remains. Captured-device fixtures were unavailable at `/Users/xmanatee/.cache/hol-real-vision/manifest.json`, so that gate skipped cleanly. These are Node/OpenCV-WASM measurements, not an iPhone frame-budget claim.
+
+### Conservative squared affine residual rejection
+
+Affine consensus still owns exact circular inlier semantics through `Math.hypot`, whose [ECMAScript contract](https://tc39.es/ecma262/multipage/numbers-and-dates.html#sec-math.hypot) is an implementation-approximated square root of the sum of squares. Before invoking it, the hot hypothesis scorer now rejects candidates whose squared residual is already outside the circular threshold. The proof check runs only after the existing axis bounds, uses an eight-epsilon outward margin, and leaves `Math.hypot` plus the original threshold comparison as the final authority for every survivor. Six fixed affine coefficients are also read once per hypothesis instead of once per observation.
+
+- A RED contract contains an axis rejection, a diagonal rejection inside the threshold square but outside its circle, and the exact `3-4-5` circular boundary. It requires only the impossible diagonal candidate to skip `Math.hypot`; accepted residual count and sum remain unchanged.
+- The deterministic 100-case quality/spatial affine corpus retains exact SHA-256 `db6c2d4b01610427b010a26a3b3ad204ddd207c26d7a6b404b606effcd40a878`.
+- Four 31-pair alternating same-process scoring populations span clean, light-, moderate-, and heavy-outlier inputs. Complete hypothesis-population medians improve by 1.8%, 0.3%, 2.0%, and 3.3%, respectively, and all accumulated scores are exactly equal. This range is retained rather than reporting only the strongest input.
+- Across the fixed 84-report quick matrix, mean and amortized `reconstructionUpdateMs` fall from 3.185373/3.146670 to 3.109296/3.071518 ms, both 2.39%. Sparse reconstruction improves 3.34%, parametric surface 3.21%, and direct photometric 2.21%; similarity-only depth fusion moves from 1.561582 to 1.562659 ms, a 0.07% control regression. Adjacent total processing falls 0.54%, but it contains unrelated native work and is not attributed to this scorer.
+- Quick coverage, quality, and compact benchmark structures remain byte-for-byte identical at SHA-256 `83aa11a7bfc4d932903d1cedcbcdac5964e4380f32b4bb526e34f2d56488e9dc`, `d7e02f69062b13203096fc9b07c269f60217733eb7bfb90b4cca1b81e8a51505`, and `19b5f95398b709bcb78591b875bbe73ddd640cc1b2fd4176d418acb02bceb94e`. The diagnostic matrix remains at 45 passes, 39 failures, and 24.571289 mean risk; all 84 curated strict reports pass.
+- Focused affected coverage passes 34/34, strict vision passes 90/90, release verification passes 593/593 tests plus production build and all asset, bundle-budget, flow, SBOM, license, and vulnerability gates, and mobile Chromium/WebKit passes seven tests with three browser-specific skips. Captured-device fixtures were unavailable at `/Users/xmanatee/.cache/hol-real-vision/manifest.json`, so that gate skipped cleanly rather than substituting synthetic evidence.
+- Applying the same representation to similarity scoring was rejected and removed after its paired median changed from 0.179893 to 0.180600 ms. Indexed observation traversal was also slower than the existing iterator. No shared abstraction, alternate scorer, approximate accepted residual, changed threshold, fallback, flag, compatibility branch, migration, or legacy path remains.
+
+### Session-owned ORB extraction workspace
+
+ORB keyframe storage and recovery now share one session-owned native extraction workspace. The workspace owns the configured detector, empty detection mask, keypoint vector, and descriptor matrix; query/storage feature limits are applied to that detector when the role changes, and `ImageAnchorService.dispose()` releases every native handle.
+
+- The image, search ROI, ORB pyramid, edge/patch/FAST settings, detection mask, descriptor ordering, matching, and keyframe association are unchanged. Successful and failed full-frame recovery still reuse their exact copied feature set for same-frame storage.
+- A RED lifecycle contract requires two real extractions to use one detector, verifies both extraction calls still execute, and proves all workspace handles are deleted. Every extraction after the first avoids four native/WASM handle allocation-and-delete cycles.
+- Across the fixed quick matrix, storage extraction still runs on 617 frames and recovery extraction on 182. Coverage, quality, and compact benchmark projections remain byte-identical at SHA-256 `83aa11a7bfc4d932903d1cedcbcdac5964e4380f32b4bb526e34f2d56488e9dc`, `d7e02f69062b13203096fc9b07c269f60217733eb7bfb90b4cca1b81e8a51505`, and `19b5f95398b709bcb78591b875bbe73ddd640cc1b2fd4176d418acb02bceb94e`.
+- Strict vision passes 90/90, release verification passes 593/593 tests plus every build, asset, budget, flow, SBOM, license, and vulnerability gate, and mobile Chromium/WebKit passes seven tests with three browser-specific skips. Captured-device fixtures were unavailable at `/Users/xmanatee/.cache/hol-real-vision/manifest.json`, so that gate skipped cleanly.
+- The warmed alternating benchmark retained exactly 1,000 descriptors in every old/new sample. Its median ratio was `0.99747` (about 0.25% faster), while the full quick stage moved by +0.02%; neither is treated as a meaningful latency improvement. The accepted benefit is bounded native allocation ownership, not a frame-time claim.
+- Replacing classic RANSAC with `USAC_DEFAULT` reduced isolated homography time from 2.458 to 0.180 ms/call and reduced quick failures from 39 to 34, but failed seven of 90 strict replays across scale, normal observability, dropout, relocalization, and attachment error. It was removed completely. RHO also lost 130 successful homographies in the captured corpus.
+- Landmark-neighborhood ORB masks were removed completely: the exact 16 px association mask failed four of nine focused recovery scenarios, and the association-plus-23 px ORB patch context still failed three. The full-frame evidence contract remains unchanged.
+- Exact local/wide planar-attempt pruning was also rejected: narrow-first could skip none of 677 paired attempts, while wide-first could prove only 19 skips. No method flag, alternate detector, mask path, compatibility branch, migration, or legacy helper remains.
+
+### ORB-first XFeat keyframe recovery
+
+The recovery stack began with one ordered policy: ORB first whenever a classical keyframe is available, then XFeat only after an ORB failure for conservative planar selections. The learned path uses a pinned official XFeat ONNX graph at 256×192, up to 500 reliability-ranked query features, at most 96 object-owned reference landmarks, mutual-nearest cosine matching at 0.82, and the existing robust similarity/affine geometry validation. A semantic rigid-plane class is eligible directly. A classless or generic tap-time selection requires an Interactive Segmenter mask with at least 0.94 bounding-box fill and a 0.4–2.5 aspect ratio. The later mature-keyframe policy below extends reference acquisition without weakening this tap-time gate.
+
+- Across 545 non-occluded research pairs, ORB alone recovered 454 (83.3%) with 14.51 px p95 anchor error. XFeat alone recovered 424 (77.8%) with 34.56 px p95 error, so replacement was rejected. ORB-first plus XFeat-after-failure recovered 484 (88.8%): 30 additional successes and no accepted ORB result replaced.
+- The fixed real-model verifier exercises a laminated-card frame where ORB fails and XFeat succeeds with 15 geometry inliers at 7.26 px anchor error. The model and external-data hashes are `86d7d549b380405f208933efb5202e1584d9762f3a72e06e7ed81ca1436972e0` and `d4498528d37bf7c737cce9c135f9b0340d828bab7dc808339e50553ac8c1b7d9`.
+- XFeat owns a dedicated nested ES-module worker and single-threaded ONNX Runtime WASM session. ES output separates its 26.97 KB entry from a 70.95 KB ONNX Runtime chunk, while the anchor implementation is 302.03 KB under its unchanged 320 KB budget. Query recovery copies the live RGBA frame once and transfers ownership of that copy; depth fusion keeps the original RGB context. Warm-up and inference are outside the steady-state path.
+- The final 84-report quick matrix is byte-identical at coverage, quality, and compact benchmark SHA-256 `83aa11a7bfc4d932903d1cedcbcdac5964e4380f32b4bb526e34f2d56488e9dc`, `d7e02f69062b13203096fc9b07c269f60217733eb7bfb90b4cca1b81e8a51505`, and `19b5f95398b709bcb78591b875bbe73ddd640cc1b2fd4176d418acb02bceb94e`: 45 passes, 39 diagnostic failures, and 24.571289 mean risk. This proves the existing synthetic policy is unchanged; the incremental XFeat evidence comes from its targeted bake-off and real-model contract.
+- Runtime initialization, superseded references, worker errors, disposal, and XFeat inference failure have explicit ownership and diagnostics. A learned failure preserves the original ORB failure. Curved and non-convex targets retain their mature-map ORB policy; learned eligibility cannot reclassify tracker geometry or disable classical recovery.
+- All 90 strict vision tests pass. Release verification passes 606/606 tests, 29 production asset checks, eight unchanged bundle budgets, a 90-file flow audit with zero omissions/defaults/missing diagnostics, SBOM generation, 205-component open-source license verification, and zero vulnerabilities. The mobile Chromium/WebKit matrix passes eleven tests with three browser-specific skips: two execute transformed recovery and reference clearing through the emitted XFeat worker, and two execute the emitted depth service, worker, model, JSEP runtime, transfer, output, and disposal contract.
+- Node WASM extraction medians were 4.53 ms at 160×128, 9.44 ms at 256×192, 14.91 ms at 320×240, and 57.48 ms at 640×480. These values selected the fixed input size but are not iPhone Safari/Chromium latency claims. Primary-device recovery spike, memory, orientation, and WebGL coexistence still require physical measurement.
+- The temporary bake-off script, XFeat-only path, LightGlue experiment, static anchor-worker model import, raised bundle-budget option, compatibility shims, flags, and migration code are absent from production.
+- Captured-device fixtures were unavailable at `/Users/xmanatee/.cache/hol-real-vision/manifest.json`; the external gate skipped cleanly rather than substituting synthetic evidence.
+
+### Mode-scoped sparse mug position ownership
+
+Sparse reconstruction can remain useful as surface-normal evidence while being too weak to own attachment position. Handled-mug arbitration now rejects only a pose whose tracker disagreement exceeds 18% of the selected template size, bounded to 20–32 px, when the pose also has at most 15 inliers and more than 4.5 px residual. The existing dense curved-mode rejection remains unchanged. Symmetric cups, cans, clean sparse mug poses, and independently valid normal evidence retain their prior policies.
+
+- On the identical 84-report diagnostic quick matrix, the pass/failure split remains 45/39 and the failure buckets remain 30 tracking, eight reconstruction, and four head attachment. Mean risk falls from 24.571289 to 24.462903, maximum risk from 60.582978 to 56.911951, and the risk bands move from 30 low / 42 moderate / 11 high / one severe to 30 low / 42 moderate / 12 high / zero severe.
+- The three-report sparse handled-mug slice falls from 43.385144 to 40.350329 mean risk. In the former severe early-occlusion case, maximum world error falls from 0.24410 to 0.11685 and maximum rotation error from 1.04689 to 0.92462 rad; mean anchor error falls from 15.5722 to 15.0683 px while maximum anchor error changes from 35.2653 to 35.4112 px.
+- Reinitializing the mug reference frame, refreshing the recovery prior, and applying the same gate to every curved sparse pose were each rejected by replay evidence. They increased drift or regressed the symmetric-cup contract and were removed completely.
+- The release suite passes 679/679 tests. The production build validates 32 hashed assets and eight bundle budgets, the anchor-flow audit reports zero omissions/defaults/missing diagnostics across 96 files, and mobile Chromium/WebKit pass 22 tests with six intentional browser-specific skips.
+
+This adds no model, asset, dependency, worker protocol, alternate estimator, compatibility branch, migration, feature flag, or legacy path. Physical-iPhone latency, thermal, memory, orientation, and WebGL-coexistence evidence remains an explicit device-validation gap.
+
+### Motion-aligned parametric mug landmark recovery
+
+An early busy-background occlusion could reduce a handled mug from 54 active landmarks to 20 before the parametric map was mature. A newly ready 17-inlier pose then reversed the last trustworthy planar/object trajectory, and support recovery attached established map identities in that drifted frame. Position filtering now retains the selected owner's confidence, residual, and inlier evidence; reliable planar and object candidates can seed motion only for parametric handled mugs; and a marginal reversing pose cannot replace that sample until the map is coherent.
+
+- The bounded motion prediction owns only the temporary reference transform used to recover established landmarks. It never owns the displayed attachment position. This preserves the same measured-versus-last-known distinction exposed by [ARCore image tracking states](https://developers.google.com/ar/reference/java/com/google/ar/core/AugmentedImage.TrackingMethod); Google's moving-image guidance likewise treats pose as valid only during full tracking and otherwise describes a last-known pose ([guide](https://developers.google.com/ar/develop/java/augmented-images/guide?hl=en)).
+- On the identical 84-report diagnostic quick matrix, mean risk falls from 24.462903 to 24.230523 and maximum risk from 56.911951 to 54.006817. The 45/39 diagnostic split, 30 tracking / eight reconstruction / four head-attachment buckets, and 30 low / 42 moderate / 12 high risk bands are unchanged. Recovered post-occlusion windows rise from 66/84 to 67/84 and failures fall from 18 to 17.
+- In the affected parametric handled-mug early-occlusion replay, mean anchor error falls from 17.4237 to 11.3544 px, maximum anchor error from 31.4184 to 26.5671 px, maximum world error from 0.15745 to 0.06250, and maximum rotation error from 0.43755 to 0.28235 rad. The window now recovers at the 8 px threshold instead of remaining failed.
+- Broad bootstrap ownership was rejected because it regressed the depth-fusion generic-can slice. Directly holding output position to motion prediction was also rejected because it delayed reacquisition and failed an established-landmark contract. Fixed segmentation-mask moments were rejected because perspective and silhouette changes produced 26.60 px mean anchor error. All three experiments were removed completely.
+- Cup, can, sparse, depth-fusion, direct-photometric, and non-mug parametric policies retain their prior thresholds. The implementation adds no model, asset, dependency, worker, protocol, alternate output estimator, compatibility branch, migration, feature flag, or legacy path.
+- Release verification passes 684/684 unit and replay tests, 5 capability packs and 13 source assets, real depth/XFeat/head contracts, 32 hashed production assets, eight bundle budgets, the 96-file anchor-flow audit with zero omissions/defaults/missing diagnostics, 248-component open-source license verification, and zero known npm vulnerabilities. Mobile Chromium/WebKit pass 22 tests with six intentional browser-specific skips.
+
+The remaining gap is physical-iPhone latency, memory, thermal, orientation, and WebGL-context evidence; Node replay timing is not used as a device-performance claim.
+
+### Production ES-module CV worker graph
+
+The complete tap path now uses one ES-module worker graph. Vite's documented `worker.format: 'es'` output makes every generated worker factory launch with module semantics. This is required by the emitted MediaPipe loader, which resolves hashed assets through `import.meta`; the former default IIFE factory launched the nested segmenter as a classic worker, failed before model/WASM initialization, and silently left production anchors on the weaker tap-local support mask. [Vite documents both worker output formats](https://vite.dev/config/worker-options), and the platform worker contract distinguishes classic and module execution semantics explicitly in [`WorkerOptions.type`](https://developer.mozilla.org/en-US/docs/Web/API/Worker/Worker#parameters).
+
+- The retained graph is page → anchor factory → anchor worker → OpenCV runtime plus nested MediaPipe/XFeat module workers. There is no second segmenter implementation, classic-worker compatibility branch, or runtime retry with different semantics.
+- Selection mode performs no periodic camera capture. The browser compositor presents the live video under a transparent diagnostics canvas; a private capture canvas draws and reads the current video only inside an admitted tap or scheduled tracking step. A production-browser contract waits beyond the removed interval, proves zero idle `getImageData()` calls, then requires exactly one non-empty capture after `pointerup`.
+- The admitted gesture owns the complete tap transaction before camera capture begins. Nine additional `pointerup` events during that transaction are rejected before `drawImage()`, `getImageData()`, lazy initialization, or worker publication; they are neither queued nor allowed to overwrite user feedback. Reset invalidates the owner by identity, so a retired request's `finally` cannot unlock a newer camera session.
+- Tap creation returns one discriminated `objectSupportSelection` record: `segmenter-mask`, `segmenter-mask-rejected`, `empty-mask`, or `segmenter-unavailable` with the originating runtime error. The same record is retained in active-anchor diagnostics, so a fallback can no longer masquerade as successful model selection.
+- A production-browser contract imports the emitted anchor factory, transfers a real RGBA tap frame, requires the 18.0 MB MagicTouch model and 11.2 MB MediaPipe WASM requests, creates an Interactive Segmenter-owned mask, then runs real OpenCV LK and planar homography over an independently translated frame. Both mobile Chromium and WebKit retain at least eight object-owned landmarks and move the anchor through the production protocol.
+- A separate emitted-asset calibration runs the 10.3 MB OpenCV runtime in a module worker and requires at least 23 of 24 translated LK observations with subpixel motion error. This isolates packaging/runtime compatibility from higher-level anchor policy without substituting a mock CV backend.
+- Existing direct MediaPipe and nested XFeat contracts now select implementation chunks explicitly and execute them with module semantics. A fresh production build validates 32 hashed assets and all eight bundle budgets.
+- LK failures now report their retained-point quorum instead of returning an unexplained false result. The added diagnostic is produced from counters already owned by the tracking loop and adds no second pass or steady-state allocation.
+- Anchor startup is one generation-bound single-flight transaction. Concurrent callers share one promise, worker, and initialization request; a reset invalidates lazy module loading before stale camera calibration can start; initialization failure terminates the invalid worker before a retry; late message, runtime-error, and deserialization-error callbacks are accepted only from the current worker instance and generation. The worker publishes its manager only after OpenCV initialization succeeds, and the manager disposes both its image-anchor and nested segmenter runtimes.
+- The inner anchor manager has one terminal lifecycle. Concurrent initialization shares one promise; disposal wins initialization, tap segmentation, anchor creation, and tracking already in flight; late child success or failure is normalized at the owner boundary and cannot restore an anchor, listener, calibration, or initialized state. Disposal returns the manager to a coherent selection/null snapshot and remains outside the steady-state CV path.
+- The nested interactive-segmenter owner binds every message and failure callback to its exact worker instance and generation. Retired worker failures cannot terminate a retry; failed lazy construction clears the rejected single-flight promise; and a synchronous request-publication failure immediately retires the current runtime, clears every timeout and pending request, and permits one fresh retry instead of waiting for the six-second inference timeout. The production path remains one MediaPipe implementation with no alternate loader or retry semantics.
+- The optional depth runtime has one ownership chain from page-level lazy import through worker callbacks. Mode or session release invalidates an in-flight service chunk before it can construct a worker or ONNX runtime; only the exact current import may publish a service or clear its single-flight promise. Inside that service, message, runtime-error, and deserialization-error callbacks validate the exact worker and generation that registered them, and pending work is published only after `postMessage` succeeds. Stale startup, results, and failures therefore cannot allocate behind a released mode, replace successor state, leak requests, or create false cadence debt.
+- [`Worker.terminate()` stops an existing worker immediately](https://developer.mozilla.org/en-US/docs/Web/API/Worker/terminate), but it cannot cancel a worker that has not yet been constructed. The service generation check therefore guards both sides of the awaited module load and request boundary instead of treating termination as sufficient lifecycle invalidation.
+- Release verification passes 641/641 tests, real model and mesh contracts, the 32-asset production graph, eight bundle budgets, a 91-file flow audit with zero omissions/defaults/missing diagnostics, a 205-component open-source license audit, and zero vulnerabilities. The complete mobile Chromium/WebKit matrix passes 20 tests with six intentional WebKit skips for Chromium-only fake-camera behavior, including the emitted Depth → Auto → Depth lazy-import race, gesture-owned tap readback, and rapid-tap exclusivity contracts.
+- Desktop browser execution proves worker nesting, module parsing, asset resolution, transferable ownership, model/operator compatibility, and protocol lifecycle. It is not a physical-iPhone latency, memory, thermal, orientation, or WebGL-coexistence claim.
+
+No dependency, model weight, acceptance threshold, estimator, tracking cadence, alternate worker path, feature flag, compatibility shim, migration, or legacy API was added.
+
+### Demand-driven media and exact async ownership
+
+The page runtime now applies the same owner/generation contract to camera start and resume, worker mutation queues, learned-runtime loading, depth evidence, object voice, and retained WebGL rendering.
+
+- Camera `start()` and `resume()` are exact single-flight operations. A stop or session replacement invalidates late success, failure, or `finally`; readiness requires positive intrinsic dimensions and listens for the video `resize` event rather than accepting zero-sized metadata.
+- Anchor and XFeat worker commands execute FIFO. Clear, mode selection, reference storage, relocalization, and frame updates cannot mutate the same worker runtime concurrently, while a rejected operation does not poison later queue entries.
+- Anchor-worker and XFeat runtime loads reuse successful instances but clear only the exact rejected Promise. A transient chunk, WASM, or model initialization failure is therefore retryable without a second loader or compatibility path.
+- Depth inference publishes through a generation-bound latest-value mailbox. The page consumes a frame once, and depth fusion accepts only a strictly newer timestamp, preventing repeated structured clones, surfel mutation, observation counts, or readiness evidence.
+- The video element is the presentation surface. The 2D canvas is transparent and diagnostics-only; the private readback canvas runs only on tap or an admitted tracking/refresh frame. CV pixels stay in native sensor coordinates; mirror-aware display, pointer inversion, and WebGL projection apply one explicit transform at their boundaries.
+- The retained Three.js/model runtime uses demand rendering. Anchor-state and viewport changes invalidate one frame; microphone or TTS activity drives continuous frames; a bounded settle window returns morph targets to rest and then stops all display-cadence polling, eye traversal, and rest-pose updates.
+- Anchor clear is an object-voice ownership boundary. It aborts active personality work, clears the completed persona, retires speech queued behind lazy loading, stops active playback, and resets UI state. Persona and speech continuations validate both request ID and anchor identity after every await.
+- Identical speech commands submitted before lazy module loading completes share one operation. Different utterances keep newest-wins semantics, and identity-checked settlement makes both loader and provider rejection retryable.
+- Duplicate tracking-mode selections are no-ops in the page worker client, manager, and image-anchor service, so the current reconstruction runtime and map are retained without publication or allocation.
+- Fresh release verification passes 679/679 tests, 32 hashed production assets, eight bundle budgets, a 96-file flow audit with zero omissions, an SBOM-backed audit of 248 open-source dependency components, and zero vulnerabilities. The mobile Chromium/WebKit production matrix passes 22 tests with six intentional platform-specific skips; the strict vision matrix passes 90/90.
+
+These changes add no model, dependency, estimator, CV threshold, tracking cadence, fallback, feature flag, compatibility branch, migration, or legacy path.
+
+### Byte-bounded capability cache
+
+The capability service worker is a performance owner, not a prerequisite for a successful model/runtime fetch. Its cache is bounded by both 144 MiB and 16 entries, admits all 13 assets declared by the runtime manifest including XFeat external data, and serializes eviction plus insertion through one mutation owner. Old cache generations are removed during activation, but cleanup or storage failure cannot prevent the worker from claiming clients.
+
+- A network response reserves a dedicated cache clone before `respondWith()` transfers its body to the page. Cache lookup, eviction, or `put()` can therefore finish in the event lifetime without attempting to clone a disturbed body or delaying delivery of the network response.
+- [`Cache.put()` may reject with `QuotaExceededError`](https://www.w3.org/TR/service-workers/#cache-put), so every cache operation is explicitly best-effort. A successful fetch remains successful even when CacheStorage is unavailable, over quota, or unable to clean an older generation.
+- Vite dev/preview and production Nginx now expose the same MIME contract for ONNX, TFLite, external model data, WASM, GLB, and module runtimes. This preserves a measurable `Content-Length` without reading a second multi-megabyte response body into JavaScript memory.
+- Deterministic worker tests execute the production script against activation failure, quota rejection, complete manifest admission, byte eviction, and parallel writes. Chromium and WebKit store byte-identical emitted XFeat model/data responses; Chromium additionally verifies ordinary `fetch()` while offline. Playwright exposes programmable service-worker networking only for Chromium, so WebKit evidence is limited to its real CacheStorage body rather than a misleading offline emulation.
+
+The cache adds no database, dependency, alternate fetch path, retry loop, prefetch, model copy, migration branch, or compatibility worker.
+
+### AI and speech
+
+Vendor SDKs and browser credentials were removed. HOL uses keyless OpenAI-compatible chat and speech HTTP contracts against user-controlled services. This preserves support for LocalAI, llama.cpp-compatible chat servers, and local speech runtimes without coupling the bundle to one backend.
+
+- Lazy and real speech clients share one terminal generation chain. Session disposal wins a pending module import, a queued continuation with an already-loaded client, `AudioContext` initialization or resume, fetch, response parsing, and decode; no retired operation can reconstruct an audio context, issue later network work, or begin playback.
+- Every synthesis continuation proves ownership with the real runtime generation and exact request ID. A late non-abort provider failure from superseded speech therefore cannot clear, report over, or cancel the newer request.
+- Rejected lazy loads clear only their exact cached promise. This keeps concurrent loading single-flight while allowing a later gesture to retry a transient chunk failure without a compatibility loader or hidden retry loop.
+- Superseded and disposed synthesis returns `false`; an error still owned by the current runtime remains explicit. The checks run only at asynchronous speech boundaries and add no animation-frame work.
+- Personality generation has one exact active-request record and one `AbortSignal` propagated through the LocalAI, vision, and persona layers. Supersession and camera-session disposal abort transport owned by the retired request.
+- Chat, vision, and speech share one bounded LocalAI transport. Its strict positive-integer deadline spans both `fetch()` and response-body consumption, forwards the caller's exact abort reason, settles independently of a non-conforming injected transport, and removes its timer and abort listener on success, provider failure, cancellation, or timeout. The default is 60 seconds and `VITE_LOCAL_AI_REQUEST_TIMEOUT_MS` configures slower self-hosted hardware without adding retries or a second request path.
+- Canvas cropping is not abortable, so ownership is revalidated immediately after it completes and before vision network work begins. A disposal during cropping therefore cannot issue a late request.
+- Results and failures are published only by the exact current request. Superseded or disposed work resolves `null`, even if its transport ignores abort, while a failure still owned by the current request remains explicit.
+- Personality disposal is terminal. A retired camera session cannot publish `lastPersona`, alter the successor's processing state, issue later network work, or reach the speech path.
+
+### Established parametric-map recovery
+
+Parametric recovery now preserves established landmark identity for both handled mugs and cylindrical cans. A can becomes eligible only after 12 mapped frames, in addition to the existing ready-map, confidence, mature-landmark, object-ownership, active-quorum, and recent-support gates. The recovery transform is used only to descriptor-match and reactivate existing landmarks; it cannot admit new map points.
+
+On `glossy-can / kitchen / slow / repeated`, this removes the late map reset and degraded-pose tail. Mean/max/p95 anchor error improve from 15.80/40.40/37.49px to 11.37/32.93/20.67px; reconstruction readiness rises from 37.2% to 79.1%; and risk moves from 43.96 high to 33.65 moderate. The other two parametric glossy-can scenarios retain identical quality and risk metrics. Across the 84-report quick matrix, pass/fail remains 45/39 while mean risk falls from 23.914 to 23.791 and high-risk reports fall from 11 to 10.
+
+An unrestricted can gate was rejected because it recovered a six-frame symmetric map too early and changed the later estimator cadence. Depth ownership and filter-state synchronization alternatives also regressed mug replays and were removed. The retained path adds no model, asset, dependency, worker, compatibility branch, migration, legacy path, or steady-state CV task.
+
+### Deformation-gated dense mug attachment and early relocalization
+
+Ready depth-fusion and direct-photometric handled mugs can retain a numerically valid tap-local similarity transform after partial occlusion even when the small patch around the tap has deformed relative to the object. The tracker now selects the already-computed object-wide similarity consensus only when a dense reconstruction is ready, the target is mug-like, object-owned support has fallen to at most 45 landmarks, the local fit residual is at least 24 px, and the broad fit retains at least seven inliers. Healthy local support remains the default owner, and all other modes and target classes keep their existing arbitration.
+
+Direct-photometric mugs additionally request descriptor relocalization before active support collapses when at most 24 landmarks remain and the reference residual reaches 24 px. This is still the existing ORB recovery path: it does not add an estimator, cadence, or alternate position owner. The split follows the deformable correspondence consensus in [CMT](https://openaccess.thecvf.com/content_cvpr_2015/html/Nebehay_Clustering_of_Static-Adaptive_2015_CVPR_paper.html) and the tracking-failure-to-feature-relocalization boundary described by [ORB-SLAM](https://arxiv.org/abs/1502.00956). Both similarity candidates retain the existing robust four-degree-of-freedom estimator, equivalent in role to OpenCV's robust [`estimateAffinePartial2D`](https://docs.opencv.org/4.8.0/d9/d0c/group__calib3d.html); no homography is promoted for non-planar mug attachment.
+
+- In `handled-mug / window / fast / repeated`, mean/max/p95 anchor error improve from 16.27/26.17/22.46 px to 11.08/16.04/15.58 px and risk falls from 47.00 to 40.67. The strict tracking gate remains failed because mean error is still above 8 px and neither post-occlusion window reaches the 8 px recovery threshold.
+- In the busy early-occlusion sibling, mean error improves from 13.18 to 11.28 px, 8 px accuracy from 9.3% to 37.2%, post-occlusion recovery from 0% to 100%, and risk from 44.39 to 38.51. The clean sibling is numerically unchanged. Across the three-report slice, mean risk falls from 38.80 to 34.73.
+- In the direct-photometric repeated-occlusion target, object-wide consensus covers the first deformed window and descriptor relocalization advances from frame 14 to frame 12 before the second drift compounds. Mean/max/p95 error improve from 16.02/25.80/22.85 px to 12.64/20.00/19.03 px and risk falls from 45.20 to 42.06. The clean and early-occlusion direct siblings are numerically unchanged. The strict tracking gate remains failed because 8 px accuracy and both recovery windows are still below contract.
+- Across the identical 84-report matrix, mean risk falls from 23.6459 to 23.6084 and maximum risk from 45.20 to 43.52. The 45/39 pass/fail split, 30 tracking / eight reconstruction / three head-attachment failure buckets, and 30 low / 44 moderate / ten high risk bands are unchanged. Descriptor relocalization coverage rises only from 162 to 164 of 2,716 frames; there is no new steady-state CV work.
+- Object-centroid ownership, always-global similarity, broad depth-pose ownership, forced planar ownership, discarding the relocalized reference, unrestricted local ORB search, high-residual direct-pose rejection, and raw motion-filter release all regressed target or sibling replays and were removed. The retained arbitration reuses current-frame candidates and the retained recovery uses the existing ORB path; neither adds a fit, model, dependency, asset, worker, feature flag, compatibility branch, migration, legacy path, or alternate output estimator.
+- Release verification passes 701/701 unit tests, 95/95 vision tests, 32 production assets, eight bundle budgets, a clean 97-file anchor-flow audit, five capability packs and 13 source assets, real depth/XFeat/head contracts, 248 dependency licenses, zero vulnerabilities, and 22 browser tests with six intentional platform-policy skips.
+
+Physical-iPhone motion-to-photon latency, camera blur, thermal behavior, memory pressure, orientation, and WebGL coexistence remain target-device measurements.
+
+### Pose-contradiction sparse-mug relocalization
+
+A ready sparse handled-mug map can retain a supported 3D pose while its 2D tap-reference transform has already deformed beyond useful attachment geometry. Descriptor recovery now runs before generic LK collapse only when the complete evidence gate agrees: sparse reconstruction owns the mode, the target is mug-like, the previous reconstruction pose retains at least eight inliers, active support has fallen to at most 32 landmarks, and the reference residual reaches 40 px. The recovery remains the existing full-frame ORB keyframe path; there is no new estimator or output owner. This follows the feature-keyframe relocalization boundary used by [ORB-SLAM](https://arxiv.org/abs/1502.00956) and the official OpenCV ORB tracker sequence of descriptor matching, RANSAC geometry, and inlier filtering in [AKAZE and ORB planar tracking](https://docs.opencv.org/4.x/dc/d16/tutorial_akaze_tracking.html).
+
+- In `handled-mug / kitchen / slow / early`, descriptor recovery advances from frame 11 to frame 6 while the sparse pose still has geometric support. Mean/max/p95 anchor error improve from 26.23/36.69/35.42 px to 12.93/34.10/25.92 px, 8 px accuracy rises from 9.3% to 30.2%, and post-occlusion recovery changes from zero of one windows to one of one.
+- Across the exact 25-report full sparse-mug slice, pass/fail remains 3/22 and mean risk falls from 36.3400 to 36.3174. Relocalization coverage rises from 89 to 93 of 807 frames; the four additional calls are recovery events rather than steady-state CV work.
+- A 24 px sparse trigger improved one quick seed but worsened the full slice from 36.34 to 37.75 mean risk and added a strict failure. Restricting sparse ORB to the current object-support ROI improved that seed further but regressed the busy-background sibling from 15.07 to 24.92 px mean error. Rebasing the ORB anchor from mask-relative support changed the target by only 0.26 px mean and propagated a horizontally biased mask anchor. All three candidates were removed completely.
+- The retained branch adds scalar admission checks only. It adds no model, asset, dependency, worker, feature flag, compatibility path, migration, legacy path, alternate estimator, or frame-cadence task.
+- Final verification passes 96/96 vision tests, 703/703 release unit tests, 32 production asset contracts, eight bundle budgets, a clean 97-file anchor-flow audit, 248 dependency licenses, zero vulnerabilities, and 22 browser tests with six intentional platform-policy skips.
+
+Physical-iPhone recovery latency, camera blur, thermal behavior, memory pressure, orientation, and WebGL coexistence remain target-device measurements.
+
+### Canonical nested benchmark fixtures
+
+Quick and full matrices now identify procedural backgrounds from canonical object, occlusion, and background axes. Matrix-size filtering no longer changes a scenario's seed through local loop indexes, so an overlapping axis tuple creates the same metadata, ground truth, and RGBA pixels at every matrix size.
+
+- Before the correction, all 10 quick scenarios that also existed in the full matrix used different background seeds. A same-named report could therefore measure a different replay depending on `--quick` or `--full`.
+- RED coverage compares every overlapping seed and byte-compares representative first, middle, and last frames. A real filtered `handled-mug / window / fast / repeated / sparse-reconstruction` run now has identical quick/full quality and benchmark SHA-256 `cf28057450a94ef7d337b2485a3ba96e10b191387df930b1b9b6f7ec810402c8`.
+- Seventeen branch-behavior replays now own explicit fixture parameters and pinned seeds instead of importing quick-matrix sampling policy. Their numerical thresholds and expected recovery events remain unchanged.
+- The canonical quick baseline is 36 passes and 48 failures across 84 reports, with 25.368526 mean risk, 54.006789 maximum risk, and 73 of 84 post-occlusion windows recovered at 8 px. Its difference from the prior quick baseline is a corpus correction, not a runtime quality change; production tracking code is unchanged.
+- Disabling mug support correction worsened the target slice, sparse motion prediction had no measurable effect, and admitting seven-inlier sparse mug poses improved one aggregate while regressing the worst case and a sibling background. Those runtime experiments were removed completely.
+- Strict vision passes 98/98. Release verification passes 703/703 unit tests, 32 production asset checks, eight bundle budgets, a clean 97-file flow audit, 248 dependency licenses, and zero vulnerabilities. Mobile Chromium/WebKit passes 22 tests with six intentional platform-policy skips.
+
+No runtime branch, compatibility path, migration, legacy seed mode, dependency, model, asset, worker, or feature flag was added. Physical-iPhone camera and thermal measurements remain unchanged and out of scope for this benchmark-integrity improvement.
+
+### Weak-geometry direct mug motion bridge
+
+A mature direct-photometric handled-mug map can briefly reverse attachment position when the first occluded frame leaves both the selected reconstruction and the tracker with weak geometry. The tracker now uses its already-recorded coherent velocity as a finite bridge only when every causal signal agrees: direct-photometric mode, a mug-like target, a ready map with at least 18 mature landmarks, a tracker explicitly rejected for weak geometry, a selected position with residual above 6.5 px or at most 13 inliers, a sample no older than 75 ms, at least 0.08 px/ms motion, and a candidate displacement of at least 3 px pointing against that motion. The existing step limiter remains the final bound, and a predicted result is never recorded as a new velocity sample, so the bridge cannot extend itself.
+
+- In the canonical `handled-mug / busy / slow / early / direct-photometric` report, risk falls from 52.318291 to 42.262081, mean/max/p95 anchor error from 18.44/42.18/35.02 px to 11.86/25.57/25.36 px, and the 8 px post-occlusion window changes from unrecovered to recovered. First recovery advances from frame 36 to frame 27. The bridge owns only frames 5, 6, and 17.
+- The report still fails the strict tracking contract, and pose-ready coverage falls from 6.98% to 2.33%; the change fixes a contradicted position owner without claiming that weak orientation evidence became usable. Clean and repeated-occlusion direct mug siblings never enter the branch.
+- Across all 21 direct-photometric quick reports, failures remain 10, high-risk reports remain three, mean risk falls from 24.225780 to 23.746913, and maximum risk falls from 52.318291 to 43.934408. Across the complete canonical 84-report matrix, pass/fail remains 36/48, failure buckets remain 38 tracking / nine reconstruction / five head attachment, risk bands remain 27 low / 43 moderate / 14 high, mean risk falls from 25.368526 to 25.248809, and recovered 8 px occlusion windows rise from 73/84 to 74/84. The unchanged 54.006789 sparse-mug report remains the global maximum and visible priority.
+- Applying the same temporal correction to every reconstruction mode reduced position error but introduced a new parametric head-attachment failure and 1.091 rad maximum rotation error. Applying it to immature direct maps displaced a useful frame-eight ORB correction in the pinned busy-background sibling and worsened maximum anchor error from 18.15 px to 28.43 px. Both broader variants were removed; direct-mode ownership and the 18-landmark maturity boundary are covered by negative tests.
+- The retained branch consumes existing scalar diagnostics and the existing bounded prediction. It adds no CV pass, estimator, model, asset, dependency, worker, allocation-heavy frame task, feature flag, compatibility path, migration, legacy path, or alternate output owner.
+- Final verification passes 99/99 strict vision tests, 705/705 release unit tests, 32 production asset contracts, eight bundle budgets, a clean 97-file anchor-flow audit, 248 dependency licenses, zero vulnerabilities, and 22 browser tests with six intentional platform-policy skips.
+
+Physical-iPhone motion-to-photon latency, camera blur, thermal behavior, memory pressure, orientation, and WebGL coexistence remain target-device measurements.
+
+### Transactional reconstruction-map admission
+
+A ready reconstruction map now remains immutable while any active recovery landmark is still below the existing four-observation map-admission boundary. Tracking and pose estimation continue with the already-confirmed subset, but `addFrameFromTrackedPoints()` is not allowed to interpret the temporarily smaller set as evidence that the established map should be rebuilt. An unfinished map continues mapping normally, so recovery probation cannot deadlock bootstrap.
+
+This follows the ownership separation used by [ORB-SLAM](https://arxiv.org/abs/1502.00956): tracking may use current feature evidence while local mapping applies stricter multi-view retention rules to map points. HOL keeps that boundary synchronous and mode-neutral; it does not add a thread, map copy, or alternate reconstructor.
+
+- RED service coverage proves a ready 24-landmark map receives no mutation frame while one active landmark remains on recovery probation, pose estimation sees only the confirmed subset, and the hold is observable in diagnostics.
+- The counterexample in the same contract proves an unfinished six-landmark map still calls its canonical mapping path with the confirmed subset.
+- The canonical 84-report quick coverage, quality, and benchmark projections remain byte-identical at SHA-256 `83aa11a7bfc4d932903d1cedcbcdac5964e4380f32b4bb526e34f2d56488e9dc`, `67fe21a186812dce1520b3944d1431603fbdabd4b191a347773759e3d63c3434`, and `7666b972a85b2ff15dd6d24d3a41af0c1048980763fde42bb8a82c05abb99a43`. The exact 25-report sparse-mug slice also remains at 3/22 pass/fail and 36.317428 mean risk.
+- An earlier curved-object keyframe changed the first storage interval from five frames to four and dramatically improved one busy-background mug. The complete sparse-mug slice exposed new tracking, reconstruction, and head failures because descriptor agreement plus mask/LK survival did not prove non-planar 3D landmark identity. That experiment, its metadata, and its tests were removed completely.
+
+The accepted lifecycle guard executes only while the existing recovery-probation state is active. It adds no CV pass, estimator, model, asset, dependency, worker, feature flag, compatibility branch, migration, legacy path, or steady-state task.
+
+### Geometry-owned ORB keyframe redundancy
+
+Rigid-planar keyframe admission now measures landmark deformation after subtracting the median common X/Y translation. A translated planar object therefore reuses its latest descriptor view without running another full-image ORB extraction. Rotation, scale, and perspective remain deformation evidence for the existing threshold, while at least four new mature landmarks admit a new view directly. Curved, multi-plane, and non-convex targets keep the previous absolute-displacement policy because apparent common motion can hide a changing visible surface.
+
+The policy follows the evidence boundary in the original [ORB paper](https://doi.org/10.1109/ICCV.2011.6126544) and [ORB-SLAM keyframe policy](https://arxiv.org/abs/1502.00956): keyframes represent useful visual change, not absolute image coordinates. HOL applies the invariant only where its selection owner has already proven rigid-planar geometry.
+
+- RED coverage proves an 18 px by -11 px common translation is rejected before ORB, while the general geometry path and a 20-degree planar rotation both remain non-redundant. Service coverage proves only `rigidPlanarRecoveryEligible` selections request translation-invariant admission.
+- The canonical 84-report quick coverage, quality, and benchmark projections remain byte-identical at SHA-256 `83aa11a7bfc4d932903d1cedcbcdac5964e4380f32b4bb526e34f2d56488e9dc`, `67fe21a186812dce1520b3944d1431603fbdabd4b191a347773759e3d63c3434`, and `7666b972a85b2ff15dd6d24d3a41af0c1048980763fde42bb8a82c05abb99a43`. Full-matrix rigid-planar coverage remains 77/23 pass/fail with 96/100 recovered occlusion windows.
+- Across five identical 12-report planar slices, extraction cadence is deterministic at 100 baseline calls versus 84 accepted calls. Median amortized extraction falls from 5.096 to 4.228 ms and median frame processing from 17.950 to 16.825 ms. The 100-report full planar slice removes 114 of 853 extractions and lowers amortized extraction from 5.053 to 4.320 ms without a new failure bucket or recovery loss.
+- Applying the same invariant to every geometry was rejected and removed. Although it cut quick extraction from 615 to 499 calls, handled-mug direct and parametric recovery fell from 1 to 0 and risk increased by 7.20 and 4.63. Four tracked modes of a curved surface do not prove an unchanged descriptor view.
+
+The accepted path adds one robust median translation calculation only when a rigid-planar keyframe is already due for evaluation. The general path is the previous absolute-displacement calculation verbatim. There is no new CV pass, model, asset, dependency, worker, flag, compatibility branch, migration, or legacy path.
+
+### Production-cadence replay and exclusive timing ownership
+
+The diagnostic benchmark now evaluates the actual scheduling contract instead of invoking tracking on every generated source frame. A 30 Hz replay admits anchor updates through the same 15 Hz interval used by the camera runtime, holds the most recent pose between updates, and continues scoring every source frame. That presentation/update separation follows the browser's [requestVideoFrameCallback processing model](https://wicg.github.io/video-rvfc/), where presented frames have their own media timeline. The algorithmic `vision:quality` gate remains per-update so the existing deterministic thresholds and failure localization are not redefined by scheduling.
+
+Runtime reports expose separate source-frame, admitted-update, held-frame, and 60 Hz display-frame counts. They report active update latency, display-amortized update cost, maximum held-pose age, and p95 cadence overages. Stage timing has explicit hierarchical ownership: `totalMs` and `keypointUpdateMs` are envelopes; tracking validation, pose estimation, pose selection, keyframe storage, and relocalization subtract their named children before budget attribution. Keypoint-map refresh is measured independently from keyframe storage. The report also publishes timing coverage and unattributed update time, so an incomplete profile cannot silently masquerade as a complete bottleneck ranking.
+
+- RED coverage proves an exact 30 Hz timeline admits 15 updates per second; without a floating-point boundary tolerance the shared scheduler admitted only 11.
+- A real OpenCV replay proves 30 scored frames become 15 admitted updates plus 15 held poses, with held-pose age and source-frame quality remaining observable.
+- Timing contracts prove 15 updates at 12 ms each contribute 3 ms per 60 Hz display frame while retaining 12 ms active latency, a 60 ms parent containing a 54 ms child owns only 6 ms exclusively, an unprofiled 12 ms update remains 3 ms/display frame unattributed, and a fully partitioned nested update reaches exactly 100% coverage without double-counting.
+- Before complete phase ownership, the same benchmark named only 3.516 of 7.017 ms/display frame, about 50.1% coverage; the apparent planar-pose lead was therefore not actionable. The complete production-cadence quick matrix measures 2,716 source frames, 1,400 admitted updates, 1,316 held frames, and 5,432 display frames. Its measured run reports 6.423 ms/display frame total, 6.365 ms owned, 0.058 ms unattributed, and 99.10% timing coverage.
+- The corrected exclusive ranking is keypoint-map refresh at 2.143 ms/display frame, planar pose at 1.012 ms, keyframe feature extraction at 0.899 ms, attachment resolution at 0.741 ms, reconstruction at 0.581 ms, and keypoint tracking at 0.426 ms. Refresh is intermittent—188 calls across 1,400 admitted updates—but each call averages 61.91 ms and reaches 92.82 ms, making refresh cadence and work partitioning the highest-value performance target after target-device confirmation.
+- The production-cadence diagnostic result is 18 passes and 66 failures across 84 reports. This newly surfaces held-pose and lower-update-rate behavior; it is not compared as an algorithm regression against the per-update 36/48 quick baseline and no quality threshold was weakened.
+- Verification passes the deterministic 84/84 strict gate, 103/103 complete vision tests, 707/707 release tests plus all asset/license/bundle audits, and 22 mobile Chromium/WebKit tests with six intentional platform skips.
+
+The replay harness keeps every-source-frame execution as its explicit default for focused behavioral tests. Production-facing benchmark/report scripts opt into the shared runtime cadence, so branch tests do not inherit an unrelated scheduling policy. The ownership change instruments existing phases only; it changes no solver, threshold, cadence, runtime CV path, model, asset, dependency, feature flag, compatibility layer, migration, or alternate report path.
+
+### Reference-feasibility gated, mask-bounded, prepared keypoint refresh
+
+Keypoint-map refresh has one frame-local, single-use feasibility plan. `KeypointTracker` returns either an accepted reference transform or an explicit `no-reference` result. `ImageAnchorService` executes refresh extraction only when the tracker can consume the candidates. When support recovery must rebuild a collapsed reference, reinitialization is the sole candidate consumer and owns both extraction and its `reinitialized` or `insufficient-candidates` outcome. There is no duplicate evidence search, service-policy flag on the tracker, mutable refresh-stat side channel, or alternate refresh path.
+
+Masked GFTT is bounded to the intersection of the requested region and the object-support bounding box plus the dependency halo required by the largest block profile, gradient, and non-maximum-suppression operators. One synchronous detector scope owns the ROI alias, materialized OpenCV mask, and output Mat across every strict/adaptive pass, releases them before returning copied JavaScript keypoints, and cleans up partially completed preparation. Object-support filtering occurs inside each detector pass before early-stop and winner selection. The detector reports exact GFTT calls, processed pixels, and native preparations. A skipped refresh therefore has `candidateCount: null`, zero calls, zero pixels, and zero preparations, while an evaluated zero-candidate result remains distinguishable. Reinitialization has its own exact work counters and exclusive stage timing.
+
+- A real-OpenCV equivalence contract proves mask-bounded extraction returns the exact same ordered corner list as full-region GFTT for an irregular support mask while processing only the bounded response domain.
+- A scoped-lifetime contract proves strict plus adaptive fallback reuses the same ROI, mask, and output Mat across all four real OpenCV calls; pass-local filtering precedes selection, partially prepared resources are released exactly once, and the parent frame Mat is never owned by the scope.
+- Service contracts prove a no-reference refresh never invokes the tracker detector; eligible support recovery performs one reinitialization extraction and retains its actual failure precedence.
+- The canonical production-cadence contract is exact: 188 attempts, 77 successful refreshes, 111 `no-reference-transform` failures, 99 evaluated candidate stages, 89 skipped stages, 77 refresh GFTT calls over 4,336,852 pixels in 77 preparations, 22 reinitialization GFTT calls over 1,019,755 pixels in 22 preparations, 22 actual reinitializations, zero reinitialization failures, 253 ORB keyframe-extraction frames, and 26 learned-relocalization extraction frames.
+- Canonical coverage, quality, benchmark, and recovery structure remains byte-identical at SHA-256 `94d44c76c2967ec11c933d1c19d0558bf49e888701382c17d6a595ee4624886e`; production cadence remains 18/66 pass/fail with mean risk `39.08382993013283`.
+- Five sequential prepared-session runs measure median refresh cost at 0.410 ms/display frame, median refresh maximum at 39.77 ms, median active-update time at 18.597 ms, median total update cost at 4.793 ms/display frame, and two cadence-overage groups with 98.80% timing ownership. These whole-replay timings are environment-sensitive location evidence. The isolated forced-three-pass comparison attributes the bounded change directly: repeated ROI/mask/output setup takes 47.34 ms versus 17.93 ms for the scoped implementation, a 62.1% reduction with the same 360 ordered corners.
+
+The accepted path adds no model, asset, dependency, worker, estimator, CV threshold, feature flag, compatibility branch, migration, legacy API, or alternate extraction path. The halo is derived from the OpenCV operator dependency chain and the largest active block profile rather than tuned against the corpus. Desktop/WASM results establish bottleneck reduction; physical-iPhone Safari and Chromium still own the mobile latency, thermal, memory, orientation, and WebGL-coexistence claim.
+
+### Exact same-frame sparse observation reuse
+
+Sparse reconstruction consumes the same ordered tracked-point snapshot for mapping coherence, pose coherence, and the tap-reference similarity fit. Those consumers require different solvers and estimator options, so their fit results remain independent. The shared boundary is only the validated plain-JavaScript observation sequence: mapping prepares it once, and same-frame pose consumes that exact snapshot instead of filtering the tracker array and allocating equivalent point wrappers twice more.
+
+- A RED production-shaped contract builds a real curved sparse map, performs mapping and pose on the same tracked-point array, and requires exactly one reference-observation preparation. The prior path performed two preparations inside pose and did not expose the mapping sequence for reuse.
+- A 72-point, 200,000-iteration allocation benchmark measures 885.47 ms for three preparations and 293.41 ms for one shared snapshot, a 3.02× reduction in the isolated preparation owner with an identical numeric checksum. This is allocation and GC-pressure evidence, not an end-to-end frame-time claim.
+- On the final canonical 84-report production-cadence matrix, sparse `reconstructionUpdateMs` falls from 1.8404 to 1.7448 ms per active reconstruction frame, or 5.2%. The aggregate reconstruction stage falls from 2.4223 to 2.3487 ms, or 3.0%. Unrelated total-frame stages moved in both directions and are treated as runtime noise.
+- Coverage, quality, benchmark, recovery cadence, and failure structure remain exact at SHA-256 `94d44c76c2967ec11c933d1c19d0558bf49e888701382c17d6a595ee4624886e`: 18/66 pass/fail, 188 refresh attempts, 77 successful refreshes, 253 ORB extraction frames, and 26 learned-relocalization extraction frames.
+- Release verification passes 720/720 tests, five capability packs, 13 source assets, real depth/XFeat/head contracts, 32 production assets, eight bundle budgets, a clean 99-file flow audit, 248 dependency licenses, and zero vulnerabilities.
+- Mobile Chromium/WebKit passes 22 tests with six intentional platform-policy skips.
+
+The cache owns one frame of copied scalar observations and borrows the tracked-array identity only across the immediate mapping-to-pose consumer window. Every pose path releases that identity, including an early no-map result; the next mapping update replaces it, and reset or reference-region change clears it. It retains no `cv.Mat`, solver result, model, asset, dependency, worker, threshold, feature flag, compatibility path, migration, legacy API, or alternate estimator. Physical-iPhone allocation pressure and active-frame latency remain target-device measurements.
+
+### Exact same-frame attachment evidence reuse
+
+Attachment resolution and keypoint-refresh planning consume the same ordered active-point snapshot during one `ImageAnchorService.update()` call. The tracker now evaluates local similarity, object-wide similarity, and homography at most once for that snapshot, including an explicit completed-null homography result for degenerate geometry. The two consumers still apply their own scoring, ordering, and fallback policies to the shared raw evidence: attachment can prefer similarity while refresh independently prefers homography.
+
+- RED coverage exercises both a valid and a degenerate real-OpenCV homography and requires one `findHomography()` call across attachment resolution and refresh planning. Stubbed contracts independently count local, broad, and failed-homography evaluation, and prove that the two consumers can select different winners from the same evidence.
+- Service lifecycle coverage proves periodic refresh and recovery refresh receive the current evaluation, while successful descriptor relocalization invalidates it and regenerates evidence from the new active points before any later refresh.
+- Against the immediately preceding canonical run, mean active refresh cost falls from 10.7452 to 7.0375 ms, saving 3.7077 ms per refresh or 34.5%. At production cadence, refresh cost falls from 0.3719 to 0.2436 ms/display frame. Mean active-update time falls from 17.5899 to 16.8077 ms and total update cost from 4.5335 to 4.3319 ms/display frame; these whole-replay figures are supporting desktop/WASM evidence rather than target-device guarantees.
+- Canonical quality and cadence remain exact at SHA-256 `94d44c76c2967ec11c933d1c19d0558bf49e888701382c17d6a595ee4624886e`: 18/66 pass/fail, mean risk `39.08382993013283`, 188 refresh attempts, 77 successful refreshes, 111 no-reference failures, 77 refresh GFTT calls, 22 reinitializations, 253 ORB extraction frames, and 26 learned-relocalization extraction frames.
+- Release verification passes 723/723 tests, five capability packs, 13 source assets, real depth/XFeat/head contracts, 32 production assets, eight bundle budgets, a clean 99-file flow audit, 248 dependency licenses, and zero vulnerabilities. Mobile Chromium/WebKit passes 22 tests with six intentional platform-policy skips.
+
+The evidence object is update-scoped plain JavaScript state. It retains no `cv.Mat`, descriptor, cross-frame cache, new solver result, model, asset, dependency, worker, threshold, feature flag, compatibility branch, migration, legacy API, or alternate tracking path. Physical-iPhone refresh latency, thermals, memory pressure, orientation, and WebGL coexistence remain target-device measurements.
+
+### Exact same-update depth pose evidence reuse
+
+Depth-fusion mapping and its immediately following pose estimate receive the same ordered tracked-point array from one `ImageAnchorService.update()` transaction. Both previously materialized the same active observations and ran `fitRobustSimilarity()` with identical `minInliers` and residual threshold. The mapping producer now retains that completed raw fit for one exact-identity consumer, including a completed failure; pose still owns readiness checks, surfel geometry, scoring, and result construction.
+
+- RED lifecycle coverage counts both observation preparation and robust fitting. One valid add-plus-pose transaction performs one of each, a second pose recomputes, and degenerate geometry reuses its completed failed fit instead of repeating the expensive failure path.
+- Invalidation coverage proves skipped or duplicate depth, a different tracked-point array, reset, and reference-region replacement cannot consume stale evidence. The producer clears the previous loan before any early return, and pose consumes the current loan before applying downstream policy.
+- A seven-sample isolated 72-point benchmark reduces median duplicate fitting from 942.07 to 470.15 ms over 400 transactions, saving 50.1% in the exact owner with a checksum ratio of precisely two duplicate results to one shared result.
+- Against the immediately preceding canonical production-cadence run, depth-fusion `reconstructionUpdateMs` falls from 1.4818 to 1.2260 ms per active reconstruction frame, saving 0.2558 ms or 17.3%. Its display-amortized reconstruction cost falls from 0.3361 to 0.2781 ms/frame. Broader total-frame movement is treated as runtime noise rather than attributed to this change.
+- Quality and cadence remain exact at SHA-256 `94d44c76c2967ec11c933d1c19d0558bf49e888701382c17d6a595ee4624886e`: 18/66 pass/fail, mean risk `39.08382993013283`, 188 refresh attempts, 77 successful refreshes, 111 no-reference failures, 77 refresh GFTT calls, 22 reinitializations, 253 ORB extraction frames, and 26 learned-relocalization extraction frames.
+- Complete vision verification passes 107/107. Release verification passes 726/726 tests, all capability/model/asset/bundle/flow contracts, 248 dependency licenses, and zero vulnerabilities. Mobile Chromium/WebKit passes 22 tests with six intentional platform-policy skips.
+
+The cache is a single-use plain-JavaScript transaction loan. It retains no native resource, descriptor, cross-frame state, changed estimator option, model, asset, dependency, worker, threshold, feature flag, compatibility branch, migration, legacy API, or alternate reconstruction path. The synthetic depth benchmark supplies a fresh frame for every admitted update, while production depth cadence is at least 260 ms; physical-iPhone latency, thermals, allocation pressure, orientation, and WebGL coexistence therefore remain target-device measurements.
+
+### Projection-free depth geometry measurement
+
+Ready depth-fusion pose requires only the surfel map's normal and depth extent. The previous hot path obtained them by ranking the complete map and allocating preview IDs, rounded colors, reliability, observations, and camera coordinates. Fusion already prunes the map to `maxSurfels`, and pose requested that exact limit, so ranking changed only order while normal and quality depend only on the complete set of `x`, `y`, and `z` values.
+
+- The surfel-map owner now measures `{ normal, depthQuality }` directly from its raw iterable and returns only fresh values. It exposes neither mutable surfels nor an iterator, retains no measurement cache, and shares the bounds calculation between normal and quality.
+- Preview-enabled pose keeps its exact ranked projection, dense IDs, colors, reliability, camera coordinates, and display cap. Production `includePreview: false` pose performs zero `previewPoints()` calls.
+- RED coverage saturates a real fused map to its prune limit and requires exact—not approximate—normal and quality equality with the complete ranked projection. The hot-path contract independently requires zero preview materialization, while the preview contract still requires exactly one ranked projection.
+- A nine-sample alternating benchmark over 1,400 surfels and 2,000 measurements per path reduces median owner time from 869.40 to 328.03 ms, a 62.3% reduction with checksum ratio exactly one. That is 0.2707 ms saved per saturated-map pose in Node.
+- Against the immediately preceding canonical run, depth-fusion `reconstructionUpdateMs` falls from 1.2260 to 1.0790 ms per active reconstruction frame, saving 0.1470 ms or 12.0%. Its display-amortized reconstruction cost falls from 0.2781 to 0.2447 ms/frame. Aggregate timing movement remains supporting environment-sensitive evidence.
+- Quality, benchmark projection, and cadence remain byte-identical at SHA-256 `94d44c76c2967ec11c933d1c19d0558bf49e888701382c17d6a595ee4624886e`: 18/66 pass/fail, mean risk `39.08382993013283`, 188 refresh attempts, 77 successful refreshes, 111 no-reference failures, 77 refresh GFTT calls, 22 reinitializations, 253 ORB extraction frames, and 26 learned-relocalization extraction frames.
+- Focused depth/service verification passes 202/202, complete vision verification passes 107/107, and release verification passes 727/727 tests plus all capability/model/asset/bundle/flow, license, and vulnerability gates. Mobile Chromium/WebKit passes 22 tests with six intentional platform-policy skips.
+
+The accepted path replaces the unused preview-backed `normal()` and `quality()` map methods with one semantic measurement owner. It adds no solver, threshold, cache, model, asset, dependency, worker, feature flag, compatibility branch, migration, legacy API, or alternate pose path. Desktop/Node and WASM measurements establish causality and replay relevance; physical-iPhone latency, thermals, allocation pressure, orientation, and WebGL coexistence remain target-device measurements.
+
+### Tracker-owned grayscale ping-pong workspace
+
+`KeypointTracker` now owns two long-lived grayscale `cv.Mat` slots. The service writes each RGBA frame directly into the inactive slot, and successful tracking advances the retained-history pointer instead of cloning the complete grayscale image and deleting the prior copy. This matches OpenCV's output-allocation contract: [`cvtColor()` writes to an `OutputArray`, and `Mat.create()` reuses storage when shape and type already match](https://docs.opencv.org/4.13.0/d3/d63/classcv_1_1Mat.html). Resolution changes still reallocate through that canonical OpenCV path.
+
+Frame-local refresh plans are bound to an explicit grayscale generation rather than native-handle identity. This is required because one current-frame slot can be retained by tracking and retained again after refresh or relocalization without representing a new camera frame. Both slots have one lifecycle owner and are released by tracker teardown; the service releases only its per-call RGBA source.
+
+- Baseline instrumentation across the canonical 84-report matrix found 1,494 full-frame grayscale clones: 1,299 during tracking, 106 during initialization, 79 during landmark merge, and 10 during descriptor restoration. They copied about 437.7 MiB while preserving no independently mutable consumer.
+- RED lifecycle coverage requires strict slot alternation, zero retained-frame clones, generation advancement on a repeated same-frame commit, stale refresh-plan rejection, async frame survival, and exact release of both native slots at teardown.
+- A nine-sample alternating real-OpenCV benchmark at 640×480 over 1,200 frames per sample reduces the complete `cvtColor + retained-history lifecycle` median from 0.23567 to 0.22654 ms/frame, saving 0.00913 ms or 3.87% in the exact owner. The improvement is deliberately reported as small; it removes deterministic memory traffic and allocation churn rather than claiming a material end-to-end frame-rate change.
+- The isolated canonical run preserves the exact SHA-256 quality projection `94d44c76c2967ec11c933d1c19d0558bf49e888701382c17d6a595ee4624886e`, 18/66 pass/fail, mean risk `39.08382993013283`, 2,716 source frames, 1,400 admitted updates, 1,316 held frames, 5,432 display frames, 188/77/111 refresh attempts/successes/failures, 253 ORB extraction frames, and 26 learned-relocalization extraction frames. Host-wide timing dilation affected every independent stage in that run, so aggregate latency was excluded from causal attribution.
+- Focused tracker/service coverage passes 233/233, complete vision verification passes 107/107, and release verification passes 729/729 tests plus all capability/model/asset/bundle/flow, license, and vulnerability gates. Mobile Chromium/WebKit passes 22 tests with six intentional platform-policy skips.
+
+Foreground-masked ORB fallback was rejected and removed: it retried only twice in the canonical matrix, succeeded once, did not improve the target score, and increased mean support error. Strict attachment-homography gating and additional observation-sharing candidates were also rejected after measured opportunity bounds were too small or no safe quality-independent gate existed. The accepted workspace changes ownership only; it adds no solver, quality threshold, model, asset, dependency, worker, feature flag, compatibility branch, migration, legacy API, or alternate frame path. Physical-iPhone memory pressure, thermals, active-frame latency, orientation, and WebGL coexistence remain target-device measurements.
+
+### Engine-owned parametric PnP workspace
+
+`ParametricSurfaceReconstructor` now owns one eight-handle OpenCV PnP workspace for its complete configured lifetime. Camera intrinsics and zero distortion are constructed once. Object/image inputs reuse `Mat.create()` storage and are filled directly through their `data32F` views; rotation, translation, inlier, and Rodrigues outputs retain their native handles across solves. The previous per-solve `matFromArray()` plus `try/finally` allocation path was removed completely.
+
+The optimization required an explicit engine lifecycle rather than an isolated cache. Every reconstruction engine now exposes `dispose()`, `ImageAnchorService` invokes it before mode replacement, anchor replacement, and service teardown, and the lazy depth-fusion wrapper prevents a late dynamic import from publishing an implementation after its owner has been disposed.
+
+- Baseline instrumentation on the 21-report parametric quick slice observed 88 PnP solves and 704 PnP-specific `Mat` create/delete lifecycles. The final path creates eight handles for each of the 21 engine sessions, reducing that slice to 168 lifecycles: 536 fewer, or 76.1%. Variable observation counts resize the two input allocations without changing their JavaScript/native handle owners.
+- The paired parametric slice preserves the exact summary quality SHA-256 `860c90678071f11004ca81534e818a546f230f0354421a53ab8b64a94ec8d3c8` and the same 17 strict failures. Mean active `reconstructionUpdate` falls from 2.688260 to 2.628530 ms (2.22%), display-amortized cost from 0.637423 to 0.623260 ms, and total measured reconstruction time from 865.62 to 846.39 ms. These desktop/WASM timings are supporting evidence; the lifecycle count is the deterministic result.
+- The complete 84-report contract remains exact at SHA-256 `94d44c76c2967ec11c933d1c19d0558bf49e888701382c17d6a595ee4624886e`, with the pinned 188 refresh attempts, 77 refreshes, 111 no-reference failures, 22 reinitializations, 253 ORB extraction frames, and 26 learned-relocalization extraction frames.
+- RED coverage requires one unchanged native-handle tuple across solve sizes, exact release of all eight handles, disposal at both service replacement boundaries, a disposable factory contract for every engine, and safe cleanup when lazy depth fusion resolves after disposal.
+- The first lifecycle implementation exceeded the production anchor-worker raw-size budget by 946 bytes. The final fixed-schema tuple and compact ownership code keep the worker at 319,991 bytes under the unchanged 320,000-byte limit; no budget was raised.
+- Final verification passes 208/208 focused tests, 107/107 complete vision tests, and 731/731 release tests, plus all 32 production assets, eight bundle budgets, the 99-file anchor-flow audit, 248 open-source dependency components, and zero vulnerabilities. Mobile Chromium/WebKit passes 22 tests with six intentional platform-policy skips.
+
+The accepted path changes allocation and lifetime ownership only. It adds no solver, pose branch, threshold, cache spanning engines, model, asset, dependency, worker, feature flag, compatibility layer, migration, legacy API, or alternate PnP path. Physical-iPhone Safari/Chromium latency, allocator pressure, thermals, orientation, and WebGL coexistence remain target-device measurements.
+
+### Phase-aware target-loss and compound-capture hard benchmark
+
+The benchmark now has a separate hard protocol instead of making the representative matrix larger and less interpretable. Six exact-ground-truth scenes combine difficult motion or repeated occlusion with deterministic low-light noise, exposure blur, and rolling-shutter readout. A seventh 36-frame scene removes a laminated target completely for 12 frames, introduces a target-like decoy for eight of them, and returns the target more than 100 pixels away under rolling shutter and motion blur.
+
+Target absence is an explicit phase, not an extreme coordinate error. The fixture publishes no object corners or support pixels while the target is absent. Hard replay disables refreshed synthetic support and suppresses synthetic depth for those frames, so neither reconstruction mode receives an annotation-derived location oracle. General tracking accuracy is computed only where the target exists; separate metrics count false tracking while absent and recovery after re-entry. A legitimate re-entry displacement is not classified as within-track jitter.
+
+- The canonical hard run contains seven scenarios across all four reconstruction modes, or 28 replays. It currently records 26 strict failures, five severe and 17 high-risk cases, mean risk `46.69451430432069`, and 23/40 post-occlusion recoveries within eight frames.
+- The full-loss slice exposes the next algorithmic failure without weakening the gate: all four modes report a tracked position on all 48 absent replay frames and recover 0/4 re-entry windows within eight frames. Recovery latency is therefore pinned at the 14-frame failure sentinel. The directional contract accepts any improvement but rejects additional false locks, slower recovery, lower partial-occlusion recovery, more failures, or higher aggregate risk.
+- Sequence generation is deterministic and shared across the four mode runs. The benchmark measures mode behavior against identical bytes without paying four independent rendering passes or allowing one mode to receive a different noise realization.
+- Coverage and reports now group capture and event axes explicitly. The canonical quick quality projection deliberately changes to SHA-256 `32f0ce849412552773c285359137387d992b5b8cb49752ce2ebc66ccb5f19e43`; its 84-replay behavior and exact refresh/reinitialization/ORB/XFeat cadence remain unchanged.
+- [TAP-Vid](https://github.com/google-deepmind/tapnet/tree/main/tapnet/tapvid) is the strongest next source for licensed point tracks plus occlusion annotations, while [DAVIS](https://davischallenge.org/) supplies dense object masks. They are not presented as executed evidence yet: the existing external-fixture path validates files but has no video decoder, coordinate adapter, or metric evaluator, and source-video licensing varies by subset. A future import must pin checksums, preserve attribution, decode frames, adapt annotations, and execute the same phase-aware evaluator before it can affect a quality claim.
+- Final verification passes 118/118 complete vision tests and 735/735 release unit tests, five capability packs, real depth and XFeat inference, the 52-target head contract, 32 production assets, eight bundle budgets, a clean 102-file anchor-flow audit, 248 open-source dependency components, and zero vulnerabilities. Mobile Chromium/WebKit passes 22 tests with six intentional platform-policy skips.
+
+The hard protocol adds no production model, asset, dependency, worker, algorithm branch, feature flag, compatibility layer, migration, or legacy benchmark path. It makes the previously unmeasured loss/re-entry contract executable and leaves the exposed failure for the next algorithm change.
+
+### Capture-timestamped display-rate motion prediction
+
+The overlay no longer treats the latest 15 Hz CV result as a pose that must remain frozen until the next React snapshot. The anchor store keeps its coalesced UI subscription, but also exposes a non-React live-pose subscription. `OverlayScene` consumes that stream directly and evaluates one bounded constant-velocity predictor during demand-rendered frames. The predictor uses the `requestVideoFrameCallback` capture timestamp rather than worker-response time, so processing latency remains part of the prediction horizon. This follows the browser frame-timeline boundary defined by the [requestVideoFrameCallback specification](https://wicg.github.io/video-rvfc/) and preserves the speed/lag principle described by the original [One Euro Filter paper](https://citeseerx.ist.psu.edu/document?doi=bae5c9639ccc3d8691b1a8d1578b9f765e7ef188&repid=rep1&type=pdf) without changing the CV filter itself.
+
+The motion owner is deliberately small and bounded. Two consecutive samples define velocity; prediction stops after one 15 Hz tracking interval; velocity is capped at 0.36 px/ms; one presentation step cannot exceed 12 px; non-monotonic samples fail immediately; target loss or anchor replacement resets all motion. Segmentation-only worker responses retain the preceding capture timestamp and therefore cannot masquerade as motion observations. Demand rendering continues only until the prediction horizon expires, while speech and microphone animation retain their existing scheduler.
+
+- RED contracts cover constant motion, capture-rate interpolation, prediction-age/speed/step limits, reset, invalid budgets, non-monotonic time, high-rate store delivery without React publication, display-position projection without state mutation, and segmentation-only timestamp ownership.
+- The benchmark runs the same predictor at 60 Hz while source frames remain 30 Hz and CV admission remains 15 Hz. Per-update `vision:quality` remains raw, so presentation work cannot hide a CV regression.
+- On the exact seven-report sparse hard slice, mean risk falls from `49.30151167907706` to `48.107803839364045` with the same one pass and six diagnostic failures. Every report's aggregate risk improves; glossy-phone maximum anchor error falls from `42.0914` to `36.0988` px, and glossy-can mean error falls from `18.0241` to `16.6402` px.
+- The canonical 28-report hard contract passes at mean risk `42.8498883005434`, 26 strict diagnostic failures, three severe cases, 19 high-or-severe cases, 27/40 post-occlusion recoveries, no false tracked admitted frame during target absence, and complete target-loss recovery within two frames.
+- The canonical quick result is 21/63 pass/fail with mean risk `35.52347796402586` and deterministic projection SHA-256 `c2d6303bcd7747804743d566883b5f08cf1aa9290cc9d98ba49e9d4bbfd5bade`. Two identical runs produce byte-identical coverage, quality, cadence, and benchmark structures.
+- Across the hard matrix, the predictor averages `0.00239` ms per source frame in Node, peaks at `0.06021` ms, and contributes `0.00119` ms per simulated 60 Hz display frame. These figures establish mechanism cost, not physical-iPhone render latency.
+- Verification passes 895/895 source tests, 32 mobile Chromium/WebKit tests with ten intentional platform-policy skips, five capability packs, real depth and XFeat inference, the compressed 52-morph head contract, 33 production assets, eight bundle budgets, a clean 108-file flow audit, 253 open-source dependency components, and zero vulnerabilities. The production anchor worker remains within its unchanged 320 KB raw budget at 319.89 KB.
+
+The rejected cadence-scaled CV step prototype is absent: although it reduced the glossy-phone mean error, it raised sparse hard mean risk from `49.3015` to `49.5544`, doubled the worst displayed step to 24 px, and removed planar-book reconstruction readiness. The accepted path changes only the presentation owner and benchmark representation. It adds no model, asset, dependency, CV branch, worker message field, feature flag, compatibility layer, migration, legacy API, or alternate tracker. Physical-iPhone Safari/Chromium latency, thermals, orientation, and WebGL coexistence remain target-device measurements.
+
+### Geometric partial-occlusion admission and one recovery displacement owner
+
+Lucas-Kanade reports a status and error for each feature; a status bit means that the feature flow was found, not that the surviving set still proves object motion. HOL therefore keeps its existing 50% retention threshold as the ordinary tracking-success boundary. On a low-retention frame, the tracker may additionally publish a robust similarity consensus over accepted, object-owned tracks. This follows the separation in the official [OpenCV LK contract](https://docs.opencv.org/4.10.0/dc/d6b/group__video__track.html) and uses the same RANSAC-style inlier reasoning exposed by OpenCV's [limited affine estimator](https://docs.opencv.org/4.13.0/d9/d0c/group__calib3d.html). It also preserves the local-motion-first, global-relocalization-on-loss ordering described by [ORB-SLAM](https://arxiv.org/abs/1502.00956).
+
+The evidence gate is intentionally narrower than ordinary LK. It requires at least ten current-frame, object-owned tracks; at least 70% robust inliers; two-dimensional reference coverage of at least 20 px per axis; confidence at least 0.4; average residual at most 8 px; scale in `[0.75, 1.35]`; and absolute rotation at most 0.35 rad. The tracker still returns `success: false` and its unmodified retention ratio. `ImageAnchorService` alone may admit the evidence for one frame, and only for the selected parametric-surface mode when the target was present on the preceding frame, there was no preceding tracking failure, the selected target is curved, and its reconstruction map is already ready with confidence at least 0.6, at least 16 mature landmarks, and at least 12 prior pose inliers. The refreshed object mask must then retain at least eight object-owned landmarks. Every other mode and a missing target therefore remain on the ordinary recovery path.
+
+The second defect had the same ownership shape: support correction was bounded, but a later successful keypoint reinitialization could replace the anchor position after that bound. Recovery now has one frame-start displacement owner. Support correction and reinitialization both submit a candidate to the same envelope, and the total applied movement for the frame—not each individual correction—is limited. Reinitialization telemetry records applied displacement and whether the shared envelope limited it.
+
+- A real label-bottle replay exposed the two failures. Sparse reconstruction had zero failed frames but a 21.1001 px recovery jump; parametric surface had one failed frame even though 10 of 12 surviving flows formed a coherent consensus with 7.3427 px average residual.
+- Sparse recovery now keeps zero failed frames and lowers the maximum jump to exactly 8 px; mean anchor error improves from `12.30346` to `11.81612` px. Parametric recovery removes the failed frame, preserves its prior 11.1049 px maximum jump, and improves mean error from `7.09492` to `6.97533` px.
+- The deterministic per-update quality matrix improves from 82/84 to 84/84 passes. The hard 28-report directional contract remains unchanged and passes: 26 diagnostic failures, mean risk `42.8498883005434`, 27/40 partial-occlusion recoveries within eight frames, zero false admitted locks during target absence, and 100% re-entry recovery within two frames.
+- The production-cadence quick matrix remains 21/63 pass/fail and now has mean risk `35.60299467859217`. Its exact cadence changes to 213 refresh attempts, 70 refreshes, 143 `no-reference-transform` failures, 70 refresh GFTT calls over 3,873,713 pixels, 25 reinitializations, 257 ORB extraction frames, and 26 learned-relocalization extraction frames. The intentional quality projection is pinned at SHA-256 `a8a8b06d47dc4fb74dc364b65fb275cb5817f90a55b4b777f24fdbb9cff70416`.
+- Regression coverage proves coherent and incoherent low-retention sets remain distinct, the tracker never fabricates success, service admission rejects lost, planar, weak, and repeated-failure states, and late reinitialization cannot exceed the shared frame envelope. Complete source verification passes 900/900 tests.
+- The first production build exceeded the unchanged 320,000-byte anchor-worker budget by 2,327 bytes. The final implementation shares one mature-curved-map predicate across recovery owners and removes redundant per-point debug string construction while preserving structured aggregate tracking diagnostics. The emitted worker is 319,859 bytes; the budget was not raised.
+- Production verification passes five capability packs and 13 source assets, real depth and XFeat inference, the 52-morph head contract, 33 emitted assets, eight bundle budgets, a clean 108-file flow audit, 253 open-source dependency components, zero vulnerabilities, and 32 mobile Chromium/WebKit tests with ten intentional platform-policy skips. The optional external real-video fixture pack was not installed, so its explicit runner reported that limitation and skipped rather than substituting synthetic evidence.
+
+The robust fit is evaluated only after ordinary LK has already failed its retention threshold, so it adds no successful-frame or steady-state CV work. The accepted path adds no model, asset, dependency, worker, feature flag, compatibility branch, migration, legacy API, or alternate tracker. Physical-iPhone Safari/Chromium latency, thermals, memory pressure, orientation, and WebGL coexistence remain target-device measurements.
+
+### Rank-conditioned three-view surface-prior bootstrap
+
+At production cadence, the worst free-tap can replay admitted only three coherent sparse views before early occlusion. The reconstruction configuration required four, while its support selector also required every landmark to survive every initial view; the configured observation ratio therefore had no effect at the exact bootstrap boundary. The map remained unavailable through the occlusion and was later reset during support recovery.
+
+[Tomasi and Kanade's factorization result](https://kilthub.cmu.edu/articles/journal_contribution/Shape_and_motion_from_image_streams_a_factorization_method_/6609482) establishes that three orthographic images can determine shape and motion in principle, while also stressing that viewing direction must change materially and that additional frames supply redundancy. HOL now spends that minimum-view risk only where a non-planar target-surface prior already supplies object geometry and interrupted visibility makes partial landmark support necessary to reach the original spatial floor. A stream with enough landmarks observed in all three views waits for a fourth view. The fast path accepts landmarks observed in two views because the missing measurement is completed by the existing robust affine reference transform. Its centered measurement matrix must contain three non-zero components and its third eigenvalue must exceed the fourth by at least 4×. This rank gap rejects noisy/non-rigid triples; deficient triples remain in mapping. Once a fourth view exists, the previous four-observation support floor is restored. Generic reconstruction retains its six-view policy. This follows the same safe-initialization principle as [ORB-SLAM](https://doi.org/10.1109/TRO.2015.2463671): ambiguous initialization is rejected rather than published and repaired later.
+
+- RED coverage distinguishes a well-conditioned, partially observed three-view cylinder from a fully observed stream that must wait for view four, identical-view rank deficiency, noisy low-gap factorization, insufficient spatial support, and four-view transient tracks. All six boundaries fail closed.
+- In the early-occlusion free-tap can replay, reconstruction readiness rises from 0% to 47.6%, 8 px post-occlusion recovery rises from 0% to 100%, the recovery maximum falls from 14 frames to one, and risk falls from `66.03875172766351` to `46.24421467440625`. The trade-off remains explicit: mean/max 2D error rise from `15.6769/27.5161` px to `19.0347/37.6632` px after the later support reinitialization; improving that reinitialization is still a separate tracking target.
+- Across the canonical quick matrix, pass/fail remains 21/63, mean risk falls from `35.60299467859217` to `35.36734542795815`, and maximum risk falls from `66.03875172766351` to `65.75226686902396`. Two independent runs produce the same quality projection SHA-256 `1f4241f636d000b3b569edec95f3b7606de26450d0d0dd5d0f9abb0636cbdf4e`.
+- The exact quick cadence is 209 refresh attempts, 70 refreshes, 139 `no-reference-transform` failures, 70 refresh GFTT calls over 3,873,713 pixels, 25 reinitializations over 1,180,818 GFTT pixels, 257 ORB extraction frames, and 26 learned-relocalization extraction frames.
+- The hard contract remains green and numerically identical to baseline: `42.8498883005434` mean risk, 26 diagnostic failures, three severe cases, 19 high-or-severe cases, 27/40 partial-occlusion recoveries, zero false admitted locks, and full-loss recovery within two frames.
+- Per-update `vision:quality` remains 84/84. Release verification passes 906/906 source tests, 33 hashed production assets, eight bundle budgets, the 108-file flow audit, 253 open-source dependency components, and zero vulnerabilities. Mobile Chromium/WebKit passes 32 tests with ten intentional platform-policy skips. The production anchor worker is 319,881 bytes under the unchanged 320,000-byte raw limit; no model, asset, dependency, worker, alternate reconstruction branch, feature flag, compatibility layer, migration, or legacy API was added.
+
+### Cross-cue absolute recovery for generic free taps
+
+The three-view bootstrap exposed a second, independent error: after early occlusion, the current-frame similarity tracker and refreshed object mask were both near the true can position, while the filtered anchor remained more than 30 px behind. Reinitializing the landmark map around that stale anchor made the later map internally coherent but spatially biased. Extending the existing motion hold to another semantic shape was rejected: after a trajectory reversal, its stale constant-velocity prior worsened the target mean error from `19.03` to `24.03` px and maximum error from `37.66` to `48.37` px.
+
+HOL now treats an absolute map reset as a strict cross-cue decision, not as another position fallback. It is eligible only for a `generic-object` free tap after the existing support-recovery and failed-reference gates have passed. The current object-wide similarity transform must retain at least eight inliers; the trusted non-local interactive mask and tracker anchors must agree within 6% of object extent, clamped to 6–14 px; and the existing filtered anchor must trail the tracker by more than two normal position envelopes. The reset corrects map coordinates once. Known bottles, cans, cups, and mugs remain on their class-specific bounded recovery. This is an implementation-specific inference from the separation of local tracking and relocalization in [ORB-SLAM](https://arxiv.org/abs/1502.00956), the per-feature status/error evidence in OpenCV's [Lucas–Kanade contract](https://docs.opencv.org/4.10.0/dc/d6b/group__video__track.html), and research showing that optical flow and segmentation can provide complementary evidence ([SegFlow](https://openaccess.thecvf.com/content_iccv_2017/html/Cheng_SegFlow_Joint_Learning_ICCV_2017_paper.html)); none of those sources prescribe HOL's thresholds.
+
+- RED coverage proves acceptance at the exact generic/trusted/eight-inlier/large-lag/agreeing-cue boundary and rejection for insufficient lag, mask disagreement, low confidence, and a known bottle class. A real-OpenCV production-cadence replay proves the intended reset and its exact quality bounds.
+- In the early-occlusion free-tap can replay, mean error falls from `19.034689627789888` to `12.896708227249885` px, maximum error from `37.66324451608213` to `32.40171751463534` px, 8 px accuracy rises from `19.05%` to `38.10%`, and risk falls from `46.24421467440625` to `42.54998744988418`. One-frame post-occlusion recovery and the ready three-view map are preserved.
+- Exact full-report A/B changes only that one replay among 84; the other 83 reports, every failure-stage count, and the complete refresh/reinitialization/ORB/XFeat cadence are unchanged. Quick mean risk improves from `35.36734542795815` to `35.32336653242813`; the intentional projection is SHA-256 `2d9df2e31dbba12bd734dac5a3cacfa6577adbea74cc16960c56e2fd787a361d`.
+- The first broad gate exposed a 33.17 px source-frame jump in the known label-bottle replay. Restricting absolute correction to generic targets restores its 8 px maximum jump and keeps the complete per-update matrix at 84/84. The hard directional contract remains exact at mean risk `42.8498883005434`, 26 diagnostic failures, three severe cases, 19 high-or-severe cases, 67.5% partial-occlusion recovery, zero false admitted locks, and full-loss recovery within two frames.
+- Vision verification passes 385/385 tests; complete release verification passes 908/908 tests, the 108-file flow audit, 253 open-source components, and zero vulnerabilities. Mobile Chromium/WebKit passes 32 tests with ten intentional platform-policy skips. All eight production bundle budgets pass with a 319,899-byte anchor worker under the unchanged 320,000-byte raw limit. Repeated 2D distance and vector-norm formulas share two allocation-free primitives; no model, asset, dependency, worker, alternate tracker, feature flag, migration, compatibility branch, or legacy path was added.
+
+### Object-local ORB keyframe novelty
+
+Keyframe admission now gives sparse absolute motion, well-supported absolute motion, and planar residual deformation independent owners. General views retain the strict 4 px boundary until at least 13 landmarks are shared with the latest keyframe; only that richer support admits the 5 px redundancy boundary. Proven rigid-planar targets continue to remove common screen translation, but use a separate 4 px residual boundary because affine relocalization can recover translation while viewpoint deformation still contributes descriptor evidence. Every path retains new-landmark admission and the unchanged full-frame ORB detector/descriptor path.
+
+- The accepted evidence-aware boundary reduces canonical quick keyframe extraction from 257 to 254 admitted frames. Exact quality remains unchanged at SHA-256 `2d9df2e31dbba12bd734dac5a3cacfa6577adbea74cc16960c56e2fd787a361d`: 21/63 pass/fail, mean risk `35.32336653242813`, eight severe cases, and identical refresh, reinitialization, learned-recovery, failure-stage, and hard-recovery behavior.
+- Dedicated unit boundaries prove 4.5 px absolute motion is redundant with 13 or more shared landmarks but novel with 12, while 3.5 px translation-normalized deformation is redundant and 4.5 px is novel. Three demanding release replays remain pinned: mature planar descriptor validation and two independent early-occlusion mug attachment trajectories.
+- A universal 5 px boundary removed the same three quick-matrix calls but lost the second mug recovery invariant at 11–12 shared landmarks. Raising it to 6 or 7 px also failed the first mug and mature planar targets despite the 84-report per-update gate accepting 7 px. An 8 px planar candidate lost a per-update strict pass. Universal translation invariance, full-frame ROI, a foreground mask, direct supplied-keypoint descriptors, and a 420-feature storage cap changed recovery evidence or ranking and were removed completely.
+- The change adds no extractor, descriptor format, model, asset, dependency, worker, compatibility path, feature flag, migration, legacy API, or alternate recovery path. Physical-iPhone sustained latency, thermals, memory pressure, orientation, and WebGL coexistence remain target-device measurements.
+- Final verification passes 84/84 per-update quality reports, the exact hard regression contract, 908/908 source tests, 33 production assets, eight bundle budgets, the 108-file flow audit, 253 open-source dependency components, zero vulnerabilities, and 32 mobile Chromium/WebKit tests with ten intentional platform-policy skips. The production anchor worker is 319,871 bytes under its unchanged 320,000-byte limit. The external annotated-video fixture pack is not installed, so its dedicated runner reports the missing manifest and skips explicitly.
+
+### Executable annotated-video benchmark contract
+
+The external fixture path no longer treats file presence as benchmark evidence. Its previous manifest admitted arbitrary tasks and annotation names, while the runner checked only that files existed and exceeded a minimum size. A corrupt, unrelated, or never-decoded video could therefore report success without invoking tracking. The replacement is one versioned causal point-track owner: exact compressed RGB frames, normalized TAP-Vid-style trajectories and occlusions, independent first-visible queries, source frame rate, CC-BY-4.0 attribution, content hashes, exact byte lengths, and explicit quality floors. Unknown fields, unsafe paths, duplicate asset ownership, duplicate query IDs, missing queries, non-finite coordinates, visible out-of-raster points, decompression expansion mismatches, and floor regressions fail immediately.
+
+The evaluator follows Google DeepMind's official TAP-Vid definitions: it excludes the query frame, scales predictions to the 256 px evaluation raster, uses strict `<` distance boundaries at 1/2/4/8/16 px, reports accuracy without hiding coordinate error behind predicted occlusion, computes threshold-specific visibility Jaccard, and aggregates counters across independent queries. Each query receives its own `ImageAnchorService` and no information from sibling annotations. Evaluation uses the default sparse mode, the fixture's declared source cadence, production 15 Hz update admission, and the existing bounded presentation predictor. RGB decoding is pure JavaScript with Node's built-in gzip support and a declared-size expansion ceiling; no codec, Python runtime, model, or npm dependency was added.
+
+- The first executed pack is official [TAP-Vid RGB-Stacking](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md) sample 34, selected because it combines rendered rigid objects, robot interaction, rapid motion, repeated occlusion, and long visibility changes. The source archive is 187,291,581 bytes; its SHA-256 is `ba0cec640deb65ab510bc3920cdaf8b7a2e756fce9fb339199c557ade436b0cc`. The compact fixture contains 250 exact 256×256 RGB frames and all 30 point tracks in 4,507,094 bytes across two files.
+- Three independent first-frame queries cover a moving gripper point and two red-cube surface points. At production cadence they evaluate 747 post-query frames, including 601 visible ground-truth points, and admit exactly 125 tracker updates per query.
+- The measured baseline is average Jaccard `0.22874138101326952`, average points within threshold `0.3011647254575707`, and occlusion accuracy `0.5957161981258366`. Threshold accuracy is `0.02163/0.06988/0.41597/0.47920/0.51913` at 1/2/4/8/16 px. The low 1–2 px results and weak visibility prediction are now explicit algorithm targets rather than hidden by the synthetic matrix.
+- Installed regression floors are `0.22` average Jaccard, `0.29` average threshold accuracy, and `0.58` occlusion accuracy. They leave measurement headroom while rejecting a meaningful loss; improvements require no manifest change.
+- The official data exposed a real format boundary during RED-to-GREEN validation: occluded trajectory coordinates may lie outside normalized raster bounds. The final validator requires every coordinate to be finite, constrains only visible samples to `[0,1]`, and still requires the query to be the first visible point.
+- OpenCV's Node loader also registered process-global error handlers from inside the Emscripten runtime. A later fixture error consequently printed the complete multi-megabyte minified runtime. The loader now snapshots process error ownership, removes only handlers introduced by OpenCV, and has a regression test proving both listener sets remain unchanged.
+- Final verification passes the 16 focused manifest/annotation/metric/runtime tests, all 397 strict vision tests, 84/84 representative quality reports, and the exact hard regression contract. Release verification passes 920/920 source tests, 33 production asset checks, eight bundle budgets, a 110-file anchor-flow audit with zero omissions/defaults/missing diagnostics, SBOM generation, 253-component open-source license verification, and zero vulnerabilities. Mobile Chromium/WebKit passes 32 tests with ten intentional platform-policy skips.
+
+The validation-only schema, task list, minimum-size acceptance, annotation-name map, old environment names, and old command were removed rather than retained as compatibility paths. The production application and bundle receive no benchmark asset or runtime code. Physical-iPhone camera, thermal, memory, orientation, and WebGL measurements remain separate target-device evidence.
+
+### Sparse candidate temporal continuity and per-query regression ownership
+
+The annotated replay exposed a boundary mismatch rather than a weak version of the full pose tracker. Full HOL pose geometry deliberately requires eight landmarks, but progressive candidates with six or seven surviving landmarks were not allowed to run Lucas-Kanade at all. Their retained gray-frame history therefore stopped advancing even though a similarity attachment is mathematically observable. The production tracker now owns two explicit operations over one implementation: `trackFrame` keeps the eight-landmark pose quorum, while `trackCandidate` uses a six-landmark temporal-continuity quorum. `ImageAnchorService` calls the latter only while the anchor remains a candidate; it does not promote the result to pose evidence or weaken tracking/reconstruction admission.
+
+This separation follows the official [OpenCV pyramidal Lucas-Kanade contract](https://docs.opencv.org/5.0/dc/d6b/group__video__track.html) while respecting the distinction in [TAP-Vid](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md) between point position and visibility. It is also structurally consistent with [TAPIR](https://arxiv.org/abs/2306.08637): coarse/candidate evidence and temporal refinement have different ownership, rather than one threshold pretending to certify both.
+
+- On the official 250-frame RGB-Stacking sample, average Jaccard improves from the previously recorded `0.22874138101326952` to `0.2600768464726836`; average threshold accuracy improves from `0.3011647254575707` to `0.3853577371048253`; occlusion accuracy improves from `0.5957161981258366` to `0.6398929049531459`. The accepted aggregate visible-point p95 is `63.289402165867884` px.
+- The two candidate-owned cube queries reach AJ `0.32040527537904834` and `0.3150035097567171`; the gripper query remains the limiting case at AJ `0.08213653523374206`, occlusion accuracy `0.321285140562249`, and p95 `59.12394073607965`. This weakest-query result is now a gate, not a detail hidden by the aggregate.
+- The fixture contract now requires three aggregate and three per-query limits. Installed floors are AJ `0.25`, average threshold accuracy `0.37`, occlusion accuracy `0.62`, per-query AJ `0.08`, per-query occlusion accuracy `0.31`, and per-query p95 at most `70` px. Unknown or missing fields fail manifest validation.
+- Reports expose visibility TP/TN/FP/FN, predicted-visible count, visible-point mean/p50/p95, tracking success, active-landmark and template-quality mean/max, state and readiness ownership, method counts, admitted updates, and bootstrap/update mean and p95 separately for visible and occluded phases.
+- Candidate-heavy queries average `1.96–2.15` ms bootstrap work with p95 `2.74–3.03` ms in Node. The gripper's rare transition path reaches `15.72` ms p95 and remains explicit. These are regression measurements, not physical-iPhone latency claims.
+
+The quorum sweep rejected five, seven, and the mathematical minimum of three. Three improved AJ to `0.24726005483148655` but raised aggregate p95 to `78.46935872615174`; five reached AJ `0.24981101995694507` with a worst-query p95 above `76` px; seven regressed AJ to `0.21906728871101722`. Six is the only tested boundary that maximized AJ and threshold accuracy while improving the accepted p95 tail. Reinitializing every sub-eight candidate regressed AJ to `0.1522859850362593`, and treating one coherent low-texture candidate step as full mapping regressed it to `0.11747473930608247`; both paths were removed. Full-rate CV, forward-backward LK, generic tap-time ORB, and a simplistic candidate-presence gate were also rejected and removed after their aggregate or failure-bucket regressions.
+
+Verification passes 921/921 source tests, the exact 28-replay hard directional contract at mean risk `42.8498883005434`, and the annotated fixture's strengthened aggregate and per-query floors. The accepted code adds no model, asset, dependency, worker message, feature flag, compatibility API, migration, or second tracking implementation.
+
+### Bounded dual-view learned appearance memory
+
+The remaining annotated failure was not an ORB threshold problem. The gripper query remained visible for 203 evaluated frames but underwent a 46-frame occlusion and returned with enough appearance change that the six retained ORB keyframes usually produced only two to four reciprocal matches. Weakening the global eight-inlier gate would therefore have converted missing identity evidence into a false-lock risk.
+
+Current online point trackers address long occlusions with explicit temporal memory or re-detection. Google DeepMind's [TapNet repository](https://github.com/google-deepmind/tapnet) now groups Online TAPIR and TAPNext/TAPNext++ around causal tracking and long-term stability, while [Track-On2](https://arxiv.org/abs/2509.19115) describes an online memory mechanism for long videos. HOL does not embed those end-to-end models: their runtime and deployment profile is not a demonstrated fit for the iPhone worker budget, and Meta's otherwise relevant [CoTracker](https://github.com/facebookresearch/co-tracker) repository is predominantly CC-BY-NC rather than a permissive production dependency. Instead, HOL applies the memory pattern to its existing permissive XFeat capability.
+
+An unproven free tap still cannot create learned identity evidence. For an unknown/generic target, once the existing ORB store accepts a mature keyframe—at least nine active tracks, eight object-owned tracks, and 0.65 tracking success—the same full frame and established landmark identities arm the initial XFeat view. The third accepted ORB keyframe may add one mature view; the two-view bound is final. Query features are extracted once, descriptor matching and robust geometry are evaluated independently per view, and selection prefers inlier count, then inlier ratio, then residual. Distinct reference geometries are never pooled. A rejected second view preserves the published first view at the core, worker-client, and service boundaries.
+
+Known bottle, can, cup, mug, and other semantic targets do not take this late generic path; their existing geometry-specific recovery remains authoritative unless they already passed the conservative tap-time planar gate. ORB remains first on every admitted recovery update. XFeat runs only when ORB fails and only every second admitted recovery update, which bounds learned inference to at most 7.5 Hz on the 30 Hz source / 15 Hz CV schedule. Both global paths still require eight geometric inliers and eight restored landmarks. Clearing the anchor invalidates both ORB and learned state, and no parallel tracker or fallback identity rule exists.
+
+- On the official 250-frame TAP-Vid RGB-Stacking sample, the bounded dual-view memory improves the accepted single-view aggregate AJ from `0.2888167288808251` to `0.29189255696038807`, average threshold accuracy from `0.45124792013311144` to `0.46322795341098166`, and occlusion accuracy from `0.7362784471218207` to `0.785809906291834`.
+- The limiting gripper query improves from single-view AJ `0.22299924716004718` to `0.2545695990968245`, occlusion accuracy from `0.6104417670682731` to `0.7590361445783133`, and p95 visible-point error from `67.32110391411184` to `45.91011311264051` px. It produces 143 true-visible predictions, 46 true-occluded predictions, zero false-visible occlusion frames, and 60 missed-visible frames.
+- The installed pack now enforces aggregate floors of AJ `0.28`, average threshold accuracy `0.44`, and occlusion accuracy `0.72`, plus per-query AJ `0.20`, occlusion accuracy `0.58`, and p95 visible-point error at most `69` px. These retain measured headroom while preventing the previous implementation from passing.
+- Diagnostics show 53 visible-phase ORB attempts, 23 learned attempts, and 18 successful geometric recoveries; the 46-frame occlusion contains 23 ORB attempts, 12 learned attempts, and zero accepted recoveries. Admitted-only storage events also prove that no keyframe is written during occlusion; event result/reason fields reset on the next frame while cumulative bank size remains available.
+- Running learned recovery every third admitted attempt was rejected because the limiting query fell below its existing floor at AJ `0.07781101623208582`. Every second attempt is the widest tested cadence that preserves the per-query contract. It also outperforms querying every attempt on aggregate AJ (`0.28882` versus `0.28089`) and visible-point mean error (`17.45` versus `18.35` px).
+- The second-view sweep rejected the second accepted keyframe because aggregate AJ fell below the release floor at `0.27985939268727933`, despite fewer visibility misses. The third keyframe maximized aggregate and limiting-query AJ; the fourth slightly improved threshold accuracy but reached only `0.2891072911341169` aggregate AJ, while the fifth regressed to `0.28707065565303436`. Replacing the long-term initial view instead of retaining it regressed aggregate AJ to `0.26099599152258335`; that experiment was removed.
+- The 28-replay hard feedback contract remains green and exact at mean risk `42.8498883005434`; its 26 diagnostic failures are unchanged. This confirms that the dual-view path does not alter the semantic hard scenarios. The XFeat worker measures `28142` bytes, and the production anchor worker measures `319841` bytes under the unchanged `320000`-byte raw limit.
+- The final annotated Node replay reports a `9.84` ms mean and `20.24` ms p95 admitted update for the gripper's visible phase, and `8.38`/`13.88` ms during occlusion. XFeat is isolated in its existing nested worker and has zero steady-state cost, but these measurements do not establish iPhone recovery latency, memory pressure, thermals, orientation stability, or WebGL coexistence.
+
+An initially broad mature-keyframe gate was rejected after the complete source corpus exposed four regressions in label-bottle, glossy-can, and handled-mug recovery that the hard subset did not cover. Scoping late arming to unknown/generic targets restored those class-specific paths without changing their thresholds. No model, asset, dependency, worker protocol, compatibility path, feature flag, migration, or legacy API was added. The accepted change reuses the single shipped XFeat model and its existing worker; the former single-reference storage was replaced completely by the bounded bank rather than retained as an alternate path.
+
+### Tree-shaken capability asset leaves
+
+Production source-map attribution showed that the anchor worker contained `7855` generated bytes from `capabilityPacks.js`, even though its only capability input is the OpenCV runtime URL. The generic `getCapabilityAsset(packId, assetId)` lookup necessarily retained every pack record, including model provenance and hashes for XFeat, Depth Anything, MediaPipe, ONNX Runtime, and the head GLB. Those records remain authoritative for validation and caching, but they are not runtime inputs to OpenCV tracking.
+
+The manifest now exports each content-hashed asset URL beside its immutable metadata record. Worker and lazy-runtime leaves import the exact URL they own; pack construction and generic lookup remain in the same manifest for cache, SBOM, license, and release consumers. Asset records, pack records, and their static constructors are explicitly pure, so Vite's ES-worker build can remove unused records. The identity contract proves every direct URL equals the URL in the frozen pack record and every generic lookup returns that same object—there is no duplicate registry or second asset path.
+
+This follows Vite's documented [ES-module worker](https://vite.dev/guide/features.html#web-workers) and [worker build](https://vite.dev/config/worker-options) boundaries, and applies bundler tree-shaking rather than adding another dynamic request. It also follows the general rule that [tree-shaking removes statically unused module branches](https://web.dev/articles/reduce-javascript-payloads-with-tree-shaking). No model, asset, worker, protocol, lazy-load transition, cache key, or runtime failure behavior changes.
+
+- Capability-manifest attribution in the anchor worker falls from `7855` to `1025` bytes. The complete worker falls from `319841` to `312955` bytes.
+- The anchor raw budget is tightened from `320000` to `315000` bytes, leaving `2045` bytes of headroom instead of `159`. A new `24000`-byte XFeat-worker budget closes the previous unbounded bundle class; its emitted implementation falls from `28142` to `21138` bytes.
+- The emitted Depth worker is `115605` bytes and the Interactive Segmenter implementation is `139348` bytes. All four CV workers reuse the same manifest and benefit without a worker-specific metadata copy.
+- The 84/84 quality matrix, exact hard mean risk `42.8498883005434`, and strengthened annotated aggregate/per-query floors remain unchanged. These are delivery-size results, not physical-iPhone parse, startup, memory, thermal, orientation, or WebGL-coexistence measurements.
+
+Final verification passes 930/930 source tests, 33 hashed production assets, all nine bundle budgets, and the 110-file anchor-flow audit with zero omissions/defaults/missing diagnostics. SBOM-backed verification accepts all 253 open-source dependency components and reports zero vulnerabilities. Production Chromium/WebKit passes 32 browser tests with ten intentional platform-policy skips, including emitted OpenCV, XFeat, Depth, and Interactive Segmenter worker execution.
+
+### Lazy personality service boundary
+
+Production source-map attribution showed that the optional personality path contributed the crop service, structured-output schemas, LocalAI transport, vision client, and LLM client to the mandatory camera shell. Constructing `PersonalityService` did not perform network work, but its static imports still required every user to download, parse, and compile that code before the start-camera interaction. The browser path does not need it until an accepted anchor requests object understanding.
+
+The camera session now owns a small `LazyPersonalityService` facade. Listener registration and idle metrics remain synchronous without importing the implementation. The first generation request performs one dynamic import and attaches the already-registered listeners to the single real service. Subject reset and session disposal advance explicit generations, so either operation wins an import already in flight; rejected imports clear the single-flight promise and can be retried. Platform collaborators are still validated synchronously before any optional code is loaded. The direct `PersonalityService` remains the sole implementation rather than a second API or fallback path.
+
+This follows the platform distinction between [static and dynamic `import()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import), Vite's documented [dynamic-import build boundary](https://vite.dev/guide/features.html#dynamic-import), and the startup principle of [shipping only the JavaScript needed for the initial interaction](https://web.dev/learn/performance/code-split-javascript). No model, provider, prompt, schema, HTTP contract, image crop, session state, or user-visible fallback changes.
+
+- The mandatory app shell falls from `139871` raw bytes (`40.40` kB gzip) to `123734` raw bytes (`36.49` kB gzip): `16137` bytes, or 11.5%, leave the startup graph.
+- The optional personality implementation is a `18599`-byte raw (`5.32` kB gzip) chunk with a new `22000`-byte budget. The app-shell budget tightens from `140000` to `130000` bytes and retains `6266` bytes of headroom.
+- Total raw JavaScript across the shell and optional personality chunk rises by `2462` bytes because the explicit lifecycle facade is real code. This is a startup download/parse deferral, not a claim that total shipped code shrank.
+- Release verification rejects any HTML preload of the twelve emitted lazy runtime assets spanning anchor, selection, XFeat, depth, depth fusion, personality, speech, OverlayScene, React Three Fiber, and Three.js. A future static import cannot silently reverse the boundary while still passing byte budgets.
+- Lazy-boundary tests cover idle loading, single-flight reuse, listener forwarding/removal before and after loading, loaded reset, reset/dispose during import, malformed module exports, retry after rejection, strict config validation, idle metrics, and terminal disposal.
+- Final verification passes 942/942 source tests, 34 hashed production assets, all ten bundle budgets, the twelve-asset startup-preload exclusion, and the 112-file anchor-flow audit. The 84/84 quality matrix, exact hard mean risk `42.8498883005434`, annotated aggregate/per-query floors, 253-component open-source license gate, zero-vulnerability audit, and 32-pass production browser suite remain green.
+
+These bundle results do not establish physical-iPhone network, parse, compile, INP, memory, or thermal improvement. They establish a smaller and mechanically guarded startup dependency graph; device timing remains a separate acceptance measurement.
+
+### Lazy field-control drawer boundary
+
+Production source-map attribution showed that the closed field-control drawer still contributed its four tabs, reconstruction preview, personality panel, diagnostic formatting, and control implementations to every camera startup. Only the compact HUD is required before the user opens diagnostics. The persistent `FieldControls` shell now owns the HUD, open state, selected tab, and trigger-focus return, while one `FieldControlsDrawer` implementation is loaded through a top-level React `lazy()` boundary only when `open` becomes true. A lightweight Suspense state is named, announced, focusable, and independently closeable; the real drawer focuses its close control when the chunk resolves. Close/reopen retains the selected tab without keeping the drawer mounted or loading its implementation early.
+
+This follows React's documented [`lazy`](https://react.dev/reference/react/lazy) and [`Suspense`](https://react.dev/reference/react/Suspense) boundaries, Vite's documented [dynamic import behavior](https://vite.dev/guide/features.html#dynamic-import), and WAI-ARIA's [dialog focus guidance](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/). It adds no route, dependency, second drawer, compatibility facade, feature flag, migration, or alternate control path.
+
+- The main app shell falls from `123734` raw bytes (`36.49` kB gzip) to `97091` raw bytes (`30.38` kB gzip): a reduction of `26643` bytes, or 21.53%.
+- The complete startup JavaScript graph, including the entry script and every generated module preload, falls from `325676` to `299118` raw bytes: `26558` bytes, or 8.15%. This aggregate prevents automatic shared-chunk extraction from hiding startup growth behind a smaller entry filename.
+- The deferred drawer is `28579` raw bytes (`7.69` kB gzip). Complete startup-plus-drawer JavaScript is `327697` bytes, `2021` bytes larger than the former startup graph, and CSS grows by 47 raw bytes for the closeable loading state. This is interaction-gated download/parse deferral, not total-code reduction; first open owns the extra request.
+- The app-shell limit tightens from `130000` to `105000` bytes, the aggregate startup-JavaScript limit is `310000`, and the drawer has its own `32000`-byte limit. The verifier requires exactly one asset for ordinary owners and explicitly requires the two-file ES bootstrap/implementation shape for the anchor and selection workers.
+- Production Chromium proves zero drawer requests on the start screen and after camera activation, exactly one request on first open, and no second request after close/reopen. The same browser contract preserves selected-tab state, Escape, initial focus, focus return, WCAG A/AA checks for every tab, and controlled values across camera restart.
+- Final verification passes 942/942 source tests, 36 hashed production assets, 11 per-owner bundle budgets, the `299118`-byte aggregate startup gate, 13 deferred-asset exclusions, the 112-file flow audit, 253-component license verification, and zero vulnerabilities. Quality remains 84/84, the 28-replay hard mean risk remains exactly `42.8498883005434`, annotated aggregate/per-query floors pass, and production Chromium/WebKit passes 33 tests with 11 intentional platform-policy skips.
+
+These measurements prove the emitted dependency and request boundaries. Physical-iPhone download, parse, first-open latency, INP, memory, and thermal effects remain target-device evidence.
+
+### Consumer-owned diagnostic derivation
+
+Source-map attribution after the drawer split exposed two residual startup owners that the closed camera HUD did not consume: `anchorDiagnostics.js` contributed `8185` generated bytes and `runtimeReadiness.js` contributed `3154`. The readiness module's import of `readViteEnv` from the HTTP client also retained the local-AI transport and its bounded request/response graph in the mandatory shell. The permanent HUD now derives one compact status record from `anchorStatus.js`; the Anchor tab alone collects the rich 100-plus-field detail record, and the System tab alone collects runtime readiness. The old combined `describeAnchorState` path was deleted rather than retained as a facade.
+
+The boundary follows React's guidance that [`useMemo` does not improve first render and is only a performance optimization](https://react.dev/reference/react/useMemo), while [`lazy` defers a component's module graph until it is rendered](https://react.dev/reference/react/lazy). It also follows the platform distinction between [static imports and interaction-owned dynamic loading](https://web.dev/learn/performance/code-split-javascript). The runtime probe is post-commit rather than render-owned and uses Khronos's ratified [`WEBGL_lose_context`](https://registry.khronos.org/webgl/extensions/WEBGL_lose_context/) mechanism, whose specified purpose includes destroying the underlying graphics context and its resources when the application is finished with them.
+
+- The app shell falls from `97091` raw bytes (`30.38` kB gzip) to `80776` (`25.38` kB gzip): `16315` bytes, or 16.80%. Complete startup JavaScript falls from `299118` to `282803` raw bytes: the same `16315`-byte reduction, or 5.45%.
+- The rich drawer grows from `28579` to `37623` raw bytes because it now owns the diagnostic derivation and readiness UI. Its strict limit is `40000` bytes. The shared strict environment record is `427` bytes with a `1000`-byte limit; first drawer open therefore brings cumulative startup-plus-drawer JavaScript to `320853` bytes, `6844` bytes smaller than the prior `327697`-byte path.
+- The `7469`-byte local-AI transport is a separately budgeted deferred asset and is not requested by camera activation, drawer opening, or the System tab. Unknown environment keys throw at their small configuration boundary instead of silently returning `undefined`.
+- A warmed desktop microbenchmark reduces the closed-HUD median derivation from `0.105743` to `0.016590` microseconds per update, an 84.31% reduction; rich diagnostics while the Anchor tab is visible remain `0.106113` microseconds. The absolute desktop times are too small to claim a mobile frame-budget gain, but they prove the closed path no longer creates the rich record.
+- Production Chromium observes zero WebGL readiness probes before System is selected, then exactly one context creation and one explicit release. Unit contracts cover every compact camera, initialization, selection, stable, candidate, mapping, tracking, degraded, lost, pose-recovery, and unknown branch, the complete rich detail projection, WebGL2/WebGL1/unavailable probes, and the strict environment-key registry.
+- Bundle enforcement now covers 13 owners, a `90000`-byte shell, `290000` aggregate startup JavaScript, and 15 deferred preload exclusions. No compatibility export, feature flag, alternate diagnostics builder, dependency, model, route, migration, or legacy path remains.
+- Final verification passes 948/948 source tests, 38 hashed production assets, five capability packs with 13 assets, real Depth and XFeat inference, the 52-morph head contract, all 13 bundle budgets, and the 113-file anchor-flow audit with zero omissions, important-option defaults, or missing diagnostics. SBOM-backed verification accepts all 253 open-source dependency components and reports zero vulnerabilities. Quality remains 84/84; the hard 28-replay research baseline remains at 26 strict diagnostic failures and `42.8498883005434` mean risk; the installed 250-frame TAP-Vid RGB-Stacking fixture passes its aggregate and per-query floors at `0.7858099063` occlusion accuracy and `0.2918925570` average Jaccard. Production Chromium/WebKit passes 34 browser tests with 12 intentional platform-policy skips.
+
+These emitted-byte, microbenchmark, and production-browser results establish ownership and lifecycle behavior. Physical-iPhone download, parse, compile, first-open responsiveness, context pressure, orientation, memory, and thermal measurements remain target-device evidence.
+
+### Release-owned cross-protocol vision gate
+
+A forward-backward Lucas–Kanade candidate exposed a release-infrastructure gap rather than a safe production algorithm. [Forward-backward error](https://dspace.cvut.cz/entities/publication/4f34fd8a-dffe-4857-96c2-42ed3d5a8449) is a well-founded local consistency signal, and [OpenCV exposes the per-feature status and error](https://docs.opencv.org/4.10.0/dc/d6b/group__video__track.html) needed by a sparse implementation. The recovery-only variant reduced the 28-report hard mean risk from `42.8498883005434` to `42.40347451290409`, severe cases from three to one, and reconstruction failures from nine to eight. However, the independent per-update matrix fell from 84/84 to 80/84 and the exact quick workload shifted from 70 to 72 refreshes, 139 to 137 no-reference failures, 254 to 252 ORB frames, and 26 to 35 learned-relocalization frames. Less constrained variants also admitted four false locks during complete target loss. The candidate and all of its buffers, metrics, API surface, and tests were therefore removed completely.
+
+The generalized fix is one release-owned `verify:vision` contract. It sequentially requires the complete per-update quality matrix, the exact quick cadence/hash contract, and the hard full-loss/re-entry safety contract; [any non-zero npm script exit aborts the chain](https://docs.npmjs.com/cli/v10/using-npm/scripts/#exiting). `verify:release` invokes it before SBOM, license, and vulnerability verification, and the only CI release job invokes `verify:release`. This matches [GitHub's required-check model](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks). It also avoids GitHub's documented false-green edge case in which a skipped job reports success: the externally installed annotated fixture remains a separate protocol, and an explicit missing-fixture skip is never counted as release evidence.
+
+- The release contract is itself covered by a source test that pins the three commands, their order, the exclusion of the skippable annotated protocol, and the CI entry point.
+- The accepted production algorithm and its deterministic baselines remain unchanged: quality is 84/84; quick cadence remains 70 refreshes, 139 no-reference failures, 254 ORB frames, 26 learned-relocalization frames, and projection SHA-256 `2d9df2e31dbba12bd734dac5a3cacfa6577adbea74cc16960c56e2fd787a361d`; hard mean risk remains `42.8498883005434` with zero false admitted locks and recovery within two frames after full loss.
+- No model, asset, dependency, worker, tracker branch, feature flag, migration, compatibility layer, or legacy API was added. External annotated evidence remains available and strict when installed, but fixture provisioning must become hermetic before it can honestly join the required CI gate.
+- Final release verification passes 949/949 source tests, 38 hashed production assets, 13 bundle budgets, the 114-file architecture audit, 253 open-source dependency components, and zero vulnerabilities. The installed 250-frame TAP-Vid RGB-Stacking fixture independently passes at `0.785809906291834` occlusion accuracy and `0.29189255696038807` average Jaccard; production Chromium/WebKit passes 34 tests with 12 intentional platform-policy skips.
+
+### Bounded console evidence and explicit report artifacts
+
+Making three vision protocols release-owned exposed a second infrastructure problem: the nominally compact commands printed nested grouped summaries and full reports to stdout. One successful gate emitted 8,316,802 bytes and 204,875 JSON lines before npm headings. That output obscured the contract decision, made failure search unnecessarily expensive, and forced Node to serialize data no console consumer needed. Node documents that process-output writes can block under slow pipes or filesystems, while [Google Benchmark separates human console summaries from explicit file output](https://google.github.io/benchmark/user_guide.html#output-formatting). GitHub likewise recommends [workflow artifacts for persistent stress-test and diagnostic output](https://docs.github.com/en/actions/concepts/workflows-and-actions/workflow-artifacts), rather than treating the job log as the artifact store.
+
+HOL now applies that ownership boundary to both synthetic reporters. `vision:quality` prints its aggregate plus only failing reports and only their failed stages. An all-green run therefore has no report payload. Benchmark `--summary-only` prints quality/risk aggregates, aggregate recovery, five worst risks, aggregate performance and five owned bottlenecks, five slowest reports, exact refresh cadence, and both regression contracts. It projects before serialization, so discarded groups and raw stage/report payloads are never converted into a temporary multi-megabyte string. Supplying `--output` writes the detailed JSON and prints only its artifact summary; ordinary non-summary benchmark output remains available for explicit research runs.
+
+- Quality JSON falls from 1,572,443 bytes and 40,607 lines to 209 bytes and 14 lines on the 84/84 release run.
+- Canonical quick JSON falls from 3,627,631 bytes and 88,440 lines to 20,471 bytes and 641 lines. Its projection SHA-256 remains `2d9df2e31dbba12bd734dac5a3cacfa6577adbea74cc16960c56e2fd787a361d`, with the exact 70 refresh, 254 ORB, and 26 learned-relocalization cadence.
+- Hard JSON falls from 3,116,728 bytes and 75,828 lines to 20,242 bytes and 609 lines. Mean risk remains `42.8498883005434`; the safety contract still records zero false admitted locks and recovery within two frames after full loss.
+- Combined release JSON falls by 99.51% in bytes and 99.38% in lines. Focused contracts prove bounded projection, preservation of decision evidence, strict argument parsing, complete explicit artifacts, and that summary mode never touches discarded detail.
+- No replay, threshold, hash projection, model, asset, dependency, worker, CI branch, compatibility path, migration, or legacy reporter was added.
+- Final verification passes 954/954 source tests, 38 hashed production assets, 13 bundle budgets, the 115-file architecture audit, 253 open-source dependency components, and zero vulnerabilities. The independent installed TAP-Vid fixture retains `0.29189255696038807` average Jaccard and `0.785809906291834` occlusion accuracy; production Chromium/WebKit retains 34 passing tests with 12 intentional platform-policy skips.
+
+### Hermetic annotated-video release evidence
+
+The annotated protocol's evaluator was strict, but its provisioning contract was not release evidence: an absent cache manifest printed a successful skip, and the downloader itself also exited successfully when no user-supplied source manifest was configured. This made the strongest independent video benchmark local-state-dependent and kept it outside `verify:vision`. The official [TAP-Vid evaluator contract](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md) requires independent queries, supports first-visible queries, evaluates at a 256×256 raster, and publishes RGB-Stacking data directly. Google DeepMind's [repository license notice](https://github.com/google-deepmind/tapnet#license-and-disclaimer) releases the TAP-Vid annotations and RGB-Stacking videos under CC-BY-4.0.
+
+The accepted fixture is therefore repository-owned test evidence. It retains one demanding 250-frame RGB-Stacking sample in 4,507,094 bytes—4,154,289 compressed frame bytes plus 352,805 annotation bytes—rather than downloading and decoding the 187,291,581-byte upstream pickle archive in every job. Its largest file is 4.15 MB, far below GitHub's [50 MiB warning and 100 MiB hard file limit](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github#file-size-limits); Git LFS would add another external availability and tooling dependency without solving a size problem. The manifest now pins the upstream archive URL, 187,291,581-byte size, SHA-256, sample id, attribution, and license in addition to exact hashes and lengths for both derived assets.
+
+- `test:vision:annotated` has one location under `tests/fixtures/annotated-vision`; the cache directory, environment overrides, downloader, asset URLs, and missing-data skip were removed completely.
+- The manifest caps fixture count, selected-query count, source/archive size, compressed frames, annotations, and decoded RGB bytes before allocation. Asset hashes and lengths are verified again before decode, and gzip expansion remains exact and bounded.
+- The checked-in fixture joins `verify:vision`, so corruption, deletion, a quality-floor regression, or a license/provenance failure now fails `verify:release` and the single required CI job. The license gate validates the annotated manifest alongside the SBOM and capability assets.
+- Successful annotated stdout is 9,818 bytes/245 lines while retaining aggregate and per-query decision metrics. `--output` writes the complete 78,756-byte evidence artifact and prints only its locator and top-level aggregates.
+- Build validation rejects TAP-Vid, normalized track, and RGB fixture artifacts if they ever appear in `dist`; the pack remains test-only and adds zero production bytes, requests, models, decoders, or runtime dependencies.
+- The benchmark remains numerically unchanged at average Jaccard `0.29189255696038807`, average points within threshold `0.46322795341098166`, occlusion accuracy `0.785809906291834`, and worst selected-query visible-point p95 `67.82357122983139` px.
+- Fresh browser validation exposed an orthogonal local-harness defect: unrestricted Playwright parallelism opened too many fake-camera sessions and seven Chromium cases reached the product's honest permission timeout. The same Chromium project passed 23/23 with the CI limit of two workers, so two workers now bound every environment. The complete production Chromium/WebKit run then passes 34 tests with 12 intentional platform-policy skips.
+- End-to-end release verification passes its then-complete 960/960 source tests, 38 hashed production assets, all 13 bundle budgets, the 116-file architecture audit, the four-part vision gate, 253 open-source dependency components plus the annotated fixture license contract, and zero vulnerabilities. After pinning the browser-worker limit, the final source corpus passes 961/961.
+
+The source archive's current HTTPS availability and exact 187,291,581-byte response were independently rechecked, but release execution makes no network request. This is intentionally one canonical fixture path, not a fallback cache or compatibility mode. Expanding to more videos remains a quality/coverage decision that must justify repository cost, evaluation duration, provenance, and per-query floors independently.
+
+### Real-world annotated domain and applicability-owned recovery
+
+The rendered-object fixture could not establish real-world generalization. The benchmark now also executes TAP-Vid-DAVIS `shooting`, a 40-frame live-action/CGI sequence from Blender Foundation's *Tears of Steel*. The complete 1,668,710,491-byte upstream archive and the 6,317,719-byte derived pack are pinned; the 1152×480 frames use the official 256×256 per-channel Lanczos evaluation transform. Video provenance is CC-BY-3.0 and DeepMind annotation provenance is CC-BY-4.0, represented and license-gated independently.
+
+The combined protocol now owns 290 frames and 12 independent queries across rendered and real-world domains. The DAVIS motion set protects tracks `7`, `0`, and `2`; its accepted aggregate is AJ `0.03886058575378964`, threshold accuracy `0.0970873786407767`, occlusion accuracy `0.811965811965812`, re-detection AJ `0.07715806331202062`, perfect stable recall, and `208.33333333333334` ms worst stable latency. The terminal-occlusion set protects tracks `1`, `9`, and `15`; its aggregate is AJ `0.045473453770082536`, threshold accuracy `0.1125`, occlusion accuracy `0.6666666666666666`, `666.6666666666666` ms worst false visibility, `416.6666666666667` ms worst missed visibility, and five fragmentations.
+
+Recovery contracts now reflect annotation applicability instead of dataset assumptions. A `not-applicable` contract requires zero reappearance and null recovery metrics. A `segment-only` contract requires post-occlusion AJ but proves there is no 100 ms stable evaluation window. An `eligible` contract requires positive reappearance evidence, internally consistent stable counts, recall, and conditional latency. The same variants apply to aggregate and per-query owners; old flat recovery fields are rejected.
+
+The new scene also exposed a first-frame state-machine failure. A weak but usable tap-local template started `degraded`; one low-retention LK update sent it directly to global loss even though progressive evidence collection was available. Only a first-update failure with existing bounded object support may now reset to `candidate`, and the failed frame remains explicitly not visible. This recovers a nonzero always-visible real-world regression surface without weakening normal tracking, later loss, relocalization eligibility, or the established RGB-Stacking floors.
+
+### Annotation-ranked occlusion-stress gate
+
+The six-query gate uses disjoint named query sets so the stable primary scale and the harder occlusion evidence own independent aggregate contracts. Manifest version 6 is the only executable shape, and every selected track owns a separate complete query contract. This distinction matters: one shared "per-query" minimum still lets the weakest sibling define the ceiling for every stronger track. The replacement follows the same failure-isolation principle as [WILDS worst-subpopulation reporting](https://arxiv.org/abs/2012.07421) and [VOT per-sequence aggregation](https://arxiv.org/abs/1906.08675): preserve the aggregate for corpus-level orientation, but make the individual unit unable to disappear into it. Duplicate query ownership, unknown fields, empty sets, resource-exhausting counts, vacuous spatial floors, negative durations, and fractional fragmentation limits fail validation.
+
+Selection used annotations only, before tracker replay. All 30 trajectories were compared by visible-path motion, occluded-frame count and ratio, longest occlusion run, and visibility transitions. Tracks `6`, `9`, and `18` retain 161, 127, and 151 visible frames while contributing 88, 122, and 98 occluded frames. Tracks `6` and `9` each cross visibility eight times; all three include a 55-frame occlusion. This targets difficult but still spatially measurable sequences rather than almost-always-occluded tracks. The protocol remains aligned with the official [TAP-Vid evaluation contract](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md): independent first-visible queries, 256×256 evaluation coordinates, threshold accuracy, occlusion accuracy, and average Jaccard.
+
+[TAPNext++](https://arxiv.org/abs/2604.10582) identifies re-detection as a blind spot in whole-track averages and defines Re-Detection Average Jaccard. The evaluator applies that definition after the first-visible query: a reappearance is eligible only when its preceding invisible run is longer than every earlier run for that track; AJ is recomputed over each eligible segment from reappearance through the end; and the reported score averages the available `d_min` results from `1`, `4`, `16`, `64`, and `256` frames. Thresholds without an eligible event remain explicit `null` diagnostics and do not dilute the summary. Every selected query contains an eligible reappearance and must produce a finite score.
+
+AJ_RD still averages the complete tail from a reappearance to the end, so later success can hide a missed first visible episode, while ordinary occlusion accuracy can hide clustered errors inside a mostly correct track. This matters to HOL's AR attachment behavior: the [VOT long-term methodology](https://arxiv.org/abs/1906.08675) requires target-disappearance decisions and re-detection, [PointOdyssey](https://arxiv.org/abs/2307.15055) makes time to tracking failure explicit through Survival, and the official [MOTChallenge evaluation](https://motchallenge.net/results/MOTS/) separately counts interruptions of a tracked trajectory as fragmentations. Version 6 therefore owns four independent temporal contracts:
+
+- `maximumFalseVisibleDurationMs` is the longest uninterrupted interval where the annotation says the point is unavailable but the tracker still claims a visible target. The value is derived from the pinned source cadence, so a 30-frame run at 30 FPS is one second rather than an incomparable frame count.
+- Stable re-detection is evaluated only inside the first visible run after each record-length disappearance. It requires correct visibility and a strict sub-16-pixel error on the standard 256-pixel raster for at least 100 ms. The 16-pixel boundary tests coarse identity/reacquisition; the existing five-threshold AJ metrics continue to own fine localization. The gate records eligible/recovered event counts, recall, first stable recovery latency, and an explicit unrecovered event rather than allowing a later visibility episode to repair the result.
+- `maximumMissedVisibleDurationMs` is the longest uninterrupted interval where the annotation remains visible but the tracker reports the point absent. It includes an initially missed visible run, so a failure to acquire cannot disappear from the diagnostic merely because it is not a fragmentation.
+- `visibleTrackFragmentationCount` counts every transition from an acquired visible prediction into a missed-visible streak while ground-truth visibility remains continuous. The required visible query initializes continuity but its prediction is excluded from evaluation. A true occlusion resets acquisition, and an initially missed reappearance is not mislabeled as an interruption. Full artifacts retain every streak's track, inclusive start, exclusive end, frame/time duration, and fragmentation classification.
+
+- The `primary` tracks `1`, `12`, and `16` retain average Jaccard `0.29189255696038807`, average points within threshold `0.46322795341098166`, occlusion accuracy `0.785809906291834`, and re-detection AJ `0.08225072909206278`. Its aggregate re-detection floor remains `0.078`; track-specific re-detection floors are `0.225`, `0.0165`, and `0.0255`, so track `1` no longer inherits track `12`'s weak baseline.
+- The `occlusion-stress` tracks `6`, `9`, and `18` measure average Jaccard `0.14335244616777107`, average points within threshold `0.20637813211845102`, occlusion accuracy `0.6050870147255689`, and re-detection AJ `0.09872620127639968`. Its aggregate floors remain `0.135`, `0.195`, `0.58`, and `0.093`; the three tracks now own their measured spatial, re-detection, stable-recall, p95, false-visible, missed-visible, and fragmentation limits independently.
+- Primary recovers 3/5 stable events (recall `0.6`) with worst accepted latency `466.6666666666667` ms. Occlusion-stress recovers 1/3 (recall `0.3333333333333333`) with worst accepted latency `366.6666666666667` ms. Each query now owns the exact temporal headroom it needs: tracks `12` and `16` permit zero missed-visible duration and zero fragmentations, track `9` permits 400 ms rather than 1834 ms of missed visibility, and only queries whose measured baseline needs one second of false visibility retain that ceiling. The integer-millisecond ceilings admit each current worst run but reject one additional frame at 30 FPS.
+- The six-query combined diagnostic is average Jaccard `0.23480652929273851`, average points within threshold `0.3548076923076923`, occlusion accuracy `0.6954484605087015`, re-detection AJ `0.08815318481845025`, and stable re-detection recall `0.5` (4/8) with `466.6666666666667` ms maximum latency, `1000` ms maximum false visibility, `1833.3333333333333` ms maximum missed visibility, and ten acquired-track fragmentations. It is reported for orientation but cannot replace either set-specific gate.
+- Adversarial metric contracts prove the dimensions are independent. One trace retains AJ, OA, and AJ_RD above `0.8`, has perfect immediate stable re-detection and zero false visibility, yet loses a continuously visible target for 500 ms. Another retains AJ and OA above `0.9` with only one-frame outages but interrupts the acquired track five times. A third regresses a clean track by one missed frame and one fragmentation while remaining below a weak sibling's shared ceilings; the version-6 gate rejects all three failures at their actual owner.
+- The evaluator reads, verifies, decompresses, and validates the same checked-in fixture once, then replays each of the six queries independently. No production byte, network request, model, dependency, feature flag, compatibility layer, or second asset path is added.
+
+These low stress scores are now explicit algorithm targets rather than excluded evidence. Desktop replay can reject a regression; it still cannot establish the physical-iPhone timing, thermal, memory, orientation, or WebGL-coexistence budgets.
+
+### Source-raster-owned annotated evidence
+
+Research into current long-term point trackers reinforced the architectural gap without justifying a browser runtime migration. Google DeepMind's [TAP-Vid contract](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md) defines independent queries and a 256×256 evaluation category; TAPIR combines per-frame matching with temporal refinement, while TAPNext++ extends the temporal horizon and re-detection. MIT-licensed [Track-On](https://github.com/gorkaydemir/track_on) likewise uses online memory, but its published implementation remains a PyTorch/CUDA path. These systems support stronger learned memory as a future direction, not an unmeasured main-thread dependency for the current mobile web budget.
+
+Three deployable classical candidates were tested against the complete annotated gate. Per-landmark `OPTFLOW_USE_INITIAL_FLOW` seeding produced byte-identical metrics across all 290 frames and was removed. A tap-time ORB keyframe for weak candidates introduced false geometry and reduced RGB-Stacking primary track `1` AJ below its floor; both global and local-search variants were removed. A background affine camera-motion search prior added roughly 1.8–4.7 ms to candidate updates, reduced RGB-Stacking track `16` AJ from `0.3150035097567171` to `0.2935748306346643`, and reduced combined AJ from `0.13806473021972454` to `0.13507912723068283`; its implementation, tests, metrics, and temporary floor bypass were removed completely. The evidence therefore locates the remaining weak-bootstrap problem in object identity/memory rather than LK initialization or generic camera motion.
+
+That investigation exposed a benchmark defect: the fixture manifest described only the derived 256×256 payload, while the DAVIS fixture documentation separately described its 1152×480 source. A tool or researcher could therefore process the pinned bytes using the source raster and silently measure nonsense in the wrong coordinate system. Manifest v8 introduced the mandatory discriminated frame-derivation contract that sole manifest v9 retains. Identity fixtures must match their source raster exactly; resized fixtures must change it, declare bounded source dimensions, and use the sole pinned `pillow-lanczos-per-channel` resampler. Unknown fields, old manifests, identity mismatches, no-op resizes, ambiguous resamplers, and oversized source dimensions fail before asset decode.
+
+- RGB-Stacking sample `34` reports an identity derivation from 256×256; DAVIS `shooting` reports 1152×480 → 256×256 with the pinned Lanczos path.
+- Compact stdout and explicit full artifacts retain both the validated derivation and the evaluation width, height, count, and cadence, so downstream analysis no longer needs out-of-band fixture knowledge.
+- The real 12-query replay remains exact: AJ `0.13806473021972454`, threshold accuracy `0.22890085214187011`, occlusion accuracy `0.7173823499124704`, re-detection AJ `0.08265562406523544`, and stable recall `0.6`.
+- No production tracker branch, model, worker, asset, dependency, migration, compatibility parser, floor bypass, or legacy manifest reader remains.
+
+### Learned-recovery-owned verification
+
+The shipped [XFeat implementation](https://github.com/verlab/accelerated_features) is already the most deployment-appropriate learned correspondence model found in the current permissive stack: Apache-2.0, compact 64-dimensional descriptors, and an architecture explicitly aimed at resource-constrained matching. Newer online point trackers such as [Track-On](https://github.com/gorkaydemir/track_on) demonstrate the value of temporal memory, but their published runtimes remain PyTorch/CUDA systems. Replacing the browser path without a measured export would move the problem rather than solve it.
+
+A symmetric nearest-neighbour ratio gate was evaluated because reciprocal matching alone can retain a descriptor whose second neighbour is nearly as plausible; [OpenCV's matching guidance](https://docs.opencv.org/master/d5/d6f/tutorial_feature_flann_matcher.html) uses the same general ambiguity test before geometry. The result exposed a cross-protocol trap:
+
+- Ratio `0.8` left only two matches and failed the pinned transformed recovery fixture.
+- Ratio `0.95` retained seven recovery inliers and reduced its isolated anchor error from `7.26` px to `4.60` px, but RGB-Stacking track `1` AJ collapsed from `0.2545695990968245` to `0.08739860275956667`.
+- Ratio `0.99` retained 14 inliers at `5.26` px, yet the same temporal AJ still fell to `0.16265824806562582`.
+- The complete matcher experiment and its adversarial test were removed. Hard synthetic quality had remained byte-identical, showing why neither an isolated matcher result nor the synthetic corpus could approve this change alone.
+
+The accepted improvement is stricter ownership at `verify:xfeat`. A pure exact-shape contract now requires all 500 requested features, at least 15 recovery inliers, and at most 7.5 px anchor error. Unknown evidence fields, fractional or negative counts, and non-finite errors fail immediately. The real model verifier exercises that contract on every release, while focused tests prove each boundary independently. The restored 290-frame annotated run retains AJ `0.13806473021972454`, and RGB-Stacking track `1` returns to `0.2545695990968245`.
+
+No matcher branch, threshold option, model, asset, dependency, compatibility path, migration, or alternate verifier remains. The reusable conclusion is that descriptor pruning must be evaluated on temporal recovery support: a lower error among fewer surviving matches can still destroy long-horizon identity.
+
+### Direction-aware diagnostic reflow
+
+The lazy field-control drawer displays values from browser errors, local providers, model output, runtime diagnostics, logger tags, and loaded asset names. Those strings are not layout-safe merely because their producers validate semantic length: one uninterrupted token can still establish an excessive min-content width, and inserted text can have a base direction different from the English shell. Truncating the value hides the exact evidence the diagnostic surface exists to expose.
+
+HOL now has one `DynamicText` boundary for this data. It applies `dir="auto"`, a zero minimum inline size, and `overflow-wrap: anywhere`; diagnostic key/value rows use bounded `minmax(0, …)` grid tracks and logical end alignment. Metrics no longer truncate values, and the same boundary owns readiness detail, log tags, mesh names, microphone/TTS errors, anchor explanations, and generated persona fields. No alternate wrapping utility or legacy rendering path remains.
+
+- A production-browser RED test reproduced the missing direction contract on the existing diagnostic value.
+- The accepted test runs the drawer at 320 CSS pixels, doubles root text size, injects a long uninterrupted token whose first strong character is RTL, and verifies computed direction, wrapping, and logical alignment.
+- It also requires exact zero horizontal overflow for the document, drawer, and scroll panel after stressing both a diagnostic row and a metric label/value pair.
+- The complete `npm run validate` gate passes. Production Chromium/WebKit validation executes 35 tests with 13 intentional platform-policy skips; the camera-dependent stress case executes in Chromium, while the WebKit project retains its explicit fake-camera limitation.
+- The drawer remains under its existing raw bundle budget. No dependency, route, model, asset, migration, compatibility layer, or test-only production hook was added.
+
+### Third-domain real manipulation gate and lossless temporal fixture storage
+
+The earlier rendered and cinematic samples did not cover fixed-camera tabletop manipulation, hands repeatedly occluding selected objects, tiny accessories, or disappearances lasting most of a clip. Candidate review included PointOdyssey's synthetic long-horizon motion and the real robot-manipulation RoboTAP corpus, but neither was admitted merely for scale: a third source had to own permissive video and annotation licenses, exact downloadable archives, bounded repository cost, annotation-first query selection, and a positive executable regression surface. Google DeepMind's [Perception Test point-tracking task](https://github.com/google-deepmind/perception_test/blob/main/README.md) satisfies those constraints and provides real perceptually difficult footage under CC-BY-4.0.
+
+Perception Test `video_5032` is now the third canonical domain. The pack retains all 333 frames at the exact 30 FPS source cadence, all 45 sparse trajectories, a 1280×720 → 256×256 pinned Lanczos derivation, and six disjoint first-visible queries. Object-motion tracks `5`, `3`, and `39` cover continuous motion, brief interruption, and a small ring with repeated long gaps. Occlusion-stress tracks `0`, `4`, and `35` cover record disappearances of 207, 86, and 154 frames. Tracks `41`, `40`, `28`, and `29` ranked highly from annotations but produced zero re-detection AJ and were rejected instead of receiving a zero floor.
+
+The new domain produces 1,901 evaluated points. Its accepted aggregate is AJ `0.25433557684855157`, threshold accuracy `0.3987086359967716`, occlusion accuracy `0.6075749605470805`, re-detection AJ `0.07826449495397754`, stable recovery 3/6, 900 ms worst stable recovery latency, 5,133 ms false visibility, 4,467 ms missed visibility, and six fragmentations. These are intentionally difficult regression surfaces rather than generalization claims. Across all three domains the release gate now executes 623 frames and 18 independent queries with AJ `0.17682167909600022`, occlusion accuracy `0.6807798867906737`, re-detection AJ `0.0811919143614828`, and stable recovery 9/16.
+
+The separate Perception Test video and annotation archives exposed an ambiguity in the singular archive pin. Manifest v9 replaces it with one strict `sources` object containing a sample id and independent `video` and `annotations` URL/length/SHA-256 records. Every previous version and the singular field fail before asset access; no compatibility reader exists. Existing same-archive datasets repeat the exact archive record for both components, which keeps the shape uniform and makes component provenance auditable without inference.
+
+Raw RGB gzip for the complete three-domain pack would occupy 66,912,658 bytes and the new frame file alone would cross GitHub's 50 MiB warning. The sole v9 frame encoding is therefore lossless `rgb24-xor-delta-gzip`: frame zero is exact RGB24, every later byte is XOR against the preceding decoded frame, gzip expansion is already bounded by the manifest, and one linear in-place pass reconstructs the original bytes. The resulting assets occupy 42,665,119 bytes, 24,247,539 fewer, with a largest file of 32,183,309 bytes. A strict unit corpus proves multi-frame reconstruction plus type/shape rejection; the complete replay proves metric identity. No video codec, package, network path, migration, old decoder, feature flag, or production asset was added.
+
+## Evaluation matrix
+
+A model or algorithm candidate must be compared on identical:
+
+- planar, curved, glossy, low-texture, repeated-texture, and busy-background objects;
+- scale, perspective, rotation, glare, fixed-strength low-light noise, linear motion blur, rolling-shutter skew, early occlusion, repeated occlusion, and reacquisition sequences;
+- anchor error, pose-source ownership, reconstruction readiness, background rejection, recovery count, and latency;
+- portrait/landscape changes, camera autoplay policy, service-worker startup, WebGL context lifecycle, and WASM fallback.
+
+Desktop numbers can reject a candidate but cannot approve it for production.
+
+## Acceptance thresholds
+
+1. No new strict replay failure.
+2. A meaningful improvement in the target failure bucket, not only an average.
+3. At most 4 ms amortized steady-state tracking cost.
+4. Heavy work in a worker with one in-flight request and transferable buffers.
+5. Recovery spikes bounded on target mobile hardware.
+6. Explicit provider and failure diagnostics.
+7. Permissive open-source code and model licenses.
+8. Content hash, byte size, revision, source URL, and I/O contract in the capability manifest.
+9. Complete replacement of the prior path; no compatibility layer.
+
+## Next experiments
+
+1. Measure XFeat cold/warm recovery spikes, memory, orientation stability, and WebGL coexistence on primary iPhone Safari and Chromium.
+2. Collect iPhone WebGPU/WASM depth profiles.
+3. Publish reproducible LocalAI/llama.cpp/speech model profiles after quality and license review.

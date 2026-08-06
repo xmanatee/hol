@@ -8,7 +8,7 @@ import {
   fitAffineCamera,
   rowScale,
   rowRotation,
-  solveLeastSquares,
+  solveLeastSquaresPair,
 } from './anchor.reconstruction.math.js';
 import { createSurfacePreview, emptySurfacePreview } from './anchor.reconstruction.preview.js';
 import {
@@ -35,7 +35,7 @@ const subtract3 = (a, b) => [a.x - b.x, a.y - b.y, a.z - b.z];
 
 const pointDistance3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 
-const normalizeObjectVector = vector => {
+const normalizeObjectVector = (vector) => {
   const normalized = normalizeVector(vector);
   return { x: normalized[0], y: normalized[1], z: normalized[2] };
 };
@@ -52,16 +52,16 @@ const scaleObjectVector = (vector, scale) => ({
   z: vector.z * scale,
 });
 
-const symmetricVectorToMatrix = vector => ([
+const symmetricVectorToMatrix = (vector) => [
   [vector[0], vector[1], vector[2]],
   [vector[1], vector[3], vector[4]],
   [vector[2], vector[4], vector[5]],
-]);
+];
 
-const normalizeMetricMatrix = matrix => {
+const normalizeMetricMatrix = (matrix) => {
   const eigen = jacobiEigenSymmetric(matrix);
   const leading = Math.max(Math.abs(eigen[0].value), 1e-9);
-  const positiveEigen = eigen.map(item => ({
+  const positiveEigen = eigen.map((item) => ({
     value: Math.max(item.value, leading * 1e-5),
     vector: item.vector,
   }));
@@ -72,7 +72,7 @@ const normalizeMetricMatrix = matrix => {
     [0, 0, 0],
   ];
 
-  positiveEigen.forEach(item => {
+  positiveEigen.forEach((item) => {
     const value = item.value / normalizedTrace;
     for (let row = 0; row < 3; row++) {
       for (let column = 0; column < 3; column++) {
@@ -84,7 +84,7 @@ const normalizeMetricMatrix = matrix => {
   return result;
 };
 
-const choleskyLower3 = matrix => {
+const choleskyLower3 = (matrix) => {
   const l00 = Math.sqrt(Math.max(matrix[0][0], 1e-9));
   const l10 = matrix[1][0] / l00;
   const l20 = matrix[2][0] / l00;
@@ -106,11 +106,11 @@ const solveLower3 = (lower, vector) => {
   return [x, y, z];
 };
 
-const multiplyRowMatrix3 = (row, matrix) => ([
+const multiplyRowMatrix3 = (row, matrix) => [
   row[0] * matrix[0][0] + row[1] * matrix[1][0] + row[2] * matrix[2][0],
   row[0] * matrix[0][1] + row[1] * matrix[1][1] + row[2] * matrix[2][1],
   row[0] * matrix[0][2] + row[1] * matrix[1][2] + row[2] * matrix[2][2],
-]);
+];
 
 const metricEquationRows = (rowX, rowY) => [
   [
@@ -132,12 +132,12 @@ const metricEquationRows = (rowX, rowY) => [
 ];
 
 const metricUpgradeFromFactorization = (eigen, rowCount) => {
-  const motionRows = Array.from({ length: rowCount }, (_, rowIndex) => (
-    eigen.map(component => {
-      const singular = Math.sqrt(Math.max(component.value, 0));
+  const motionRows = Array.from({ length: rowCount }, (_, rowIndex) =>
+    eigen.map((component) => {
+      const singular = Math.sqrt(component.value);
       return component.vector[rowIndex] * Math.sqrt(singular);
-    })
-  ));
+    }),
+  );
   const equations = [];
 
   for (let row = 0; row < motionRows.length; row += 2) {
@@ -145,7 +145,7 @@ const metricUpgradeFromFactorization = (eigen, rowCount) => {
   }
 
   const normal = Array.from({ length: 6 }, () => new Array(6).fill(0));
-  equations.forEach(equation => {
+  equations.forEach((equation) => {
     for (let row = 0; row < 6; row++) {
       for (let column = 0; column < 6; column++) {
         normal[row][column] += equation[row] * equation[column];
@@ -154,15 +154,16 @@ const metricUpgradeFromFactorization = (eigen, rowCount) => {
   });
 
   const metricVector = jacobiEigenSymmetric(normal).at(-1).vector;
-  const signedVector = metricVector[0] + metricVector[3] + metricVector[5] < 0
-    ? metricVector.map(value => -value)
-    : metricVector;
+  const signedVector =
+    metricVector[0] + metricVector[3] + metricVector[5] < 0
+      ? metricVector.map((value) => -value)
+      : metricVector;
   const metricMatrix = normalizeMetricMatrix(symmetricVectorToMatrix(signedVector));
   const lower = choleskyLower3(metricMatrix);
 
   return {
-    motionRows: motionRows.map(row => multiplyRowMatrix3(row, lower)),
-    transformShape: coords => solveLower3(lower, coords),
+    motionRows: motionRows.map((row) => multiplyRowMatrix3(row, lower)),
+    transformShape: (coords) => solveLower3(lower, coords),
   };
 };
 
@@ -188,30 +189,31 @@ const projectSurfaceNormalToCamera = (surfaceNormal, rowX, rowY) => {
     dot3(normalModel, yAxis),
     dot3(normalModel, zAxis),
   ]);
-  const frontFacing = cameraNormal[2] >= 0
-    ? cameraNormal
-    : cameraNormal.map(value => -value);
+  const frontFacing = cameraNormal[2] >= 0 ? cameraNormal : cameraNormal.map((value) => -value);
 
   return { x: frontFacing[0], y: frontFacing[1], z: frontFacing[2] };
 };
 
 const interpolateAnchorPoint = (landmarks, anchorReference) => {
   const nearest = [...landmarks.values()]
-    .map(item => ({
+    .map((item) => ({
       point: item.point,
       distance: Math.hypot(item.reference.x - anchorReference.x, item.reference.y - anchorReference.y),
     }))
     .sort((left, right) => left.distance - right.distance)
     .slice(0, 14);
-  const weighted = nearest.reduce((sum, item) => {
-    const weight = 1 / (item.distance * item.distance + 36);
-    return {
-      x: sum.x + item.point.x * weight,
-      y: sum.y + item.point.y * weight,
-      z: sum.z + item.point.z * weight,
-      weight: sum.weight + weight,
-    };
-  }, { x: 0, y: 0, z: 0, weight: 0 });
+  const weighted = nearest.reduce(
+    (sum, item) => {
+      const weight = 1 / (item.distance ** 2 + 36);
+      return {
+        x: sum.x + item.point.x * weight,
+        y: sum.y + item.point.y * weight,
+        z: sum.z + item.point.z * weight,
+        weight: sum.weight + weight,
+      };
+    },
+    { x: 0, y: 0, z: 0, weight: 0 },
+  );
 
   return {
     x: weighted.x / weighted.weight,
@@ -220,28 +222,31 @@ const interpolateAnchorPoint = (landmarks, anchorReference) => {
   };
 };
 
-const calculateBounds = points => {
+const calculateBounds = (points) => {
   const initial = {
     min: { x: Infinity, y: Infinity, z: Infinity },
     max: { x: -Infinity, y: -Infinity, z: -Infinity },
   };
 
-  return points.reduce((bounds, point) => ({
-    min: {
-      x: Math.min(bounds.min.x, point.x),
-      y: Math.min(bounds.min.y, point.y),
-      z: Math.min(bounds.min.z, point.z),
-    },
-    max: {
-      x: Math.max(bounds.max.x, point.x),
-      y: Math.max(bounds.max.y, point.y),
-      z: Math.max(bounds.max.z, point.z),
-    },
-  }), initial);
+  return points.reduce(
+    (bounds, point) => ({
+      min: {
+        x: Math.min(bounds.min.x, point.x),
+        y: Math.min(bounds.min.y, point.y),
+        z: Math.min(bounds.min.z, point.z),
+      },
+      max: {
+        x: Math.max(bounds.max.x, point.x),
+        y: Math.max(bounds.max.y, point.y),
+        z: Math.max(bounds.max.z, point.z),
+      },
+    }),
+    initial,
+  );
 };
 
-const calculateDepthQuality = landmarks => {
-  const bounds = calculateBounds([...landmarks.values()].map(item => item.point));
+const calculateDepthQuality = (landmarks) => {
+  const bounds = calculateBounds([...landmarks.values()].map((item) => item.point));
   const depth = bounds.max.z - bounds.min.z;
   const width = bounds.max.x - bounds.min.x;
   const height = bounds.max.y - bounds.min.y;
@@ -270,6 +275,11 @@ export class SparseObjectReconstructor {
     this.cameraParams = { ...cameraParams };
   }
 
+  dispose() {
+    this.frames = [];
+    this.map = null;
+  }
+
   reset({ anchorReference, templateRegion = { x: 0, y: 0, width: 1, height: 1 }, targetClass = null }) {
     this.anchorReference = { x: anchorReference.x, y: anchorReference.y };
     this.templateRegion = { ...templateRegion };
@@ -283,6 +293,7 @@ export class SparseObjectReconstructor {
     this.framesSinceBuild = 0;
     this.frameIndex = 0;
     this.landmarkStats = new Map();
+    this.frameObservationCache = null;
   }
 
   updateReferenceRegion(templateRegion, targetClass = this.targetClass) {
@@ -290,6 +301,7 @@ export class SparseObjectReconstructor {
     this.targetClass = targetClass;
     this.targetSurfaceModel = modelFromRegion(templateRegion, targetClass);
     this._applyTargetSurfaceConfig();
+    this.frameObservationCache = null;
   }
 
   _applyBaseConfig() {
@@ -309,7 +321,7 @@ export class SparseObjectReconstructor {
       return;
     }
 
-    this.minFrames = Math.min(this.minFrames, 4);
+    this.minFrames = Math.min(this.minFrames, 3);
     this.minLandmarks = Math.min(this.minLandmarks, 14);
     this.minPoseLandmarks = Math.min(this.minPoseLandmarks, 8);
     this.maxBuildFrames = Math.min(this.maxBuildFrames, 8);
@@ -327,21 +339,13 @@ export class SparseObjectReconstructor {
   }
 
   addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now(), { includePreview = true } = {}) {
-    const observations = trackedPoints
-      .filter(point => point.status === 'active')
-      .filter(point => Number.isFinite(point.current.x) && Number.isFinite(point.current.y))
-      .filter(point => Number.isFinite(point.original.x) && Number.isFinite(point.original.y))
-      .map(point => ({
-        id: point.id,
-        current: { x: point.current.x, y: point.current.y },
-        reference: { x: point.original.x, y: point.original.y },
-        quality: (point.stabilityScore || 0) + Math.min(point.age || 0, 30) / 30 + (point.response || 0),
-      }));
+    const observations = this._activeReferenceObservations(trackedPoints);
+    this.frameObservationCache = { trackedPoints, observations };
 
     this.frameIndex++;
     if (observations.length < this.minLandmarks) {
       this.state = this.map ? 'ready' : 'mapping';
-      this.lastFailureReason = 'Insufficient active landmarks for reconstruction';
+      this.lastFailureReason = 'Too few active reconstruction landmarks';
       return this.getState({ includePreview });
     }
 
@@ -374,17 +378,27 @@ export class SparseObjectReconstructor {
 
   estimatePoseFromTrackedPoints(trackedPoints, { includePreview = true } = {}) {
     if (!this.map) {
-      return { success: false, method: RECONSTRUCTION_POSE_MODEL, reason: '3D reconstruction map is not ready' };
+      this.frameObservationCache = null;
+      return {
+        success: false,
+        method: RECONSTRUCTION_POSE_MODEL,
+        reason: '3D map is not ready',
+      };
     }
 
-    const observations = this._poseObservationsFromTrackedPoints(trackedPoints);
-    const trackedFit = fitRobustSimilarity(this._activeReferenceObservations(trackedPoints), {
+    const activeReferenceObservations = this._takeFrameReferenceObservations(trackedPoints);
+    const observations = this._poseObservationsFromTrackedPoints(trackedPoints, activeReferenceObservations);
+    const trackedFit = fitRobustSimilarity(activeReferenceObservations, {
       minInliers: Math.max(8, this.minPoseLandmarks),
       threshold: 10,
     });
 
     if (observations.length < this.minPoseLandmarks) {
-      return { success: false, method: RECONSTRUCTION_POSE_MODEL, reason: 'Insufficient reconstructed landmarks in view' };
+      return {
+        success: false,
+        method: RECONSTRUCTION_POSE_MODEL,
+        reason: 'Insufficient reconstructed landmarks in view',
+      };
     }
 
     const pose = fitAffineCamera(observations, this.minPoseLandmarks);
@@ -393,28 +407,32 @@ export class SparseObjectReconstructor {
     }
 
     const rawNormal = normalizeVector(cross(pose.rowX.slice(0, 3), pose.rowY.slice(0, 3)));
-    const viewNormal = rawNormal[2] >= 0 ? rawNormal : rawNormal.map(value => -value);
-    const surface = this.map.surface?.poseReliable === false
-      ? null
-      : this.map.surface || this._estimateLocalSurface([...this.map.landmarks.values()], this.map.anchorPoint);
+    const viewNormal = rawNormal[2] >= 0 ? rawNormal : rawNormal.map((value) => -value);
+    const surface =
+      this.map.surface?.poseReliable === false
+        ? null
+        : this.map.surface ||
+          this._estimateLocalSurface([...this.map.landmarks.values()], this.map.anchorPoint);
     const surfaceNormal = projectSurfaceNormalToCamera(surface?.normal, pose.rowX, pose.rowY);
     const normal = surfaceNormal || { x: viewNormal[0], y: viewNormal[1], z: viewNormal[2] };
     const currentScale = rowScale(pose.rowX, pose.rowY);
     const projectedAnchor = projectWithRows(this.map.anchorPoint, pose.rowX, pose.rowY);
     const surfaceTransform = this._usesTargetSurfacePrior()
       ? this._projectLocalSurfaceTransform({
-        rowX: pose.rowX,
-        rowY: pose.rowY,
-        anchorPoint: this.map.anchorPoint,
-        surface,
-      })
+          rowX: pose.rowX,
+          rowY: pose.rowY,
+          anchorPoint: this.map.anchorPoint,
+          surface,
+        })
       : null;
-    const poseScale = surfaceTransform && this.map.referenceSurfaceScale
-      ? surfaceTransform.scale / this.map.referenceSurfaceScale
-      : currentScale / this.map.referenceScale;
-    const poseRotation = surfaceTransform && Number.isFinite(this.map.referenceSurfaceRotation)
-      ? normalizeAngle(surfaceTransform.rotation - this.map.referenceSurfaceRotation)
-      : normalizeAngle(rowRotation(pose.rowX, pose.rowY) - this.map.referenceRotation);
+    const poseScale =
+      surfaceTransform && this.map.referenceSurfaceScale
+        ? surfaceTransform.scale / this.map.referenceSurfaceScale
+        : currentScale / this.map.referenceScale;
+    const poseRotation =
+      surfaceTransform && Number.isFinite(this.map.referenceSurfaceRotation)
+        ? normalizeAngle(surfaceTransform.rotation - this.map.referenceSurfaceRotation)
+        : normalizeAngle(rowRotation(pose.rowX, pose.rowY) - this.map.referenceRotation);
     const trackedAnchor = trackedFit.success
       ? transformPoint2(this.anchorReference, trackedFit.transform)
       : null;
@@ -425,13 +443,20 @@ export class SparseObjectReconstructor {
       trackedAnchor,
     });
     const attachmentAnchor = useProjectedSurfaceAnchor || !trackedAnchor ? projectedAnchor : trackedAnchor;
-    const attachmentScale = useProjectedSurfaceAnchor || !trackedFit.success ? poseScale : trackedFit.transform.scale;
-    const attachmentRotation = useProjectedSurfaceAnchor || !trackedFit.success ? poseRotation : trackedFit.transform.rotation;
-    const attachmentMethod = useProjectedSurfaceAnchor || !trackedFit.success
-      ? RECONSTRUCTION_POSE_MODEL
-      : 'reference_similarity_transform';
+    const attachmentScale =
+      useProjectedSurfaceAnchor || !trackedFit.success ? poseScale : trackedFit.transform.scale;
+    const attachmentRotation =
+      useProjectedSurfaceAnchor || !trackedFit.success ? poseRotation : trackedFit.transform.rotation;
+    const attachmentMethod =
+      useProjectedSurfaceAnchor || !trackedFit.success
+        ? RECONSTRUCTION_POSE_MODEL
+        : 'reference_similarity_transform';
     const residualScore = clamp(1 - pose.averageResidual / 12, 0, 1);
-    const coverageScore = clamp(pose.inlierCount / Math.max(this.map.landmarks.size * 0.62, this.minPoseLandmarks), 0, 1);
+    const coverageScore = clamp(
+      pose.inlierCount / Math.max(this.map.landmarks.size * 0.62, this.minPoseLandmarks),
+      0,
+      1,
+    );
     const confidence = clamp(pose.inlierRatio * 0.5 + residualScore * 0.3 + coverageScore * 0.2, 0, 1);
 
     const result = {
@@ -450,9 +475,10 @@ export class SparseObjectReconstructor {
       inlierCount: pose.inlierCount,
       inlierRatio: pose.inlierRatio,
       averageResidual: pose.averageResidual,
+      poseObs: pose.poseObs,
       depthQuality: this.map.depthQuality,
       landmarkCount: this.map.landmarks.size,
-      completedLandmarkCount: observations.filter(observation => observation.completed).length,
+      completedLandmarkCount: observations.filter((observation) => observation.completed).length,
     };
 
     if (!includePreview) {
@@ -476,15 +502,24 @@ export class SparseObjectReconstructor {
 
   _activeReferenceObservations(trackedPoints) {
     return trackedPoints
-      .filter(point => point.status === 'active')
-      .filter(point => Number.isFinite(point.original?.x) && Number.isFinite(point.original?.y))
-      .filter(point => Number.isFinite(point.current?.x) && Number.isFinite(point.current?.y))
-      .map(point => ({
+      .filter((point) => point.status === 'active')
+      .filter((point) => Number.isFinite(point.original?.x) && Number.isFinite(point.original?.y))
+      .filter((point) => Number.isFinite(point.current?.x) && Number.isFinite(point.current?.y))
+      .map((point) => ({
         id: point.id,
         reference: { x: point.original.x, y: point.original.y },
         current: { x: point.current.x, y: point.current.y },
         quality: (point.stabilityScore || 0) + Math.min(point.age || 0, 30) / 30 + (point.response || 0),
       }));
+  }
+
+  _takeFrameReferenceObservations(trackedPoints) {
+    const observations =
+      this.frameObservationCache?.trackedPoints === trackedPoints
+        ? this.frameObservationCache.observations
+        : this._activeReferenceObservations(trackedPoints);
+    this.frameObservationCache = null;
+    return observations;
   }
 
   _shouldUseProjectedSurfaceAnchor({ pose, trackedFit, projectedAnchor, trackedAnchor }) {
@@ -495,25 +530,26 @@ export class SparseObjectReconstructor {
     const averageResidual = pose.averageResidual ?? Infinity;
     const inlierCount = pose.inlierCount || 0;
     const mapConfidence = this.map?.statistics?.mapConfidence ?? 0;
-    const highPrecisionSurfaceFit = inlierCount >= 30 &&
-      averageResidual <= 3.4 &&
-      mapConfidence >= 0.62;
+    const highPrecisionSurfaceFit = inlierCount >= 30 && averageResidual <= 3.4 && mapConfidence >= 0.62;
 
     if (!trackedFit.success || !trackedAnchor) {
-      return highPrecisionSurfaceFit ||
-        (inlierCount >= 20 && averageResidual <= 5.5 && mapConfidence >= 0.58);
+      return (
+        highPrecisionSurfaceFit || (inlierCount >= 20 && averageResidual <= 5.5 && mapConfidence >= 0.58)
+      );
     }
 
     const anchorDisagreement = Math.hypot(
       projectedAnchor.x - trackedAnchor.x,
-      projectedAnchor.y - trackedAnchor.y
+      projectedAnchor.y - trackedAnchor.y,
     );
-    const staleReferenceTransform = anchorDisagreement >= 24 &&
+    const staleReferenceTransform =
+      anchorDisagreement >= 24 &&
       inlierCount >= 18 &&
       averageResidual <= 6.5 &&
       mapConfidence >= 0.55 &&
       trackedFit.averageResidual <= 4.5;
-    const weakTrackedSurfaceCorrection = anchorDisagreement >= 12 &&
+    const weakTrackedSurfaceCorrection =
+      anchorDisagreement >= 12 &&
       inlierCount >= 14 &&
       averageResidual <= 4.8 &&
       mapConfidence >= 0.72 &&
@@ -523,27 +559,26 @@ export class SparseObjectReconstructor {
     return highPrecisionSurfaceFit || staleReferenceTransform || weakTrackedSurfaceCorrection;
   }
 
-  _poseObservationsFromTrackedPoints(trackedPoints) {
+  _poseObservationsFromTrackedPoints(trackedPoints, activeReferenceObservations) {
     if (this._usesTargetSurfacePrior() && this.map.referenceBounds) {
-      const coherent = selectCoherentObservations(
-        this._activeReferenceObservations(trackedPoints),
-        {
-          minInliers: Math.max(8, this.minPoseLandmarks),
-          threshold: 10,
-          minInlierRatio: 0.42,
-          model: 'affine',
-          maxSample: MOBILE_AFFINE_SAMPLE_WINDOW,
-        }
-      );
+      const priorCoherent = selectCoherentObservations(activeReferenceObservations, {
+        minInliers: Math.max(8, this.minPoseLandmarks),
+        threshold: 10,
+        minInlierRatio: 0.42,
+        model: 'affine',
+        maxSample: MOBILE_AFFINE_SAMPLE_WINDOW,
+      });
 
-      if (coherent.success) {
-        return coherent.observations.map(observation => ({
+      if (priorCoherent.success) {
+        return priorCoherent.observations.map((observation) => ({
           id: observation.id,
-          point: this.map.landmarks.get(observation.id)?.point || pointForSurfaceModel(
-            observation.reference,
-            this.map.referenceBounds,
-            this.map.targetSurfaceModel
-          ),
+          point:
+            this.map.landmarks.get(observation.id)?.point ||
+            pointForSurfaceModel(
+              observation.reference,
+              this.map.referenceBounds,
+              this.map.targetSurfaceModel,
+            ),
           current: observation.current,
           completed: false,
         }));
@@ -551,11 +586,11 @@ export class SparseObjectReconstructor {
     }
 
     const active = trackedPoints
-      .filter(point => point.status === 'active')
-      .filter(point => Number.isFinite(point.current.x) && Number.isFinite(point.current.y));
+      .filter((point) => point.status === 'active')
+      .filter((point) => Number.isFinite(point.current.x) && Number.isFinite(point.current.y));
     const observations = active
-      .filter(point => this.map.landmarks.has(point.id))
-      .map(point => ({
+      .filter((point) => this.map.landmarks.has(point.id))
+      .map((point) => ({
         id: point.id,
         point: this.map.landmarks.get(point.id).point,
         current: { x: point.current.x, y: point.current.y },
@@ -566,27 +601,24 @@ export class SparseObjectReconstructor {
       return observations;
     }
 
-    const coherent = selectCoherentObservations(
-      this._activeReferenceObservations(trackedPoints),
-      {
-        minInliers: Math.max(8, this.minPoseLandmarks),
-        threshold: 10,
-        minInlierRatio: 0.5,
-        model: 'affine',
-        maxSample: MOBILE_AFFINE_SAMPLE_WINDOW,
-      }
-    );
+    const coherent = selectCoherentObservations(activeReferenceObservations, {
+      minInliers: Math.max(8, this.minPoseLandmarks),
+      threshold: 10,
+      minInlierRatio: 0.5,
+      model: 'affine',
+      maxSample: MOBILE_AFFINE_SAMPLE_WINDOW,
+    });
 
     if (!coherent.success) {
       return observations;
     }
 
-    const activeIds = new Set(observations.map(observation => observation.id));
+    const activeIds = new Set(observations.map((observation) => observation.id));
     const completed = [...this.map.landmarks.values()]
-      .filter(landmark => !activeIds.has(landmark.id))
+      .filter((landmark) => !activeIds.has(landmark.id))
       .sort((left, right) => right.reliability - left.reliability)
       .slice(0, Math.max(0, this.minPoseLandmarks * 3 - observations.length))
-      .map(landmark => ({
+      .map((landmark) => ({
         id: landmark.id,
         point: landmark.point,
         current: this._projectReferenceWithTransform(landmark.reference, coherent.fit.transform),
@@ -598,39 +630,54 @@ export class SparseObjectReconstructor {
 
   _rebuildMap() {
     const frames = this.frames.slice(-this.maxBuildFrames);
-    if (frames.length < this.minFrames) {
-      this.lastFailureReason = 'Move the object: more calibration views are needed';
+    const threeViewBootstrap =
+      frames.length === 3 &&
+      this.minFrames === 3 &&
+      this._supportedIds(frames, frames.length).length < this.baseConfig.minLandmarks;
+    if (frames.length < this.minFrames || (frames.length === 3 && !threeViewBootstrap)) {
+      this.lastFailureReason = 'Move object through more views';
       return;
     }
 
     const supportedIds = this._supportedIds(frames);
-    if (supportedIds.length < this.minLandmarks) {
-      this.lastFailureReason = 'Move slower: too few statistically supported landmarks persisted across views';
+    if (supportedIds.length < (threeViewBootstrap ? this.baseConfig.minLandmarks : this.minLandmarks)) {
+      this.lastFailureReason = 'Move slower: too few persistent landmarks';
       return;
     }
 
     const ids = supportedIds.slice(0, this.maxMappedLandmarks);
     const centeredRows = this._createCenteredMeasurementRows(frames, ids);
     if (!centeredRows) {
-      this.lastFailureReason = 'Calibration views are too sparse for landmark completion';
+      this.lastFailureReason = 'Calibration views are too sparse';
       return;
     }
-    const covariance = centeredRows.map(left => (
-      centeredRows.map(right => left.reduce((sum, value, index) => sum + value * right[index], 0))
-    ));
-    const eigen = jacobiEigenSymmetric(covariance).filter(item => item.value > 1e-7).slice(0, 3);
-    if (eigen.length < 3) {
-      this.lastFailureReason = 'Calibration motion is nearly planar';
+    const covariance = centeredRows.map((left) =>
+      centeredRows.map((right) => left.reduce((sum, value, index) => sum + value * right[index], 0)),
+    );
+    const eigen = jacobiEigenSymmetric(covariance).filter((item) => item.value > 1e-7);
+    if (eigen.length < 3 || (threeViewBootstrap && eigen[2].value < eigen[3]?.value * 4)) {
+      this.lastFailureReason = 'Calibration motion lacks stable depth';
       return;
     }
+    eigen.length = 3;
 
     const metricUpgrade = metricUpgradeFromFactorization(eigen, centeredRows.length);
     const referenceBounds = this._referenceBoundsForIds(ids);
-    const landmarks = this._createLandmarks({ frames, ids, eigen, centeredRows, metricUpgrade, referenceBounds });
-    const referencePose = fitAffineCamera([...landmarks.values()].map(item => ({
-      point: item.point,
-      current: item.reference,
-    })), this.minPoseLandmarks);
+    const landmarks = this._createLandmarks({
+      frames,
+      ids,
+      eigen,
+      centeredRows,
+      metricUpgrade,
+      referenceBounds,
+    });
+    const referencePose = fitAffineCamera(
+      [...landmarks.values()].map((item) => ({
+        point: item.point,
+        current: item.reference,
+      })),
+      this.minPoseLandmarks,
+    );
 
     if (!referencePose.success) {
       this.lastFailureReason = referencePose.reason;
@@ -643,19 +690,17 @@ export class SparseObjectReconstructor {
       : this._estimateLocalSurface([...landmarks.values()], anchorPoint);
     const referenceSurfaceTransform = surface
       ? this._projectLocalSurfaceTransform({
-        rowX: referencePose.rowX,
-        rowY: referencePose.rowY,
-        anchorPoint,
-        surface,
-      })
+          rowX: referencePose.rowX,
+          rowY: referencePose.rowY,
+          anchorPoint,
+          surface,
+        })
       : null;
 
     this.map = {
       landmarks,
       anchorPoint,
-      surface: surface
-        ? { ...surface, poseReliable: this._usesTargetSurfacePrior() }
-        : null,
+      surface: surface ? { ...surface, poseReliable: this._usesTargetSurfacePrior() } : null,
       targetSurfaceModel: this._usesTargetSurfacePrior() ? this.targetSurfaceModel : null,
       referenceBounds,
       referenceScale: rowScale(referencePose.rowX, referencePose.rowY),
@@ -674,25 +719,28 @@ export class SparseObjectReconstructor {
 
   _createCenteredMeasurementRows(frames, ids) {
     const centeredRows = [];
-    frames.forEach(frame => {
-      const byId = new Map(frame.observations.map(item => [item.id, item]));
+    frames.forEach((frame) => {
+      const byId = new Map(frame.observations.map((item) => [item.id, item]));
       const completionTransform = this._estimateReferenceToCurrentTransform(frame, ids);
       if (!completionTransform) {
         return;
       }
-      const points = ids.map(id => {
+      const points = ids.map((id) => {
         const observation = byId.get(id);
-        return observation?.current || this._projectReferenceWithTransform(
-          this.landmarkStats.get(id).reference,
-          completionTransform
+        return (
+          observation?.current ||
+          this._projectReferenceWithTransform(this.landmarkStats.get(id).reference, completionTransform)
         );
       });
-      const centroid = points.reduce((sum, point) => ({
-        x: sum.x + point.x / points.length,
-        y: sum.y + point.y / points.length,
-      }), { x: 0, y: 0 });
-      centeredRows.push(points.map(point => point.x - centroid.x));
-      centeredRows.push(points.map(point => point.y - centroid.y));
+      const centroid = points.reduce(
+        (sum, point) => ({
+          x: sum.x + point.x / points.length,
+          y: sum.y + point.y / points.length,
+        }),
+        { x: 0, y: 0 },
+      );
+      centeredRows.push(points.map((point) => point.x - centroid.x));
+      centeredRows.push(points.map((point) => point.y - centroid.y));
     });
     return centeredRows.length === frames.length * 2 ? centeredRows : null;
   }
@@ -702,23 +750,22 @@ export class SparseObjectReconstructor {
   }
 
   _referenceBoundsForIds(ids) {
-    return calculateBounds(ids.map(id => ({
-      ...this.landmarkStats.get(id).reference,
-      z: 0,
-    })));
+    return calculateBounds(
+      ids.map((id) => ({
+        ...this.landmarkStats.get(id).reference,
+        z: 0,
+      })),
+    );
   }
 
   _createTargetSurface(referenceBounds) {
-    const normal = normalizeObjectVector(Object.values(normalForSurfaceModel(
-      this.anchorReference,
-      referenceBounds,
-      this.targetSurfaceModel
-    )));
+    const normal = normalizeObjectVector(
+      Object.values(normalForSurfaceModel(this.anchorReference, referenceBounds, this.targetSurfaceModel)),
+    );
     const tangentX = normalizeObjectVector([normal.z, 0, -normal.x]);
-    const tangentY = normalizeObjectVector(cross(
-      [normal.x, normal.y, normal.z],
-      [tangentX.x, tangentX.y, tangentX.z]
-    ));
+    const tangentY = normalizeObjectVector(
+      cross([normal.x, normal.y, normal.z], [tangentX.x, tangentX.y, tangentX.z]),
+    );
     const centroid = pointForSurfaceModel(this.anchorReference, referenceBounds, this.targetSurfaceModel);
 
     return {
@@ -741,12 +788,12 @@ export class SparseObjectReconstructor {
     const projectedX = projectWithRows(
       addObjectVectors(anchorPoint, scaleObjectVector(surface.tangentX, basis)),
       rowX,
-      rowY
+      rowY,
     );
     const projectedY = projectWithRows(
       addObjectVectors(anchorPoint, scaleObjectVector(surface.tangentY, basis)),
       rowX,
-      rowY
+      rowY,
     );
     const vectorX = {
       x: projectedX.x - projectedAnchor.x,
@@ -758,7 +805,9 @@ export class SparseObjectReconstructor {
     };
 
     return {
-      scale: Math.sqrt(Math.max(1e-9, Math.hypot(vectorX.x, vectorX.y) * Math.hypot(vectorY.x, vectorY.y))) / basis,
+      scale:
+        Math.sqrt(Math.max(1e-9, Math.hypot(vectorX.x, vectorX.y) * Math.hypot(vectorY.x, vectorY.y))) /
+        basis,
       rotation: Math.atan2(vectorX.y, vectorX.x),
     };
   }
@@ -768,12 +817,13 @@ export class SparseObjectReconstructor {
 
     ids.forEach((id, pointIndex) => {
       const stat = this.landmarkStats.get(id);
-      const affineCoords = eigen.map(component => {
+      const affineCoords = eigen.map((component) => {
         const singular = Math.sqrt(component.value);
         const rootSingular = Math.sqrt(singular);
-        const numerator = component.vector.reduce((sum, value, rowIndex) => (
-          sum + value * centeredRows[rowIndex][pointIndex]
-        ), 0);
+        const numerator = component.vector.reduce(
+          (sum, value, rowIndex) => sum + value * centeredRows[rowIndex][pointIndex],
+          0,
+        );
         return numerator / Math.max(rootSingular, 1e-9);
       });
       const coords = this._usesTargetSurfacePrior()
@@ -795,7 +845,7 @@ export class SparseObjectReconstructor {
 
   _estimateLocalSurface(landmarks, anchorPoint) {
     const local = landmarks
-      .map(item => ({
+      .map((item) => ({
         ...item,
         distance: pointDistance3(item.point, anchorPoint),
       }))
@@ -806,42 +856,44 @@ export class SparseObjectReconstructor {
       return null;
     }
 
-    const totalWeight = local.reduce((sum, item) => sum + 1 / (item.distance * item.distance + 144), 0);
-    const centroid = local.reduce((sum, item) => {
-      const weight = 1 / (item.distance * item.distance + 144);
-      return {
-        x: sum.x + item.point.x * weight / totalWeight,
-        y: sum.y + item.point.y * weight / totalWeight,
-        z: sum.z + item.point.z * weight / totalWeight,
-      };
-    }, { x: 0, y: 0, z: 0 });
+    const totalWeight = local.reduce((sum, item) => sum + 1 / (item.distance ** 2 + 144), 0);
+    const centroid = local.reduce(
+      (sum, item) => {
+        const weight = 1 / (item.distance ** 2 + 144);
+        return {
+          x: sum.x + (item.point.x * weight) / totalWeight,
+          y: sum.y + (item.point.y * weight) / totalWeight,
+          z: sum.z + (item.point.z * weight) / totalWeight,
+        };
+      },
+      { x: 0, y: 0, z: 0 },
+    );
     const covariance = [
       [0, 0, 0],
       [0, 0, 0],
       [0, 0, 0],
     ];
 
-    local.forEach(item => {
+    local.forEach((item) => {
       const vector = subtract3(item.point, centroid);
-      const weight = 1 / (item.distance * item.distance + 144);
+      const weight = 1 / (item.distance ** 2 + 144);
       for (let row = 0; row < 3; row++) {
         for (let column = 0; column < 3; column++) {
-          covariance[row][column] += vector[row] * vector[column] * weight / totalWeight;
+          covariance[row][column] += (vector[row] * vector[column] * weight) / totalWeight;
         }
       }
     });
 
     const eigen = jacobiEigenSymmetric(covariance);
-    if (eigen.length < 3 || eigen[1].value < 1e-9) {
+    if (eigen[1].value < 1e-9) {
       return null;
     }
 
     const normal = normalizeObjectVector(eigen[2].vector);
     const tangentX = normalizeObjectVector(eigen[0].vector);
-    const tangentY = normalizeObjectVector(cross(
-      [normal.x, normal.y, normal.z],
-      [tangentX.x, tangentX.y, tangentX.z]
-    ));
+    const tangentY = normalizeObjectVector(
+      cross([normal.x, normal.y, normal.z], [tangentX.x, tangentX.y, tangentX.z]),
+    );
 
     return {
       normal,
@@ -849,23 +901,32 @@ export class SparseObjectReconstructor {
       tangentY,
       centroid,
       support: local.length,
-      planarity: clamp(1 - Math.sqrt(Math.max(eigen[2].value, 0)) / Math.max(Math.sqrt(Math.max(eigen[1].value, 1e-9)), 1e-9), 0, 1),
+      planarity: clamp(
+        1 - Math.sqrt(Math.max(eigen[2].value, 0)) / Math.sqrt(Math.max(eigen[1].value, 1e-9)),
+        0,
+        1,
+      ),
     };
   }
 
-  _supportedIds(frames) {
+  _supportedIds(frames, minObservationCount) {
     const counts = new Map();
     const quality = new Map();
-    frames.forEach(frame => {
-      frame.observations.forEach(item => {
+    frames.forEach((frame) => {
+      frame.observations.forEach((item) => {
         counts.set(item.id, (counts.get(item.id) || 0) + 1);
         quality.set(item.id, (quality.get(item.id) || 0) + item.quality);
       });
     });
 
-    const minObservationCount = Math.max(this.minFrames, Math.ceil(frames.length * this.minObservationRatio));
+    const requiredCount =
+      minObservationCount ??
+      Math.max(
+        this.minFrames + (this._usesTargetSurfacePrior() ? (frames.length === 3 ? -1 : 1) : 0),
+        Math.ceil(frames.length * this.minObservationRatio),
+      );
     return [...counts.entries()]
-      .filter(([, count]) => count >= minObservationCount)
+      .filter(([, count]) => count >= requiredCount)
       .map(([id]) => id)
       .sort((left, right) => {
         const leftStat = this.landmarkStats.get(left);
@@ -876,7 +937,7 @@ export class SparseObjectReconstructor {
   }
 
   _updateLandmarkStats(observations, frameIndex) {
-    observations.forEach(observation => {
+    observations.forEach((observation) => {
       const previous = this.landmarkStats.get(observation.id);
       const nextCount = (previous?.observations || 0) + 1;
       const previousMean = previous?.mean || observation.current;
@@ -889,13 +950,9 @@ export class SparseObjectReconstructor {
         x: previousM2.x + (observation.current.x - previousMean.x) * (observation.current.x - mean.x),
         y: previousM2.y + (observation.current.y - previousMean.y) * (observation.current.y - mean.y),
       };
-      const variance = nextCount > 1
-        ? Math.sqrt((m2.x + m2.y) / Math.max(nextCount - 1, 1))
-        : 0;
+      const variance = nextCount > 1 ? Math.sqrt((m2.x + m2.y) / (nextCount - 1)) : 0;
       const expectedPreviousFrame = frameIndex - 1;
-      const activeStreak = previous?.lastFrameIndex === expectedPreviousFrame
-        ? previous.activeStreak + 1
-        : 1;
+      const activeStreak = previous?.lastFrameIndex === expectedPreviousFrame ? previous.activeStreak + 1 : 1;
 
       this.landmarkStats.set(observation.id, {
         id: observation.id,
@@ -914,16 +971,19 @@ export class SparseObjectReconstructor {
   }
 
   _estimateReferenceToCurrentTransform(frame, ids) {
-    const byId = new Map(frame.observations.map(item => [item.id, item]));
-    const available = ids.map(id => byId.get(id)).filter(Boolean);
+    const byId = new Map(frame.observations.map((item) => [item.id, item]));
+    const available = ids.map((id) => byId.get(id)).filter(Boolean);
     if (available.length < 3) {
       return null;
     }
 
-    const rows = available.map(item => [item.reference.x, item.reference.y, 1]);
-    const rowX = solveLeastSquares(rows, available.map(item => item.current.x));
-    const rowY = solveLeastSquares(rows, available.map(item => item.current.y));
-    return rowX && rowY ? { rowX, rowY } : null;
+    const rows = available.map((item) => [item.reference.x, item.reference.y, 1]);
+    const solution = solveLeastSquaresPair(
+      rows,
+      available.map((item) => item.current.x),
+      available.map((item) => item.current.y),
+    );
+    return solution ? { rowX: solution.left, rowY: solution.right } : null;
   }
 
   _projectReferenceWithTransform(reference, transform) {
@@ -934,16 +994,16 @@ export class SparseObjectReconstructor {
   }
 
   _frameSupport(id, frames) {
-    const observedFrames = frames.filter(frame => (
-      frame.observations.some(observation => observation.id === id)
-    )).length;
+    const observedFrames = frames.filter((frame) =>
+      frame.observations.some((observation) => observation.id === id),
+    ).length;
     return observedFrames / frames.length;
   }
 
   _landmarkReliability(stat) {
-    const support = clamp(stat.observations / Math.max(this.frameIndex, 1), 0, 1);
-    const quality = clamp((stat.qualitySum / Math.max(stat.observations, 1)) / 3, 0, 1);
-    const streak = clamp(stat.longestStreak / Math.max(this.minFrames, 1), 0, 1);
+    const support = clamp(stat.observations / this.frameIndex, 0, 1);
+    const quality = clamp(stat.qualitySum / stat.observations / 3, 0, 1);
+    const streak = clamp(stat.longestStreak / this.minFrames, 0, 1);
     const varianceScore = clamp(1 - stat.variance / 80, 0, 1);
     return clamp(support * 0.4 + quality * 0.25 + streak * 0.2 + varianceScore * 0.15, 0, 1);
   }
@@ -952,7 +1012,7 @@ export class SparseObjectReconstructor {
     const mapped = [...landmarks.values()];
     const averageSupport = mapped.reduce((sum, item) => sum + item.support, 0) / mapped.length;
     const averageReliability = mapped.reduce((sum, item) => sum + item.reliability, 0) / mapped.length;
-    const matureLandmarks = mapped.filter(item => item.reliability >= 0.62).length;
+    const matureLandmarks = mapped.filter((item) => item.reliability >= 0.62).length;
     const geometricConsistency = frames.reduce((sum, frame) => sum + frame.consistency / frames.length, 0);
 
     return {
@@ -962,11 +1022,11 @@ export class SparseObjectReconstructor {
       geometricConsistency,
       mapConfidence: clamp(
         averageSupport * 0.34 +
-        averageReliability * 0.3 +
-        clamp(matureLandmarks / this.minLandmarks, 0, 1) * 0.18 +
-        geometricConsistency * 0.18,
+          averageReliability * 0.3 +
+          clamp(matureLandmarks / this.minLandmarks, 0, 1) * 0.18 +
+          geometricConsistency * 0.18,
         0,
-        1
+        1,
       ),
       mappedFrames: frames.length,
     };
@@ -1028,7 +1088,7 @@ export class SparseObjectReconstructor {
     const points = [...this.map.landmarks.values()]
       .sort((left, right) => left.id - right.id)
       .slice(0, 96)
-      .map(item => ({
+      .map((item) => ({
         id: item.id,
         x: item.point.x,
         y: item.point.y,
@@ -1062,20 +1122,22 @@ export class SparseObjectReconstructor {
       anchor,
       bounds,
       surface,
-      current: currentPose ? {
-        points: points.map(point => ({
-          id: point.id,
-          ...projectWithRows(point, currentPose.rowX, currentPose.rowY),
-          reliability: point.reliability,
-        })),
-        anchor: {
-          x: currentPose.anchor.x,
-          y: currentPose.anchor.y,
-        },
-        normal: currentPose.normal,
-        planarTransform: currentPose.planarTransform,
-        surface,
-      } : null,
+      current: currentPose
+        ? {
+            points: points.map((point) => ({
+              id: point.id,
+              ...projectWithRows(point, currentPose.rowX, currentPose.rowY),
+              reliability: point.reliability,
+            })),
+            anchor: {
+              x: currentPose.anchor.x,
+              y: currentPose.anchor.y,
+            },
+            normal: currentPose.normal,
+            planarTransform: currentPose.planarTransform,
+            surface,
+          }
+        : null,
     };
   }
 
@@ -1087,7 +1149,7 @@ export class SparseObjectReconstructor {
     const mesh = surfaceMeshForModel(this.map.referenceBounds, this.map.targetSurfaceModel);
     return {
       model: this.map.targetSurfaceModel,
-      hull: mesh.points.map(point => point.id),
+      hull: mesh.points.map((point) => point.id),
       edges: mesh.edges,
       faces: mesh.faces,
       mesh: mesh.points,

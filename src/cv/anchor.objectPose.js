@@ -4,12 +4,12 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 const transformPoint = (point, affine) => ({
   x: affine.a * point.x + affine.b * point.y + affine.tx,
-  y: affine.c * point.x + affine.d * point.y + affine.ty
+  y: affine.c * point.x + affine.d * point.y + affine.ty,
 });
 
-const measureReferenceSpread = correspondences => {
-  const xs = correspondences.map(correspondence => correspondence.prev.x);
-  const ys = correspondences.map(correspondence => correspondence.prev.y);
+const measureReferenceSpread = (correspondences) => {
+  const xs = correspondences.map((correspondence) => correspondence.prev.x);
+  const ys = correspondences.map((correspondence) => correspondence.prev.y);
   const width = Math.max(...xs) - Math.min(...xs);
   const height = Math.max(...ys) - Math.min(...ys);
 
@@ -38,7 +38,7 @@ export class ObjectPoseEstimator {
       return {
         success: false,
         reason: affinePose.reason,
-        method: 'object-pose-affine'
+        method: 'object-pose-affine',
       };
     }
 
@@ -49,7 +49,7 @@ export class ObjectPoseEstimator {
     const confidence = clamp(
       affinePose.confidence * 0.58 + affinePose.inlierRatio * 0.27 + residualScore * 0.15,
       0,
-      1
+      1,
     );
 
     return {

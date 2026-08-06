@@ -21,6 +21,8 @@ test('benchmark coverage summary separates scenario balance from replay mode bal
         motion: 'slow',
         occlusion: 'early',
         condition: 'slow-early',
+        capture: 'nominal',
+        event: 'continuous',
       },
     },
     {
@@ -33,6 +35,8 @@ test('benchmark coverage summary separates scenario balance from replay mode bal
         motion: 'fast',
         occlusion: 'repeated',
         condition: 'fast-repeated',
+        capture: 'handheld-night',
+        event: 'full-loss-reentry',
       },
     },
     {
@@ -45,13 +49,12 @@ test('benchmark coverage summary separates scenario balance from replay mode bal
         motion: 'slow',
         occlusion: 'early',
         condition: 'slow-early',
+        capture: 'nominal',
+        event: 'continuous',
       },
     },
   ];
-  const modes = [
-    { id: 'sparse-reconstruction' },
-    { id: 'direct-photometric' },
-  ];
+  const modes = [{ id: 'sparse-reconstruction' }, { id: 'direct-photometric' }];
 
   const coverage = summarizeVisionBenchmarkCoverage({ scenarios, modes });
 
@@ -84,9 +87,23 @@ test('benchmark coverage summary separates scenario balance from replay mode bal
     { name: 'slow / early', count: 2, share: 2 / 3 },
     { name: 'fast / repeated', count: 1, share: 1 / 3 },
   ]);
+  assert.deepEqual(coverage.scenarioAxes.capture.values, [
+    { name: 'nominal', count: 2, share: 2 / 3 },
+    { name: 'handheld-night', count: 1, share: 1 / 3 },
+  ]);
+  assert.deepEqual(coverage.scenarioInteractions.motionCapture.values, [
+    { name: 'slow / nominal', count: 2, share: 2 / 3 },
+    { name: 'fast / handheld-night', count: 1, share: 1 / 3 },
+  ]);
   assert.deepEqual(
-    coverage.replayAxes.modeObject.values.find(item => item.name === 'direct-photometric / handled-mug'),
-    { name: 'direct-photometric / handled-mug', count: 2, share: 2 / 6 }
+    coverage.replayAxes.modeCapture.values.find(
+      (item) => item.name === 'direct-photometric / handheld-night',
+    ),
+    { name: 'direct-photometric / handheld-night', count: 1, share: 1 / 6 },
+  );
+  assert.deepEqual(
+    coverage.replayAxes.modeObject.values.find((item) => item.name === 'direct-photometric / handled-mug'),
+    { name: 'direct-photometric / handled-mug', count: 2, share: 2 / 6 },
   );
   assert.deepEqual(coverage.imbalances.scenarioAxes[0], {
     name: 'object',

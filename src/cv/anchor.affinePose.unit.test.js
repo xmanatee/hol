@@ -13,34 +13,36 @@ const createGridCorrespondences = (transform, options = {}) => {
     const row = Math.floor(index / columns);
     const prev = {
       x: origin.x + column * step.x,
-      y: origin.y + row * step.y
+      y: origin.y + row * step.y,
     };
     const centered = {
       x: prev.x - transform.center.x,
-      y: prev.y - transform.center.y
+      y: prev.y - transform.center.y,
     };
 
     return {
       prev,
       curr: {
         x: transform.tx + transform.center.x + transform.xx * centered.x + transform.xy * centered.y,
-        y: transform.ty + transform.center.y + transform.yx * centered.x + transform.yy * centered.y
-      }
+        y: transform.ty + transform.center.y + transform.yx * centered.x + transform.yy * centered.y,
+      },
     };
   });
 };
 
 test('affine parallax estimates object yaw from horizontal foreshortening', () => {
   const estimator = new AffineParallaxPoseEstimator();
-  const pose = estimator.estimatePose(createGridCorrespondences({
-    center: { x: 124, y: 100 },
-    xx: 0.52,
-    xy: 0,
-    yx: 0,
-    yy: 1,
-    tx: 14,
-    ty: 6
-  }));
+  const pose = estimator.estimatePose(
+    createGridCorrespondences({
+      center: { x: 124, y: 100 },
+      xx: 0.52,
+      xy: 0,
+      yx: 0,
+      yy: 1,
+      tx: 14,
+      ty: 6,
+    }),
+  );
 
   assert.equal(pose.success, true);
   assert.equal(pose.method, 'affine-parallax');
@@ -52,15 +54,17 @@ test('affine parallax estimates object yaw from horizontal foreshortening', () =
 
 test('affine parallax estimates object pitch from vertical foreshortening', () => {
   const estimator = new AffineParallaxPoseEstimator();
-  const pose = estimator.estimatePose(createGridCorrespondences({
-    center: { x: 124, y: 100 },
-    xx: 1,
-    xy: 0,
-    yx: 0,
-    yy: 0.58,
-    tx: 8,
-    ty: -9
-  }));
+  const pose = estimator.estimatePose(
+    createGridCorrespondences({
+      center: { x: 124, y: 100 },
+      xx: 1,
+      xy: 0,
+      yx: 0,
+      yy: 0.58,
+      tx: 8,
+      ty: -9,
+    }),
+  );
 
   assert.equal(pose.success, true);
   assert.ok(Math.abs(pose.normal.y) > 0.55);
@@ -70,17 +74,19 @@ test('affine parallax estimates object pitch from vertical foreshortening', () =
 
 test('affine parallax keeps pure similarity motion face-on with roll', () => {
   const estimator = new AffineParallaxPoseEstimator();
-  const rotation = 22 * Math.PI / 180;
+  const rotation = (22 * Math.PI) / 180;
   const scale = 1.18;
-  const pose = estimator.estimatePose(createGridCorrespondences({
-    center: { x: 124, y: 100 },
-    xx: scale * Math.cos(rotation),
-    xy: -scale * Math.sin(rotation),
-    yx: scale * Math.sin(rotation),
-    yy: scale * Math.cos(rotation),
-    tx: 10,
-    ty: 12
-  }));
+  const pose = estimator.estimatePose(
+    createGridCorrespondences({
+      center: { x: 124, y: 100 },
+      xx: scale * Math.cos(rotation),
+      xy: -scale * Math.sin(rotation),
+      yx: scale * Math.sin(rotation),
+      yy: scale * Math.cos(rotation),
+      tx: 10,
+      ty: 12,
+    }),
+  );
 
   assert.equal(pose.success, true);
   assert.ok(Math.abs(pose.normal.x) < 0.08);
@@ -99,15 +105,15 @@ test('affine parallax rejects incoherent point clouds', () => {
     yx: 0,
     yy: 1,
     tx: 12,
-    ty: 4
-  }).map((correspondence, index) => (
+    ty: 4,
+  }).map((correspondence, index) =>
     index % 3 === 0
       ? {
-        prev: correspondence.prev,
-        curr: { x: 260 + index * 9, y: 30 + index * 7 }
-      }
-      : correspondence
-  ));
+          prev: correspondence.prev,
+          curr: { x: 260 + index * 9, y: 30 + index * 7 },
+        }
+      : correspondence,
+  );
 
   const pose = estimator.estimatePose(correspondences, { maxResidual: 3 });
 

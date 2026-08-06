@@ -8,7 +8,6 @@ import {
   fitRobustSimilarity,
   MOBILE_AFFINE_SAMPLE_WINDOW,
   readinessFromGeometry,
-  selectCoherentObservations,
   toActiveObservations,
   transformPointAffine2,
   transformPoint2,
@@ -21,6 +20,7 @@ import {
   surfaceMeshForModel as surfaceMesh,
 } from './anchor.parametricGeometry.js';
 import { PARAMETRIC_SURFACE_POSE_MODEL } from './anchor.reconstructionModes.js';
+import { evaluateFrameConsensus } from './anchor.frameConsensus.js';
 
 export { PARAMETRIC_SURFACE_POSE_MODEL };
 
@@ -37,9 +37,34 @@ const rotateNormal = (rotation, normal) => {
     z: rotated.z / length,
   };
 
-  return normalized.z >= 0
-    ? normalized
-    : { x: -normalized.x, y: -normalized.y, z: -normalized.z };
+  return normalized.z >= 0 ? normalized : { x: -normalized.x, y: -normalized.y, z: -normalized.z };
+};
+
+const createPnpWorkspace = (cv, cameraParams) => [
+  new cv.Mat(),
+  new cv.Mat(),
+  cv.matFromArray(3, 3, cv.CV_64F, [
+    cameraParams.fx,
+    0,
+    cameraParams.cx,
+    0,
+    cameraParams.fy,
+    cameraParams.cy,
+    0,
+    0,
+    1,
+  ]),
+  cv.Mat.zeros(4, 1, cv.CV_64F),
+  new cv.Mat(),
+  new cv.Mat(),
+  new cv.Mat(),
+  new cv.Mat(),
+];
+
+const disposePnpWorkspace = (workspace) => {
+  workspace.forEach((handle) => {
+    handle.delete();
+  });
 };
 
 export class ParametricSurfaceReconstructor {
@@ -49,6 +74,7 @@ export class ParametricSurfaceReconstructor {
     this.maxFrames = config.maxFrames ?? 24;
     this.cv = null;
     this.cameraParams = null;
+    this.pnp = null;
     this.reset({
       anchorReference: { x: 0, y: 0 },
       templateRegion: { x: 0, y: 0, width: 1, height: 1 },
@@ -56,8 +82,19 @@ export class ParametricSurfaceReconstructor {
   }
 
   configure({ cv, cameraParams }) {
+    if (this.pnp) {
+      disposePnpWorkspace(this.pnp);
+    }
     this.cv = cv;
     this.cameraParams = { ...cameraParams };
+    this.pnp = createPnpWorkspace(cv, this.cameraParams);
+  }
+
+  dispose() {
+    if (this.pnp) {
+      disposePnpWorkspace(this.pnp);
+      this.pnp = null;
+    }
   }
 
   reset({ anchorReference, templateRegion = { x: 0, y: 0, width: 1, height: 1 }, targetClass = null }) {
@@ -71,19 +108,29 @@ export class ParametricSurfaceReconstructor {
     this.state = 'mapping';
     this.lastFailureReason = null;
     this.frameObservationCache = null;
+    this.frameConsensusCache = null;
     this.referencePnpTransform = null;
     this.referenceFitCache = null;
   }
 
   updateReferenceRegion(templateRegion, targetClass = this.targetClass) {
+    const previousModel = this.model;
     this.templateRegion = { ...templateRegion };
     this.targetClass = targetClass;
     this.model = modelFromRegion(templateRegion, targetClass);
     this.frameObservationCache = null;
-    this.referenceFitCache = null;
+    if (this.model !== previousModel) {
+      this.frameConsensusCache = null;
+      this.referenceFitCache = null;
+    }
   }
 
-  addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now(), optionsOrGrayImage = null, options = {}) {
+  addFrameFromTrackedPoints(
+    trackedPoints,
+    timestamp = performance.now(),
+    optionsOrGrayImage = null,
+    options = {},
+  ) {
     const stateOptions = optionsOrGrayImage?.includePreview === false ? optionsOrGrayImage : options;
     const observations = this._activeObservationsFromTrackedPoints(trackedPoints);
     this.frameObservationCache = { trackedPoints, observations };
@@ -94,12 +141,20 @@ export class ParametricSurfaceReconstructor {
     }
 
     const consensus = this._consensusOptions();
-    const coherent = selectCoherentObservations(observations, {
+    const consensusOptions = {
       minInliers: this.minLandmarks,
       threshold: consensus.threshold,
       minInlierRatio: consensus.minInlierRatio,
       model: consensus.model,
-    });
+      maxSample: consensus.maxSample,
+      sampleCoverage: consensus.sampleCoverage,
+    };
+    this.frameConsensusCache = evaluateFrameConsensus(
+      this.frameConsensusCache,
+      observations,
+      consensusOptions,
+    );
+    const coherent = this.frameConsensusCache.result;
     if (!coherent.success) {
       this.lastFailureReason = coherent.reason;
       return this.getState(stateOptions);
@@ -112,9 +167,11 @@ export class ParametricSurfaceReconstructor {
       this.frames = this.frames.slice(-this.maxFrames);
       this.consistency = this.consistency.slice(-this.maxFrames);
     }
-    this.state = this.frames.length >= this.minFrames && this._statistics().mapConfidence >= 0.42 ? 'ready' : 'mapping';
+    const statistics = this._statistics();
+    this.state =
+      this.frames.length >= this.minFrames && statistics.mapConfidence >= 0.42 ? 'ready' : 'mapping';
     this.lastFailureReason = this.state === 'ready' ? null : 'Move object through more surface views';
-    return this.getState(stateOptions);
+    return this._createState(statistics, stateOptions);
   }
 
   estimatePoseFromTrackedPoints(trackedPoints, { includePreview = true } = {}) {
@@ -127,13 +184,22 @@ export class ParametricSurfaceReconstructor {
     }
 
     const rawObservations = this._takeFrameObservationsForPose(trackedPoints);
-    const consensus = this._poseConsensusOptions();
-    const coherent = selectCoherentObservations(rawObservations, {
+    const statistics = this._statistics();
+    const consensus = this._poseConsensusOptions(statistics);
+    const consensusOptions = {
       minInliers: consensus.minInliers,
       threshold: consensus.threshold,
       minInlierRatio: consensus.minInlierRatio,
       model: consensus.model,
-    });
+      maxSample: consensus.maxSample,
+      sampleCoverage: consensus.sampleCoverage,
+    };
+    this.frameConsensusCache = evaluateFrameConsensus(
+      this.frameConsensusCache,
+      rawObservations,
+      consensusOptions,
+    );
+    const coherent = this.frameConsensusCache.result;
     const observations = coherent.success ? coherent.observations : [];
     const fit = this._fitAttachmentTransform(observations, {
       minInliers: consensus.minInliers,
@@ -151,21 +217,18 @@ export class ParametricSurfaceReconstructor {
     const position = this._transformReferencePoint(this.anchorReference, fit);
     const pnpPose = this._estimatePnPPose(observations);
     const usePnPProjection = pnpPose && this._shouldUsePnPAnchorProjection(pnpPose, position);
-    const usePnPTransform = usePnPProjection &&
-      Number.isFinite(pnpPose.scale) &&
-      Number.isFinite(pnpPose.rotation);
-    const anchorPosition = usePnPProjection
-      ? pnpPose.position
-      : position;
+    const usePnPTransform =
+      usePnPProjection && Number.isFinite(pnpPose.scale) && Number.isFinite(pnpPose.rotation);
+    const anchorPosition = usePnPProjection ? pnpPose.position : position;
     const planarTransform = usePnPTransform
       ? {
-        scale: pnpPose.scale,
-        rotation: pnpPose.rotation,
-      }
+          scale: pnpPose.scale,
+          rotation: pnpPose.rotation,
+        }
       : {
-        scale: this._transformScale(fit) / this._referenceScale(),
-        rotation: normalizeAngle(this._transformRotation(fit) - this._referenceRotation()),
-      };
+          scale: this._transformScale(fit) / this._referenceScale(),
+          rotation: normalizeAngle(this._transformRotation(fit) - this._referenceRotation()),
+        };
     const normal = pnpPose?.normal || this._estimateNormal(fit, fit.inliers);
     const result = {
       success: true,
@@ -195,15 +258,22 @@ export class ParametricSurfaceReconstructor {
 
     return {
       ...result,
-      preview: this._createPreview({
-        fit,
-        normal,
-        anchor: anchorPosition,
-      }),
+      preview: this._createPreview(
+        {
+          fit,
+          normal,
+          anchor: anchorPosition,
+        },
+        statistics,
+      ),
     };
   }
 
-  getState({ includePreview = true } = {}) {
+  getState(options = {}) {
+    return this._createState(this._statistics(), options);
+  }
+
+  _createState(statistics, { includePreview = true } = {}) {
     const state = {
       state: this.state,
       ready: this.state === 'ready',
@@ -211,11 +281,11 @@ export class ParametricSurfaceReconstructor {
       frameCount: this.frames.length,
       landmarkCount: this.stats.size,
       depthQuality: depthQualityForSurfaceModel(this.model),
-      statistics: this._statistics(),
+      statistics,
       lastFailureReason: this.lastFailureReason,
     };
     if (includePreview) {
-      state.preview = this._createPreview();
+      state.preview = this._createPreview(null, statistics);
     }
     return state;
   }
@@ -235,7 +305,7 @@ export class ParametricSurfaceReconstructor {
   }
 
   _recordStats(observations) {
-    observations.forEach(observation => {
+    observations.forEach((observation) => {
       const previous = this.stats.get(observation.id);
       this.stats.set(observation.id, {
         id: observation.id,
@@ -247,7 +317,7 @@ export class ParametricSurfaceReconstructor {
   }
 
   _referenceBounds() {
-    const points = [...this.stats.values()].map(item => ({ ...item.reference, z: 0 }));
+    const points = [...this.stats.values()].map((item) => ({ ...item.reference, z: 0 }));
     if (points.length) return boundsForPoints(points);
 
     return {
@@ -271,12 +341,13 @@ export class ParametricSurfaceReconstructor {
   }
 
   _referenceFit() {
+    if (this.referenceFitCache) {
+      return this.referenceFitCache.fit;
+    }
+
     const stateFrame = this.frames[0];
     if (!stateFrame) {
       return { success: false };
-    }
-    if (this.referenceFitCache?.frame === stateFrame) {
-      return this.referenceFitCache.fit;
     }
 
     const fit = this._fitAttachmentTransform(stateFrame.observations, {
@@ -284,7 +355,7 @@ export class ParametricSurfaceReconstructor {
       threshold: 6,
       maxSample: this._coherenceModel() === 'affine' ? MOBILE_AFFINE_SAMPLE_WINDOW : undefined,
     });
-    this.referenceFitCache = { frame: stateFrame, fit };
+    this.referenceFitCache = { fit };
     return fit;
   }
 
@@ -296,17 +367,17 @@ export class ParametricSurfaceReconstructor {
     return this.model === 'plane'
       ? { model: 'similarity', threshold: 8, minInlierRatio: 0.5 }
       : {
-        model: 'affine',
-        threshold: 18,
-        minInlierRatio: 0.36,
-        maxSample: MOBILE_AFFINE_SAMPLE_WINDOW,
-      };
+          model: 'affine',
+          threshold: 18,
+          minInlierRatio: 0.36,
+          maxSample: MOBILE_AFFINE_SAMPLE_WINDOW,
+        };
   }
 
-  _poseConsensusOptions() {
+  _poseConsensusOptions(statistics = this._statistics()) {
     const options = this._consensusOptions();
-    const statistics = this._statistics();
-    const compactMatureSurface = this.state === 'ready' &&
+    const compactMatureSurface =
+      this.state === 'ready' &&
       this.model !== 'plane' &&
       /mug/i.test(this.targetClass || '') &&
       statistics.mapConfidence >= 0.62 &&
@@ -315,22 +386,20 @@ export class ParametricSurfaceReconstructor {
     return {
       ...options,
       minInliers: compactMatureSurface ? 8 : this.minLandmarks,
-      minInlierRatio: compactMatureSurface
-        ? Math.min(options.minInlierRatio, 0.3)
-        : options.minInlierRatio,
+      minInlierRatio: compactMatureSurface ? Math.min(options.minInlierRatio, 0.3) : options.minInlierRatio,
     };
   }
 
   _fitAttachmentTransform(observations, options) {
     if (this._coherenceModel() === 'affine') {
-      const fit = fitRobustAffine2D(observations, options);
-      if (fit.success) {
-        const similarityFit = fitRobustSimilarity(fit.inliers, {
-          minInliers: Math.min(options.minInliers, fit.inliers.length),
+      const affineFit = fitRobustAffine2D(observations, options);
+      if (affineFit.success) {
+        const similarityFit = fitRobustSimilarity(affineFit.inliers, {
+          minInliers: Math.min(options.minInliers, affineFit.inliers.length),
           threshold: Math.max(10, options.threshold * 0.75),
         });
         return {
-          ...fit,
+          ...affineFit,
           transformKind: 'affine',
           similarityTransform: similarityFit.success ? similarityFit.transform : null,
         };
@@ -338,9 +407,7 @@ export class ParametricSurfaceReconstructor {
     }
 
     const fit = fitRobustSimilarity(observations, options);
-    return fit.success
-      ? { ...fit, transformKind: 'similarity' }
-      : fit;
+    return fit.success ? { ...fit, transformKind: 'similarity' } : fit;
   }
 
   _transformReferencePoint(point, fit) {
@@ -350,9 +417,7 @@ export class ParametricSurfaceReconstructor {
   }
 
   _transformScale(fit) {
-    return fit.transformKind === 'affine'
-      ? affineVerticalScale(fit.transform)
-      : fit.transform.scale;
+    return fit.transformKind === 'affine' ? affineVerticalScale(fit.transform) : fit.transform.scale;
   }
 
   _transformRotation(fit) {
@@ -360,19 +425,22 @@ export class ParametricSurfaceReconstructor {
       return fit.similarityTransform.rotation;
     }
 
-    return fit.transformKind === 'affine'
-      ? affineRotation(fit.transform)
-      : fit.transform.rotation;
+    return fit.transformKind === 'affine' ? affineRotation(fit.transform) : fit.transform.rotation;
   }
 
   _estimateNormal(fit, inliers) {
     const referenceWidth = this._referenceBounds().max.x - this._referenceBounds().min.x;
-    const currentWidth = inliers.reduce((range, item) => ({
-      min: Math.min(range.min, item.current.x),
-      max: Math.max(range.max, item.current.x),
-    }), { min: Infinity, max: -Infinity });
-    const widthRatio = (currentWidth.max - currentWidth.min) / Math.max(referenceWidth * this._transformScale(fit), 1);
-    const surfaceTilt = this.model === 'plane' ? 0 : Math.sqrt(clamp(1 - widthRatio * widthRatio, 0.03, 0.92));
+    const currentWidth = inliers.reduce(
+      (range, item) => ({
+        min: Math.min(range.min, item.current.x),
+        max: Math.max(range.max, item.current.x),
+      }),
+      { min: Infinity, max: -Infinity },
+    );
+    const widthRatio =
+      (currentWidth.max - currentWidth.min) / Math.max(referenceWidth * this._transformScale(fit), 1);
+    const surfaceTilt =
+      this.model === 'plane' ? 0 : Math.sqrt(clamp(1 - widthRatio * widthRatio, 0.03, 0.92));
     const rotation = this._transformRotation(fit);
     const x = Math.sin(rotation) * 0.34 + surfaceTilt * 0.56;
     const y = -Math.cos(rotation) * surfaceTilt * 0.12;
@@ -404,98 +472,75 @@ export class ParametricSurfaceReconstructor {
       averageResidual: pnpSolution.averageResidual,
       position: currentTransform.position,
       scale: referenceTransform ? currentTransform.rawScale / referenceTransform.rawScale : null,
-      rotation: referenceTransform ? normalizeAngle(currentTransform.rawRotation - referenceTransform.rawRotation) : null,
+      rotation: referenceTransform
+        ? normalizeAngle(currentTransform.rawRotation - referenceTransform.rawRotation)
+        : null,
       anchorEccentricity: currentTransform.anchorEccentricity,
     };
   }
 
   _solvePnPPose(observations, bounds) {
-    const objectPoints = [];
-    const imagePoints = [];
+    const cv = this.cv;
+    const [objectMat, imageMat, cameraMat, distCoeffs, rvec, tvec, inliers, rotationMat] = this.pnp;
+    objectMat.create(observations.length, 1, cv.CV_32FC3);
+    imageMat.create(observations.length, 1, cv.CV_32FC2);
+    const objectPoints = objectMat.data32F;
+    const imagePoints = imageMat.data32F;
+    let objectIndex = 0;
+    let imageIndex = 0;
 
-    observations.forEach(observation => {
+    observations.forEach((observation) => {
       const point = pointForModel(observation.reference, bounds, this.model);
-      objectPoints.push(point.x, point.y, point.z);
-      imagePoints.push(observation.current.x, observation.current.y);
+      objectPoints[objectIndex++] = point.x;
+      objectPoints[objectIndex++] = point.y;
+      objectPoints[objectIndex++] = point.z;
+      imagePoints[imageIndex++] = observation.current.x;
+      imagePoints[imageIndex++] = observation.current.y;
     });
 
-    const cv = this.cv;
-    let objectMat = null;
-    let imageMat = null;
-    let cameraMat = null;
-    let distCoeffs = null;
-    let rvec = null;
-    let tvec = null;
-    let inliers = null;
-    let rotationMat = null;
+    const solved = cv.solvePnPRansac(
+      objectMat,
+      imageMat,
+      cameraMat,
+      distCoeffs,
+      rvec,
+      tvec,
+      false,
+      100,
+      5,
+      0.98,
+      inliers,
+      cv.SOLVEPNP_ITERATIVE,
+    );
 
-    try {
-      objectMat = cv.matFromArray(observations.length, 1, cv.CV_32FC3, objectPoints);
-      imageMat = cv.matFromArray(observations.length, 1, cv.CV_32FC2, imagePoints);
-      cameraMat = cv.matFromArray(3, 3, cv.CV_64F, [
-        this.cameraParams.fx, 0, this.cameraParams.cx,
-        0, this.cameraParams.fy, this.cameraParams.cy,
-        0, 0, 1,
-      ]);
-      distCoeffs = cv.Mat.zeros(4, 1, cv.CV_64F);
-      rvec = new cv.Mat();
-      tvec = new cv.Mat();
-      inliers = new cv.Mat();
-      rotationMat = new cv.Mat();
+    if (!solved || inliers.rows < Math.max(10, Math.ceil(observations.length * 0.45))) {
+      return null;
+    }
 
-      const solved = cv.solvePnPRansac(
-        objectMat,
-        imageMat,
-        cameraMat,
-        distCoeffs,
-        rvec,
-        tvec,
-        false,
-        100,
-        5,
-        0.98,
-        inliers,
-        cv.SOLVEPNP_ITERATIVE
-      );
+    cv.Rodrigues(rvec, rotationMat);
+    const rotation = Array.from(rotationMat.data64F);
+    const translation = Array.from(tvec.data64F);
+    const averageResidual = this._calculatePnPResidual({
+      rotation,
+      translation,
+      objectPoints,
+      imagePoints,
+    });
 
-      if (!solved || inliers.rows < Math.max(10, Math.ceil(observations.length * 0.45))) {
-        return null;
-      }
-
-      cv.Rodrigues(rvec, rotationMat);
-      const rotation = Array.from(rotationMat.data64F);
-      const translation = Array.from(tvec.data64F);
-      const averageResidual = this._calculatePnPResidual({
-        rotation,
-        translation,
-        objectPoints,
-        imagePoints,
-      });
-
-      return averageResidual <= 7
-        ? {
+    return averageResidual <= 7
+      ? {
           inlierCount: inliers.rows,
           averageResidual,
           rotation,
           translation,
         }
-        : null;
-    } finally {
-      if (objectMat) objectMat.delete();
-      if (imageMat) imageMat.delete();
-      if (cameraMat) cameraMat.delete();
-      if (distCoeffs) distCoeffs.delete();
-      if (rvec) rvec.delete();
-      if (tvec) tvec.delete();
-      if (inliers) inliers.delete();
-      if (rotationMat) rotationMat.delete();
-    }
+      : null;
   }
 
   _referencePnPTransform(bounds, observations) {
     if (this.referencePnpTransform) return this.referencePnpTransform;
 
-    const referenceObservations = observations.map(observation => ({
+    const referenceObservations = observations.map((observation) => ({
       ...observation,
       current: observation.reference,
     }));
@@ -516,8 +561,8 @@ export class ParametricSurfaceReconstructor {
     const cameraZ = rotation[6] * point.x + rotation[7] * point.y + rotation[8] * point.z + translation[2];
 
     return {
-      x: this.cameraParams.cx + this.cameraParams.fx * cameraX / cameraZ,
-      y: this.cameraParams.cy + this.cameraParams.fy * cameraY / cameraZ,
+      x: this.cameraParams.cx + (this.cameraParams.fx * cameraX) / cameraZ,
+      y: this.cameraParams.cy + (this.cameraParams.fy * cameraY) / cameraZ,
     };
   }
 
@@ -565,7 +610,7 @@ export class ParametricSurfaceReconstructor {
       position: projectedAnchor,
       rawScale: Math.sqrt(
         Math.max(1e-9, Math.hypot(vectorX.x, vectorX.y) / basis) *
-        Math.max(1e-9, Math.hypot(vectorY.x, vectorY.y) / basis)
+          Math.max(1e-9, Math.hypot(vectorY.x, vectorY.y) / basis),
       ),
       rawRotation: normalizeAngle(Math.atan2(vectorX.y, vectorX.x)),
       anchorEccentricity: this._anchorEccentricity(bounds),
@@ -596,12 +641,10 @@ export class ParametricSurfaceReconstructor {
   _shouldUsePnPAnchorProjection(pnpPose, similarityPosition) {
     const pnpDelta = Math.hypot(
       pnpPose.position.x - similarityPosition.x,
-      pnpPose.position.y - similarityPosition.y
+      pnpPose.position.y - similarityPosition.y,
     );
 
-    return pnpPose.anchorEccentricity >= 0.42 &&
-      pnpPose.averageResidual <= 4.5 &&
-      pnpDelta >= 2.5;
+    return pnpPose.anchorEccentricity >= 0.42 && pnpPose.averageResidual <= 4.5 && pnpDelta >= 2.5;
   }
 
   _calculatePnPResidual({ rotation, translation, objectPoints, imagePoints }) {
@@ -616,8 +659,8 @@ export class ParametricSurfaceReconstructor {
       const cameraY = rotation[3] * x + rotation[4] * y + rotation[5] * z + translation[1];
       const cameraZ = rotation[6] * x + rotation[7] * y + rotation[8] * z + translation[2];
       const imageIndex = count * 2;
-      const projectedX = this.cameraParams.cx + this.cameraParams.fx * cameraX / cameraZ;
-      const projectedY = this.cameraParams.cy + this.cameraParams.fy * cameraY / cameraZ;
+      const projectedX = this.cameraParams.cx + (this.cameraParams.fx * cameraX) / cameraZ;
+      const projectedY = this.cameraParams.cy + (this.cameraParams.fy * cameraY) / cameraZ;
 
       total += Math.hypot(projectedX - imagePoints[imageIndex], projectedY - imagePoints[imageIndex + 1]);
       count++;
@@ -629,10 +672,17 @@ export class ParametricSurfaceReconstructor {
   _statistics() {
     const stats = [...this.stats.values()];
     if (!stats.length) return EMPTY_RECONSTRUCTION_STATS;
-    const averageSupport = stats.reduce((sum, item) => sum + item.observations / Math.max(this.frames.length, 1), 0) / stats.length;
-    const averageReliability = stats.reduce((sum, item) => sum + clamp(item.quality / Math.max(item.observations, 1) / 3, 0, 1), 0) / stats.length;
-    const matureLandmarks = stats.filter(item => item.observations >= this.minFrames).length;
-    const geometricConsistency = this.consistency.reduce((sum, value) => sum + value / Math.max(this.consistency.length, 1), 0);
+    const averageSupport =
+      stats.reduce((sum, item) => sum + item.observations / Math.max(this.frames.length, 1), 0) /
+      stats.length;
+    const averageReliability =
+      stats.reduce((sum, item) => sum + clamp(item.quality / Math.max(item.observations, 1) / 3, 0, 1), 0) /
+      stats.length;
+    const matureLandmarks = stats.filter((item) => item.observations >= this.minFrames).length;
+    const geometricConsistency = this.consistency.reduce(
+      (sum, value) => sum + value / Math.max(this.consistency.length, 1),
+      0,
+    );
     const frameProgress = clamp(this.frames.length / Math.max(this.minFrames, 1), 0, 1);
     const matureScore = clamp(matureLandmarks / Math.max(this.minLandmarks, 1), 0, 1);
     const geometryReadiness = readinessFromGeometry(geometricConsistency);
@@ -642,22 +692,22 @@ export class ParametricSurfaceReconstructor {
       averageReliability,
       matureLandmarks,
       geometricConsistency,
-      mapConfidence: frameProgress * geometryReadiness * clamp(
-        averageSupport * 0.34 +
-        averageReliability * 0.24 +
-        matureScore * 0.22 +
-        geometricConsistency * 0.2,
-        0,
-        1
-      ),
+      mapConfidence:
+        frameProgress *
+        geometryReadiness *
+        clamp(
+          averageSupport * 0.34 + averageReliability * 0.24 + matureScore * 0.22 + geometricConsistency * 0.2,
+          0,
+          1,
+        ),
       mappedFrames: this.frames.length,
     };
   }
 
-  _createPreview(current = null) {
+  _createPreview(current = null, statistics = this._statistics()) {
     const bounds = this._referenceBounds();
     const mesh = surfaceMesh(bounds, this.model);
-    const points = [...this.stats.values()].slice(0, 96).map(item => ({
+    const points = [...this.stats.values()].slice(0, 96).map((item) => ({
       id: item.id,
       ...pointForModel(item.reference, bounds, this.model),
       reference: item.reference,
@@ -674,37 +724,39 @@ export class ParametricSurfaceReconstructor {
       frameCount: this.frames.length,
       landmarkCount: this.stats.size,
       depthQuality: depthQualityForSurfaceModel(this.model),
-      statistics: this._statistics(),
+      statistics,
       points,
       anchor,
       bounds: boundsForPoints([...points, anchor]),
       surface: {
         model: this.model,
-        hull: mesh.points.map(point => point.id),
+        hull: mesh.points.map((point) => point.id),
         edges: mesh.edges,
         faces: mesh.faces,
         mesh: mesh.points,
       },
-      current: current ? {
-        points: points.map(point => ({
-          id: point.id,
-          ...this._transformReferencePoint(point.reference, current.fit),
-          reliability: point.reliability,
-        })),
-        anchor: current.anchor,
-        normal: current.normal,
-        planarTransform: {
-          scale: this._transformScale(current.fit) / this._referenceScale(),
-          rotation: normalizeAngle(this._transformRotation(current.fit) - this._referenceRotation()),
-        },
-        surface: {
-          model: this.model,
-          hull: mesh.points.map(point => point.id),
-          edges: mesh.edges,
-          faces: mesh.faces,
-          mesh: mesh.points,
-        },
-      } : null,
+      current: current
+        ? {
+            points: points.map((point) => ({
+              id: point.id,
+              ...this._transformReferencePoint(point.reference, current.fit),
+              reliability: point.reliability,
+            })),
+            anchor: current.anchor,
+            normal: current.normal,
+            planarTransform: {
+              scale: this._transformScale(current.fit) / this._referenceScale(),
+              rotation: normalizeAngle(this._transformRotation(current.fit) - this._referenceRotation()),
+            },
+            surface: {
+              model: this.model,
+              hull: mesh.points.map((point) => point.id),
+              edges: mesh.edges,
+              faces: mesh.faces,
+              mesh: mesh.points,
+            },
+          }
+        : null,
     };
   }
 }

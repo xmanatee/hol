@@ -1,201 +1,80 @@
-# HOL Vision Improvement Backlog
+# Measured improvement backlog
 
-## Current Truth
+This backlog contains only changes that still have an evidence gap. Production does not carry dormant model adapters, duplicate providers, detector compatibility paths, or migration shims.
 
-- The normal flow is tap-first object anchoring. YOLO is retained as optional/debug context, not the geometry authority.
-- Tap-time object support is already implemented with `ObjectSupportMask`, MediaPipe Interactive Segmenter in a worker, tap-local fallback masks, warped mask propagation, and object-owned keypoint filtering.
-- Anchor tracking combines Shi-Tomasi keypoints, Lucas-Kanade optical flow, patch keyframe relocalization, homography/object-pose estimation, and three reconstruction modes.
-- Latest verified checks in this pass: `node --test src/services/ImageAnchorService.unit.test.js`, `node --test src/cv/anchor.tracking.unit.test.js`, `npm run lint`, `npm run build`, and `git diff --check` pass.
-- Latest OpenCV replay status in this pass: `node --test src/cv/syntheticVisionReplay.unit.test.js` still fails on sparse tapered-cup max anchor error and off-center parametric can max anchor error. These are the next reconstruction-quality targets.
-- Latest quality matrix from the backlog research pass: `scripts/vision-quality-report.mjs` reported 35/54 passing and 19 failing. Remaining failures are mostly tracking drift and reconstruction/pose-source instability under occlusion, glare, curved surfaces, and busy backgrounds.
-- Primary runtime target is still iPhone Safari/Chrome. Heavy CV/model work belongs in workers, with the 16.67 ms frame budget protected.
+## Release gates
 
-## Improvement Order
+Any runtime change must:
 
-Work through these in order. Each item should be implemented with a focused regression, replay comparison, and cleanup of any redundant older path it replaces.
+- keep npm run validate and npm run test:browser green;
+- preserve all capability-asset hashes and declared licenses;
+- remain under scripts/verify-build-budget.mjs limits;
+- improve the fixed vision quality matrix without creating a new failing scenario;
+- keep steady-state tracking at or below 4 ms amortized on the primary iPhone target;
+- provide an explicit worker boundary and failure state for heavy CV;
+- replace its predecessor completely if adopted.
 
-## P0 - Object-Owned Landmark Quality Model
+## P0: expand strict replay coverage
 
-- Research basis: classical SLAM systems such as COLMAP and ORB-SLAM3 succeed by ranking observations, rejecting outliers, and using long-lived high-quality landmarks; learned trackers such as CoTracker show the value of jointly reasoning over point tracks.
-- Current weakness: HOL counts object-owned landmarks but does not yet score each landmark as a durable map element. A point that is old, mask-owned, low residual, spatially useful, and parallax-rich should not be treated like a fresh weak corner.
-- Proposed change:
-  - Add per-landmark quality fields: mask ownership history, age, successful observations, reprojection/flow residual, descriptor stability, parallax contribution, spatial cell, recovery count, and recent dropout state.
-  - Prefer landmarks by quality when estimating planar/object/reconstruction poses.
-  - Demote or retire points that repeatedly leave the object mask or only agree with weak similarity fallback.
-- Acceptance:
-  - Tests prove low-quality background-like points cannot dominate pose selection.
-  - Vision quality report has no new failures.
-  - At least one existing drift-heavy scenario improves numerically.
-- Sources: [COLMAP](https://github.com/colmap/colmap), [ORB-SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3), [CoTracker](https://github.com/facebookresearch/co-tracker)
+The current annotated gate now owns three independently sourced domains, 623 frames, and 18 first-visible queries. The newly admitted Perception Test scene adds real fixed-camera object manipulation, small rings, hands, a 207-frame disappearance, 900 ms stable recovery latency, 4,467 ms missed visibility, and 5,133 ms false visibility. Combined output is AJ `0.17682167909600022`, occlusion accuracy `0.6807798867906737`, re-detection AJ `0.0811919143614828`, and stable recovery 9/16 eligible events. These values supersede the earlier two-domain counts retained below as historical optimization evidence.
 
-## P0 - Pose Candidate Arbitration Cleanup
+The current classical path passes all 84 strict reports across the fixed planar, curved, occlusion, background, reconstruction-mode, low-light, motion-blur, and rolling-shutter matrix. The repository-owned annotated gate now adds 12 independent first-visible queries across a 250-frame rendered fixture and a 40-frame real-world fixture, split into named primary/motion and occlusion-stress contracts. Each track owns a complete query-specific floor, so a strong trajectory cannot lend spatial or temporal headroom to a weak sibling. The stress set's `0.14335244616777107` average Jaccard and `0.6050870147255689` occlusion accuracy expose the clearest remaining algorithm gap without weakening the primary floors. The same gate now exposes temporal concentration rather than only averages: combined stable re-detection is 6/10 eligible events with `466.6666666666667` ms worst latency, a selected query can remain falsely visible for `1000` ms continuously, the longest visible-target outage is `1833.3333333333333` ms, and the 12 tracks contain 19 acquired-track interruptions (at most three on one query). Those are explicit optimization targets; later correct frames and weak sibling ceilings can no longer hide them. Transactional PnP arbitration, geometry-scoped ORB, and mature-map descriptor validation raise the representative laminated-card benchmark from 7/20 to 12/20 passing reports and cut mean risk from 33.36 to 28.97. The extra mature-map checks raise amortized ORB cost from 0.659 ms to 0.774 ms per frame in that benchmark; LK steady state is unchanged. Bounded and same-transform-cached object-mask projection cuts quick-matrix `landmarkMetricsMs` from 4.743 ms to 0.106 ms without changing any quality report. Full-path storage telemetry attributes 5.130 ms amortized quick-matrix cost to `keyframeStoreMs`, including 5.051 ms of ORB feature extraction across 26.0% of frames; indexed, bit-exact post-processing now cuts the isolated 1,000-feature/96-landmark JS association from 0.789 ms to 0.127 ms and avoids unused descriptor materialization. Same-frame full-image query reuse removes another 44 duplicate storage extractions, equal to 0.346 ms amortized at the measured baseline extraction cost, without changing quality or recovery cadence. Compact native-to-JavaScript ownership now retains only selected 32-byte ORB rows: a typical 22-entry keyframe falls from 32,000 to 704 descriptor bytes and the 96-entry maximum to 3,072 bytes, while adjacent `keyframeStoreMs` falls from 4.561 ms to 4.437 ms with exactly unchanged quick output and extraction count. Exact mapping-to-pose consensus reuse removes 764 of 1,112 duplicate ready-pose evaluations in direct and parametric reconstruction and cuts aggregate `reconstructionUpdateMs` from 8.259 ms to 7.337 ms with numerically identical quick quality. Sharing one regularized affine factorization across the X/Y right-hand sides cuts the same aggregate stage from 7.337 ms to 6.172 ms; allocation-free affine and similarity hypothesis scoring reduces it again to 5.978 ms, and letting the paired solver consume its private normal-matrix workspace reduces it further to 5.446 ms while preserving byte-identical solver and robust-fit corpora plus the complete quick-quality aggregate. Bounding the existing deterministic homography RANSAC at 1,250 iterations preserves the complete quick-quality aggregate while reducing amortized planar pose from 4.442 ms to 4.222 ms and maximum p95 frame processing from 141.052 ms to 125.638 ms in the adjacent Node replay. Inlier-only homography post-processing preserves an exact 60-case result corpus while reducing the fixed 96-correspondence/85-inlier summary from 2.949 to 1.672 microseconds; native and pipeline timing are not claimed. Full ORB extraction remains the dominant storage cost and still requires target-device measurement. Curved and non-convex targets retain their broader recovery model. Mode-scoped handled-mug arbitration now prevents weak, tracker-divergent sparse poses from owning attachment position: on the identical historical 84-report diagnostic quick matrix, mean risk falls from 24.571289 to 24.462903, maximum risk from 60.582978 to 56.911951, and severe cases from one to zero without changing the 45/39 diagnostic split or its failure buckets. Motion-aligned parametric handled-mug recovery then preserves reliable bootstrap position evidence, blocks a marginal just-ready pose from reversing it, and uses its bounded prediction only to recover established landmarks. It changes only that historical mode/object slice: mean matrix risk falls again to 24.230523, maximum risk to 54.006817, and recovered post-occlusion windows rise from 66/84 to 67/84 without changing the diagnostic split, failure buckets, or risk bands. Quick/full overlaps now share canonical axis-derived seeds, so those earlier values remain historical A/B evidence rather than the current quick baseline. The weak-geometry direct mug motion bridge then corrects the canonical worst direct position reversal without adding another CV pass: that intermediate quick triage was 36/84 pass, 48/84 fail, 25.248809 mean risk, and 74/84 recovered occlusion windows. Ready reconstruction maps now reject partial recovery-probation mapping frames while still estimating pose from confirmed points; unfinished maps continue building, and the canonical quick hashes remain exact. Preserve the canonical corpus while extending the evidence surface before adding model weight:
 
-- Research basis: robust visual odometry/SLAM systems separate frontend tracking, pose hypotheses, quality scoring, and backend map updates. HOL currently has the pieces, but pose source selection has accumulated many local gates.
-- Current weakness: planar homography, object affine pose, sparse reconstruction, parametric surface, direct photometric, centroid recovery, and reference similarity each compete through scattered conditional logic.
-- Proposed change:
-  - Introduce a single pose candidate scoring function with explicit candidate records: source, position, transform, normal, inliers, residual, confidence, object-owned ratio, map maturity, continuity, and allowed overlay ownership.
-  - Keep source-specific estimators separate; centralize only selection and readiness.
-  - Delete redundant local gates once their logic is represented in the candidate score.
-- Acceptance:
-  - Existing source-selection unit tests move to candidate scoring.
-  - No swallowed/implicit fallback: rejected candidates carry a reason.
-  - `reference_similarity_transform` cannot own overlay readiness in reconstruction modes.
-- Sources: [DROID-SLAM](https://github.com/princeton-vl/droid-slam), [ORB-SLAM3 paper](https://ar5iv.labs.arxiv.org/html/2007.11898)
+- calibrate thresholds only against the full fixture matrix.
+- Improve Perception Test identity loss without relaxing its owners: track `35` remains falsely visible through a 154-frame disappearance, track `3` has a 134-frame visible-target outage, and track `0` needs 27 frames to recover after a 207-frame disappearance. Any change must improve these exact queries while preserving every established synthetic and annotated floor.
+- Keep rigid-planar ORB keyframe redundancy translation-invariant: the full planar slice removes 114 of 853 extraction calls with unchanged 77/23 pass/fail and 96/100 recovered windows. Do not extend this invariant to curved or non-convex views; the generalized candidate failed handled-mug recovery.
+- Preserve hierarchical phase ownership and at least 95% timing coverage before ranking performance work. The complete production-cadence profile owns 99.10% of update time and identifies intermittent keypoint-map refresh—not the previously apparent planar-pose leader—as the largest display-amortized cost. Physical iPhone evidence remains required before claiming the mobile budget.
+- Preserve the accepted prepared, mask-bounded GFTT refresh contract: 188 attempts, 77 successful refreshes, 111 `no-reference-transform` outcomes, 99 evaluated candidate stages, 89 zero-GFTT skips, 77 refresh calls over 4,336,852 pixels in 77 native preparations, 22 reinitialization calls over 1,019,755 pixels in 22 native preparations, 22 actual reinitializations, zero reinitialization failures, 253 ORB keyframe-extraction frames, and deterministic quality SHA-256 `94d44c76c2967ec11c933d1c19d0558bf49e888701382c17d6a595ee4624886e`. Five production-cadence Node runs measure median refresh cost at 0.410 ms/display frame, total update cost at 4.793 ms/display frame, active-update latency at 18.597 ms, median maximum refresh latency at 39.77 ms, two cadence-overage groups, and 98.80% timing ownership. A forced three-pass real-OpenCV profile measures 47.34 ms with repeated setup versus 17.93 ms with one scoped preparation while preserving all 360 ordered corners. Physical-iPhone latency and spikes remain the evidence gap.
 
-## P0 - Occlusion-Aware Recovery State
+## P1: learned recovery device validation
 
-- Research basis: video object segmentation systems such as SAM 2, XMem, and Cutie preserve object identity through memory and explicitly handle mask/visibility changes. HOL should copy the state idea, not the heavy model dependency.
-- Current weakness: occlusion is inferred indirectly from point counts and residuals. The app needs a clear state for visible, partially occluded, recovering, and lost.
-- Proposed change:
-  - Derive occlusion state from object-owned ratio, active landmark count, mask coverage continuity, residual spikes, and pose-source dropouts.
-  - During partial occlusion, freeze map growth, avoid adding new landmarks, preserve mature landmarks, and prefer conservative recovery poses.
-  - After recovery, require a short stable window before new landmarks affect reconstruction.
-- Acceptance:
-  - Unit tests cover repeated occlusion, glare, and moving-background cases.
-  - Busy-background replays do not add background points during occlusion.
-  - Overlay readiness remains hidden when pose is background-driven.
-- Sources: [SAM 2](https://github.com/facebookresearch/sam2), [XMem](https://github.com/hkchengrex/XMem), [Cutie](https://github.com/hkchengrex/Cutie)
+The ORB-first XFeat fallback is shipped from one pinned, permissively licensed model revision. Its real ONNX contract, provenance, hashes, bundle budgets, transformed recovery, failure isolation, and nested-worker execution are release-tested. The model-owned gate requires all 500 requested features, at least 15 recovery inliers, and at most 7.5 px anchor error; a lower isolated error cannot compensate for lost correspondence support. The remaining evidence gap is target hardware, not another desktop matcher bake-off:
 
-## P1 - Progressive Full-Object Map Growth
+- record cold and warm recovery latency in iPhone Safari and Chromium;
+- record peak memory and thermal behavior alongside the active WebGL scene;
+- repeat recovery before and after portrait/landscape source-dimension changes;
+- keep LK steady-state and ORB first unless the same target-device evidence proves a replacement better.
+- use the production-cadence benchmark's active latency, display-amortized exclusive cost, and pose-age fields for device comparison; never reconstruct frame cost by adding inclusive parent and child stages.
+- record timing coverage and unattributed update time with every device profile; reject bottleneck rankings from materially incomplete ownership.
 
-- Research basis: multi-view reconstruction depends on view diversity and stable correspondences. A tap-local region is a safe bootstrap, but full-object reconstruction needs controlled expansion.
-- Current weakness: growth still sometimes behaves like “more points near the initial support” instead of deliberate object-wide coverage.
-- Proposed change:
-  - Divide the current object mask/bounds into spatial cells and track coverage per cell.
-  - Refresh keypoints preferentially in under-covered object-owned cells.
-  - Add growth phases: bootstrap local patch, expand within mask, mature full-object map, lock mature landmarks.
-  - Block expansion into cells whose points repeatedly fail mask/pose consistency.
-- Acceptance:
-  - Tests prove detection/debug boxes do not expand default support.
-  - Replay diagnostics show coverage growth across the object, not only near the tap.
-  - Full-object growth does not increase background-rejected point counts.
-- Sources: [COLMAP MVS docs](https://colmap.github.io/tutorial.html), [DUSt3R](https://github.com/naver/dust3r), [MASt3R](https://github.com/naver/mast3r)
+Do not add another matcher, export path, model adapter, or fallback without beating the fixed recovery corpus and completing those device measurements.
 
-## P1 - Better Keyframe Relocalization
+## P1: tap segmentation device validation
 
-- Research basis: LightGlue/SuperPoint and LoFTR-style matchers outperform hand-built patch descriptors under larger viewpoint and lighting changes, while classical LK flow remains cheaper for normal frames.
-- Current weakness: patch relocalization is lightweight but limited under glare, blur, scale change, and repeated texture.
-- Proposed change:
-  - Keep LK optical flow as the primary frame path.
-  - Add a stronger keyframe matcher only for degraded/lost recovery or low-cadence validation.
-  - First evaluate an ONNX/browser route for LightGlue/SuperPoint or XFeat-like features in a worker; do not put it on every frame.
-  - Compare against the existing patch relocalizer on occlusion and glare fixtures.
-- Acceptance:
-  - Recovery improves without increasing steady-state frame cost.
-  - Worker boundaries are explicit; runtime/provider selection is visible in diagnostics.
-  - If learned matching is not mobile-safe, keep the experiment out of production.
-- Sources: [LightGlue](https://github.com/cvg/lightglue), [LightGlue paper](https://openaccess.thecvf.com/content/ICCV2023/html/Lindenberger_LightGlue_Local_Feature_Matching_at_Light_Speed_ICCV_2023_paper.html), [LoFTR](https://github.com/zju3dv/LoFTR)
+The emitted MediaPipe worker, MagicTouch foreground channel, model, loader, WASM, transferable ownership, bounded object mask, and fatal-error retry lifecycle now execute in Chromium and WebKit. The remaining evidence gap is physical target behavior:
 
-## P1 - Segmentation Refresh Quality Gates
+- record first-load and warm-selection latency in iPhone Safari and Chromium;
+- record peak memory and thermal behavior with OpenCV tracking and the WebGL scene active;
+- repeat tap selection and bounded refresh before and after portrait/landscape source-dimension changes;
+- keep the 6,000 ms cold-selection and 1,400 ms refresh budgets until target measurements justify stricter limits.
 
-- Research basis: promptable segmentation is best used sparsely on mobile. Google documents MediaPipe web segmentation calls as synchronous, so worker/throttled use is required.
-- Current weakness: segmentation refresh exists, but it should become more explicit about why a refreshed mask is accepted, rejected, or ignored.
-- Proposed change:
-  - Score refresh masks by tap/current-position continuity, coverage bounds, connected component stability, overlap with warped mask, and object-owned landmark agreement.
-  - Store the last accepted and last rejected refresh reason for diagnostics.
-  - Trigger immediate refresh only when occlusion/recovery state says the existing mask is stale.
-- Acceptance:
-  - Tests cover empty, oversized, discontinuous, shifted, and good masks.
-  - No more than one pending segmentation request.
-  - Refresh does not create new object support from debug detections.
-- Sources: [MediaPipe Interactive Segmenter](https://developers.google.com/edge/mediapipe/solutions/vision/interactive_segmenter), [MediaPipe Web Guide](https://developers.google.com/edge/mediapipe/solutions/vision/interactive_segmenter/web_js)
+Do not add an inversion heuristic, second segmentation model, model adapter, or main-thread inference path. The pinned model contract has one foreground channel and one worker owner.
 
-## P1 - Surface Prior Selection And Validation
+## P1: depth provider validation
 
-- Research basis: monocular live reconstruction needs priors. Depth/geometry foundation models can infer plausible shape, but observed tracked geometry must remain the authority for AR attachment.
-- Current weakness: plane/cylinder/ellipsoid/tapered-surface choices exist, but their validation can be clearer and more tied to observed evidence.
-- Proposed change:
-  - Make surface prior selection explicit: target class, mask aspect, silhouette curvature, parallax, depth consistency, and reconstruction residual.
-  - Add a confidence/rationale object for the selected surface model.
-  - Allow fallback from curved prior to planar only when observed geometry supports it, not because the curved model temporarily drops.
-- Acceptance:
-  - Tests cover book/card/phone, can/bottle, tapered cup, mug, pouch, and ball.
-  - Rigid planar targets do not get curved normals from unstable fits.
-  - Curved objects do not collapse to planar attachment during brief dropout.
-- Sources: [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2), [UniDepth](https://github.com/lpiccinelli-eth/unidepth), [Metric3D](https://github.com/yvanyin/metric3d)
+The shipped Q4 Depth Anything model is 27.4 MB. Its graph contract is tested in Node, while its emitted service, worker, model URL, JSEP runtime, transferable input, normalized output, and WASM fallback execute in the Chromium/WebKit release matrix. Before making depth the default:
 
-## P2 - Optional Server/Cloud Reconstruction Track
+- record production-size WebGPU and WASM latency, memory, and thermal behavior on supported iPhones;
+- compare depth-fusion accuracy with sparse and parametric reconstruction;
+- verify orientation-change stability and WebGPU execution on physical supported devices;
+- keep depth optional until it is consistently better within budget.
 
-- Research basis: VGGT, DUSt3R/MASt3R, MonST3R, Gaussian Splatting, and modern image-to-3D models are powerful but too heavy for reliable iPhone browser real-time use.
-- Current weakness: HOL is a live mobile app, but “perfect full object reconstruction” may require an offline/cloud tier for high-quality assets.
-- Proposed change:
-  - Add a capture-mode concept separate from live anchoring: collect selected-object keyframes, masks, camera/frame metadata, and quality diagnostics.
-  - Export a reconstruction bundle that can be processed by a server pipeline later.
-  - Keep generated/offline meshes or splats separate from live pose truth.
-- Acceptance:
-  - Capture quality tells the user when there is enough view diversity.
-  - Live tracking works without the server path.
-  - Offline results cannot silently replace live object pose unless calibrated back to tracked landmarks.
-- Sources: [VGGT](https://github.com/facebookresearch/vggt), [DUSt3R](https://github.com/naver/dust3r), [MASt3R](https://github.com/naver/mast3r), [MonST3R](https://github.com/junyi42/monst3r), [3D Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting), [gsplat](https://github.com/nerfstudio-project/gsplat)
+## P2: local AI profiles
 
-## P2 - Device Benchmark Harness
+Build published, reproducible server profiles after measuring model quality:
 
-- Research basis: browser ML runtime support varies quickly. WebGPU is increasingly available, including Safari 26/iOS 26, but ONNX Runtime WebGPU and mobile stability still need feature probes and fallbacks.
-- Current weakness: Node replay tests verify behavior, but not iPhone Safari frame budget, WebGL context stability, camera policy issues, or worker latency.
-- Proposed change:
-  - Add a debug benchmark route/panel that records camera frame time, anchor update time, segmentation worker latency, detector raw/amortized time, R3F render time, dropped frames, and WebGL context loss.
-  - Export compact JSON from real device sessions.
-  - Gate new models by device benchmark, not desktop assumptions.
-- Acceptance:
-  - Browser QA covers desktop and iPhone-sized viewport.
-  - HTTPS camera flow is verified.
-  - Benchmark output is stable enough to compare before/after changes.
-- Sources: [ONNX Runtime Web](https://onnxruntime.ai/docs/get-started/with-javascript/web.html), [ONNX WebGPU EP](https://onnxruntime.ai/docs/tutorials/web/ep-webgpu.html), [WebGPU implementation status](https://github.com/gpuweb/gpuweb/wiki/Implementation-Status)
+- a small permissive chat/persona model;
+- a permissive vision-language model;
+- a low-latency local TTS model;
+- documented RAM/VRAM, quantization, latency, and model revision.
 
-## P2 - Model Runtime Profiles
+The browser contract remains keyless and provider-neutral. Model downloads stay outside the web artifact.
 
-- Research basis: modern browser CV may use WASM, WebGL, WebGPU, WebNN, or server inference. Runtime choice should be explicit and diagnosable.
-- Current weakness: adding models ad hoc risks hidden fallbacks, duplicated workers, and unclear performance tradeoffs.
-- Proposed change:
-  - Define runtime profiles for each model family: detector, interactive segmentation, learned matcher, depth prior, and future cloud/offline path.
-  - Each profile should declare provider, cadence, worker ownership, model assets, expected memory, and mobile support.
-  - Do not silently switch providers; surface selected runtime in diagnostics.
-- Acceptance:
-  - No duplicate model loading paths.
-  - Runtime failures report actionable reasons.
-  - `.env.local` and secrets remain untouched.
-- Sources: [ONNX Runtime Web](https://onnxruntime.ai/docs/get-started/with-javascript/web.html), [MediaPipe Tasks Vision](https://developers.google.com/edge/mediapipe/solutions/vision)
+## Explicit non-goals
 
-## P3 - Optional Known-Class Segmentation Profile
-
-- Research basis: YOLO segmentation models can provide masks for known classes at detection/tap cadence, but they do not solve arbitrary tapped-object segmentation.
-- Current weakness: detection boxes are still useful debug context, but box geometry should not guide object support.
-- Proposed change:
-  - Evaluate a small YOLO segmentation model as a separate debug/profile path.
-  - Decode masks without changing the existing box detector contract.
-  - Compare known-class masks against MediaPipe tap masks on bottles, cups, books, phones, and cans.
-- Acceptance:
-  - If mask quality/runtime loses to MediaPipe Interactive Segmenter, do not ship it.
-  - If shipped, it remains optional and does not re-authorize detection-box geometry.
-- Sources: [Ultralytics segmentation](https://docs.ultralytics.com/tasks/segment/), [YOLO11](https://docs.ultralytics.com/models/yolo11/), [Ultralytics export](https://docs.ultralytics.com/modes/export/)
-
-## P3 - Generative 3D Asset Experiments
-
-- Research basis: TripoSR, Stable Fast 3D, InstantMesh, Wonder3D, and Hunyuan3D can synthesize plausible object meshes from one or a few images, but they hallucinate hidden geometry.
-- Current weakness: user expectations around “full object reconstruction” can blur observed reconstruction and generated plausible assets.
-- Proposed change:
-  - Treat image-to-3D as an optional asset-generation mode, not live reconstruction.
-  - Use generated meshes only after explicit user action and calibration to tracked object landmarks.
-  - Never let generated hidden geometry drive live pose confidence.
-- Acceptance:
-  - Generated asset state is visually and architecturally separate from observed reconstruction.
-  - Tests/diagnostics label generated geometry as inferred, not measured.
-- Sources: [TripoSR](https://github.com/VAST-AI-Research/TripoSR), [Stable Fast 3D](https://github.com/Stability-AI/stable-fast-3d), [InstantMesh](https://github.com/tencentarc/instantmesh), [Wonder3D](https://github.com/xxlong0/Wonder3D), [Hunyuan3D 2](https://github.com/Tencent-Hunyuan/Hunyuan3D-2)
-
-## Cleanup Rules For Every Step
-
-- Remove obsolete branches, duplicate helpers, and redundant gates while touching the owning module.
-- Prefer one explicit contract over parallel special cases.
-- Keep heavy CV in workers or low-cadence paths.
-- Add a regression before production behavior changes.
-- Compare `scripts/vision-quality-report.mjs` before/after for tracking, reconstruction, and head attachment deltas.
-- Keep UI diagnostics compact: operational controls by default, details in debug surfaces.
-- Do not add a new model family to the live frame path without a device benchmark and rollback path.
-
-## Do Not Do Yet
-
-- Do not replace tap-first segmentation with detection-box geometry.
-- Do not run SAM 2, DUSt3R, VGGT, Gaussian Splatting, or image-to-3D models in the live mobile frame loop.
-- Do not mix human-body perception and object anchoring in the same worker contract.
-- Do not treat monocular depth or generated meshes as measured object geometry.
-- Do not commit model assets or large runtime bundles without measured mobile value.
+- No class detector in the tap-to-anchor path.
+- No browser secrets or proprietary hosted-service SDKs.
+- No SAM 2, DUSt3R, VGGT, Gaussian Splatting, or generated 3D model in the live frame loop.
+- No silent provider fallback.
+- No generated geometry treated as measured pose truth.
+- No model adoption based on desktop-only throughput.

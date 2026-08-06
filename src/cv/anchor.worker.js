@@ -1,7 +1,11 @@
 import { AnchorManager } from '../services/AnchorManager.js';
+import { ImageAnchorService } from '../services/ImageAnchorService.js';
 import { loadOpenCVRuntimeInWorker } from './opencv.workerRuntime.js';
+import { createAnchorWorkerMessageHandler } from './anchorWorkerProtocol.js';
+import { createXFeatWorkerRelocalizer } from './xfeatWorkerProvider.js';
 
 let manager = null;
+let initializationStarted = false;
 
 const ensureManager = () => {
   if (!manager) {
@@ -10,27 +14,37 @@ const ensureManager = () => {
   return manager;
 };
 
-const postState = () => {
-  if (manager) {
-    self.postMessage({ type: 'state', state: manager.getState() });
-  }
-};
-
 const createManager = async ({ viewportWidth, viewportHeight, fov, trackingMode }) => {
+  if (initializationStarted) {
+    throw new Error('Anchor worker initialization already started');
+  }
+  initializationStarted = true;
+
   const cv = await loadOpenCVRuntimeInWorker();
-  manager = new AnchorManager();
-  manager.addListener(state => self.postMessage({ type: 'state', state }));
-  await manager.initialize(cv, viewportWidth, viewportHeight, fov);
-  manager.setTrackingMode(trackingMode);
-  return manager.getState();
+  const nextManager = new AnchorManager({
+    imageAnchorService: new ImageAnchorService({
+      learnedRelocalizer: createXFeatWorkerRelocalizer(),
+    }),
+  });
+  await nextManager.initialize(cv, viewportWidth, viewportHeight, fov);
+  nextManager.setTrackingMode(trackingMode);
+  manager = nextManager;
+  return true;
 };
 
 const handlers = {
   initialize: createManager,
-  processDetections: ({ detections }) => ensureManager().processDetections(detections),
-  createAnchorFromTap: ({ tapPosition, imageData }) => ensureManager().createAnchorFromTap(tapPosition, imageData),
-  updateAnchor: ({ imageData, depthContext }) => ensureManager().updateAnchor(imageData, depthContext),
-  refreshSegmentationIfNeeded: ({ imageData }) => ensureManager().refreshSegmentationIfNeeded(imageData),
+  createAnchorFromTap: ({ tapPosition, imageData }) =>
+    ensureManager().createAnchorFromTap(tapPosition, imageData),
+  processFrame: async ({ imageData, update, refreshSegmentation, depthContext }) => {
+    const anchorManager = ensureManager();
+    return {
+      updateResult: update ? await anchorManager.updateAnchor(imageData, depthContext) : null,
+      segmentationRefreshStarted: refreshSegmentation
+        ? anchorManager.refreshSegmentationIfNeeded(imageData)
+        : false,
+    };
+  },
   clearAnchor: () => {
     ensureManager().clearAnchor();
     return true;
@@ -48,30 +62,8 @@ const handlers = {
   },
 };
 
-self.onmessage = event => {
-  const { id, command, payload } = event.data;
-  const handler = handlers[command];
-  if (!handler) {
-    self.postMessage({ type: 'response', id, error: `Unsupported anchor worker command: ${command}` });
-    return;
-  }
-
-  Promise.resolve(handler(payload || {}))
-    .then(result => {
-      self.postMessage({
-        type: 'response',
-        id,
-        result,
-        state: manager ? manager.getState() : null,
-      });
-      postState();
-    })
-    .catch(error => {
-      self.postMessage({
-        type: 'response',
-        id,
-        error: error.message,
-        state: manager ? manager.getState() : null,
-      });
-    });
-};
+self.onmessage = createAnchorWorkerMessageHandler({
+  handlers,
+  getState: () => manager?.getState() ?? null,
+  postMessage: (message) => self.postMessage(message),
+});

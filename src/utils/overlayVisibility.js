@@ -8,8 +8,13 @@ export const shouldRenderAnchorOverlay = ({ activeAnchor, anchorState }) => {
   }
 
   const metrics = anchorState?.metrics || activeAnchor.diagnostics || {};
-  const readiness = metrics.readiness || activeAnchor.readiness || activeAnchor.diagnostics?.readiness || null;
+  const readiness =
+    metrics.readiness || activeAnchor.readiness || activeAnchor.diagnostics?.readiness || null;
   const state = anchorState?.state || activeAnchor.state || null;
+
+  if (metrics.targetPresent === false) {
+    return false;
+  }
 
   if (readiness?.attachmentReady === false) {
     return false;
@@ -33,15 +38,13 @@ export const shouldRenderAnchorOverlay = ({ activeAnchor, anchorState }) => {
   }
 
   const selectedReconstructionPose = metrics.reconstructionReady && metrics.poseSource === poseModel;
-  return readiness?.faceReady === true ||
-    selectedReconstructionPose ||
-    metrics.poseSource === 'planar-homography';
+  return (
+    readiness?.faceReady === true || selectedReconstructionPose || metrics.poseSource === 'planar-homography'
+  );
 };
 
-export const getRenderableAnchorOverlay = ({ activeAnchor, anchorState }) => (
-  shouldRenderAnchorOverlay({ activeAnchor, anchorState }) ? activeAnchor : null
-);
+export const getRenderableAnchorOverlay = ({ activeAnchor, anchorState }) =>
+  shouldRenderAnchorOverlay({ activeAnchor, anchorState }) ? activeAnchor : null;
 
-export const shouldMountOverlayScene = ({ cameraState, activeAnchor, anchorState }) => (
-  cameraState === 'active' && !!getRenderableAnchorOverlay({ activeAnchor, anchorState })
-);
+export const shouldMountOverlayScene = ({ cameraState, activeAnchor }) =>
+  cameraState === 'active' && activeAnchor?.overlaySceneReady === true;

@@ -23,6 +23,11 @@ class LazyDepthFusionReconstructor {
     this.lastFailureReason = 'Loading depth fusion reconstructor';
     this.ready = import('./anchor.depthFusion.js').then(({ DepthFusionReconstructor }) => {
       this.impl = new DepthFusionReconstructor(this.config);
+      if (this.state === 'inactive') {
+        this.impl.dispose();
+        this.impl = null;
+        return null;
+      }
       if (this.cameraParams) {
         this.impl.configure({ cameraParams: this.cameraParams });
       }
@@ -38,6 +43,14 @@ class LazyDepthFusionReconstructor {
   configure({ cameraParams } = {}) {
     this.cameraParams = cameraParams ? { ...cameraParams } : null;
     this.impl?.configure({ cameraParams: this.cameraParams });
+  }
+
+  dispose() {
+    if (this.impl) {
+      this.impl.dispose();
+      this.impl = null;
+    }
+    this.state = 'inactive';
   }
 
   reset({ anchorReference, templateRegion = this.templateRegion, targetClass = null }) {
@@ -113,7 +126,7 @@ class LazyDepthFusionReconstructor {
   }
 }
 
-export const createReconstructionEngine = mode => {
+export const createReconstructionEngine = (mode) => {
   switch (mode) {
     case RECONSTRUCTION_POSE_MODEL:
       return new SparseObjectReconstructor();

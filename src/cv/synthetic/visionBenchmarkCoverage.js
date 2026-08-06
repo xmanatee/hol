@@ -1,4 +1,4 @@
-const summarizeCounts = values => {
+const summarizeCounts = (values) => {
   const total = values.length;
   const countByName = new Map();
 
@@ -12,11 +12,8 @@ const summarizeCounts = values => {
       count,
       share: total ? count / total : 0,
     }))
-    .sort((left, right) => (
-      right.count - left.count ||
-      left.name.localeCompare(right.name)
-    ));
-  const counts = rows.map(row => row.count);
+    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name));
+  const counts = rows.map((row) => row.count);
   const minCount = counts.length ? Math.min(...counts) : 0;
   const maxCount = counts.length ? Math.max(...counts) : 0;
 
@@ -30,34 +27,28 @@ const summarizeCounts = values => {
   };
 };
 
-const scenarioAxisValues = (scenarios, axis) => scenarios.map(scenario => scenario.axes[axis]);
+const scenarioAxisValues = (scenarios, axis) => scenarios.map((scenario) => scenario.axes[axis]);
 
-const scenarioInteractionValues = (scenarios, axes) => (
-  scenarios.map(scenario => axes.map(axis => scenario.axes[axis]).join(' / '))
-);
+const scenarioInteractionValues = (scenarios, axes) =>
+  scenarios.map((scenario) => axes.map((axis) => scenario.axes[axis]).join(' / '));
 
-const replayModeValues = ({ scenarios, modes }) => (
-  modes.flatMap(mode => scenarios.map(() => mode.id))
-);
+const replayModeValues = ({ scenarios, modes }) => modes.flatMap((mode) => scenarios.map(() => mode.id));
 
-const replayModeAxisValues = ({ scenarios, modes, axis }) => (
-  modes.flatMap(mode => scenarios.map(scenario => `${mode.id} / ${scenario.axes[axis]}`))
-);
+const replayModeAxisValues = ({ scenarios, modes, axis }) =>
+  modes.flatMap((mode) => scenarios.map((scenario) => `${mode.id} / ${scenario.axes[axis]}`));
 
-const imbalanceRows = groups => Object.entries(groups)
-  .map(([name, summary]) => ({
-    name,
-    total: summary.total,
-    uniqueCount: summary.uniqueCount,
-    minCount: summary.minCount,
-    maxCount: summary.maxCount,
-    imbalanceRatio: summary.imbalanceRatio,
-  }))
-  .filter(row => row.uniqueCount > 1)
-  .sort((left, right) => (
-    right.imbalanceRatio - left.imbalanceRatio ||
-    right.maxCount - left.maxCount
-  ));
+const imbalanceRows = (groups) =>
+  Object.entries(groups)
+    .map(([name, summary]) => ({
+      name,
+      total: summary.total,
+      uniqueCount: summary.uniqueCount,
+      minCount: summary.minCount,
+      maxCount: summary.maxCount,
+      imbalanceRatio: summary.imbalanceRatio,
+    }))
+    .filter((row) => row.uniqueCount > 1)
+    .sort((left, right) => right.imbalanceRatio - left.imbalanceRatio || right.maxCount - left.maxCount);
 
 export const summarizeVisionBenchmarkCoverage = ({ scenarios, modes }) => {
   const scenarioAxes = {
@@ -68,12 +59,17 @@ export const summarizeVisionBenchmarkCoverage = ({ scenarios, modes }) => {
     lighting: summarizeCounts(scenarioAxisValues(scenarios, 'lighting')),
     motion: summarizeCounts(scenarioAxisValues(scenarios, 'motion')),
     occlusion: summarizeCounts(scenarioAxisValues(scenarios, 'occlusion')),
+    capture: summarizeCounts(scenarioAxisValues(scenarios, 'capture')),
+    event: summarizeCounts(scenarioAxisValues(scenarios, 'event')),
     condition: summarizeCounts(scenarioAxisValues(scenarios, 'condition')),
   };
   const scenarioInteractions = {
     objectBackground: summarizeCounts(scenarioInteractionValues(scenarios, ['object', 'background'])),
     objectOcclusion: summarizeCounts(scenarioInteractionValues(scenarios, ['object', 'occlusion'])),
     motionOcclusion: summarizeCounts(scenarioInteractionValues(scenarios, ['motion', 'occlusion'])),
+    motionCapture: summarizeCounts(scenarioInteractionValues(scenarios, ['motion', 'capture'])),
+    occlusionCapture: summarizeCounts(scenarioInteractionValues(scenarios, ['occlusion', 'capture'])),
+    eventCapture: summarizeCounts(scenarioInteractionValues(scenarios, ['event', 'capture'])),
     geometryMotion: summarizeCounts(scenarioInteractionValues(scenarios, ['geometry', 'motion'])),
     geometryOcclusion: summarizeCounts(scenarioInteractionValues(scenarios, ['geometry', 'occlusion'])),
     targetClassOcclusion: summarizeCounts(scenarioInteractionValues(scenarios, ['targetClass', 'occlusion'])),
@@ -85,6 +81,8 @@ export const summarizeVisionBenchmarkCoverage = ({ scenarios, modes }) => {
     modeGeometry: summarizeCounts(replayModeAxisValues({ scenarios, modes, axis: 'geometry' })),
     modeMotion: summarizeCounts(replayModeAxisValues({ scenarios, modes, axis: 'motion' })),
     modeOcclusion: summarizeCounts(replayModeAxisValues({ scenarios, modes, axis: 'occlusion' })),
+    modeCapture: summarizeCounts(replayModeAxisValues({ scenarios, modes, axis: 'capture' })),
+    modeEvent: summarizeCounts(replayModeAxisValues({ scenarios, modes, axis: 'event' })),
   };
 
   return {

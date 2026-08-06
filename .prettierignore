@@ -1,0 +1,12 @@
+artifacts/
+dist/
+node_modules/
+playwright-report/
+test-results/
+src/assets/
+tests/fixtures/annotated-vision/tapvid-rgb-stacking/
+tests/fixtures/annotated-vision/tapvid-davis/
+public/*
+!public/sw.js
+.learnings/
+*.md

@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 
-const [inputPath = '/tmp/hol-vision-benchmark-full.json', outputPath = 'docs/vision-benchmark-full-report.html'] =
-  process.argv.slice(2);
+const [
+  inputPath = '/tmp/hol-vision-benchmark-full.json',
+  outputPath = 'docs/vision-benchmark-full-report.html',
+] = process.argv.slice(2);
 
 const benchmarkOutput = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
 const benchmark = benchmarkOutput.benchmark;
@@ -10,51 +12,53 @@ const performance = benchmarkOutput.performanceSummary || null;
 const coverage = benchmarkOutput.coverageSummary || null;
 const risk = benchmark.aggregate;
 
-const formatNumber = value => Number.isFinite(value)
-  ? Number(value).toLocaleString('en-US', { maximumFractionDigits: 2 })
-  : 'n/a';
+const formatNumber = (value) =>
+  Number.isFinite(value) ? Number(value).toLocaleString('en-US', { maximumFractionDigits: 2 }) : 'n/a';
 
-const formatPercent = (value, total) => (
+const formatPercent = (value, total) =>
   Number.isFinite(value) && Number.isFinite(total) && total > 0
-    ? `${formatNumber(value / total * 100)}%`
-    : 'n/a'
-);
+    ? `${formatNumber((value / total) * 100)}%`
+    : 'n/a';
 
-const escapeHtml = value => String(value)
-  .replaceAll('&', '&amp;')
-  .replaceAll('<', '&lt;')
-  .replaceAll('>', '&gt;')
-  .replaceAll('"', '&quot;');
+const formatRatioPercent = (value) => (Number.isFinite(value) ? `${formatNumber(value * 100)}%` : 'n/a');
 
-const riskClass = score => {
+const escapeHtml = (value) =>
+  String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+
+const riskClass = (score) => {
   if (score >= 58) return 'severe';
   if (score >= 36) return 'high';
   if (score >= 20) return 'moderate';
   return 'low';
 };
 
-const riskCell = score => `<span class="risk ${riskClass(score)}">${formatNumber(score)}</span>`;
+const riskCell = (score) => `<span class="risk ${riskClass(score)}">${formatNumber(score)}</span>`;
 
-const msCell = value => Number.isFinite(value) ? `${formatNumber(value)}ms` : 'n/a';
+const msCell = (value) => (Number.isFinite(value) ? `${formatNumber(value)}ms` : 'n/a');
 
-const ratioCell = value => Number.isFinite(value) ? `${formatNumber(value)}x` : 'n/a';
+const ratioCell = (value) => (Number.isFinite(value) ? `${formatNumber(value)}x` : 'n/a');
 
 const percentBar = (value, total, className = '') => `
   <div class="bar ${className}" aria-hidden="true">
-    <span style="width: ${Math.max(0, Math.min(100, value / total * 100))}%"></span>
+    <span style="width: ${Math.max(0, Math.min(100, (value / total) * 100))}%"></span>
   </div>
 `;
 
-const topWeakness = item => (
+const topWeakness = (item) =>
   item.topFailedPrimaryWeaknesses?.[0]?.weakness ||
   item.topHighRiskPrimaryWeaknesses?.[0]?.weakness ||
   item.topPrimaryWeaknesses?.[0]?.weakness ||
-  'none'
-);
+  'none';
 
-const groupRows = group => group.map(item => {
-  const severeHigh = item.severe + item.high;
-  return `
+const groupRows = (group) =>
+  group
+    .map((item) => {
+      const severeHigh = item.severe + item.high;
+      return `
     <tr>
       <th scope="row">${escapeHtml(item.name)}</th>
       <td>${formatNumber(item.count)}</td>
@@ -68,9 +72,13 @@ const groupRows = group => group.map(item => {
       <td>${escapeHtml(item.worst.name)} <span class="muted">/ ${escapeHtml(item.worst.mode)}</span></td>
     </tr>
   `;
-}).join('');
+    })
+    .join('');
 
-const compactGroupRows = group => group.map(item => `
+const compactGroupRows = (group) =>
+  group
+    .map(
+      (item) => `
   <tr>
     <th scope="row">${escapeHtml(item.name)}</th>
     <td>${riskCell(item.meanRiskScore)}</td>
@@ -80,55 +88,84 @@ const compactGroupRows = group => group.map(item => `
     <td>${escapeHtml(topWeakness(item))}</td>
     <td>${escapeHtml(item.worst.name)} <span class="muted">/ ${escapeHtml(item.worst.mode)}</span></td>
   </tr>
-`).join('');
+`,
+    )
+    .join('');
 
-const performanceRows = group => group.map(item => `
+const performanceRows = (group) =>
+  group
+    .map(
+      (item) => `
   <tr>
     <th scope="row">${escapeHtml(item.name)}</th>
     <td>${formatNumber(item.count)}</td>
     <td>${msCell(item.meanReplayWallTimeMs)}</td>
     <td>${msCell(item.maxReplayWallTimeMs)}</td>
-    <td>${msCell(item.meanFrameWallTimeMs)}</td>
-    <td>${msCell(item.meanFrameProcessingTimeMs)}</td>
-    <td>${msCell(item.maxFrameProcessingTimeMs)}</td>
-    <td>${item.budget.meanFrameProcessingOverBudget ? 'over' : 'ok'}</td>
+    <td>${msCell(item.displayAmortizedUpdateTimeMs)}</td>
+    <td>${msCell(item.meanActiveUpdateTimeMs)}</td>
+    <td>${msCell(item.maxActiveUpdateTimeMs)}</td>
+    <td>${formatPercent(item.admittedUpdateCount, item.sourceFrameCount)}</td>
+    <td>${formatRatioPercent(item.timingCoverageRatio)}</td>
+    <td>${msCell(item.displayAmortizedUnattributedUpdateTimeMs)}</td>
+    <td>${item.budget.displayAmortizedUpdateOverBudget ? 'over' : 'ok'}</td>
   </tr>
-`).join('');
+`,
+    )
+    .join('');
 
-const slowestRows = reports => reports.map((report, index) => `
+const slowestRows = (reports) =>
+  reports
+    .map(
+      (report, index) => `
   <tr>
     <td>${index + 1}</td>
     <th scope="row">${escapeHtml(report.name)}</th>
     <td>${escapeHtml(report.mode)}</td>
-    <td>${msCell(report.runtime.wallTimeMs)}</td>
-    <td>${msCell(report.runtime.meanFrameWallTimeMs)}</td>
-    <td>${msCell(report.runtime.meanProcessingTimeMs)}</td>
-    <td>${msCell(report.runtime.maxProcessingTimeMs)}</td>
+    <td>${msCell(report.runtime.replayWallTimeMs)}</td>
+    <td>${formatNumber(report.runtime.admittedUpdateCount)}</td>
+    <td>${msCell(report.runtime.displayAmortizedUpdateTimeMs)}</td>
+    <td>${msCell(report.runtime.meanActiveUpdateTimeMs)}</td>
+    <td>${msCell(report.runtime.maxActiveUpdateTimeMs)}</td>
   </tr>
-`).join('');
+`,
+    )
+    .join('');
 
-const stageTimingRows = stageTimings => Object.entries(stageTimings || {})
-  .slice(0, 12)
-  .map(([stage, timing]) => `
+const stageTimingRows = (stageTimings) =>
+  Object.entries(stageTimings || {})
+    .slice(0, 12)
+    .map(
+      ([stage, timing]) => `
     <tr>
       <th scope="row">${escapeHtml(stage)}</th>
+      <td>${escapeHtml(timing.ownership)}</td>
       <td>${formatNumber(timing.frameCount)}</td>
-      <td>${formatPercent(timing.frameCount, performance.aggregate.frameCount)}</td>
-      <td>${msCell(timing.amortizedMeanMs)}</td>
+      <td>${formatPercent(timing.frameCount, performance.aggregate.admittedUpdateCount)}</td>
+      <td>${msCell(timing.displayAmortizedExclusiveMeanMs)}</td>
+      <td>${msCell(timing.exclusiveMeanMs)}</td>
       <td>${msCell(timing.meanMs)}</td>
       <td>${msCell(timing.maxMs)}</td>
     </tr>
-  `).join('');
+  `,
+    )
+    .join('');
 
-const coverageRows = summary => summary.values.map(item => `
+const coverageRows = (summary) =>
+  summary.values
+    .map(
+      (item) => `
   <tr>
     <th scope="row">${escapeHtml(item.name)}</th>
     <td>${formatNumber(item.count)}</td>
     <td>${formatPercent(item.count, summary.total)}</td>
   </tr>
-`).join('');
+`,
+    )
+    .join('');
 
-const coverageTable = ({ title, label, summary }) => summary ? `
+const coverageTable = ({ title, label, summary }) =>
+  summary
+    ? `
   <section>
     <h3>${escapeHtml(title)}</h3>
     <div class="table-wrap">
@@ -141,10 +178,15 @@ const coverageTable = ({ title, label, summary }) => summary ? `
     </div>
     <p class="note">Unique ${formatNumber(summary.uniqueCount)}; min ${formatNumber(summary.minCount)}, max ${formatNumber(summary.maxCount)}, imbalance ${ratioCell(summary.imbalanceRatio)}.</p>
   </section>
-` : '';
+`
+    : '';
 
-const coverageImbalanceRows = rows => rows.length
-  ? rows.slice(0, 8).map(row => `
+const coverageImbalanceRows = (rows) =>
+  rows.length
+    ? rows
+        .slice(0, 8)
+        .map(
+          (row) => `
     <tr>
       <th scope="row">${escapeHtml(row.name)}</th>
       <td>${formatNumber(row.uniqueCount)}</td>
@@ -152,10 +194,13 @@ const coverageImbalanceRows = rows => rows.length
       <td>${formatNumber(row.maxCount)}</td>
       <td>${ratioCell(row.imbalanceRatio)}</td>
     </tr>
-  `).join('')
-  : '<tr><td colspan="5">No scenario-axis imbalance in this artifact.</td></tr>';
+  `,
+        )
+        .join('')
+    : '<tr><td colspan="5">No scenario-axis imbalance in this artifact.</td></tr>';
 
-const coverageSection = coverage ? `
+const coverageSection = coverage
+  ? `
     <h2>Matrix Coverage</h2>
     <p class="note">Coverage is computed from the artifact after filters. Scenario tables count generated scenarios; mode tables count executed replays.</p>
     <div class="grid-two">
@@ -163,6 +208,8 @@ const coverageSection = coverage ? `
       ${coverageTable({ title: 'Scenario Backgrounds', label: 'Background', summary: coverage.scenarioAxes.background })}
       ${coverageTable({ title: 'Scenario Motions', label: 'Motion', summary: coverage.scenarioAxes.motion })}
       ${coverageTable({ title: 'Scenario Occlusions', label: 'Occlusion', summary: coverage.scenarioAxes.occlusion })}
+      ${coverageTable({ title: 'Capture Profiles', label: 'Capture', summary: coverage.scenarioAxes.capture })}
+      ${coverageTable({ title: 'Tracking Events', label: 'Event', summary: coverage.scenarioAxes.event })}
       ${coverageTable({ title: 'Replay Modes', label: 'Mode', summary: coverage.replayAxes.mode })}
       <section>
         <h3>Largest Scenario-Axis Imbalances</h3>
@@ -176,25 +223,25 @@ const coverageSection = coverage ? `
         </div>
       </section>
     </div>
-` : `
+`
+  : `
     <h2>Matrix Coverage</h2>
     <div class="panel">
       <p>Coverage summary is not present in this artifact. Regenerate the benchmark JSON with the current runner to audit matrix balance.</p>
     </div>
 `;
 
-const percentMetricCell = value => Number.isFinite(value) ? `${formatNumber(value * 100)}%` : 'n/a';
-const recoveryRateCell = metrics => metrics.postOcclusionWindowCount
-  ? percentMetricCell(metrics.postOcclusionRecoveryRateAt8)
-  : 'n/a';
-const recoveryFramesCell = metrics => metrics.postOcclusionWindowCount
-  ? formatNumber(metrics.maxPostOcclusionRecoveryFramesAt8)
-  : 'n/a';
-const recoveryFailedCell = metrics => metrics.postOcclusionWindowCount
-  ? formatNumber(metrics.postOcclusionFailedWindowsAt8)
-  : 'n/a';
+const percentMetricCell = (value) => (Number.isFinite(value) ? `${formatNumber(value * 100)}%` : 'n/a');
+const recoveryRateCell = (metrics) =>
+  metrics.postOcclusionWindowCount ? percentMetricCell(metrics.postOcclusionRecoveryRateAt8) : 'n/a';
+const recoveryFramesCell = (metrics) =>
+  metrics.postOcclusionWindowCount ? formatNumber(metrics.maxPostOcclusionRecoveryFramesAt8) : 'n/a';
+const recoveryFailedCell = (metrics) =>
+  metrics.postOcclusionWindowCount ? formatNumber(metrics.postOcclusionFailedWindowsAt8) : 'n/a';
 
-const worstRows = benchmark.worstReports.map((report, index) => `
+const worstRows = benchmark.worstReports
+  .map(
+    (report, index) => `
   <tr>
     <td>${index + 1}</td>
     <th scope="row">${escapeHtml(report.name)}</th>
@@ -212,9 +259,14 @@ const worstRows = benchmark.worstReports.map((report, index) => `
     <td>${recoveryFramesCell(report.metrics)}</td>
     <td>${percentMetricCell(report.metrics.readyFrameRatio)}</td>
   </tr>
-`).join('');
+`,
+  )
+  .join('');
 
-const recoveryGroupRows = group => group.map(item => `
+const recoveryGroupRows = (group) =>
+  group
+    .map(
+      (item) => `
   <tr>
     <th scope="row">${escapeHtml(item.name)}</th>
     <td>${formatNumber(item.reportCount)}</td>
@@ -225,9 +277,14 @@ const recoveryGroupRows = group => group.map(item => `
     <td>${formatNumber(item.meanRecoveryFramesAt8)}</td>
     <td>${escapeHtml(item.worstReports[0]?.name || 'none')} <span class="muted">/ ${escapeHtml(item.worstReports[0]?.mode || 'none')}</span></td>
   </tr>
-`).join('');
+`,
+    )
+    .join('');
 
-const recoveryWorstRows = reports => reports.map((report, index) => `
+const recoveryWorstRows = (reports) =>
+  reports
+    .map(
+      (report, index) => `
   <tr>
     <td>${index + 1}</td>
     <th scope="row">${escapeHtml(report.name)}</th>
@@ -240,7 +297,9 @@ const recoveryWorstRows = reports => reports.map((report, index) => `
     <td>${formatNumber(report.metrics.maxPostOcclusionRecoveryFramesAt8)}</td>
     <td>${escapeHtml(report.risk.primaryWeakness)}</td>
   </tr>
-`).join('');
+`,
+    )
+    .join('');
 
 const modeRanking = benchmark.weakPoints.byMode;
 const objectRanking = benchmark.weakPoints.byObject;
@@ -255,29 +314,41 @@ const failedStages = Object.entries(quality.failedByStage || {})
   .map(([stage, count]) => ({ stage, count }))
   .sort((left, right) => right.count - left.count || left.stage.localeCompare(right.stage));
 const topFailedStage = failedStages[0] || { stage: 'none', count: 0 };
-const topOcclusions = occlusionRanking.slice(0, 2).map(item => item.name).join(' and ');
+const topOcclusions = occlusionRanking
+  .slice(0, 2)
+  .map((item) => item.name)
+  .join(' and ');
 const recovery = benchmark.postOcclusionRecovery;
 const recoveryAggregate = recovery.aggregate;
+const targetLossRecovery = benchmark.targetLossRecovery;
 const budget = performance?.aggregate?.budget || null;
 const weakestBackground = backgroundRanking[0];
 const strongestBackground = backgroundRanking[backgroundRanking.length - 1];
 const backgroundRiskSpread = weakestBackground.meanRiskScore - strongestBackground.meanRiskScore;
 
-const budgetStageNames = items => items?.length ? items.map(item => item.stage).join(', ') : 'none';
+const budgetStageNames = (items) => (items?.length ? items.map((item) => item.stage).join(', ') : 'none');
 
 const conclusions = [
   `${bestMode.name} is the strongest mode overall in this run: ${formatNumber(bestMode.meanRiskScore)} mean risk, ${formatNumber(bestMode.severe)} severe cases, and ${formatNumber(bestMode.fail)} strict failures out of ${formatNumber(bestMode.count)} replays.`,
   `${topFailedStage.stage} is the top failed stage with ${formatNumber(topFailedStage.count)} failed-stage reports. Use the primaryWeakness field before assuming the owner is reconstruction or rendering.`,
   `${motionRanking[0].name} motion is the most damaging dynamic condition: ${formatNumber(motionRanking[0].fail)} failures out of ${formatNumber(motionRanking[0].count)}, with ${formatNumber(motionRanking[0].severe + motionRanking[0].high)} high-or-severe runs.`,
-  `${topOcclusions} are the most damaging occlusion patterns. Clean scenes fail ${formatPercent(occlusionRanking.find(item => item.name === 'clean')?.fail || 0, occlusionRanking.find(item => item.name === 'clean')?.count || 0)}, so this is not only an occlusion problem.`,
+  `${topOcclusions} are the most damaging occlusion patterns. Clean scenes fail ${formatPercent(occlusionRanking.find((item) => item.name === 'clean')?.fail || 0, occlusionRanking.find((item) => item.name === 'clean')?.count || 0)}, so this is not only an occlusion problem.`,
   `Post-occlusion recovery succeeds on ${formatPercent(recoveryAggregate.recoveredAt8, recoveryAggregate.windowCount)} of visible recovery windows, with a worst reacquisition window of ${formatNumber(recoveryAggregate.maxRecoveryFramesAt8)} frames.`,
+  ...(targetLossRecovery.reportCount
+    ? [
+        `Full-target-loss recovery succeeds on ${formatPercent(targetLossRecovery.recoveredAt8, targetLossRecovery.windowCount)} of re-entry windows; ${formatNumber(targetLossRecovery.falseTrackedAbsentAdmittedFrames)} admitted CV updates falsely report presence, while display cadence holds presence for ${formatNumber(targetLossRecovery.targetPresentAbsentDisplayFrames)} source frames.`,
+      ]
+    : []),
   `${objectRanking[0].name} is the clearest object weak point: ${formatPercent(objectRanking[0].fail, objectRanking[0].count)} strict failure rate and ${formatNumber(objectRanking[0].severe)} severe cases.`,
   `${weakestBackground.name} is the weakest background in this run. Background mean-risk spread is ${formatNumber(backgroundRiskSpread)} points (${formatNumber(strongestBackground.meanRiskScore)}-${formatNumber(weakestBackground.meanRiskScore)}).`,
   performance
-    ? `Runtime is measured in the same loop. The slowest mode by frame processing is ${slowMode.name}: ${msCell(slowMode.meanFrameProcessingTimeMs)} mean processing and ${msCell(slowMode.maxFrameProcessingTimeMs)} max processing.`
+    ? `Runtime is measured in the same loop. The slowest mode by display-amortized CV cost is ${slowMode.name}: ${msCell(slowMode.displayAmortizedUpdateTimeMs)} display-amortized, ${msCell(slowMode.meanActiveUpdateTimeMs)} mean active, and ${msCell(slowMode.maxActiveUpdateTimeMs)} max active update.`
     : 'Runtime is not present in this JSON; rerun the feedback loop with the current benchmark runner to include lag analysis.',
+  performance
+    ? `Timing ownership covers ${formatRatioPercent(performance.aggregate.timingCoverageRatio)} of measured update time, leaving ${msCell(performance.aggregate.displayAmortizedUnattributedUpdateTimeMs)} per display frame unattributed.`
+    : 'Timing ownership coverage is not present in this JSON.',
   budget
-    ? `Mobile budget status: mean frame processing is ${budget.meanFrameProcessingOverBudget ? 'over' : 'within'} the ${msCell(budget.trackingFrameBudgetMs)} tracking budget; max frame processing is ${budget.maxFrameProcessingOverBudget ? 'over' : 'within'} the ${msCell(budget.frameBudgetMs)} frame budget. Sustained stage overages: ${budgetStageNames(budget.stageOverages)}. Rare spike stages: ${budgetStageNames(budget.stageSpikeOverages)}.`
+    ? `Mobile budget status: display-amortized CV cost is ${budget.displayAmortizedUpdateOverBudget ? 'over' : 'within'} the ${msCell(budget.trackingFrameBudgetMs)} tracking budget; ${formatNumber(budget.cadenceLatencyOverageCount)} replay groups exceed their update interval at p95. Sustained stage overages: ${budgetStageNames(budget.stageOverages)}. Rare spike stages: ${budgetStageNames(budget.stageSpikeOverages)}.`
     : 'Mobile budget status is not present in this JSON.',
 ];
 
@@ -555,7 +626,7 @@ ${coverageSection}
       <div class="panel">
         <h2>Executive Conclusions</h2>
         <ol>
-          ${conclusions.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
+          ${conclusions.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
         </ol>
       </div>
       <div class="panel">
@@ -590,15 +661,17 @@ ${coverageSection}
       </table>
     </div>
 
-    ${performance ? `
+    ${
+      performance
+        ? `
     <h2>Performance Bottlenecks</h2>
-    <p class="note">Wall time measures the Node synthetic replay loop. Frame processing time is measured around each <code>updateAnchor</code> call and is the closest synthetic proxy for app-side lag.</p>
+    <p class="note">Wall time measures the Node synthetic replay loop. Active latency covers admitted <code>updateAnchor</code> calls; display-amortized cost spreads that work over the 60 Hz presentation timeline. Held source frames remain in quality scoring.</p>
     <div class="grid-two">
       <section>
         <h3>Modes By Runtime</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Mode</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th><th>Mean budget</th></tr></thead>
+            <thead><tr><th>Mode</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Display amortized</th><th>Mean active</th><th>Max active</th><th>Admission</th><th>Timing coverage</th><th>Unattributed/display</th><th>Budget</th></tr></thead>
             <tbody>${performanceRows(performance.byMode)}</tbody>
           </table>
         </div>
@@ -607,7 +680,7 @@ ${coverageSection}
         <h3>Slowest Replays</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>#</th><th>Scenario</th><th>Mode</th><th>Replay</th><th>Frame wall</th><th>Mean processing</th><th>Max processing</th></tr></thead>
+            <thead><tr><th>#</th><th>Scenario</th><th>Mode</th><th>Replay</th><th>Admitted</th><th>Display amortized</th><th>Mean active</th><th>Max active</th></tr></thead>
             <tbody>${slowestRows(performance.slowestReports)}</tbody>
           </table>
         </div>
@@ -616,7 +689,7 @@ ${coverageSection}
         <h3>Mode / Object By Runtime</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Mode / object</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th><th>Mean budget</th></tr></thead>
+            <thead><tr><th>Mode / object</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Display amortized</th><th>Mean active</th><th>Max active</th><th>Admission</th><th>Timing coverage</th><th>Unattributed/display</th><th>Budget</th></tr></thead>
             <tbody>${performanceRows((performance.byModeObject || []).slice(0, 12))}</tbody>
           </table>
         </div>
@@ -625,7 +698,7 @@ ${coverageSection}
         <h3>Mode / Geometry By Runtime</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Mode / geometry</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th><th>Mean budget</th></tr></thead>
+            <thead><tr><th>Mode / geometry</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Display amortized</th><th>Mean active</th><th>Max active</th><th>Admission</th><th>Timing coverage</th><th>Unattributed/display</th><th>Budget</th></tr></thead>
             <tbody>${performanceRows((performance.byModeGeometry || []).slice(0, 12))}</tbody>
           </table>
         </div>
@@ -634,7 +707,7 @@ ${coverageSection}
         <h3>Target Classes By Runtime</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Target class</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th><th>Mean budget</th></tr></thead>
+            <thead><tr><th>Target class</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Display amortized</th><th>Mean active</th><th>Max active</th><th>Admission</th><th>Timing coverage</th><th>Unattributed/display</th><th>Budget</th></tr></thead>
             <tbody>${performanceRows(performance.byTargetClass || [])}</tbody>
           </table>
         </div>
@@ -643,7 +716,7 @@ ${coverageSection}
         <h3>Geometry By Runtime</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Geometry</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th><th>Mean budget</th></tr></thead>
+            <thead><tr><th>Geometry</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Display amortized</th><th>Mean active</th><th>Max active</th><th>Admission</th><th>Timing coverage</th><th>Unattributed/display</th><th>Budget</th></tr></thead>
             <tbody>${performanceRows(performance.byGeometry || [])}</tbody>
           </table>
         </div>
@@ -652,7 +725,7 @@ ${coverageSection}
         <h3>Lighting By Runtime</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Lighting</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Mean frame wall</th><th>Mean processing</th><th>Max processing</th><th>Mean budget</th></tr></thead>
+            <thead><tr><th>Lighting</th><th>Runs</th><th>Mean replay</th><th>Max replay</th><th>Display amortized</th><th>Mean active</th><th>Max active</th><th>Admission</th><th>Timing coverage</th><th>Unattributed/display</th><th>Budget</th></tr></thead>
             <tbody>${performanceRows(performance.byLighting || [])}</tbody>
           </table>
         </div>
@@ -661,11 +734,13 @@ ${coverageSection}
     <h3>Aggregate Stage Timings</h3>
     <div class="table-wrap">
       <table>
-            <thead><tr><th>Stage</th><th>Frames</th><th>Coverage</th><th>Amortized</th><th>Mean When Run</th><th>Max</th></tr></thead>
+            <thead><tr><th>Stage</th><th>Ownership</th><th>Calls</th><th>Admitted coverage</th><th>Display amortized exclusive</th><th>Exclusive when run</th><th>Inclusive when run</th><th>Max</th></tr></thead>
         <tbody>${stageTimingRows(performance.aggregate.stageTimings)}</tbody>
       </table>
     </div>
-    ` : ''}
+    `
+        : ''
+    }
 
     <h2>Object Class And Geometry Weak Points</h2>
     <div class="grid-two">
@@ -719,6 +794,17 @@ ${coverageSection}
         </div>
       </section>
     </div>
+
+    <h2>Full Target Loss</h2>
+    <p class="note">These metrics separate correct disappearance handling from false locks on a decoy and score recovery only after the true target re-enters.</p>
+    <section class="kpis" aria-label="Full target loss metrics">
+      <div class="kpi"><span>Evaluated modes</span><strong>${formatNumber(targetLossRecovery.reportCount)}</strong></div>
+      <div class="kpi"><span>Absent frames</span><strong>${formatNumber(targetLossRecovery.absentFrameCount)}</strong></div>
+      <div class="kpi"><span>False admitted locks</span><strong>${formatNumber(targetLossRecovery.falseTrackedAbsentAdmittedFrames)}</strong></div>
+      <div class="kpi"><span>Display presence latency</span><strong>${formatNumber(targetLossRecovery.targetPresentAbsentDisplayFrames)}</strong></div>
+      <div class="kpi"><span>Recovered @8px</span><strong>${percentMetricCell(targetLossRecovery.recoveryRateAt8)}</strong></div>
+      <div class="kpi"><span>Worst recovery</span><strong>${formatNumber(targetLossRecovery.maxRecoveryFramesAt8)} frames</strong></div>
+    </section>
 
     <h2>Post-Occlusion Recovery</h2>
     <p class="note">Recovery windows start on the first visible frame after an occlusion run and close when the anchor returns inside the 8px threshold. Clean runs are excluded from these counts.</p>

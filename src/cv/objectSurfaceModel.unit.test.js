@@ -24,7 +24,16 @@ const createMask = ({ width = 160, height = 120, bbox = { x: 20, y: 20, width: 1
   });
 };
 
-const point = ({ id, x, y, quality = 0.76, status = 'active', objectOwned = true, residual = 1.2, age = 20 }) => ({
+const point = ({
+  id,
+  x,
+  y,
+  quality = 0.76,
+  status = 'active',
+  objectOwned = true,
+  residual = 1.2,
+  age = 20,
+}) => ({
   id,
   original: { x, y },
   current: { x: x + 2, y: y + 1 },
@@ -165,6 +174,6 @@ test('object surface model derives silhouette segments from the mask shape inste
 
   assert.equal(state.silhouette.source, 'mask-boundary');
   assert.ok(state.silhouette.boundaryPointCount > state.contourSegments.length);
-  assert.ok(state.contourSegments.some(segment => segment.role === 'mask-silhouette'));
-  assert.ok(state.contourSegments.some(segment => segment.from.x > 44 && segment.from.y >= 38));
+  assert.ok(state.contourSegments.some((segment) => segment.role === 'mask-silhouette'));
+  assert.ok(state.contourSegments.some((segment) => segment.from.x > 44 && segment.from.y >= 38));
 });
