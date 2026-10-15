@@ -85,7 +85,10 @@ test('robust similarity fit recovers geometric consensus across noisy observatio
     assert.equal(fit.success, true, `case ${caseIndex}: ${fit.reason}`);
     assert.ok(fit.averageResidual < 0.5, `case ${caseIndex}: residual ${fit.averageResidual}`);
     assert.ok(fit.inlierRatio >= 0.7, `case ${caseIndex}: too few inliers`);
-    for (const point of [{ x: 0, y: 0 }, { x: 200, y: 120 }]) {
+    for (const point of [
+      { x: 0, y: 0 },
+      { x: 200, y: 120 },
+    ]) {
       const expected = {
         x: tx + scale * (cos * point.x - sin * point.y),
         y: ty + scale * (sin * point.x + cos * point.y),
@@ -95,7 +98,10 @@ test('robust similarity fit recovers geometric consensus across noisy observatio
       const actualSin = Math.sin(actual.rotation);
       const x = actual.tx + actual.scale * (actualCos * point.x - actualSin * point.y);
       const y = actual.ty + actual.scale * (actualSin * point.x + actualCos * point.y);
-      assert.ok(Math.hypot(x - expected.x, y - expected.y) < 1, `case ${caseIndex}: transform misses by a pixel`);
+      assert.ok(
+        Math.hypot(x - expected.x, y - expected.y) < 1,
+        `case ${caseIndex}: transform misses by a pixel`,
+      );
     }
   }
 });
