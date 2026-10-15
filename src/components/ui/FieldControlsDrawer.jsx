@@ -128,7 +128,7 @@ const FieldControlsDrawer = ({
             onClick={() => onActiveTabChange(tab)}
             onKeyDown={(event) => handleTabKeyDown(event, index)}
             className={cx(
-              'min-h-11 border-r border-white/10 text-xs capitalize last:border-r-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70',
+              'min-h-11 min-w-0 [overflow-wrap:anywhere] border-r border-white/10 text-xs capitalize last:border-r-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70',
               activeTab === tab ? 'bg-white text-black' : 'bg-transparent text-gray-300 hover:bg-white/10',
             )}
           >

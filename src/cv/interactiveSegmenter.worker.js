@@ -25,6 +25,7 @@ const getSegmenter = () => {
         modelAssetPath: MODEL_PATH,
         delegate: 'CPU',
       },
+      canvas: new OffscreenCanvas(1, 1),
       outputConfidenceMasks: true,
       outputCategoryMask: false,
     });
