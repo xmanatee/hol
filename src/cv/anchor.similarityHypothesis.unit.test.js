@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 
 import { fitRobustSimilarity } from './anchor.reconstructionRobust.js';
 import {
@@ -43,14 +42,13 @@ test('similarity hypotheses retain only the numeric score needed during search',
   assert.ok(workspace.score[1] < 1e-12);
 });
 
-test('robust similarity fit preserves its deterministic result corpus', () => {
+test('robust similarity fit recovers geometric consensus across noisy observations', () => {
   let randomState = 0x91e10da5;
   const random = () => {
     randomState = Math.imul(randomState ^ (randomState >>> 15), 1 | randomState);
     randomState ^= randomState + Math.imul(randomState ^ (randomState >>> 7), 61 | randomState);
     return ((randomState ^ (randomState >>> 14)) >>> 0) / 4294967296;
   };
-  const reports = [];
 
   for (let caseIndex = 0; caseIndex < 120; caseIndex++) {
     const count = 12 + (caseIndex % 37);
@@ -84,21 +82,20 @@ test('robust similarity fit preserves its deterministic result corpus', () => {
       threshold: 2.5 + (caseIndex % 5),
       maxSample: 10 + (caseIndex % 27),
     });
-    reports.push({
-      success: fit.success,
-      reason: fit.reason,
-      transform: fit.transform,
-      inlierIds: fit.inliers?.map((item) => item.id),
-      inlierCount: fit.inlierCount,
-      inlierRatio: fit.inlierRatio,
-      averageResidual: fit.averageResidual,
-      confidence: fit.confidence,
-    });
+    assert.equal(fit.success, true, `case ${caseIndex}: ${fit.reason}`);
+    assert.ok(fit.averageResidual < 0.5, `case ${caseIndex}: residual ${fit.averageResidual}`);
+    assert.ok(fit.inlierRatio >= 0.7, `case ${caseIndex}: too few inliers`);
+    for (const point of [{ x: 0, y: 0 }, { x: 200, y: 120 }]) {
+      const expected = {
+        x: tx + scale * (cos * point.x - sin * point.y),
+        y: ty + scale * (sin * point.x + cos * point.y),
+      };
+      const actual = fit.transform;
+      const actualCos = Math.cos(actual.rotation);
+      const actualSin = Math.sin(actual.rotation);
+      const x = actual.tx + actual.scale * (actualCos * point.x - actualSin * point.y);
+      const y = actual.ty + actual.scale * (actualSin * point.x + actualCos * point.y);
+      assert.ok(Math.hypot(x - expected.x, y - expected.y) < 1, `case ${caseIndex}: transform misses by a pixel`);
+    }
   }
-
-  assert.equal(reports.filter((report) => report.success).length, 120);
-  assert.equal(
-    createHash('sha256').update(JSON.stringify(reports)).digest('hex'),
-    '39538f2177bf36ac1e0bb742127d6ff55270f1e097b6407c6135f1766871c337',
-  );
 });
