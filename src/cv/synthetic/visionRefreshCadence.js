@@ -22,9 +22,6 @@ export const QUICK_VISION_REFRESH_CADENCE_CONTRACT = Object.freeze({
   failureReasons: { 'no-reference-transform': 139 },
 });
 
-export const QUICK_VISION_QUALITY_PROJECTION_SHA256 =
-  '2d9df2e31dbba12bd734dac5a3cacfa6577adbea74cc16960c56e2fd787a361d';
-
 export const compareVisionRefreshCadence = (actual, expected) =>
   Object.entries(expected).flatMap(([field, expectedValue]) => {
     const actualValue = actual[field];

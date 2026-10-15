@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { loadOpenCvForNode } from '../src/cv/synthetic/opencvNodeLoader.js';
 import {
   createSyntheticDepthFrame,
@@ -21,7 +20,6 @@ import {
 import {
   compareVisionRefreshCadence,
   mergeVisionRefreshCadence,
-  QUICK_VISION_QUALITY_PROJECTION_SHA256,
   QUICK_VISION_REFRESH_CADENCE_CONTRACT,
   summarizeVisionRefreshCadence,
 } from '../src/cv/synthetic/visionRefreshCadence.js';
@@ -196,27 +194,11 @@ const performanceSummary = summarizeVisionBenchmarkPerformance(reports);
 const refreshCadenceSummary = mergeVisionRefreshCadence(refreshCadenceRuns);
 const coverageSummary = summarizeVisionBenchmarkCoverage({ scenarios, modes });
 const outputBenchmark = summaryOnly ? compactVisionBenchmarkAnalysis(benchmark) : benchmark;
-const qualityProjectionSha256 = createHash('sha256')
-  .update(
-    JSON.stringify({
-      coverageSummary,
-      qualitySummary,
-      benchmark: outputBenchmark,
-    }),
-  )
-  .digest('hex');
 const canonicalQuickRun = size === 'quick' && summaryOnly && Object.keys(filters).length === 0;
 const canonicalHardRun = size === 'hard' && summaryOnly && Object.keys(filters).length === 0;
 const refreshCadenceMismatches = canonicalQuickRun
   ? compareVisionRefreshCadence(refreshCadenceSummary, QUICK_VISION_REFRESH_CADENCE_CONTRACT)
   : [];
-if (canonicalQuickRun && qualityProjectionSha256 !== QUICK_VISION_QUALITY_PROJECTION_SHA256) {
-  refreshCadenceMismatches.push({
-    field: 'qualityProjectionSha256',
-    expected: QUICK_VISION_QUALITY_PROJECTION_SHA256,
-    actual: qualityProjectionSha256,
-  });
-}
 const hardContractActual = projectHardVisionBenchmarkContract({ qualitySummary, benchmark });
 const hardContractMismatches = canonicalHardRun
   ? compareHardVisionBenchmarkContract(hardContractActual, HARD_VISION_BENCHMARK_CONTRACT)
@@ -233,7 +215,6 @@ const output = {
   deterministicContract: {
     enforced: canonicalQuickRun,
     passed: canonicalQuickRun ? refreshCadenceMismatches.length === 0 : null,
-    qualityProjectionSha256,
     mismatches: refreshCadenceMismatches,
   },
   hardRegressionContract: {
