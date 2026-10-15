@@ -16,10 +16,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version-file: '.nvmrc'
           cache: npm
@@ -37,7 +37,7 @@ jobs:
         run: npm run test:browser
 
       - name: Upload production artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: hol-dist
           path: |
@@ -51,7 +51,7 @@ jobs:
 
       - name: Upload browser diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: hol-browser-diagnostics
           path: |
@@ -60,14 +60,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  dispatch-deploy:
+  publish:
     needs: release-gates
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger deploy on servers repo
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
-          repository: xmanatee/servers
-          event-type: deploy-hol
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    permissions:
+      contents: write
+      packages: write
+    uses: xmanatee/servers/.github/workflows/publish-static.yml@main
+    with:
+      artifact: hol-dist
+      dist: dist
+      image: hol
