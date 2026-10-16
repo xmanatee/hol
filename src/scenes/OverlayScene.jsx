@@ -1,12 +1,15 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { DoubleSide } from 'three';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import HeadAnchor from '../components/organisms/HeadAnchor.jsx';
 import { logger } from '../utils/logger.js';
 import { computeAnchorOverlayTransform } from '../utils/anchorProjection.js';
+import { writePlanarSurfaceMatrices } from '../utils/planarSurfaceAttachment.js';
 import { getRenderableAnchorOverlay } from '../utils/overlayVisibility.js';
 import { DemandRenderScheduler } from '../utils/overlayRenderScheduler.js';
 import { observeWebGLContext } from '../utils/webglContextLifecycle.js';
 import { ANCHOR_PRESENTATION_MOTION_CONFIG, AnchorMotionPredictor } from '../utils/anchorMotionPredictor.js';
+import { MAX_OBJECT_OBSERVATION_AGE_MS } from '../utils/cvScheduling.js';
 
 const MAX_DEVICE_PIXEL_RATIO = 1.5;
 const WEBGL_OPTIONS = {
@@ -117,43 +120,60 @@ const LiveAnchorGroup = ({
   children,
 }) => {
   const groupRef = useRef(null);
+  const contentRef = useRef(null);
+  const surfaceRef = useRef(null);
+  const camera = useThree((state) => state.camera);
+  const planarProjectionRef = useRef(false);
+  const appearedAtRef = useRef(0);
+  const [motionPreference] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)'));
   const invalidate = useThree((state) => state.invalidate);
   const liveStateRef = useRef(anchorSystemState);
   const sampledAtRef = useRef(null);
   const anchorIdentityRef = useRef(null);
   const motionUntilRef = useRef(0);
+  const expiryTimerRef = useRef(null);
   const [motionPredictor] = useState(() => new AnchorMotionPredictor());
 
-  useLayoutEffect(() => {
-    liveStateRef.current = anchorSystemState;
-    motionUntilRef.current = Number.isFinite(anchorSystemState.sampledAt)
-      ? anchorSystemState.sampledAt + ANCHOR_PRESENTATION_MOTION_CONFIG.maxPredictionAgeMs
-      : 0;
-    invalidate();
-  }, [anchorSystemState, invalidate]);
-
-  useEffect(
-    () =>
-      subscribeAnchorSystemState((state) => {
-        liveStateRef.current = state;
-        motionUntilRef.current = Number.isFinite(state.sampledAt)
-          ? state.sampledAt + ANCHOR_PRESENTATION_MOTION_CONFIG.maxPredictionAgeMs
-          : 0;
-        invalidate();
-      }),
-    [invalidate, subscribeAnchorSystemState],
+  const updateObservation = useCallback(
+    (state) => {
+      liveStateRef.current = state;
+      motionUntilRef.current = Number.isFinite(state.sampledAt)
+        ? state.sampledAt + ANCHOR_PRESENTATION_MOTION_CONFIG.maxPredictionAgeMs
+        : 0;
+      window.clearTimeout(expiryTimerRef.current);
+      if (Number.isFinite(state.sampledAt)) {
+        expiryTimerRef.current = window.setTimeout(
+          invalidate,
+          Math.max(0, state.sampledAt + MAX_OBJECT_OBSERVATION_AGE_MS - performance.now()) + 1,
+        );
+      }
+      invalidate();
+    },
+    [invalidate],
   );
+
+  useLayoutEffect(() => {
+    updateObservation(anchorSystemState);
+  }, [anchorSystemState, updateObservation]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeAnchorSystemState(updateObservation);
+    return () => {
+      unsubscribe();
+      window.clearTimeout(expiryTimerRef.current);
+    };
+  }, [subscribeAnchorSystemState, updateObservation]);
 
   useFrame(() => {
     const now = performance.now();
     const group = groupRef.current;
     const liveState = liveStateRef.current;
-    const activeAnchor = getRenderableAnchorOverlay(liveState);
+    const activeAnchor = getRenderableAnchorOverlay(liveState, now);
     const anchorIdentity = activeAnchor ? (activeAnchor.createdAt ?? activeAnchor.id) : null;
     if (!activeAnchor || !liveState.anchorState?.position || !Number.isFinite(liveState.sampledAt)) {
       motionPredictor.reset();
       sampledAtRef.current = null;
-      anchorIdentityRef.current = null;
+      if (!liveState.activeAnchor) anchorIdentityRef.current = null;
       group.visible = false;
       return;
     }
@@ -162,7 +182,39 @@ const LiveAnchorGroup = ({
       motionPredictor.reset();
       sampledAtRef.current = null;
       anchorIdentityRef.current = anchorIdentity;
+      appearedAtRef.current = now;
     }
+    const attachment = liveState.anchorState.metrics?.surfaceAttachment;
+    if (attachment) {
+      group.matrixAutoUpdate = false;
+      writePlanarSurfaceMatrices({
+        attachment,
+        modelMatrix: group.matrix,
+        projectionMatrix: camera.projectionMatrix,
+        width,
+        height,
+        renderWidth,
+        renderHeight,
+        cameraDistance,
+        mirrored,
+      });
+      group.matrixWorldNeedsUpdate = true;
+      camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+      planarProjectionRef.current = true;
+      group.visible = attachment.rotation[8] > 0.12;
+      surfaceRef.current.visible = true;
+      const progress = motionPreference.matches ? 1 : Math.min(1, (now - appearedAtRef.current) / 450);
+      contentRef.current.position.z = -0.5 + 0.75 * (1 - (1 - progress) ** 3);
+      if (progress < 1) invalidate();
+      return;
+    }
+    if (planarProjectionRef.current) {
+      camera.updateProjectionMatrix();
+      planarProjectionRef.current = false;
+    }
+    group.matrixAutoUpdate = true;
+    surfaceRef.current.visible = false;
+    contentRef.current.position.z = 0;
     if (sampledAtRef.current !== liveState.sampledAt) {
       motionPredictor.observe(liveState.anchorState.position, liveState.sampledAt);
       sampledAtRef.current = liveState.sampledAt;
@@ -192,7 +244,11 @@ const LiveAnchorGroup = ({
 
   return (
     <group ref={groupRef} visible={false}>
-      {children}
+      <mesh ref={surfaceRef} visible={false} renderOrder={-1}>
+        <planeGeometry args={[2, 2]} />
+        <meshBasicMaterial colorWrite={false} depthWrite side={DoubleSide} />
+      </mesh>
+      <group ref={contentRef}>{children}</group>
     </group>
   );
 };

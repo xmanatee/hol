@@ -1,4 +1,5 @@
 import { isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
+import { MAX_OBJECT_OBSERVATION_AGE_MS } from './cvScheduling.js';
 
 const PROGRESSIVE_ANCHOR_STATES = new Set(['candidate', 'mapping']);
 
@@ -43,8 +44,13 @@ export const shouldRenderAnchorOverlay = ({ activeAnchor, anchorState }) => {
   );
 };
 
-export const getRenderableAnchorOverlay = ({ activeAnchor, anchorState }) =>
-  shouldRenderAnchorOverlay({ activeAnchor, anchorState }) ? activeAnchor : null;
+export const getRenderableAnchorOverlay = (state, now) =>
+  Number.isFinite(state.sampledAt) &&
+  now >= state.sampledAt &&
+  now - state.sampledAt <= MAX_OBJECT_OBSERVATION_AGE_MS &&
+  shouldRenderAnchorOverlay(state)
+    ? state.activeAnchor
+    : null;
 
 export const shouldMountOverlayScene = ({ cameraState, activeAnchor }) =>
   cameraState === 'active' && activeAnchor?.overlaySceneReady === true;

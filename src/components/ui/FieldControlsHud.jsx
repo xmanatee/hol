@@ -22,7 +22,7 @@ export const FieldControlsHud = ({
   open,
 }) => {
   const anchorTone = getAnchorTone(anchorStatus);
-  const anchorLabel = hasActiveAnchor ? anchorStatus.status : 'tap to anchor';
+  const anchorLabel = anchorStatus.status;
   const voiceActive = microphoneMode ? microphoneActive : ttsData.isPlaying;
 
   return (

@@ -36,25 +36,18 @@ class ThrowingAnchorWorker extends FakeAnchorWorker {
 
 class TestAnchorWorkerService extends AnchorWorkerService {
   constructor(WorkerClass = FakeAnchorWorker, options = {}) {
-    super(options);
-    this.WorkerClass = WorkerClass;
-  }
-
-  async _getWorkerClass() {
-    return this.WorkerClass;
+    super({ ...options, loadWorkerClass: async () => WorkerClass });
   }
 }
 
 class DeferredWorkerClassService extends AnchorWorkerService {
   constructor() {
-    super();
-    this.workerClass = new Promise((resolve) => {
-      this.resolveWorkerClass = resolve;
+    let resolveWorkerClass;
+    const workerClass = new Promise((resolve) => {
+      resolveWorkerClass = resolve;
     });
-  }
-
-  async _getWorkerClass() {
-    return this.workerClass;
+    super({ loadWorkerClass: () => workerClass });
+    this.resolveWorkerClass = resolveWorkerClass;
   }
 }
 
@@ -67,9 +60,13 @@ const createImageData = () => ({
 const createState = (overrides = {}) => ({
   mode: 'selection',
   activeAnchor: null,
+  candidate: null,
+  nextObservationAt: 0,
   anchorState: null,
+  segmentationRefresh: null,
   trackingMode: 'sparse-reconstruction',
   initialized: false,
+  error: null,
   sampledAt: null,
   ...overrides,
 });
@@ -199,7 +196,8 @@ test('anchor worker initialization is single-flight across concurrent callers', 
   assert.equal(FakeAnchorWorker.instances[0].messages.length, 1);
 });
 
-test('anchor worker class loading shares active work but retries after rejection', async () => {
+test('anchor initialization shares runtime loading and permits retry after a load failure', async (t) => {
+  t.mock.method(console, 'error', () => {});
   let loadAttempts = 0;
   let rejectFirstLoad;
   const firstLoad = new Promise((_, reject) => {
@@ -212,8 +210,8 @@ test('anchor worker class loading shares active work but retries after rejection
     },
   });
 
-  const first = service._getWorkerClass();
-  const concurrent = service._getWorkerClass();
+  const first = service.initialize(null, 320, 240, 63);
+  const concurrent = service.initialize(null, 320, 240, 63);
   assert.equal(first, concurrent);
   assert.equal(loadAttempts, 1);
 
@@ -221,8 +219,13 @@ test('anchor worker class loading shares active work but retries after rejection
   await assert.rejects(first, /chunk unavailable/);
   await assert.rejects(concurrent, /chunk unavailable/);
 
-  assert.equal(await service._getWorkerClass(), FakeAnchorWorker);
+  const retry = service.initialize(null, 320, 240, 63);
+  await waitForWorkerPost();
+  const worker = FakeAnchorWorker.instances.at(-1);
+  worker.reply({ id: worker.messages[0].id, result: true, state: createState({ initialized: true }) });
+  await retry;
   assert.equal(loadAttempts, 2);
+  service.dispose();
 });
 
 test('anchor reset cancels lazy worker creation and starts only the latest calibration', async () => {
@@ -298,26 +301,24 @@ test('anchor initialization failures terminate the invalid runtime before retry'
   assert.equal(service.initialized, true);
 });
 
-test('anchor tap requests copy frame data and transfer the copied buffer', async () => {
+test('selection commits a candidate without copying or transferring another camera frame', async () => {
   FakeAnchorWorker.instances = [];
   const service = new TestAnchorWorkerService();
   service.initialized = true;
-  const imageData = createImageData();
   let publicationCount = 0;
   service.addListener(() => {
     publicationCount++;
   });
 
-  const created = service.createAnchorFromTap({ x: 1, y: 0 }, imageData);
+  const created = service.selectCandidate({ x: 1, y: 0 }, 100);
 
   await waitForWorkerPost();
   const worker = FakeAnchorWorker.instances[0];
   const message = worker.messages[0];
-  assert.equal(message.command, 'createAnchorFromTap');
+  assert.equal(message.command, 'selectCandidate');
   assert.deepEqual(message.payload.tapPosition, { x: 1, y: 0 });
-  assert.notEqual(message.payload.imageData.data.buffer, imageData.data.buffer);
-  assert.deepEqual(Array.from(message.payload.imageData.data), Array.from(imageData.data));
-  assert.deepEqual(worker.transferLists[0], [message.payload.imageData.data.buffer]);
+  assert.deepEqual(message.payload, { tapPosition: { x: 1, y: 0 }, capturedAt: 100 });
+  assert.deepEqual(worker.transferLists[0], []);
 
   worker.reply({
     id: message.id,
@@ -333,10 +334,10 @@ test('anchor tap requests reject locally before selection is initialized without
   FakeAnchorWorker.instances = [];
   const service = new TestAnchorWorkerService();
 
-  const outcome = await outcomeAfterAsyncTurn(service.createAnchorFromTap({ x: 1, y: 0 }, createImageData()));
+  const outcome = await outcomeAfterAsyncTurn(service.selectCandidate({ x: 1, y: 0 }, 100));
 
   assert.equal(outcome.status, 'rejected');
-  assert.match(outcome.error.message, /Can only create an anchor in selection mode/);
+  assert.match(outcome.error.message, /initialized selection mode/);
   assert.equal(FakeAnchorWorker.instances.length, 0);
 });
 
@@ -379,7 +380,7 @@ test('anchor frames combine tracking and segmentation in one zero-copy worker re
   assert.equal(worker.messages[0].payload.update, true);
   assert.equal(worker.messages[0].payload.refreshSegmentation, true);
   assert.deepEqual(worker.transferLists[0], [imageData.data.buffer]);
-  assert.equal(service.frameInFlight, true);
+  assert.equal(service.canProcessFrame(), false);
 
   const blocked = service.processFrame(createImageData(), {
     update: true,
@@ -388,7 +389,7 @@ test('anchor frames combine tracking and segmentation in one zero-copy worker re
     capturedAt: 101,
   });
   assert.equal(blocked.success, false);
-  assert.equal(blocked.reason, 'Anchor frame in progress');
+  assert.equal(blocked.reason, 'Observation frame in progress');
   assert.equal(worker.messages.length, 1);
 
   worker.reply({
@@ -397,7 +398,7 @@ test('anchor frames combine tracking and segmentation in one zero-copy worker re
     state: createState({ mode: 'anchor', initialized: true }),
   });
   await waitForRequestHandlers();
-  assert.equal(service.frameInFlight, false);
+  assert.equal(service.canProcessFrame(), true);
   assert.equal(service.getState().sampledAt, 100);
 
   const next = service.processFrame(createImageData(), {
@@ -443,15 +444,18 @@ test('anchor worker deadline retires a stalled frame and releases the frame gate
   });
   await waitForWorkerPost();
   const stalledWorker = FakeAnchorWorker.instances[0];
-  assert.equal(service.frameInFlight, true);
+  assert.equal(service.canProcessFrame(), false);
 
   scheduler.run();
   await waitForRequestHandlers();
 
   assert.equal(stalledWorker.terminated, true);
-  assert.equal(service.frameInFlight, false);
+  assert.equal(service.canProcessFrame(), false);
   assert.equal(service.pendingRequests.size, 0);
-  assert.deepEqual(service.getState(), createState());
+  assert.deepEqual(
+    service.getState(),
+    createState({ error: 'Anchor worker processFrame timed out after 1000ms' }),
+  );
 });
 
 test('anchor clear in selection mode does not create a worker request', async () => {
@@ -488,11 +492,11 @@ test('anchor dispose clears the in-flight frame gate immediately', async (t) => 
   });
   await waitForWorkerPost();
 
-  assert.equal(service.frameInFlight, true);
+  assert.equal(service.canProcessFrame(), false);
 
   service.dispose();
 
-  assert.equal(service.frameInFlight, false);
+  assert.equal(service.canProcessFrame(), false);
 
   await waitForRequestHandlers();
   assert.equal(errorCount, 0);
@@ -596,7 +600,7 @@ test('anchor worker failures reject pending work and reset runtime state', async
   await assert.rejects(pending, /worker crashed/);
   assert.equal(worker.terminated, true);
   assert.equal(service.pendingRequests.size, 0);
-  assert.deepEqual(service.getState(), createState());
+  assert.deepEqual(service.getState(), createState({ error: 'worker crashed' }));
 });
 
 test('anchor worker message errors reject pending work and reset runtime state', async (t) => {
@@ -621,7 +625,7 @@ test('anchor worker message errors reject pending work and reset runtime state',
   await assert.rejects(pending, /worker message could not be cloned/);
   assert.equal(worker.terminated, true);
   assert.equal(service.pendingRequests.size, 0);
-  assert.deepEqual(service.getState(), createState());
+  assert.deepEqual(service.getState(), createState({ error: 'worker message could not be cloned' }));
 });
 
 test('anchor worker requests do not leak pending entries when postMessage rejects', async () => {
@@ -631,4 +635,41 @@ test('anchor worker requests do not leak pending entries when postMessage reject
   await assert.rejects(service._request('processFrame', { imageData: createImageData() }), /DataCloneError/);
 
   assert.equal(service.pendingRequests.size, 0);
+});
+
+test('anchor replies publish refresh diagnostics once and release only their own frame', async () => {
+  const service = new TestAnchorWorkerService();
+  const initialized = service.initialize(null, 320, 240, 63);
+  await waitForWorkerPost();
+  const worker = FakeAnchorWorker.instances.at(-1);
+  const ready = createState({ initialized: true });
+  worker.reply({ id: worker.messages[0].id, result: true, state: ready });
+  await initialized;
+  const states = [];
+  service.addListener((state) => states.push(state));
+  const frame = { update: true, refreshSegmentation: true, depthContext: null, capturedAt: 100 };
+  service.processFrame(createImageData(), frame);
+  await waitForWorkerPost();
+  const reply = {
+    id: worker.messages.at(-1).id,
+    result: { success: true },
+    state: { ...ready, segmentationRefresh: { status: 'rejected', errorMessage: 'Model unavailable' } },
+  };
+  worker.reply(reply);
+  assert.equal(service.canProcessFrame(), true);
+  assert.deepEqual(service.getState().segmentationRefresh, reply.state.segmentationRefresh);
+  assert.equal(states.length, 1);
+
+  service.processFrame(createImageData(), { ...frame, capturedAt: 200 });
+  worker.reply({ ...reply, state: createState({ initialized: false }) });
+  worker.reply({ ...reply, id: -1, error: 'unowned error' });
+  await waitForRequestHandlers();
+  assert.equal(service.canProcessFrame(), false);
+  assert.equal(service.getState().initialized, true);
+  assert.equal(states.length, 1);
+  worker.reply({ ...reply, id: worker.messages.at(-1).id });
+  await waitForRequestHandlers();
+  assert.equal(service.canProcessFrame(), true);
+  assert.equal(service.getState().sampledAt, 200);
+  service.dispose();
 });

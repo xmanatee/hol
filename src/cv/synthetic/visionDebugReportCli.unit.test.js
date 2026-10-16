@@ -1,17 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { debugReportUsesBenchmarkMatrix, selectedDebugFrameIndexes } from './visionDebugReportCli.js';
-
-test('debug report uses benchmark matrix when filters or matrix size are explicit', () => {
-  assert.equal(debugReportUsesBenchmarkMatrix(), false);
-  assert.equal(debugReportUsesBenchmarkMatrix({ size: 'representative', filters: {} }), false);
-  assert.equal(debugReportUsesBenchmarkMatrix({ size: 'quick', filters: {} }), true);
-  assert.equal(
-    debugReportUsesBenchmarkMatrix({ size: 'representative', filters: { object: 'handled-mug' } }),
-    true,
-  );
-});
+import { selectedDebugFrameIndexes } from './visionDebugReportCli.js';
 
 test('debug report samples stable checkpoints and worst diagnostic frames once', () => {
   assert.deepEqual(

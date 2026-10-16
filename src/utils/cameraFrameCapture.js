@@ -3,7 +3,10 @@ export const shouldCaptureCameraFrame = ({
   shouldUpdateAnchor,
   shouldRefreshSegmentation,
   canProcess,
-}) => mode === 'anchor' && canProcess && (shouldUpdateAnchor || shouldRefreshSegmentation);
+}) =>
+  (mode === 'anchor' || mode === 'selection') &&
+  canProcess &&
+  (shouldUpdateAnchor || shouldRefreshSegmentation);
 
 export const captureCameraFrame = ({ video, canvas, context }) => {
   const width = video.videoWidth;

@@ -1,4 +1,5 @@
 import * as ort from 'onnxruntime-web/webgpu';
+import { createSerialExecutor } from '../utils/serialExecutor.js';
 import {
   DEPTH_MODEL_DEFAULT_INPUT_SIZE,
   postprocessDepthTensor,
@@ -38,27 +39,12 @@ const configureRuntime = ({ crossOriginIsolated, hardwareConcurrency }) => {
 };
 
 const createSession = async () => {
-  const webgpuAvailable = typeof navigator !== 'undefined' && Boolean(navigator.gpu);
-  const providerAttempts = webgpuAvailable ? [['webgpu', 'wasm'], ['wasm']] : [['wasm']];
-  let lastError = null;
-
-  for (const providers of providerAttempts) {
-    try {
-      session = await ort.InferenceSession.create(modelConfig.modelUrl, {
-        executionProviders: providers,
-      });
-      provider = providers[0];
-      break;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  if (!session) {
-    throw new Error(`Depth model load failed: ${lastError?.message || 'No execution provider available'}`, {
-      cause: lastError,
-    });
-  }
+  const providers = navigator.gpu ? ['webgpu', 'wasm'] : ['wasm'];
+  session = await ort.InferenceSession.create(modelConfig.modelUrl, {
+    executionProviders: providers,
+  });
+  // The declared hybrid execution plan is not a per-kernel GPU residency claim.
+  provider = providers.join('+');
 
   modelConfig = {
     ...modelConfig,
@@ -67,11 +53,12 @@ const createSession = async () => {
   };
 };
 
-const initialize = async (config) => {
-  modelConfig = {
-    ...modelConfig,
-    ...config,
-  };
+const initialize = async ({ modelUrl, inputSize }) => {
+  if (session) {
+    throw new Error('Depth model is already initialized');
+  }
+  modelConfig.modelUrl = modelUrl;
+  modelConfig.inputSize = inputSize;
   configureRuntime({
     crossOriginIsolated: self.crossOriginIsolated,
     hardwareConcurrency: navigator.hardwareConcurrency,
@@ -96,7 +83,7 @@ const estimateDepth = async ({ requestId, imageData, timestamp }) => {
   });
   const inputTensor = new ort.Tensor('float32', preprocessInfo.tensor, preprocessInfo.dims);
   const output = await session.run({ [modelConfig.inputName]: inputTensor });
-  const outputTensor = output[modelConfig.outputName] || Object.values(output)[0];
+  const outputTensor = output[modelConfig.outputName];
   const depthMap = postprocessDepthTensor(outputTensor, preprocessInfo, {
     outputMaxSize: modelConfig.outputMaxSize,
   });
@@ -119,24 +106,23 @@ const estimateDepth = async ({ requestId, imageData, timestamp }) => {
   );
 };
 
-self.onmessage = (event) => {
-  const message = event.data;
-
-  if (message.type === 'initialize') {
-    initialize(message.config).catch((error) => {
-      postMessage({ type: 'error', stage: 'initialize', message: error.message });
-    });
-    return;
-  }
-
-  if (message.type === 'estimate') {
-    estimateDepth(message).catch((error) => {
+const executeSerially = createSerialExecutor();
+self.onmessage = ({ data: message }) =>
+  executeSerially(async () => {
+    try {
+      if (message.type === 'initialize') {
+        await initialize(message.config);
+      } else if (message.type === 'estimate') {
+        await estimateDepth(message);
+      } else {
+        throw new Error(`Unsupported depth worker command: ${message.type}`);
+      }
+    } catch (error) {
       postMessage({
         type: 'error',
-        stage: 'estimate',
+        stage: message.type,
         requestId: message.requestId,
         message: error.message,
       });
-    });
-  }
-};
+    }
+  });

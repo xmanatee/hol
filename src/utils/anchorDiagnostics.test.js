@@ -98,6 +98,7 @@ test('includes support growth and landmark refresh diagnostics', () => {
       trigger: 'object-ownership-recovery',
       outcomeReason: 'discontinuous-mask',
       maskSource: null,
+      errorMessage: 'Segmentation worker failed',
     },
     anchorState: {
       anchored: true,
@@ -131,6 +132,7 @@ test('includes support growth and landmark refresh diagnostics', () => {
   assert.equal(details.segmentationRefreshTrigger, 'object-ownership-recovery');
   assert.equal(details.segmentationRefreshOutcomeReason, 'discontinuous-mask');
   assert.equal(details.segmentationRefreshMaskSource, null);
+  assert.equal(details.segmentationRefreshError, 'Segmentation worker failed');
   assert.equal(details.landmarkRefreshReason, 'support-growth');
   assert.equal(details.landmarkRefreshAdded, 18);
   assert.equal(details.landmarkRefreshTotal, 38);

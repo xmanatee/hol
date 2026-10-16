@@ -3,16 +3,16 @@ import assert from 'node:assert/strict';
 
 import { captureCameraFrame, shouldCaptureCameraFrame } from './cameraFrameCapture.js';
 
-test('selection-mode presentation never captures a frame without an admitted tap', () => {
+test('discovery captures only admitted scheduled frames before the tap', () => {
   for (let frame = 0; frame < 120; frame++) {
     assert.equal(
       shouldCaptureCameraFrame({
         mode: 'selection',
         shouldUpdateAnchor: true,
         shouldRefreshSegmentation: true,
-        canProcess: true,
+        canProcess: frame % 15 === 0,
       }),
-      false,
+      frame % 15 === 0,
     );
   }
 });

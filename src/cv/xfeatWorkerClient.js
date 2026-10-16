@@ -1,4 +1,5 @@
 import { assertWorkerRequestTimeout, WorkerRequestRegistry } from '../utils/workerRequestRegistry.js';
+import { copyImageData } from '../utils/imageDataTransfer.js';
 
 const DEFAULT_REFERENCE_TIMEOUT_MS = 60_000;
 const DEFAULT_RELOCALIZATION_TIMEOUT_MS = 10_000;
@@ -33,10 +34,11 @@ export class XFeatWorkerRelocalizer {
 
   async storeReference(reference) {
     const epoch = ++this.referenceEpoch;
+    const imageData = copyImageData(reference.imageData);
     const result = await this._request(
       'storeReference',
-      reference,
-      [reference.imageData.data.buffer],
+      { ...reference, imageData },
+      [imageData.data.buffer],
       this.referenceTimeoutMs,
     );
     if (epoch !== this.referenceEpoch) {
@@ -53,11 +55,7 @@ export class XFeatWorkerRelocalizer {
     if (!this.referenceReady) {
       return Promise.resolve({ success: false, reason: 'No XFeat reference available' });
     }
-    const workerImageData = {
-      width: imageData.width,
-      height: imageData.height,
-      data: imageData.data.slice(),
-    };
+    const workerImageData = copyImageData(imageData);
     return this._request(
       'relocalize',
       { imageData: workerImageData },
@@ -115,7 +113,7 @@ export class XFeatWorkerRelocalizer {
   }
 
   _handleMessage(message) {
-    if (message.error) {
+    if (Object.hasOwn(message, 'error')) {
       this.pendingRequests.reject(message.id, new Error(message.error));
     } else {
       this.pendingRequests.resolve(message.id, message.result);

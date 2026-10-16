@@ -6,6 +6,27 @@ import {
   shouldRenderAnchorOverlay,
 } from './overlayVisibility.js';
 
+test('a ready face expires with its source observation, not its last successful render', () => {
+  const state = {
+    sampledAt: 100,
+    activeAnchor: { id: 'subject' },
+    anchorState: {
+      metrics: {
+        poseModel: 'sparse-reconstruction',
+        poseSource: 'planar-homography',
+        readiness: { faceReady: true },
+      },
+    },
+  };
+  assert.equal(getRenderableAnchorOverlay(state, 100), state.activeAnchor);
+  assert.equal(getRenderableAnchorOverlay(state, 400), state.activeAnchor);
+  assert.equal(getRenderableAnchorOverlay(state, 401), null);
+  assert.equal(getRenderableAnchorOverlay(state, 99), null);
+  for (const sampledAt of [null, undefined, NaN, Infinity]) {
+    assert.equal(getRenderableAnchorOverlay({ ...state, sampledAt }, 200), null);
+  }
+});
+
 test('renders sparse reconstruction overlay when planar homography is the active pose source', () => {
   assert.equal(
     shouldRenderAnchorOverlay({
@@ -217,10 +238,14 @@ test('keeps the overlay scene unmounted until the camera and anchor have proven 
     true,
   );
   assert.equal(
-    getRenderableAnchorOverlay({
-      activeAnchor,
-      anchorState,
-    }),
+    getRenderableAnchorOverlay(
+      {
+        activeAnchor,
+        anchorState,
+        sampledAt: 100,
+      },
+      200,
+    ),
     activeAnchor,
   );
 });

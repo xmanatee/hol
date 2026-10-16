@@ -12,7 +12,8 @@ const budgets = [
   { pattern: /^vendor-react-.*\.js$/, label: 'React runtime', bytes: 220_000 },
   { pattern: /^vendor-r3f-.*\.js$/, label: 'React Three Fiber runtime', bytes: 190_000 },
   { pattern: /^vendor-three-addons-.*\.js$/, label: 'lazy Three.js scene runtime', bytes: 850_000 },
-  { pattern: /^anchor\.worker-.*\.js$/, label: 'anchor worker', bytes: 315_000, assetCount: 2 },
+  // Includes pre-tap observation lifecycle and the bounded silhouette preview.
+  { pattern: /^anchor\.worker-.*\.js$/, label: 'anchor worker', bytes: 320_000, assetCount: 2 },
   { pattern: /^xfeat\.worker-.*\.js$/, label: 'XFeat worker', bytes: 24_000 },
   {
     pattern: /^interactiveSegmenter\.worker-.*\.js$/,

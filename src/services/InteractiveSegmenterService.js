@@ -1,8 +1,15 @@
 import { copyImageData } from '../utils/imageDataTransfer.js';
 import { assertWorkerRequestTimeout, WorkerRequestRegistry } from '../utils/workerRequestRegistry.js';
+import { assertSegmentationInput, getSegmentationBackend } from '../cv/segmentationBackend.js';
 
 export class InteractiveSegmenterService {
-  constructor({ WorkerClass = null, requestTimeoutMs = 6000, scheduleRequestTimeout } = {}) {
+  constructor({
+    WorkerClass = null,
+    backendId = 'mediapipe-wasm',
+    requestTimeoutMs = 6000,
+    scheduleRequestTimeout,
+  } = {}) {
+    this.backend = getSegmentationBackend(backendId);
     this.WorkerClass = WorkerClass;
     this.requestTimeoutMs = assertWorkerRequestTimeout(
       requestTimeoutMs,
@@ -25,52 +32,40 @@ export class InteractiveSegmenterService {
     timeoutMs = this.requestTimeoutMs,
   }) {
     assertWorkerRequestTimeout(timeoutMs, 'Interactive segmenter request timeout');
+    assertSegmentationInput({ imageData, tapPosition, createdAtFrame, maxRadius });
     const requestId = this.nextRequestId++;
     const copiedImageData = copyImageData(imageData);
     const workerGeneration = this.workerGeneration;
 
-    return this.pendingRequests.start({
+    const request = this.pendingRequests.start({
       id: requestId,
       timeoutMs,
       timeoutMessage: `Interactive segmenter request timed out after ${timeoutMs}ms`,
-      send: () => {
-        let requestWorker = null;
-        const posting = this._getWorker().then((worker) => {
-          requestWorker = worker;
-          if (!this.pendingRequests.has(requestId)) {
-            return;
-          }
-          if (!this._ownsWorker(worker, workerGeneration)) {
-            throw new Error('Interactive segmenter request owner changed');
-          }
-
-          worker.postMessage(
-            {
-              type: 'segment',
-              requestId,
-              imageData: copiedImageData,
-              tapPosition: { ...tapPosition },
-              createdAtFrame,
-              maxRadius,
-            },
-            [copiedImageData.data.buffer],
-          );
-        });
-        posting.then(
-          () => {},
-          (error) => {
-            if (!this.pendingRequests.has(requestId)) {
-              return;
-            }
-            if (requestWorker && this._ownsWorker(requestWorker, workerGeneration)) {
-              this._handleWorkerError(error.message);
-            } else {
-              this.pendingRequests.reject(requestId, error);
-            }
+      send: async () => {
+        const worker = await this._getWorker();
+        if (!this.pendingRequests.has(requestId)) {
+          return;
+        }
+        worker.postMessage(
+          {
+            type: 'segment',
+            backendId: this.backend.id,
+            requestId,
+            imageData: copiedImageData,
+            tapPosition: { ...tapPosition },
+            createdAtFrame,
+            maxRadius,
           },
+          [copiedImageData.data.buffer],
         );
       },
       onTimeout: (error) => this._handleWorkerError(error.message),
+    });
+    return request.catch((error) => {
+      if (workerGeneration === this.workerGeneration) {
+        this._handleWorkerError(error.message);
+      }
+      throw error;
     });
   }
 
@@ -80,24 +75,17 @@ export class InteractiveSegmenterService {
   }
 
   _getWorker() {
-    if (this.worker) {
-      return this.worker;
-    }
-
     if (this.workerPromise) {
       return this.workerPromise;
     }
 
     const workerPromise = this._createWorker(this.workerGeneration);
     this.workerPromise = workerPromise;
-    workerPromise.then(
-      () => {},
-      () => {
-        if (this.workerPromise === workerPromise) {
-          this.workerPromise = null;
-        }
-      },
-    );
+    workerPromise.catch(() => {
+      if (this.workerPromise === workerPromise) {
+        this.workerPromise = null;
+      }
+    });
     return workerPromise;
   }
 
@@ -136,10 +124,16 @@ export class InteractiveSegmenterService {
       return;
     }
 
+    if (message.backendId !== this.backend.id) {
+      this._handleWorkerError('Interactive segmenter response backend mismatch');
+      return;
+    }
     if (message.type === 'segment-result') {
       this.pendingRequests.resolve(message.requestId, message.objectSupportMask);
-    } else {
+    } else if (message.type === 'segment-error') {
       this._handleWorkerError(message.reason);
+    } else {
+      this._handleWorkerError(`Unsupported interactive segmenter response: ${message.type}`);
     }
   }
 

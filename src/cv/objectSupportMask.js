@@ -1,3 +1,5 @@
+import { traceMaskOutline } from './maskOutline.js';
+
 export const OBJECT_SUPPORT_MASK_SOURCES = Object.freeze({
   INTERACTIVE_SEGMENTER: 'interactive-segmenter',
   TAP_LOCAL: 'tap-local',
@@ -48,34 +50,10 @@ const summarizePositivePixels = ({ width, height, data }) => {
 
 export const getObjectSupportBounds = (objectSupportMask) => summarizePositivePixels(objectSupportMask).bbox;
 
-const findNearestPositivePixel = ({ width, height, data, point }) => {
-  const targetX = Math.trunc(point.x);
-  const targetY = Math.trunc(point.y);
-  let best = null;
-  let bestDistance = Infinity;
-
-  for (let y = 0; y < height; y++) {
-    const rowOffset = y * width;
-    for (let x = 0; x < width; x++) {
-      if (data[rowOffset + x] === 0) {
-        continue;
-      }
-
-      const distance = Math.abs(x - targetX) + Math.abs(y - targetY);
-      if (distance < bestDistance) {
-        best = { x, y };
-        bestDistance = distance;
-      }
-    }
-  }
-
-  return best;
-};
-
 export const keepConnectedComponentContainingPoint = ({ width, height, data, point }) => {
   const output = new Uint8Array(width * height);
-  const start = findNearestPositivePixel({ width, height, data, point });
-  if (!start) {
+  const start = { x: Math.trunc(point.x), y: Math.trunc(point.y) };
+  if (!(data[start.y * width + start.x] > 0)) {
     return output;
   }
 
@@ -151,21 +129,10 @@ export const createObjectSupportMask = (options) => {
   });
 };
 
-const hasMaskPixel = (objectSupportMask, x, y) =>
-  x >= 0 &&
-  y >= 0 &&
-  x < objectSupportMask.width &&
-  y < objectSupportMask.height &&
-  objectSupportMask.data[y * objectSupportMask.width + x] > 0;
-
-const isBoundaryPixel = (objectSupportMask, x, y) =>
-  hasMaskPixel(objectSupportMask, x, y) &&
-  (!hasMaskPixel(objectSupportMask, x - 1, y) ||
-    !hasMaskPixel(objectSupportMask, x + 1, y) ||
-    !hasMaskPixel(objectSupportMask, x, y - 1) ||
-    !hasMaskPixel(objectSupportMask, x, y + 1));
-
 export const createObjectSupportMaskPreview = (objectSupportMask, { maxPoints = 180 } = {}) => {
+  if (!Number.isInteger(maxPoints) || maxPoints < 4) {
+    throw new RangeError('Mask outline requires at least four points');
+  }
   const { bbox } = objectSupportMask;
   if (bbox.width <= 0 || bbox.height <= 0) {
     return {
@@ -178,22 +145,14 @@ export const createObjectSupportMaskPreview = (objectSupportMask, { maxPoints = 
   }
 
   const sampleStride = Math.max(1, Math.floor(Math.sqrt((bbox.width * bbox.height) / maxPoints)));
-  const points = [];
-
-  for (let y = bbox.y; y < bbox.y + bbox.height; y += sampleStride) {
-    for (let x = bbox.x; x < bbox.x + bbox.width; x += sampleStride) {
-      if (isBoundaryPixel(objectSupportMask, x, y)) {
-        points.push({ x, y });
-      }
-    }
-  }
+  const points = traceMaskOutline(objectSupportMask, maxPoints);
 
   return {
     source: objectSupportMask.source,
     confidence: objectSupportMask.confidence,
     bbox: { ...bbox },
     sampleStride,
-    points: points.slice(0, maxPoints),
+    points,
   };
 };
 

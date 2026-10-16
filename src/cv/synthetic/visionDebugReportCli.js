@@ -1,6 +1,3 @@
-export const debugReportUsesBenchmarkMatrix = ({ size = 'representative', filters = {} } = {}) =>
-  size !== 'representative' || Object.keys(filters).length > 0;
-
 export const selectedDebugFrameIndexes = ({ frameCount, trackingWorstFrames = [], headWorstFrames = [] }) =>
   [
     ...new Set([

@@ -10,7 +10,12 @@ import CameraVideo from '../components/CameraVideo.jsx';
 import CameraCanvas from '../components/CameraCanvas.jsx';
 import OverlaySceneBoundary from '../components/OverlaySceneBoundary.jsx';
 import FieldControls from '../components/ui/FieldControls.jsx';
-import { renderAnchorOverlay, renderDebugStats, renderKeypoints } from '../utils/anchorOverlayRenderer.js';
+import {
+  renderAnchorOverlay,
+  renderDiscoveryOverlay,
+  renderDebugStats,
+  renderKeypoints,
+} from '../utils/anchorOverlayRenderer.js';
 import { logger } from '../utils/logger.js';
 import { RECONSTRUCTION_POSE_MODEL, isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
 import { shouldAutoStartObjectVoice } from '../audio/objectVoicePolicy.js';
@@ -46,7 +51,7 @@ const StartScreen = ({ cameraState, cameraError, onStartCamera }) => {
         <h1 id="start-screen-title" className="text-4xl font-bold mb-4 text-white">
           High on Life
         </h1>
-        <p className="text-base mb-8 text-gray-400">Tap an object in view to bring it to life</p>
+        <p className="text-base mb-8 text-gray-400">Point at an object. Tap when its outline turns green.</p>
         <button
           type="button"
           onClick={onStartCamera}
@@ -79,7 +84,7 @@ const AnchorFeedback = ({ feedback }) => {
       role={feedback.severity === 'bad' ? 'alert' : 'status'}
       aria-live={feedback.severity === 'bad' ? 'assertive' : 'polite'}
       aria-atomic="true"
-      className={`fixed left-1/2 bottom-8 z-50 w-[min(92vw,28rem)] -translate-x-1/2 rounded border px-3 py-2 text-center text-sm shadow-lg ${toneClass}`}
+      className={`fixed left-1/2 bottom-24 z-50 w-[min(92vw,28rem)] -translate-x-1/2 rounded border px-3 py-2 text-center text-sm shadow-lg ${toneClass}`}
     >
       {feedback.message}
     </div>
@@ -131,6 +136,7 @@ const CameraView = () => {
   const {
     cameraState,
     cameraError,
+    visionError,
     videoDimensions,
     depthStateStore,
     anchorSystemState,
@@ -324,7 +330,7 @@ const CameraView = () => {
     lastAnchorUpdateAtRef.current = 0;
     lastSegmentationRefreshCheckAtRef.current = 0;
     clearAnchor();
-    showAnchorFeedback('Anchor cleared. Tap any object to anchor again.', 'good');
+    showAnchorFeedback('Point at another object and wait for its green outline.', 'good');
   }, [clearAnchor, showAnchorFeedback]);
 
   // Handle canvas selection for anchor creation or clearing
@@ -349,14 +355,11 @@ const CameraView = () => {
               imageData = captureCurrentCameraFrame();
               logger.info(
                 'CameraView',
-                `Creating tap-local anchor at (${position.x.toFixed(1)}, ${position.y.toFixed(1)})`,
+                `Selected prepared object at (${position.x.toFixed(1)}, ${position.y.toFixed(1)})`,
                 {
                   imageSize: `${imageData.width}x${imageData.height}`,
                 },
               );
-              if (!liveAnchorSystemState.initialized) {
-                showAnchorFeedback('Preparing vision tracking...', 'warn');
-              }
               return imageData;
             },
           });
@@ -374,41 +377,26 @@ const CameraView = () => {
               method: result.method,
               position: result.position,
             });
-            const qualityLabel = result.state === 'degraded' ? 'weak' : 'solid';
-            if (result.state === 'candidate' || result.state === 'mapping') {
-              showAnchorFeedback(
-                `Object selected. Building support from ${result.evidence?.objectOwnedLandmarks || result.keypoints} object landmarks.`,
-                'warn',
-              );
-            } else if (isReconstructionMode(result.trackingMode)) {
-              showAnchorFeedback(
-                `Anchor created with ${result.keypoints} local points. Move slowly to build the 3D map.`,
-                'warn',
-              );
-            } else {
-              showAnchorFeedback(
-                `Anchor created with ${result.keypoints} local points (${qualityLabel} lock).`,
-                result.state === 'degraded' ? 'warn' : 'good',
-              );
-              if (
-                shouldAutoStartObjectVoice({
-                  trackingMode: result.trackingMode,
-                  reconstructionReady: false,
-                  hasUserGesture: true,
-                })
-              ) {
-                const createdAnchor = getAnchorSystemState().activeAnchor;
-                generateAndSpeakForAnchor({
-                  imageData,
-                  position: result.position,
-                  selectionRegion: createdAnchor?.selectionRegion,
-                  anchorCreatedAt: createdAnchor?.createdAt,
-                });
-              }
+            showAnchorFeedback('Object selected. Face attached.', 'good');
+            if (
+              shouldAutoStartObjectVoice({
+                trackingMode: result.trackingMode,
+                reconstructionReady:
+                  getAnchorSystemState().activeAnchor?.diagnostics?.reconstructionReady === true,
+                hasUserGesture: true,
+              })
+            ) {
+              const createdAnchor = getAnchorSystemState().activeAnchor;
+              generateAndSpeakForAnchor({
+                imageData,
+                position: result.position,
+                selectionRegion: createdAnchor?.selectionRegion,
+                anchorCreatedAt: createdAnchor?.createdAt,
+              });
             }
           } else {
             logger.warn('CameraView', 'Anchor creation failed:', result);
-            showAnchorFeedback('Anchor was not created. Try a sharper textured area.', 'warn');
+            showAnchorFeedback(result.reason, 'warn');
           }
         } catch (error) {
           logger.warn('CameraView', `Anchor not created: ${error.message}`);
@@ -494,14 +482,13 @@ const CameraView = () => {
       const ctx = ctxRef.current;
       const frameIndex = ++frameCountRef.current;
       const liveAnchorSystemState = getAnchorSystemState();
-      const hasOverlayContent =
-        Boolean(liveAnchorSystemState.mode === 'anchor' && liveAnchorSystemState.activeAnchor) || showStats;
+      const hasOverlayContent = true;
       if (resized || hasOverlayContent || overlayContentRef.current) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
       }
       overlayContentRef.current = hasOverlayContent;
 
-      if (liveAnchorSystemState.mode === 'anchor') {
+      if (liveAnchorSystemState.initialized) {
         const now = videoFrameAt;
         const shouldUpdateAnchor = shouldRunTimedStep({
           now,
@@ -552,12 +539,16 @@ const CameraView = () => {
       }
 
       if (liveAnchorSystemState.mode === 'anchor' && liveAnchorSystemState.activeAnchor) {
-        renderAnchorOverlay(ctx, {
-          anchor: liveAnchorSystemState.activeAnchor,
-          anchorState: liveAnchorSystemState.anchorState,
-          trackedPoints: services.anchor?.imageAnchorService?.keypointTracker?.trackedPoints || [],
-          showObjectSupport: showStats,
-        });
+        if (showStats) {
+          renderAnchorOverlay(ctx, {
+            anchor: liveAnchorSystemState.activeAnchor,
+            anchorState: liveAnchorSystemState.anchorState,
+            trackedPoints: services.anchor?.imageAnchorService?.keypointTracker?.trackedPoints || [],
+            showObjectSupport: true,
+          });
+        }
+      } else {
+        renderDiscoveryOverlay(ctx, liveAnchorSystemState.candidate);
       }
 
       if (typeof captureFps === 'number' && !isNaN(captureFps)) {
@@ -609,6 +600,21 @@ const CameraView = () => {
         style={cameraViewportStyle}
       />
       <AnchorFeedback feedback={anchorFeedback} />
+      {cameraState === 'active' && anchorSystemState.mode === 'selection' && (
+        <div
+          role={visionError ? 'alert' : 'status'}
+          data-testid="object-discovery"
+          data-stage={visionError ? 'error' : anchorSystemState.candidate?.status || 'searching'}
+          className="fixed top-[max(1rem,env(safe-area-inset-top))] left-1/2 z-30 w-[min(90vw,26rem)] -translate-x-1/2 rounded-xl bg-black/75 px-4 py-3 text-center text-sm text-white pointer-events-none"
+        >
+          {visionError
+            ? 'Object discovery is unavailable. Stop and restart the camera to retry.'
+            : anchorSystemState.candidate?.reason ||
+              (anchorSystemState.initialized
+                ? 'Point at one object near the center'
+                : 'Preparing object discovery…')}
+        </div>
+      )}
 
       {/* WebGL Overlay Scene */}
       {overlaySceneEnabled && (

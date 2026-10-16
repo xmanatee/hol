@@ -1,8 +1,10 @@
 import { AnchorManager } from '../services/AnchorManager.js';
 import { ImageAnchorService } from '../services/ImageAnchorService.js';
 import { loadOpenCVRuntimeInWorker } from './opencv.workerRuntime.js';
-import { createAnchorWorkerMessageHandler } from './anchorWorkerProtocol.js';
+import { createWorkerCommandHandler } from '../utils/workerCommandHandler.js';
+import { createAnchorWorkerSnapshot } from './anchorWorkerSnapshot.js';
 import { createXFeatWorkerRelocalizer } from './xfeatWorkerProvider.js';
+import { ObjectObservationSession } from '../services/ObjectObservationSession.js';
 
 let manager = null;
 let initializationStarted = false;
@@ -28,23 +30,18 @@ const createManager = async ({ viewportWidth, viewportHeight, fov, trackingMode 
   });
   await nextManager.initialize(cv, viewportWidth, viewportHeight, fov);
   nextManager.setTrackingMode(trackingMode);
-  manager = nextManager;
+  manager = new ObjectObservationSession({
+    manager: nextManager,
+    width: viewportWidth,
+    height: viewportHeight,
+  });
   return true;
 };
 
 const handlers = {
   initialize: createManager,
-  createAnchorFromTap: ({ tapPosition, imageData }) =>
-    ensureManager().createAnchorFromTap(tapPosition, imageData),
-  processFrame: async ({ imageData, update, refreshSegmentation, depthContext }) => {
-    const anchorManager = ensureManager();
-    return {
-      updateResult: update ? await anchorManager.updateAnchor(imageData, depthContext) : null,
-      segmentationRefreshStarted: refreshSegmentation
-        ? anchorManager.refreshSegmentationIfNeeded(imageData)
-        : false,
-    };
-  },
+  selectCandidate: (selection) => ensureManager().selectCandidate(selection),
+  processFrame: (frame) => ensureManager().processFrame(frame),
   clearAnchor: () => {
     ensureManager().clearAnchor();
     return true;
@@ -62,8 +59,8 @@ const handlers = {
   },
 };
 
-self.onmessage = createAnchorWorkerMessageHandler({
+self.onmessage = createWorkerCommandHandler({
   handlers,
-  getState: () => manager?.getState() ?? null,
+  getState: () => createAnchorWorkerSnapshot(manager?.getState() ?? null),
   postMessage: (message) => self.postMessage(message),
 });

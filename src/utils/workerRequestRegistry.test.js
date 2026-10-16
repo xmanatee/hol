@@ -124,3 +124,50 @@ test('worker request registry does not retain requests when postMessage throws',
   assert.equal(registry.size, 0);
   assert.equal(scheduler.pendingCount, 0);
 });
+
+test('worker requests own their deadline before transport and accept immediate replies', async () => {
+  const scheduler = createManualScheduler();
+  const registry = new WorkerRequestRegistry({ scheduleTimeout: scheduler.schedule });
+  const request = registry.start({
+    id: 1,
+    timeoutMs: 1000,
+    send: () => registry.resolve(1, 'ready'),
+    onTimeout: () => assert.fail('completed request timed out'),
+  });
+  assert.equal(await request, 'ready');
+  assert.equal(registry.size, 0);
+  assert.equal(scheduler.pendingCount, 0);
+});
+
+test('worker requests reject asynchronous transport failures and cancel the deadline', async () => {
+  const scheduler = createManualScheduler();
+  const registry = new WorkerRequestRegistry({ scheduleTimeout: scheduler.schedule });
+  const request = registry.start({
+    id: 1,
+    timeoutMs: 1000,
+    send: async () => {
+      throw new Error('Worker module unavailable');
+    },
+    onTimeout: () => assert.fail('failed transport timed out'),
+  });
+  await assert.rejects(request, /Worker module unavailable/);
+  assert.equal(registry.size, 0);
+  assert.equal(scheduler.pendingCount, 0);
+});
+
+test('worker requests do not send work if their deadline cannot be scheduled', async () => {
+  const registry = new WorkerRequestRegistry({
+    scheduleTimeout: () => {
+      throw new Error('Scheduler unavailable');
+    },
+  });
+  await assert.rejects(
+    registry.start({
+      id: 1,
+      timeoutMs: 1000,
+      send: () => assert.fail('unbounded request was sent'),
+    }),
+    /Scheduler unavailable/,
+  );
+  assert.equal(registry.size, 0);
+});

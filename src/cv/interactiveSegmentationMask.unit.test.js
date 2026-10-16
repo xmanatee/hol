@@ -21,3 +21,52 @@ test('interactive segmentation confidence mask is resized and thresholded into f
   assert.equal(isPointInsideObjectSupport(mask, { x: 3, y: 1 }), true);
   assert.equal(isPointInsideObjectSupport(mask, { x: 1, y: 1 }), false);
 });
+
+test('confidence belongs only to the selected component, not a disconnected confident distractor', () => {
+  const mask = createInteractiveObjectSupportMask({
+    confidenceData: new Float32Array([0.51, 0.1, 0.99, 0.99, 0.99]),
+    maskWidth: 5,
+    maskHeight: 1,
+    frameWidth: 10,
+    frameHeight: 2,
+    threshold: 0.5,
+    referencePoint: { x: 0, y: 0 },
+    createdAtFrame: 1,
+  });
+  assert.ok(Math.abs(mask.confidence - 0.51) < 1e-6);
+  assert.deepEqual(mask.bbox, { x: 0, y: 0, width: 2, height: 2 });
+});
+
+test('an empty selected component cannot borrow confidence from foreground elsewhere', () => {
+  const mask = createInteractiveObjectSupportMask({
+    confidenceData: new Float32Array([0.1, 0.1, 0.99]),
+    maskWidth: 3,
+    maskHeight: 1,
+    frameWidth: 3,
+    frameHeight: 1,
+    threshold: 0.5,
+    referencePoint: { x: 0, y: 0 },
+    createdAtFrame: 1,
+  });
+  assert.equal(mask.confidence, 0);
+  assert.equal(
+    mask.data.some((value) => value > 0),
+    false,
+  );
+});
+
+test('confidence excludes foreground removed by the explicit radius constraint', () => {
+  const mask = createInteractiveObjectSupportMask({
+    confidenceData: new Float32Array([0.51, 0.51, 0.99, 0.99, 0.99]),
+    maskWidth: 5,
+    maskHeight: 1,
+    frameWidth: 5,
+    frameHeight: 1,
+    threshold: 0.5,
+    referencePoint: { x: 0, y: 0 },
+    createdAtFrame: 1,
+    maxRadius: 1,
+  });
+  assert.ok(Math.abs(mask.confidence - 0.51) < 1e-6);
+  assert.equal(mask.pixelCount, 2);
+});

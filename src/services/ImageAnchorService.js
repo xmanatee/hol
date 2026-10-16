@@ -51,6 +51,7 @@ import {
 import { calculateTapLocalTemplateRegion, calculateTemplateRegion } from '../utils/templateRegion.js';
 import { angularDistanceBetweenNormals, SurfaceNormalStabilizer } from '../utils/normalStabilizer.js';
 import { logger } from '../utils/logger.js';
+import { createPlanarSurfaceAttachment } from '../utils/planarSurfaceAttachment.js';
 import { CURVED_OBJECT_RECOVERY_REASON } from '../cv/curvedObjectRecovery.js';
 import { WEAKLY_OBSERVED_NORMAL_INNOVATION_REASON } from '../cv/poseDropoutRecovery.js';
 import {
@@ -302,6 +303,7 @@ export class ImageAnchorService {
     this.curvedMotionSample = null;
     this.localizeCurvedRelocalizationSearch = false;
     this.objectSupportMask = null;
+    this.planarAttachmentReference = null;
     this.currentObjectSupportMask = null;
     this.objectSupportProjectionCache = null;
     this.objectSupportAnchorUv = null;
@@ -644,6 +646,12 @@ export class ImageAnchorService {
       };
       this.currentNormal = { x: 0, y: 0, z: 1 };
       this.objectSupportMask = objectSupportMask;
+      this.planarAttachmentReference = objectSupportMask
+        ? {
+            generation: this.keypointTracker.referenceGeneration,
+            bounds: { ...objectSupportMask.bbox },
+          }
+        : null;
       this.currentObjectSupportMask = objectSupportMask;
       this.objectSupportProjectionCache = null;
       this.objectSupportAnchorUv = this._calculateObjectSupportAnchorUv(objectSupportMask, tapPosition);
@@ -1974,7 +1982,10 @@ export class ImageAnchorService {
       objectPose,
       poseResult,
       correspondences,
-      preferPlanar: preferPlanarPose,
+      // A physical planar attachment must not mix its position with another pose's orientation.
+      // Normal eligibility still owns whether the planar estimate is geometrically trustworthy.
+      preferPlanar:
+        preferPlanarPose || (positionSelection.role === 'planar' && Boolean(planarPose.surfaceAttachment)),
     });
     this.metrics.poseNormalRole = normalSelection?.role || null;
     this.metrics.poseNormalReason = normalSelection?.reason || null;
@@ -2125,6 +2136,10 @@ export class ImageAnchorService {
       method: positionMethod,
       inliers: poseInliers,
       poseSource: this.metrics.poseSource,
+      surfaceAttachment:
+        positionSelection?.role === 'planar' && normalSelection?.role === 'planar'
+          ? planarPose.surfaceAttachment
+          : null,
       state: this.anchorState,
     };
   }
@@ -4066,6 +4081,14 @@ export class ImageAnchorService {
     });
   }
 
+  _hasOriginalPlanarReference() {
+    return (
+      this.planarAttachmentReference !== null &&
+      this.planarAttachmentReference.generation === this.keypointTracker.referenceGeneration &&
+      this.keypointTracker.relocalizationReference === null
+    );
+  }
+
   _createPlanarHomographyPose(poseResult, correspondences) {
     if (!poseResult?.success || poseResult.method !== 'homography' || !poseResult.homographyMatrix) {
       return null;
@@ -4104,6 +4127,13 @@ export class ImageAnchorService {
     return {
       success: true,
       method: 'planar-homography',
+      surfaceAttachment: this._hasOriginalPlanarReference()
+        ? createPlanarSurfaceAttachment({
+            pose: poseResult,
+            cameraParams: this.cameraParams,
+            referenceBounds: this.planarAttachmentReference.bounds,
+          })
+        : null,
       position: { x: position2d.x, y: position2d.y, z: 0 },
       normal: poseResult.normal,
       planarTransform: {
@@ -6578,6 +6608,10 @@ export class ImageAnchorService {
           faceReady: false,
           reason: 'Target is not visible; searching globally for the selected object',
         };
+    this.metrics.surfaceAttachment =
+      result.success && this.metrics.readiness.faceReady && this._hasOriginalPlanarReference()
+        ? (result.surfaceAttachment ?? null)
+        : null;
 
     if (!result.success) {
       this.metrics.lastFailureReason =
@@ -6835,6 +6869,7 @@ export class ImageAnchorService {
       this.curvedMotionSample = null;
       this.localizeCurvedRelocalizationSearch = false;
       this.objectSupportMask = null;
+      this.planarAttachmentReference = null;
       this.currentObjectSupportMask = null;
       this.objectSupportProjectionCache = null;
       this.objectSupportAnchorUv = null;

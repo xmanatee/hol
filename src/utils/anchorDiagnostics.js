@@ -34,6 +34,7 @@ export const collectAnchorDetails = ({ anchorState, segmentationRefresh }) => {
     segmentationRefreshTrigger: segmentationRefresh?.trigger || null,
     segmentationRefreshOutcomeReason: segmentationRefresh?.outcomeReason || null,
     segmentationRefreshMaskSource: segmentationRefresh?.maskSource || null,
+    segmentationRefreshError: segmentationRefresh?.errorMessage ?? null,
     templateKeypoints: metrics.templateKeypoints ?? metrics.keypointCount ?? 0,
     templateQuality: metrics.templateQuality ?? null,
     trackingRegion: metrics.trackingRegion || null,

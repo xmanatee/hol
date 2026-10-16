@@ -42,6 +42,23 @@ const createManualScheduler = () => {
   };
 };
 
+test('candidate readiness and identity changes publish immediately without exposing an active anchor', () => {
+  const scheduler = createManualScheduler();
+  const initial = createState({ mode: 'selection' });
+  const store = createAnchorStateStore(initial, scheduler.schedule);
+  const segmented = { ...initial, candidate: { id: 1, status: 'segmented' } };
+  store.update(segmented);
+  assert.equal(store.getSnapshot(), segmented);
+  const ready = { ...initial, candidate: { id: 1, status: 'ready' } };
+  store.update(ready);
+  assert.equal(store.getSnapshot(), ready);
+  const lost = { ...initial, candidate: { id: 1, status: 'lost' } };
+  store.update(lost);
+  assert.equal(store.getSnapshot(), lost);
+  assert.equal(store.getSnapshot().activeAnchor, null);
+  assert.equal(scheduler.tasks.length, 0);
+});
+
 test('anchor state store exposes live pose immediately and coalesces UI snapshots', () => {
   const scheduler = createManualScheduler();
   const initialState = createState({ x: 10 });
@@ -115,7 +132,17 @@ test('anchor state store disposal cancels pending UI publication', () => {
   assert.equal(publicationCount, 0);
 });
 
-test('anchor state store ignores duplicate wrappers around the same service state', () => {
+test('a runtime error publishes immediately even without an anchor or another state transition', () => {
+  const scheduler = createManualScheduler();
+  const initial = { ...createState({ mode: 'selection' }), error: null };
+  const store = createAnchorStateStore(initial, scheduler.schedule);
+  const failed = { ...initial, error: 'Segmentation model unavailable' };
+  store.update(failed);
+  assert.equal(store.getSnapshot(), failed);
+  assert.equal(scheduler.tasks.length, 0);
+});
+
+test('anchor state store coalesces duplicate snapshots without dropping changed refresh diagnostics', () => {
   const scheduler = createManualScheduler();
   const initialState = createState({ mode: 'selection' });
   const store = createAnchorStateStore(initialState, scheduler.schedule);
@@ -128,4 +155,13 @@ test('anchor state store ignores duplicate wrappers around the same service stat
 
   assert.equal(publicationCount, 1);
   assert.equal(scheduler.tasks.length, 0);
+
+  const refresh = {
+    ...anchorState,
+    segmentationRefresh: { status: 'rejected', errorMessage: 'Model unavailable' },
+  };
+  store.update(refresh);
+  scheduler.runNext();
+  assert.equal(publicationCount, 2);
+  assert.equal(store.getSnapshot().segmentationRefresh.errorMessage, 'Model unavailable');
 });

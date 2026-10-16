@@ -19,7 +19,7 @@ Before broad work, read parent `AGENTS.md` files up to the mono root; nearest sc
 
 ## Performance Budget (per frame @ 60 FPS = 16.67ms)
 
-- Tap selection: one-shot worker task; no steady-state frame cost
+- Discovery: bounded worker inference before tap; selection commits the prepared object without rerunning CV
 - Tracking/CV: ≤4ms
 - OpenCV operations: ≤6ms
 - R3F render + lip-sync: ≤6ms

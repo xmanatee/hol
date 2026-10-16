@@ -1,5 +1,5 @@
 import { XFeatKeyframeRelocalizer } from './xfeat.relocalization.js';
-import { createXFeatWorkerMessageHandler } from './xfeatWorkerProtocol.js';
+import { createWorkerCommandHandler } from '../utils/workerCommandHandler.js';
 
 const relocalizer = new XFeatKeyframeRelocalizer();
 const handlers = {
@@ -11,7 +11,7 @@ const handlers = {
   },
 };
 
-self.onmessage = createXFeatWorkerMessageHandler({
+self.onmessage = createWorkerCommandHandler({
   handlers,
   postMessage: (message) => self.postMessage(message),
 });

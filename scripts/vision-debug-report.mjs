@@ -3,11 +3,6 @@ import { dirname } from 'node:path';
 
 import { loadOpenCvForNode } from '../src/cv/synthetic/opencvNodeLoader.js';
 import {
-  createCylindricalCanSequence,
-  createPlanarBookSequence,
-  createRigidBoxSequence,
-} from '../src/cv/synthetic/visionFixtures.js';
-import {
   createSyntheticDepthFrame,
   replayImageAnchorSequence,
   summarizeReplay,
@@ -20,10 +15,7 @@ import {
   filterVisionBenchmarkRuns,
   parseVisionBenchmarkArgs,
 } from '../src/cv/synthetic/visionBenchmarkCli.js';
-import {
-  debugReportUsesBenchmarkMatrix,
-  selectedDebugFrameIndexes,
-} from '../src/cv/synthetic/visionDebugReportCli.js';
+import { selectedDebugFrameIndexes } from '../src/cv/synthetic/visionDebugReportCli.js';
 import { RECONSTRUCTION_MODES } from '../src/cv/anchor.reconstructionModes.js';
 
 const REPORT_PATH = '/tmp/hol-vision-debug-report.html';
@@ -141,43 +133,6 @@ const sequenceSection = ({ title, sequence, replay, rawSummary, headPose, qualit
   `;
 };
 
-const legacyDebugRuns = () => [
-  {
-    title: 'sparse-reconstruction / planar-book',
-    mode: RECONSTRUCTION_MODES.find((mode) => mode.id === 'sparse-reconstruction'),
-    sequence: createPlanarBookSequence({
-      kind: 'planar-book',
-      frameCount: 32,
-      occlusionFrames: [14, 15, 16, 17],
-    }),
-  },
-  {
-    title: 'sparse-reconstruction / dark-book',
-    mode: RECONSTRUCTION_MODES.find((mode) => mode.id === 'sparse-reconstruction'),
-    sequence: createPlanarBookSequence({
-      kind: 'dark-book',
-      frameCount: 32,
-      occlusionFrames: [14, 15, 16, 17],
-    }),
-  },
-  {
-    title: 'sparse-reconstruction / cylindrical-can',
-    mode: RECONSTRUCTION_MODES.find((mode) => mode.id === 'sparse-reconstruction'),
-    sequence: createCylindricalCanSequence({
-      frameCount: 30,
-      occlusionFrames: [12, 13, 14],
-    }),
-  },
-  {
-    title: 'sparse-reconstruction / rigid-box',
-    mode: RECONSTRUCTION_MODES.find((mode) => mode.id === 'sparse-reconstruction'),
-    sequence: createRigidBoxSequence({
-      frameCount: 28,
-      occlusionFrames: [10, 11, 12],
-    }),
-  },
-];
-
 const benchmarkDebugRuns = ({ size, filters }) => {
   const { scenarios, modes } = filterVisionBenchmarkRuns({
     scenarios: createVisionBenchmarkMatrix({ size }),
@@ -198,11 +153,6 @@ const benchmarkDebugRuns = ({ size, filters }) => {
   });
 };
 
-const debugRunsFor = ({ size, filters }) =>
-  debugReportUsesBenchmarkMatrix({ size, filters })
-    ? benchmarkDebugRuns({ size, filters })
-    : legacyDebugRuns();
-
 const qualityForRun = ({ title, replay, rawSummary, headPose }) =>
   scoreVisionPipelineQuality({
     name: title,
@@ -216,7 +166,7 @@ const args = parseVisionBenchmarkArgs(process.argv.slice(2));
 const reportPath = args.outputPath || REPORT_PATH;
 const cv = await loadOpenCvForNode();
 const sections = [];
-const runs = debugRunsFor(args);
+const runs = benchmarkDebugRuns(args);
 
 const depthFrameFactoryFor = (run) => {
   if (!run.mode.requiresDepthFrame) return null;

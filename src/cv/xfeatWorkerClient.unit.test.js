@@ -76,7 +76,7 @@ test('XFeat client rejects incomplete worker ownership and invalid deadlines', (
   );
 });
 
-test('XFeat worker client transfers reference ownership and preserves the live query frame', async () => {
+test('XFeat worker client owns transferred copies and preserves both live reference and query frames', async () => {
   const worker = new FakeWorker();
   const relocalizer = new XFeatWorkerRelocalizer({ createWorker: () => worker });
   const referenceImage = imageData();
@@ -96,11 +96,35 @@ test('XFeat worker client transfers reference ownership and preserves the live q
     worker.requests.map((request) => request.message.command),
     ['storeReference', 'relocalize'],
   );
-  assert.equal(worker.requests[0].transferables[0], referenceImage.data.buffer);
+  assert.notEqual(worker.requests[0].transferables[0], referenceImage.data.buffer);
   assert.notEqual(worker.requests[1].transferables[0], queryImage.data.buffer);
   assert.equal(worker.requests[1].message.payload.imageData.width, queryImage.width);
   assert.deepEqual(worker.requests[1].message.payload.imageData.data, queryImage.data);
   assert.equal(queryImage.data.byteLength, 8 * 8 * 4);
+  assert.equal(referenceImage.data.byteLength, 8 * 8 * 4);
+});
+
+test('real transfer semantics cannot detach or mutate the caller RGB during learned-reference storage', async () => {
+  class TransferringWorker extends FakeWorker {
+    postMessage(message, transfer) {
+      super.postMessage(structuredClone(message, { transfer }));
+    }
+  }
+  const worker = new TransferringWorker();
+  const relocalizer = new XFeatWorkerRelocalizer({ createWorker: () => worker });
+  const frame = imageData();
+  frame.data.fill(19);
+  const stored = await relocalizer.storeReference({
+    imageData: frame,
+    trackedPoints: [],
+    anchorPoint: { x: 4, y: 4 },
+  });
+  assert.equal(stored.success, true);
+  assert.equal(frame.data.byteLength, 256);
+  assert.equal(frame.data[0], 19);
+  frame.data.fill(31);
+  assert.equal(worker.requests[0].message.payload.imageData.data[0], 19);
+  relocalizer.dispose();
 });
 
 test('a rejected memory extension preserves an already published XFeat reference', async () => {

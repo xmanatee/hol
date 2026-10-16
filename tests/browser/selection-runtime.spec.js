@@ -67,6 +67,7 @@ test('production interactive segmenter runs real tap inference in a mobile brows
         worker.postMessage(
           {
             type: 'segment',
+            backendId: 'mediapipe-wasm',
             requestId: 1,
             imageData: { width, height, data },
             tapPosition,

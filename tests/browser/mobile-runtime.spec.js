@@ -33,16 +33,6 @@ const instrumentCanvasReadbacks = (page) =>
     };
   });
 
-const dispatchCenterTap = async (page, canvas) => {
-  const bounds = await canvas.boundingBox();
-  await canvas.dispatchEvent('pointerup', {
-    button: 0,
-    isPrimary: true,
-    clientX: bounds.x + bounds.width / 2,
-    clientY: bounds.y + bounds.height / 2,
-  });
-};
-
 test('mobile shell is usable across portrait and landscape without runtime errors', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -117,7 +107,7 @@ test('Chromium starts the camera only from the user gesture', async ({ page, bro
   expect(pageErrors).toEqual([]);
 });
 
-test('tap selection captures the compositor-presented video only from the tap gesture', async ({
+test('camera discovery reads compositor-presented frames before any tap, with backpressure', async ({
   page,
   browserName,
 }) => {
@@ -127,24 +117,19 @@ test('tap selection captures the compositor-presented video only from the tap ge
   await page.goto('/');
   await page.waitForLoadState('networkidle');
   await page.getByRole('button', { name: 'Start Camera' }).click();
-  const { canvas } = await waitForActiveCamera(page);
-  await page.waitForTimeout(750);
-
-  expect(await page.evaluate(() => window.__holCanvasReadbacks)).toEqual([]);
-  expect(await page.evaluate(() => window.__holCameraCaptures)).toEqual([]);
-
-  const tapAt = await page.evaluate(() => performance.now());
-  await dispatchCenterTap(page, canvas);
-
-  await expect.poll(() => page.evaluate(() => window.__holCanvasReadbacks.length)).toBe(1);
+  await waitForActiveCamera(page);
+  await expect
+    .poll(() => page.evaluate(() => window.__holCanvasReadbacks.length), { timeout: 60_000 })
+    .toBeGreaterThan(0);
   const [readback] = await page.evaluate(() => window.__holCanvasReadbacks);
-  expect(await page.evaluate(() => window.__holCameraCaptures.length)).toBe(1);
-  expect(readback.at).toBeGreaterThanOrEqual(tapAt);
   expect(readback.width).toBeGreaterThan(0);
   expect(readback.height).toBeGreaterThan(0);
+  await expect(page.getByTestId('object-discovery')).toBeVisible();
+  const captures = await page.evaluate(() => window.__holCameraCaptures.length);
+  expect(captures).toBeLessThanOrEqual(3);
 });
 
-test('rapid repeated taps start one selection transaction and copy one frame', async ({
+test('rapid taps cannot trigger capture or segmentation while discovery is still initializing', async ({
   page,
   browserName,
 }) => {
@@ -156,13 +141,48 @@ test('rapid repeated taps start one selection transaction and copy one frame', a
   await page.getByRole('button', { name: 'Start Camera' }).click();
   const { canvas } = await waitForActiveCamera(page);
 
-  for (let tap = 0; tap < 10; tap++) {
-    await dispatchCenterTap(page, canvas);
-  }
-
-  expect(await page.evaluate(() => window.__holCanvasReadbacks.length)).toBe(1);
-  expect(await page.evaluate(() => window.__holCameraCaptures.length)).toBe(1);
+  const counts = await canvas.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const before = window.__holCanvasReadbacks.length;
+    for (let tap = 0; tap < 10; tap++) {
+      element.dispatchEvent(
+        new PointerEvent('pointerup', {
+          button: 0,
+          isPrimary: true,
+          clientX: bounds.x + bounds.width / 2,
+          clientY: bounds.y + bounds.height / 2,
+        }),
+      );
+    }
+    return { before, after: window.__holCanvasReadbacks.length };
+  });
+  expect(counts.after).toBe(counts.before);
 });
+
+for (const [dependency, runtimeUrl] of [
+  ['OpenCV', /\/assets\/opencv-[\w-]+\.js$/],
+  ['segmentation model', /\/assets\/magic-touch-f32-[\w-]+\.tflite$/],
+  ['segmentation WASM', /\/assets\/vision_wasm_module_internal-[\w-]+\.wasm$/],
+]) {
+  test(`a failed ${dependency} reports a retryable discovery error`, async ({
+    page,
+    context,
+    browserName,
+  }) => {
+    test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');
+    await context.route(runtimeUrl, (route) => route.abort());
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Start Camera' }).click();
+    const discovery = page.getByTestId('object-discovery');
+    await expect(discovery).toHaveAttribute('data-stage', 'error', { timeout: 30_000 });
+    await expect(discovery).toContainText('Stop and restart the camera');
+    await page.getByRole('button', { name: 'Stop camera' }).click();
+    await context.unroute(runtimeUrl);
+    await page.getByRole('button', { name: 'Start Camera' }).click();
+    await expect(discovery).not.toContainText('Preparing', { timeout: 30_000 });
+    await expect(discovery).not.toHaveAttribute('data-stage', 'error');
+  });
+}
 
 test('active camera canvas follows portrait and landscape viewport changes', async ({
   page,

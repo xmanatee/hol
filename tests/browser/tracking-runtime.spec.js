@@ -13,13 +13,18 @@ const productionAnchorWorkerFactoryUrl = () =>
     maxBytes: 1_000,
   });
 
-test('production anchor worker initializes OpenCV and tracks a translated tapped object', async ({
+test('production worker discovers, prepares, commits and tracks one object without rebuilding it', async ({
   page,
 }) => {
   test.setTimeout(180_000);
   const pageErrors = [];
+  const runtimeWarnings = [];
   const capabilityRequests = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (['warning', 'error'].includes(message.type()) && runtimeWarnings.length < 20)
+      runtimeWarnings.push(message.text());
+  });
   page.on('request', (request) => {
     if (/anchor\.worker|opencv|interactiveSegmenter|magic-touch|vision_wasm/i.test(request.url())) {
       capabilityRequests.push(request.url());
@@ -94,27 +99,49 @@ test('production anchor worker initializes OpenCV and tracks a translated tapped
       const initialFrame = createFrame({ offsetX: 0, offsetY: 0 });
       const translatedReference = initialFrame.data.slice();
       const initialBuffer = initialFrame.data.buffer;
-      const created = await request(
-        'createAnchorFromTap',
-        {
-          tapPosition,
-          imageData: initialFrame,
-        },
-        [initialBuffer],
-      );
-
-      const warmupFrame = createFrame({ offsetX: 0, offsetY: 0 });
-      const warmupBuffer = warmupFrame.data.buffer;
-      const warmedUp = await request(
+      const discovered = await request(
         'processFrame',
         {
-          imageData: warmupFrame,
+          imageData: initialFrame,
+          capturedAt: performance.now(),
           update: true,
           refreshSegmentation: false,
           depthContext: {},
         },
-        [warmupBuffer],
+        [initialBuffer],
       );
+      let warmedUp;
+      let warmupDetached = true;
+      for (let observation = 0; observation < 3; observation++) {
+        // Exercise filters on a real video cadence, not three same-tick worker requests.
+        await new Promise((resolve) => {
+          setTimeout(resolve, 100);
+        });
+        const capturedAt = performance.now();
+        const warmupFrame = createFrame({ offsetX: 0, offsetY: 0 });
+        const warmupBuffer = warmupFrame.data.buffer;
+        warmedUp = await request(
+          'processFrame',
+          {
+            imageData: warmupFrame,
+            capturedAt,
+            update: true,
+            refreshSegmentation: false,
+            depthContext: {},
+          },
+          [warmupBuffer],
+        );
+        warmupDetached &&= warmupBuffer.byteLength === 0;
+      }
+      const neighbor = await request('selectCandidate', {
+        tapPosition: { x: 5, y: 5 },
+        capturedAt: performance.now(),
+      });
+      const created = await request('selectCandidate', { tapPosition, capturedAt: performance.now() });
+
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
 
       const movedFrame = createFrame({
         offsetX: translation.x,
@@ -137,6 +164,7 @@ test('production anchor worker initializes OpenCV and tracks a translated tapped
         'processFrame',
         {
           imageData: movedFrame,
+          capturedAt: performance.now(),
           update: true,
           refreshSegmentation: false,
           depthContext: {},
@@ -144,15 +172,43 @@ test('production anchor worker initializes OpenCV and tracks a translated tapped
         [movedBuffer],
       );
 
+      const refreshed = [];
+      for (let refresh = 0; refresh < 2; refresh++) {
+        // Controlled source cadence crosses the production 500 ms refresh deadline.
+        await new Promise((resolve) => {
+          setTimeout(resolve, 550);
+        });
+        const frame = createFrame({ offsetX: translation.x, offsetY: translation.y });
+        const response = await request(
+          'processFrame',
+          {
+            imageData: frame,
+            capturedAt: performance.now(),
+            update: true,
+            refreshSegmentation: true,
+            depthContext: {},
+          },
+          [frame.data.buffer],
+        );
+        refreshed.push({
+          objectId: response.state.activeAnchor.id,
+          segmentation: response.state.segmentationRefresh,
+          targetPresent: response.result.updateResult.targetPresent,
+        });
+      }
+
       const disposed = await request('dispose');
       worker.terminate();
 
       return {
         initialDetached: initialBuffer.byteLength === 0,
-        warmupDetached: warmupBuffer.byteLength === 0,
+        warmupDetached,
         movedDetached: movedBuffer.byteLength === 0,
         translationMismatchCount,
+        refreshed,
         initialized: initialized.state,
+        discovered,
+        neighbor,
         created: {
           result: created.result,
           state: created.state,
@@ -191,6 +247,24 @@ test('production anchor worker initializes OpenCV and tracks a translated tapped
     trackingMode: 'sparse-reconstruction',
   });
   expect(result.created.result.keypoints).toBeGreaterThanOrEqual(8);
+  expect(result.discovered.state.mode).toBe('selection');
+  expect(result.discovered.state.activeAnchor).toBeNull();
+  expect(result.warmedUp.state.candidate.status, JSON.stringify(result.warmedUp)).toBe('ready');
+  expect(result.neighbor.result.success).toBe(false);
+  expect(result.created.state.activeAnchor.id).toBe(result.discovered.state.candidate.id);
+  expect(result.refreshed, JSON.stringify({ refreshed: result.refreshed, runtimeWarnings })).toEqual([
+    {
+      objectId: result.created.state.activeAnchor.id,
+      segmentation: expect.objectContaining({ status: 'accepted', maskSource: 'interactive-segmenter' }),
+      targetPresent: true,
+    },
+    {
+      objectId: result.created.state.activeAnchor.id,
+      segmentation: expect.objectContaining({ status: 'accepted', maskSource: 'interactive-segmenter' }),
+      targetPresent: true,
+    },
+  ]);
+  expect(result.created.result.method).toBe('prepared-object-selected');
   expect(result.created.state).toMatchObject({
     initialized: true,
     mode: 'anchor',
@@ -205,6 +279,12 @@ test('production anchor worker initializes OpenCV and tracks a translated tapped
   expect(result.tracked.state.anchorState.anchored).toBe(true);
   expect(result.tracked.state.anchorState.metrics.activeLandmarks).toBeGreaterThanOrEqual(8);
   expect(result.tracked.state.anchorState.metrics.trackingSuccessRate).toBeGreaterThan(0.5);
+  expect(result.tracked.state.anchorState.metrics.surfaceAttachment).toMatchObject({
+    kind: 'planar-pnp',
+    units: 'reference-pixels',
+    rotation: expect.any(Array),
+    translation: expect.any(Array),
+  });
   expect(result.translationMismatchCount).toBe(0);
   expect(result.tracked.state.activeAnchor.position.x, JSON.stringify(result.tracked)).toBeGreaterThan(
     TAP_POSITION.x + 0.5,

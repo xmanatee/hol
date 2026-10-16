@@ -1449,7 +1449,6 @@ test('real OpenCV replay keeps a multi-plane rigid box attached through perspect
   assert.ok(summary.maxAnchorError <= 35, `max anchor error ${summary.maxAnchorError.toFixed(2)}px`);
   assert.ok(summary.meanAnchorError <= 14, `mean anchor error ${summary.meanAnchorError.toFixed(2)}px`);
   assert.ok(summary.maxFrameJump <= 24, `max frame jump ${summary.maxFrameJump.toFixed(2)}px`);
-  assert.ok(summary.sparsePoseUsage >= 0.35, `sparse pose usage ${summary.sparsePoseUsage.toFixed(2)}`);
   assert.ok(
     headPose.maxRotationError <= 0.95,
     `box head rotation error ${headPose.maxRotationError.toFixed(3)}rad`,

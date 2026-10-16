@@ -22,6 +22,7 @@ const AnchorDiagnostics = ({ diagnostics }) => {
           details.segmentationRefreshTrigger,
           details.segmentationRefreshOutcomeReason,
           details.segmentationRefreshMaskSource,
+          details.segmentationRefreshError,
         ]
           .filter(Boolean)
           .join(' · ')
@@ -31,11 +32,9 @@ const AnchorDiagnostics = ({ diagnostics }) => {
   const supportTone =
     details.segmentationRefreshStatus === 'accepted'
       ? 'good'
-      : details.segmentationRefreshStatus === 'fallback'
-        ? 'warn'
-        : details.segmentationRefreshStatus === 'rejected'
-          ? 'bad'
-          : 'neutral';
+      : details.segmentationRefreshStatus === 'rejected'
+        ? 'bad'
+        : 'neutral';
   const normalRejectionValue =
     Object.entries(details.normalPoseRejectedCandidates)
       .map(([source, reason]) => `${source}: ${reason}`)

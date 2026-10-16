@@ -23,10 +23,12 @@ const createIdleDepthState = () => ({
 const createIdleAnchorState = () => ({
   mode: 'selection',
   activeAnchor: null,
+  candidate: null,
   anchorState: null,
   sampledAt: null,
   trackingMode: 'sparse-reconstruction',
   initialized: false,
+  error: null,
 });
 
 const createIdlePersonalityData = () => ({
@@ -44,8 +46,8 @@ const createIdleTTSData = () => ({
 });
 
 export const shouldInitializeDepthForTrackingMode = (mode) => mode === DEPTH_FUSION_MODE;
-export const shouldLoadVisionRuntime = ({ cameraState, visionRequested, initialized }) =>
-  cameraState === 'active' && visionRequested && !initialized;
+export const shouldLoadVisionRuntime = ({ cameraState, initialized, error }) =>
+  cameraState === 'active' && !initialized && error === null;
 export const retireObjectVoiceSession = ({ personality, tts }) => {
   personality.resetSubject();
   tts.stopCurrentAudio();
@@ -86,10 +88,10 @@ export const useCameraSystem = (config = {}) => {
   const visionInitializationRef = useRef(null);
   const visionGenerationRef = useRef(0);
   const metricUpdateRef = useRef(config.onMetricUpdate || null);
-  const [visionRequested, setVisionRequested] = useState(false);
 
   const [cameraState, setCameraState] = useState('idle');
   const [cameraError, setCameraError] = useState(null);
+  const [visionError, setVisionError] = useState(null);
   const [videoDimensions, setVideoDimensions] = useState({ width: 1280, height: 720 });
   const [personalityData, setPersonalityData] = useState(createIdlePersonalityData);
   const [ttsData, setTTSData] = useState(createIdleTTSData);
@@ -201,8 +203,8 @@ export const useCameraSystem = (config = {}) => {
     releaseDepthRuntime();
     visionGenerationRef.current += 1;
     visionInitializationRef.current = null;
-    setVisionRequested(false);
     anchorStateStore.reset(createIdleAnchorState());
+    setVisionError(null);
     setPersonalityData(createIdlePersonalityData());
     setTTSData(createIdleTTSData());
     resetSpeechMetrics();
@@ -245,16 +247,6 @@ export const useCameraSystem = (config = {}) => {
         ) {
           return false;
         }
-        await session.tts.initialize();
-
-        if (
-          !mountedRef.current ||
-          sessionRef.current !== session ||
-          visionGenerationRef.current !== visionGeneration
-        ) {
-          return false;
-        }
-
         logger.info('CameraSystem', 'Vision anchor services initialized successfully');
         return true;
       })
@@ -269,6 +261,7 @@ export const useCameraSystem = (config = {}) => {
           return false;
         }
         logger.error('CameraSystem', 'Vision service initialization failed:', error);
+        setVisionError(error.message);
         updateMetric('Vision error', error.message);
         throw error;
       });
@@ -281,15 +274,15 @@ export const useCameraSystem = (config = {}) => {
     if (
       shouldLoadVisionRuntime({
         cameraState,
-        visionRequested,
         initialized: session.anchor.initialized,
+        error: visionError,
       })
     ) {
       initializeVisionServices().catch((error) => {
         logger.warn('CameraSystem', `Vision initialization request failed: ${error.message}`);
       });
     }
-  }, [cameraState, visionRequested, initializeVisionServices, session.anchor.initialized]);
+  }, [cameraState, initializeVisionServices, session.anchor.initialized, visionError]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -315,6 +308,7 @@ export const useCameraSystem = (config = {}) => {
           visionGenerationRef.current += 1;
           anchorManager.reset();
           visionInitializationRef.current = null;
+          setVisionError(null);
           depthFrameMailbox.reset();
           updateMetric('Camera calibration', `${data.width}x${data.height}`);
         } else if (lifecycleAction === 'replace-session') {
@@ -326,6 +320,10 @@ export const useCameraSystem = (config = {}) => {
     const removeAnchorListener = anchorManager.addListener({
       onAnchorUpdate: (state) => {
         anchorStateStore.update(state);
+        if (state.error !== null) {
+          setVisionError(state.error);
+          updateMetric('Vision error', state.error);
+        }
       },
     });
 
@@ -463,9 +461,6 @@ export const useCameraSystem = (config = {}) => {
   const processAnchorFrame = useCallback(
     (imageData, { update, refreshSegmentation, capturedAt }) => {
       const currentAnchorState = getAnchorSystemState();
-      if (currentAnchorState.mode !== 'anchor') {
-        return { success: false, reason: 'Not in anchor mode' };
-      }
       if (!session.anchor.canProcessFrame()) {
         return { success: false, reason: 'Anchor frame in progress' };
       }
@@ -509,16 +504,18 @@ export const useCameraSystem = (config = {}) => {
   const selectAnchorFromTap = useCallback(
     ({ tapPosition, captureFrame }) => {
       return anchorSelectionGate.run(async () => {
-        const imageData = captureFrame();
-        setVisionRequested(true);
-        const initialized = await initializeVisionServices();
-        if (!initialized) {
-          return { success: false, reason: 'Camera session ended' };
+        if (!session.anchor.initialized) {
+          return {
+            success: false,
+            reason: visionError
+              ? 'Vision unavailable. Stop and restart the camera.'
+              : 'Preparing object discovery',
+          };
         }
-
-        const result = await session.anchor.createAnchorFromTap(tapPosition, imageData);
+        const result = await session.anchor.selectCandidate(tapPosition, performance.now());
 
         if (result.success) {
+          captureFrame();
           updateMetric(
             'Anchor created',
             `${result.keypoints} keypoints, quality: ${result.quality.toFixed(2)}`,
@@ -528,7 +525,7 @@ export const useCameraSystem = (config = {}) => {
         return result;
       });
     },
-    [anchorSelectionGate, initializeVisionServices, session, updateMetric],
+    [anchorSelectionGate, session, updateMetric, visionError],
   );
 
   const clearAnchor = useCallback(() => {
@@ -600,6 +597,7 @@ export const useCameraSystem = (config = {}) => {
   return {
     cameraState,
     cameraError,
+    visionError,
     videoDimensions,
     depthStateStore,
     anchorSystemState,

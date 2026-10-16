@@ -22,17 +22,29 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
   }
 
   if (anchorSystemState.mode === 'selection') {
+    const candidate = anchorSystemState.candidate;
     return {
-      status: 'ready',
-      severity: 'idle',
-      message: 'Tap an object to create an anchor',
-      recommendation: 'Tap a sharp, textured area on the object surface.',
+      status: candidate?.status || 'searching',
+      severity: candidate?.status === 'ready' ? 'good' : 'idle',
+      message: candidate?.reason || 'Point the camera at an object',
+      recommendation: 'Keep one object near the center until its outline turns green.',
     };
   }
 
   const serviceState = anchorSystemState.anchorState;
   const metrics = serviceState?.metrics || {};
   const reconstructionMode = isReconstructionMode(metrics.poseModel);
+
+  if (metrics.targetPresent === true && metrics.readiness?.faceReady === true) {
+    return {
+      status: metrics.surfaceAttachment ? 'attached' : 'tracking',
+      severity: 'good',
+      message: metrics.surfaceAttachment
+        ? 'Face attached to the tracked plane'
+        : 'Face is tracking the object',
+      recommendation: 'Keep the selected surface visible.',
+    };
+  }
 
   if (reconstructionMode && metrics.readiness?.reason === POSE_RECOVERY_REASON) {
     return {

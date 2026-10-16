@@ -15,7 +15,10 @@ const getAnchorIdentity = (state) => {
 const hasSameStatePayload = (previous, next) =>
   previous.mode === next.mode &&
   previous.activeAnchor === next.activeAnchor &&
+  previous.candidate === next.candidate &&
   previous.anchorState === next.anchorState &&
+  previous.segmentationRefresh === next.segmentationRefresh &&
+  previous.error === next.error &&
   previous.trackingMode === next.trackingMode &&
   previous.initialized === next.initialized;
 
@@ -23,7 +26,10 @@ const hasStructuralChange = (previous, next) => {
   if (
     previous.mode !== next.mode ||
     previous.initialized !== next.initialized ||
+    previous.error !== next.error ||
     previous.trackingMode !== next.trackingMode ||
+    previous.candidate?.id !== next.candidate?.id ||
+    previous.candidate?.status !== next.candidate?.status ||
     getAnchorIdentity(previous) !== getAnchorIdentity(next)
   ) {
     return true;

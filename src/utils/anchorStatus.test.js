@@ -25,10 +25,10 @@ const describeTrackedState = ({ state, metrics = {}, initialized = true }) =>
 
 test('returns a compact status record for the permanent HUD', () => {
   assert.deepEqual(describeAnchorStatus(ACTIVE_SELECTION), {
-    status: 'ready',
+    status: 'searching',
     severity: 'idle',
-    message: 'Tap an object to create an anchor',
-    recommendation: 'Tap a sharp, textured area on the object surface.',
+    message: 'Point the camera at an object',
+    recommendation: 'Keep one object near the center until its outline turns green.',
   });
 });
 
@@ -60,6 +60,23 @@ test('describes stable and tracking states without allocating rich diagnostics',
     message: 'Anchor is tracking',
     recommendation: 'Hold the object steady if the face drifts.',
   });
+});
+
+test('accepted face readiness owns the HUD even while optional reconstruction is still mapping', () => {
+  for (const surfaceAttachment of [null, { kind: 'planar-pnp' }]) {
+    const status = describeTrackedState({
+      state: 'stable',
+      metrics: {
+        targetPresent: true,
+        poseModel: 'sparse-reconstruction',
+        reconstructionReady: false,
+        readiness: { faceReady: true },
+        surfaceAttachment,
+      },
+    });
+    assert.equal(status.status, surfaceAttachment ? 'attached' : 'tracking');
+    assert.equal(status.severity, 'good');
+  }
 });
 
 test('keeps reconstruction mapping and pose-recovery states exact', () => {

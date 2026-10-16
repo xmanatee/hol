@@ -9,12 +9,6 @@ const DEFAULT_INTERVAL_MS = 260;
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 90_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
-const disposeWorker = (worker) => {
-  if (worker) {
-    worker.terminate();
-  }
-};
-
 export class DepthEstimationService {
   constructor({
     modelUrl = DEFAULT_MODEL_URL,
@@ -225,6 +219,11 @@ export class DepthEstimationService {
   }
 
   _handleWorkerMessage(message) {
+    const requestId =
+      message.type === 'initialized' || message.stage === 'initialize' ? 'initialize' : message.requestId;
+    if (!this.pending.has(requestId)) {
+      return;
+    }
     if (message.type === 'initialized') {
       this._setStatus({
         state: 'ready',
@@ -262,7 +261,6 @@ export class DepthEstimationService {
 
     if (message.type === 'error') {
       this.inFlight = false;
-      const requestId = message.requestId || 'initialize';
       if (message.stage === 'initialize') {
         this.initializePromise = null;
         this.latestFrame = null;
@@ -313,6 +311,6 @@ export class DepthEstimationService {
     const worker = this.worker;
     this.worker = null;
     this.workerGeneration++;
-    disposeWorker(worker);
+    worker?.terminate();
   }
 }

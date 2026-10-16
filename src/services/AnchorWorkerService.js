@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger.js';
-import { copyImageData, prepareImageDataTransfer } from '../utils/imageDataTransfer.js';
+import { prepareImageDataTransfer } from '../utils/imageDataTransfer.js';
 import { assertWorkerRequestTimeout, WorkerRequestRegistry } from '../utils/workerRequestRegistry.js';
 
 const loadAnchorWorkerClass = () => import('../cv/anchor.worker.js?worker').then((module) => module.default);
@@ -15,14 +15,17 @@ export class AnchorWorkerService {
   } = {}) {
     this.runsInWorker = true;
     this.initialized = false;
+    this.error = null;
     this.mode = 'selection';
     this.activeAnchor = null;
+    this.candidate = null;
+    this.nextObservationAt = 0;
     this.anchorState = null;
+    this.segmentationRefresh = null;
     this.sampledAt = null;
     this.trackingMode = 'sparse-reconstruction';
     this.worker = null;
     this.workerPromise = null;
-    this.workerClassPromise = null;
     this.loadWorkerClass = loadWorkerClass;
     this.workerGeneration = 0;
     this.workerCancellationReason = 'Anchor worker reset';
@@ -36,7 +39,6 @@ export class AnchorWorkerService {
       scheduleTimeout: scheduleRequestTimeout,
     });
     this.nextRequestId = 1;
-    this.frameInFlight = false;
     this.frameRequestId = null;
     this.frameCapturedAt = null;
     this.frameUpdatesAnchor = false;
@@ -79,30 +81,23 @@ export class AnchorWorkerService {
     return this.initializationPromise;
   }
 
-  async createAnchorFromTap(tapPosition, imageData) {
+  selectCandidate(tapPosition, capturedAt) {
     if (!this.initialized || this.mode !== 'selection') {
-      throw new Error('Can only create an anchor in selection mode');
+      return Promise.reject(new Error('Can only select a candidate in initialized selection mode'));
     }
-
-    const copied = copyImageData(imageData);
-    const transfer = prepareImageDataTransfer(copied);
-    const result = await this._request(
-      'createAnchorFromTap',
-      { tapPosition, imageData: transfer.imageData },
-      transfer.transferList,
-    );
-    return result;
+    return this._request('selectCandidate', { tapPosition, capturedAt });
   }
 
   canProcessFrame() {
-    return this.initialized && this.mode === 'anchor' && !this.frameInFlight;
+    return this.initialized && this.frameRequestId === null && performance.now() >= this.nextObservationAt;
   }
 
   processFrame(imageData, { update, refreshSegmentation, depthContext, capturedAt }) {
     if (!this.canProcessFrame()) {
       return {
         success: false,
-        reason: this.frameInFlight ? 'Anchor frame in progress' : 'Not in anchor mode',
+        reason:
+          this.frameRequestId !== null ? 'Observation frame in progress' : 'Observation is not scheduled',
       };
     }
     if (!Number.isFinite(capturedAt) || capturedAt < 0) {
@@ -110,7 +105,7 @@ export class AnchorWorkerService {
     }
 
     const transfer = prepareImageDataTransfer(imageData);
-    this.frameInFlight = true;
+    const workerGeneration = this.workerGeneration;
     this.frameRequestId = this.nextRequestId;
     this.frameCapturedAt = capturedAt;
     this.frameUpdatesAnchor = update;
@@ -121,16 +116,14 @@ export class AnchorWorkerService {
         update,
         refreshSegmentation,
         depthContext,
+        capturedAt,
       },
       transfer.transferList,
-    )
-      .then(
-        () => {},
-        (error) => this._handleWorkerRequestError(error),
-      )
-      .finally(() => {
-        this.frameInFlight = false;
-      });
+    ).catch((error) => {
+      if (workerGeneration === this.workerGeneration) {
+        this._handleWorkerFailure(error);
+      }
+    });
     return { success: true, method: 'worker-anchor-frame', pending: true };
   }
 
@@ -158,9 +151,13 @@ export class AnchorWorkerService {
     return {
       mode: this.mode,
       activeAnchor: this.activeAnchor,
+      candidate: this.candidate,
+      nextObservationAt: this.nextObservationAt,
       anchorState: this.anchorState,
+      segmentationRefresh: this.segmentationRefresh,
       trackingMode: this.trackingMode,
       initialized: this.initialized,
+      error: this.error,
       sampledAt: this.sampledAt,
     };
   }
@@ -185,54 +182,37 @@ export class AnchorWorkerService {
       this.worker = null;
     }
     this.pendingRequests.rejectAll(reason);
-    this.frameInFlight = false;
     this.frameRequestId = null;
     this.frameCapturedAt = null;
     this.frameUpdatesAnchor = false;
     this.initialized = false;
+    this.error = null;
     this.mode = 'selection';
     this.activeAnchor = null;
+    this.candidate = null;
+    this.nextObservationAt = 0;
     this.anchorState = null;
+    this.segmentationRefresh = null;
     this.sampledAt = null;
   }
 
-  _getWorkerClass() {
-    if (!this.workerClassPromise) {
-      const workerClassPromise = this.loadWorkerClass();
-      this.workerClassPromise = workerClassPromise;
-      workerClassPromise.catch(() => {
-        if (this.workerClassPromise === workerClassPromise) {
-          this.workerClassPromise = null;
-        }
-      });
-    }
-    return this.workerClassPromise;
-  }
-
   _getWorker() {
-    if (this.worker) {
-      return this.worker;
-    }
-
     if (this.workerPromise) {
       return this.workerPromise;
     }
 
     const workerPromise = this._createWorker(this.workerGeneration);
     this.workerPromise = workerPromise;
-    workerPromise.then(
-      () => {},
-      () => {
-        if (this.workerPromise === workerPromise) {
-          this.workerPromise = null;
-        }
-      },
-    );
+    workerPromise.catch(() => {
+      if (this.workerPromise === workerPromise) {
+        this.workerPromise = null;
+      }
+    });
     return workerPromise;
   }
 
   async _createWorker(workerGeneration) {
-    const WorkerClass = await this._getWorkerClass();
+    const WorkerClass = await this.loadWorkerClass();
     if (workerGeneration !== this.workerGeneration) {
       throw new Error(this.workerCancellationReason);
     }
@@ -266,20 +246,12 @@ export class AnchorWorkerService {
       id,
       timeoutMs,
       timeoutMessage: `Anchor worker ${command} timed out after ${timeoutMs}ms`,
-      send: () => {
-        const posting = Promise.resolve(this._getWorker()).then((worker) => {
-          if (!this.pendingRequests.has(id)) {
-            return;
-          }
-          if (workerGeneration !== this.workerGeneration || worker !== this.worker) {
-            throw new Error(this.workerCancellationReason);
-          }
-          worker.postMessage({ id, command, payload }, transferables);
-        });
-        posting.then(
-          () => {},
-          (error) => this.pendingRequests.reject(id, error),
-        );
+      send: async () => {
+        const worker = await this._getWorker();
+        if (!this.pendingRequests.has(id)) {
+          return;
+        }
+        worker.postMessage({ id, command, payload }, transferables);
       },
       onTimeout: (error) => {
         if (workerGeneration === this.workerGeneration) {
@@ -290,50 +262,41 @@ export class AnchorWorkerService {
   }
 
   _send(command, payload = {}, transferables = []) {
-    this._request(command, payload, transferables).then(
-      () => {},
-      (error) => this._handleWorkerRequestError(error),
-    );
-  }
-
-  _handleWorkerRequestError(error) {
-    if (
-      error?.name === 'TimeoutError' ||
-      error?.message === 'Anchor worker disposed' ||
-      error?.message === 'Anchor worker reset'
-    ) {
-      return;
-    }
-
-    this._handleWorkerFailure(error);
+    const workerGeneration = this.workerGeneration;
+    this._request(command, payload, transferables).catch((error) => {
+      if (workerGeneration === this.workerGeneration) {
+        this._handleWorkerFailure(error);
+      }
+    });
   }
 
   _handleWorkerMessage(message) {
-    const frameResponse = message.id === this.frameRequestId;
-    if (message.state) {
-      this._applyState(
-        message.state,
-        frameResponse && this.frameUpdatesAnchor ? this.frameCapturedAt : this.sampledAt,
-      );
+    const completed = Object.hasOwn(message, 'error')
+      ? this.pendingRequests.reject(message.id, new Error(message.error))
+      : this.pendingRequests.resolve(message.id, message.result);
+    if (!completed) {
+      return;
     }
+    const frameResponse = message.id === this.frameRequestId;
+    const sampledAt = frameResponse && this.frameUpdatesAnchor ? this.frameCapturedAt : this.sampledAt;
     if (frameResponse) {
       this.frameRequestId = null;
       this.frameCapturedAt = null;
       this.frameUpdatesAnchor = false;
     }
-
-    if (message.error) {
-      this.pendingRequests.reject(message.id, new Error(message.error));
-      return;
+    if (message.state) {
+      this._applyState(message.state, sampledAt);
     }
-
-    this.pendingRequests.resolve(message.id, message.result);
   }
 
   _applyState(state, sampledAt = this.sampledAt) {
+    this.error = null;
     this.mode = state.mode;
     this.activeAnchor = state.activeAnchor;
+    this.candidate = state.candidate;
+    this.nextObservationAt = state.nextObservationAt;
     this.anchorState = state.anchorState;
+    this.segmentationRefresh = state.segmentationRefresh;
     this.trackingMode = state.trackingMode;
     this.initialized = state.initialized;
     this.sampledAt = sampledAt;
@@ -351,6 +314,7 @@ export class AnchorWorkerService {
     const message = error?.message || 'Anchor worker failed';
     logger.error('AnchorWorker', message);
     this._resetRuntime(message);
+    this.error = message;
     this._notifyUpdate();
   }
 }

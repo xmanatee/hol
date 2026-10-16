@@ -16,6 +16,7 @@ class FakeWorker {
     this.onmessage({
       data: {
         type: 'segment-result',
+        backendId: message.backendId,
         requestId: message.requestId,
         objectSupportMask: {
           width: 4,
@@ -115,6 +116,7 @@ test('interactive segmenter service resolves worker masks with copied frame data
   });
 
   assert.equal(FakeWorker.instances.length, 1);
+  assert.equal(FakeWorker.instances[0].messages[0].backendId, 'mediapipe-wasm');
   assert.notEqual(FakeWorker.instances[0].messages[0].imageData.data.buffer, imageData.data.buffer);
   assert.equal(mask.source, 'interactive-segmenter');
   assert.deepEqual(mask.bbox, { x: 1, y: 1, width: 2, height: 1 });
@@ -122,6 +124,58 @@ test('interactive segmenter service resolves worker masks with copied frame data
 
   service.dispose();
   assert.equal(FakeWorker.instances[0].terminated, true);
+});
+
+test('GPU segmentation uses the same service contract without silently falling back to CPU', async () => {
+  const service = new InteractiveSegmenterService({ WorkerClass: FakeWorker, backendId: 'mediapipe-webgl' });
+  await service.segmentTap({
+    imageData: { width: 4, height: 3, data: new Uint8ClampedArray(48) },
+    tapPosition: { x: 2, y: 1 },
+    createdAtFrame: 1,
+  });
+  assert.equal(service.worker.messages[0].backendId, 'mediapipe-webgl');
+  service.dispose();
+});
+
+test('consecutive cold and warm masks reuse one worker with one asynchronous request contract', async () => {
+  FakeWorker.instances = [];
+  const service = new InteractiveSegmenterService({ WorkerClass: FakeWorker });
+  for (const createdAtFrame of [0, 1, 2]) {
+    const mask = await service.segmentTap({
+      imageData: { width: 4, height: 3, data: new Uint8ClampedArray(48) },
+      tapPosition: { x: 2, y: 1 },
+      createdAtFrame,
+    });
+    assert.equal(mask.updatedAtFrame, createdAtFrame);
+  }
+  assert.equal(FakeWorker.instances.length, 1);
+  assert.deepEqual(
+    service.worker.messages.map(({ requestId }) => requestId),
+    [1, 2, 3],
+  );
+  assert.equal(service.pendingRequests.size, 0);
+  service.dispose();
+});
+
+test('mixed-backend and unknown worker replies fail and retire the owned runtime', async () => {
+  for (const response of [
+    { type: 'segment-result', backendId: 'mediapipe-webgl' },
+    { type: 'segment-result' },
+    { type: 'unknown', backendId: 'mediapipe-wasm' },
+  ]) {
+    const service = new InteractiveSegmenterService({ WorkerClass: DeferredWorker });
+    const pending = service.segmentTap({
+      imageData: { width: 2, height: 2, data: new Uint8ClampedArray(16) },
+      tapPosition: { x: 1, y: 1 },
+      createdAtFrame: 1,
+    });
+    await Promise.resolve();
+    const worker = service.worker;
+    worker.onmessage({ data: { requestId: 1, ...response } });
+    await assert.rejects(pending, /backend mismatch|Unsupported/);
+    assert.equal(worker.terminated, true);
+    assert.equal(service.pendingRequests.size, 0);
+  }
 });
 
 test('interactive segmenter service rejects pending requests and ignores stale replies on dispose', async () => {
@@ -207,6 +261,7 @@ test('interactive segmenter service clears failed workers before retrying', asyn
     data: {
       type: 'segment-result',
       requestId: 2,
+      backendId: 'mediapipe-wasm',
       objectSupportMask: { source: 'interactive-segmenter', data: new Uint8Array([255]) },
     },
   });
@@ -251,6 +306,7 @@ test('interactive segmenter retry ignores every callback from the failed worker'
     data: {
       type: 'segment-result',
       requestId: 2,
+      backendId: 'mediapipe-wasm',
       objectSupportMask: { source: 'interactive-segmenter', data: new Uint8Array([255]) },
     },
   });
@@ -292,6 +348,7 @@ test('interactive segmenter post failures reject immediately and retry with a fr
     data: {
       type: 'segment-result',
       requestId: 2,
+      backendId: 'mediapipe-wasm',
       objectSupportMask: { source: 'interactive-segmenter', data: new Uint8Array([255]) },
     },
   });
@@ -328,6 +385,7 @@ test('interactive segmenter retries worker construction after a rejected factory
     data: {
       type: 'segment-result',
       requestId: 2,
+      backendId: 'mediapipe-wasm',
       objectSupportMask: { source: 'interactive-segmenter', data: new Uint8Array([255]) },
     },
   });
@@ -355,6 +413,7 @@ test('interactive segmenter service replaces workers after reported inference fa
     data: {
       type: 'segment-error',
       requestId: 1,
+      backendId: 'mediapipe-wasm',
       reason: 'model initialization failed',
     },
   });
@@ -374,6 +433,7 @@ test('interactive segmenter service replaces workers after reported inference fa
     data: {
       type: 'segment-result',
       requestId: 2,
+      backendId: 'mediapipe-wasm',
       objectSupportMask: { source: 'interactive-segmenter', data: new Uint8Array([255]) },
     },
   });
@@ -416,6 +476,7 @@ test('interactive segmenter service clears workers after message deserialization
     data: {
       type: 'segment-result',
       requestId: 2,
+      backendId: 'mediapipe-wasm',
       objectSupportMask: { source: 'interactive-segmenter', data: new Uint8Array([255]) },
     },
   });
@@ -459,6 +520,7 @@ test('interactive segmenter service times out stalled workers and retries with a
     data: {
       type: 'segment-result',
       requestId: 2,
+      backendId: 'mediapipe-wasm',
       objectSupportMask: { source: 'interactive-segmenter', data: new Uint8Array([255]) },
     },
   });

@@ -11,6 +11,36 @@ const productionDepthServiceUrl = () =>
     pattern: /^DepthEstimationService-[\w-]+\.js$/,
   });
 
+test('depth model load failures surface once without retrying a different execution plan', async ({
+  page,
+}) => {
+  const missingModel = '/models/missing-depth-sweep-test.onnx';
+  let modelRequests = 0;
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === missingModel) modelRequests++;
+  });
+  await page.goto('/');
+  const result = await page.evaluate(
+    async ({ serviceUrl, missingModel: modelUrl, inputSize }) => {
+      const { DepthEstimationService } = await import(new URL(serviceUrl, window.location.href).href);
+      const service = new DepthEstimationService({ modelUrl, inputSize });
+      const error = await service.initialize().then(
+        () => {
+          throw new Error('Missing model unexpectedly initialized');
+        },
+        (failure) => failure.message,
+      );
+      const state = service.getState();
+      service.dispose();
+      return { error, state };
+    },
+    { serviceUrl: productionDepthServiceUrl(), missingModel, inputSize: DEPTH_INPUT_SIZE },
+  );
+  expect(modelRequests).toBe(1);
+  expect(result.error).toMatch(/load model/i);
+  expect(result.state).toMatchObject({ state: 'error', provider: null, error: result.error });
+});
+
 test('cancelled depth imports cannot start or orphan a superseded runtime', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');
 
@@ -162,7 +192,7 @@ test('production depth service runs real worker inference in a mobile browser', 
     },
   );
 
-  expect(['webgpu', 'wasm']).toContain(result.initialized.provider);
+  expect(['webgpu+wasm', 'wasm']).toContain(result.initialized.provider);
   expect(result.initialized).toMatchObject({
     state: 'ready',
     inputSize: DEPTH_INPUT_SIZE,

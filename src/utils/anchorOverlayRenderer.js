@@ -12,6 +12,36 @@ const STATE_STYLES = {
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
+export const renderDiscoveryOverlay = (ctx, candidate) => {
+  ctx.save();
+  const ready = candidate?.status === 'ready';
+  ctx.strokeStyle = ready ? '#4ade80' : '#e2e8f0';
+  ctx.fillStyle = ready ? 'rgba(74,222,128,0.22)' : 'rgba(226,232,240,0.12)';
+  ctx.lineWidth = 2;
+  const preview = candidate?.maskPreview;
+  if (preview && candidate.status !== 'lost') {
+    ctx.beginPath();
+    preview.points.forEach((point, index) => {
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    const { position } = candidate;
+    ctx.beginPath();
+    ctx.arc(position.x, position.y, 12, 0, 2 * Math.PI);
+    ctx.stroke();
+  } else {
+    const x = ctx.canvas.width / 2;
+    const y = ctx.canvas.height / 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 18, 0, 2 * Math.PI);
+    ctx.stroke();
+  }
+  ctx.restore();
+};
+
 const pointColor = (point) => {
   if (point.status === 'outlier') return '#ef4444';
   if (point.status === 'lost') return '#64748b';

@@ -291,7 +291,7 @@ export const ReconstructionPreviewSection = ({ details, embedded = false }) => {
           value={details.reconstructionDepthStatus || 'N/A'}
           tone={details.reconstructionDepthStatus === 'ready' ? 'good' : 'warn'}
         />
-        <DiagnosticRow label="Depth provider" value={details.reconstructionDepthProvider || 'N/A'} />
+        <DiagnosticRow label="Depth execution plan" value={details.reconstructionDepthProvider || 'N/A'} />
         <DiagnosticRow
           label="Depth inference"
           value={`${formatNumber(details.reconstructionDepthInferenceTime, 1)} ms`}

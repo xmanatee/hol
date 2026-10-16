@@ -467,3 +467,47 @@ test('depth estimation service rejects in-flight estimates after worker message 
   assert.equal(service.getState().state, 'error');
   assert.equal(service.getState().error, 'depth result could not be cloned');
 });
+
+test('depth replies cannot publish or release a frame without an outstanding request', async () => {
+  const worker = new FakeDepthWorker();
+  const service = new DepthEstimationService({ workerFactory: () => worker });
+  const initialized = service.initialize();
+  const initialization = { type: 'initialized', provider: 'wasm', inputSize: 518, modelUrl: '/depth.onnx' };
+  worker.reply(initialization);
+  await initialized;
+  let publications = 0;
+  service.addListener(() => publications++);
+  const frame = {
+    type: 'depth',
+    requestId: 1,
+    width: 4,
+    height: 4,
+    sourceWidth: 4,
+    sourceHeight: 4,
+    data: new Float32Array(16),
+    timestamp: 100,
+    processingTime: 4,
+    provider: 'wasm',
+    modelUrl: '/depth.onnx',
+  };
+  worker.reply(frame);
+  worker.reply({ ...initialization, provider: 'unowned' });
+  assert.equal(service.getLatestFrame(), null);
+  assert.equal(service.getState().provider, 'wasm');
+  assert.equal(publications, 0);
+
+  const first = service.estimate(createImageData(), { force: true });
+  worker.reply(frame);
+  await first;
+  const second = service.estimate(createImageData(), { force: true });
+  worker.reply({ ...frame, timestamp: 0 });
+  worker.reply({ type: 'error', stage: 'estimate', requestId: 1, message: 'duplicate error' });
+  assert.equal(service.getLatestFrame().timestamp, 100);
+  assert.equal(service.shouldEstimate({ force: true }), false);
+  assert.equal(service.getState().error, null);
+  assert.equal(publications, 1);
+  worker.reply({ ...frame, requestId: 2, timestamp: 200 });
+  assert.equal((await second).timestamp, 200);
+  assert.equal(service.shouldEstimate({ force: true }), true);
+  service.dispose();
+});

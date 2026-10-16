@@ -64,6 +64,7 @@ export class KeypointTracker {
     this.grayFrameSlots = null;
     this.grayFrameGeneration = 0;
     this.nextPointId = 0;
+    this.referenceGeneration = 0;
     this.relocalizationReference = null;
     this.lkWorkspace = null;
     this.referenceHomographyWorkspace = null;
@@ -126,6 +127,7 @@ export class KeypointTracker {
     if (!this.initialized) {
       throw new Error('KeypointTracker not initialized');
     }
+    this.referenceGeneration++;
 
     // Select strongest keypoints for tracking (limit to 80 for quality)
     const sortedKeypoints = [...keypoints].sort((a, b) => b.response - a.response).slice(0, 80);

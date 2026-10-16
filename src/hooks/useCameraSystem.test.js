@@ -12,7 +12,7 @@ test('vision runtime loading waits for an active camera session', () => {
     shouldLoadVisionRuntime({
       cameraState: 'idle',
       initialized: false,
-      visionRequested: true,
+      error: null,
     }),
     false,
   );
@@ -20,7 +20,7 @@ test('vision runtime loading waits for an active camera session', () => {
     shouldLoadVisionRuntime({
       cameraState: 'requesting',
       initialized: false,
-      visionRequested: true,
+      error: null,
     }),
     false,
   );
@@ -28,7 +28,7 @@ test('vision runtime loading waits for an active camera session', () => {
     shouldLoadVisionRuntime({
       cameraState: 'blocked',
       initialized: false,
-      visionRequested: true,
+      error: null,
     }),
     false,
   );
@@ -36,7 +36,7 @@ test('vision runtime loading waits for an active camera session', () => {
     shouldLoadVisionRuntime({
       cameraState: 'error',
       initialized: false,
-      visionRequested: true,
+      error: null,
     }),
     false,
   );
@@ -44,25 +44,21 @@ test('vision runtime loading waits for an active camera session', () => {
     shouldLoadVisionRuntime({
       cameraState: 'active',
       initialized: false,
-      visionRequested: false,
+      error: null,
     }),
-    false,
+    true,
   );
   assert.equal(
     shouldLoadVisionRuntime({
       cameraState: 'active',
       initialized: true,
-      visionRequested: true,
+      error: null,
     }),
     false,
   );
   assert.equal(
-    shouldLoadVisionRuntime({
-      cameraState: 'active',
-      initialized: false,
-      visionRequested: true,
-    }),
-    true,
+    shouldLoadVisionRuntime({ cameraState: 'active', initialized: false, error: 'Model unavailable' }),
+    false,
   );
 });
 

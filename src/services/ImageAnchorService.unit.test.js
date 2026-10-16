@@ -6,6 +6,35 @@ import { createObjectSupportMask, isPointInsideObjectSupport } from '../cv/objec
 import { CURVED_OBJECT_RECOVERY_REASON } from '../cv/curvedObjectRecovery.js';
 import { loadOpenCvForNode } from '../cv/synthetic/opencvNodeLoader.js';
 
+test('physical plane presentation owns an immutable initial footprint and retires after reference replacement', () => {
+  const service = new ImageAnchorService();
+  service.cameraParams = { fx: 200, fy: 200, cx: 160, cy: 120 };
+  service.keypointTracker.anchorOriginalPosition = { x: 160, y: 120 };
+  service.keypointTracker.referenceGeneration = 3;
+  service.planarAttachmentReference = { generation: 3, bounds: { width: 120, height: 80 } };
+  service.objectSupportMask = { bbox: { width: 260, height: 200 } };
+  const pose = {
+    success: true,
+    method: 'homography',
+    homographyMatrix: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    translation: [0, 0, 200],
+    normal: { x: 0, y: 0, z: 1 },
+    referenceSpread: { minAxis: 60 },
+    confidence: 0.9,
+    inlierCount: 24,
+    inlierRatio: 1,
+  };
+  assert.equal(service._createPlanarHomographyPose(pose, []).surfaceAttachment.faceSize, 44);
+  service.objectSupportMask.bbox = { width: 300, height: 230 };
+  assert.equal(service._createPlanarHomographyPose(pose, []).surfaceAttachment.faceSize, 44);
+  service.keypointTracker.referenceGeneration++;
+  assert.equal(service._createPlanarHomographyPose(pose, []).surfaceAttachment, null);
+  service.keypointTracker.referenceGeneration = 3;
+  service.keypointTracker.relocalizationReference = { anchorPoint: { x: 180, y: 100 } };
+  assert.equal(service._createPlanarHomographyPose(pose, []).surfaceAttachment, null);
+});
+
 const createObjectPose = ({
   x = 140,
   y = 160,

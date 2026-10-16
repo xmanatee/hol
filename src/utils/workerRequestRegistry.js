@@ -31,13 +31,6 @@ export class WorkerRequestRegistry extends Map {
       rejectRequest = reject;
     });
 
-    try {
-      send();
-    } catch (error) {
-      rejectRequest(error);
-      return promise;
-    }
-
     const request = [resolveRequest, rejectRequest, () => {}];
     this.set(id, request);
     try {
@@ -51,9 +44,9 @@ export class WorkerRequestRegistry extends Map {
         expired[1](error);
         onTimeout(error);
       }, timeoutMs);
+      Promise.resolve(send()).catch((error) => this.reject(id, error));
     } catch (error) {
-      this.delete(id);
-      rejectRequest(error);
+      this.reject(id, error);
     }
 
     return promise;

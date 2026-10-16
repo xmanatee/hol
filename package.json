@@ -41,6 +41,8 @@
     "vision:feedback:hard": "node scripts/run-vision-feedback-loop.mjs --hard",
     "vision:feedback:full": "node scripts/run-vision-feedback-loop.mjs --full",
     "vision:debug": "node scripts/vision-debug-report.mjs",
+    "vision:experiments": "npm run build && playwright test --config=playwright.experiments.config.js --trace=off",
+    "vision:probes": "node scripts/export-segmentation-probes.mjs",
     "test:browser": "npm run build && playwright test",
     "preview": "vite preview"
   },
