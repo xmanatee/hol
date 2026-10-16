@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { AnchorMotionPredictor } from './anchorMotionPredictor.js';
+import { getRenderableAnchorOverlay } from './overlayVisibility.js';
 
 const FRAME_INTERVAL_MS = 1000 / 30;
 const UPDATE_INTERVAL_MS = 1000 / 15;
@@ -61,4 +62,91 @@ test('anchor motion predictor resets identity and rejects non-monotonic samples'
   assert.equal(predictor.project(20), null);
   predictor.observe({ x: 30, y: 40, z: 0 }, 20);
   assert.deepEqual(predictor.project(20), { x: 30, y: 40, z: 0 });
+});
+
+test('demand presentation settles delayed observations after the extrapolation horizon', () => {
+  for (const fps of [30, 60, 120]) {
+    for (const deliveryAge of [0, 40, 80, 120]) {
+      for (const direction of [1, -1]) {
+        const predictor = new AnchorMotionPredictor();
+        predictor.observe({ x: 0, y: 0, z: 0 }, 0);
+        let position = predictor.project(0);
+        assert.equal(predictor.needsRender, true);
+        predictor.observe({ x: 21.6 * direction, y: 28.8 * direction, z: 0 }, 100);
+        let now = 100 + deliveryAge;
+        let previousTime = 0;
+        let frames = 0;
+        do {
+          const previous = position;
+          position = predictor.project(now);
+          const step = Math.hypot(position.x - previous.x, position.y - previous.y);
+          assert.ok(step <= 12 + 1e-9);
+          assert.ok(step <= 0.36 * (now - previousTime) + 1e-9);
+          previousTime = now;
+          now += 1000 / fps;
+          assert.ok(++frames < 40, 'demand rendering must stop after settling');
+        } while (predictor.needsRender);
+        assert.ok(frames > 1, 'the first bounded step must not end presentation');
+        assert.ok(previousTime <= 400, 'this correction must finish before observation expiry');
+        // Extrapolation is still capped at 24 px, even while delivery correction continues.
+        assert.ok(Math.abs(position.x - 36 * direction) < 1e-9);
+        assert.ok(Math.abs(position.y - 48 * direction) < 1e-9);
+        assert.deepEqual(predictor.project(now + 1000), position);
+        assert.equal(predictor.needsRender, false);
+      }
+    }
+  }
+});
+
+test('demand presentation expires from capture time even while correcting a late observation', () => {
+  const predictor = new AnchorMotionPredictor();
+  predictor.observe({ x: 0, y: 0, z: 0 }, 0);
+  predictor.project(0);
+  predictor.observe({ x: 120, y: 0, z: 0 }, 100);
+  const state = {
+    sampledAt: 100,
+    activeAnchor: { id: 'subject' },
+    anchorState: { metrics: { poseModel: 'object-pose', targetPresent: true } },
+  };
+  let position;
+  for (let now = 350; now <= 400; now += 10) {
+    assert.equal(getRenderableAnchorOverlay(state, now), state.activeAnchor);
+    position = predictor.project(now);
+    assert.equal(predictor.needsRender, true);
+  }
+  assert.ok(position.x < 120, 'a large correction can still be unfinished at expiry');
+  assert.equal(getRenderableAnchorOverlay(state, 401), null);
+  predictor.reset();
+  assert.equal(predictor.needsRender, false);
+  assert.equal(predictor.project(401), null);
+  predictor.observe({ x: -30, y: 40, z: 0 }, 500);
+  assert.deepEqual(predictor.project(500), { x: -30, y: 40, z: 0 });
+  assert.equal(predictor.needsRender, true);
+  assert.deepEqual(predictor.project(600), { x: -30, y: 40, z: 0 });
+  assert.equal(predictor.needsRender, false);
+});
+
+test('new stationary and reversing observations replace an unfinished presentation target', () => {
+  for (const [nextX, expectedX] of [
+    [120, 120],
+    [0, -24],
+  ]) {
+    const predictor = new AnchorMotionPredictor();
+    predictor.observe({ x: 0, y: 0, z: 0 }, 0);
+    predictor.project(0);
+    predictor.observe({ x: 120, y: 0, z: 0 }, 100);
+    assert.equal(predictor.project(200).x, 12);
+    assert.equal(predictor.needsRender, true);
+    assert.equal(predictor.project(200).x, 12);
+    predictor.observe({ x: nextX, y: 0, z: 0 }, 150);
+    let position;
+    let now = 220;
+    do {
+      position = predictor.project(now);
+      now += 1000 / 60;
+      assert.ok(now < 1000);
+    } while (predictor.needsRender);
+    assert.ok(Math.abs(position.x - expectedX) < 1e-9);
+    assert.deepEqual(predictor.project(now + 1000), position);
+  }
 });

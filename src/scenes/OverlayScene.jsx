@@ -8,7 +8,7 @@ import { writePlanarSurfaceMatrices } from '../utils/planarSurfaceAttachment.js'
 import { getRenderableAnchorOverlay } from '../utils/overlayVisibility.js';
 import { DemandRenderScheduler } from '../utils/overlayRenderScheduler.js';
 import { observeWebGLContext } from '../utils/webglContextLifecycle.js';
-import { ANCHOR_PRESENTATION_MOTION_CONFIG, AnchorMotionPredictor } from '../utils/anchorMotionPredictor.js';
+import { AnchorMotionPredictor } from '../utils/anchorMotionPredictor.js';
 import { MAX_OBJECT_OBSERVATION_AGE_MS } from '../utils/cvScheduling.js';
 
 const MAX_DEVICE_PIXEL_RATIO = 1.5;
@@ -130,16 +130,12 @@ const LiveAnchorGroup = ({
   const liveStateRef = useRef(anchorSystemState);
   const sampledAtRef = useRef(null);
   const anchorIdentityRef = useRef(null);
-  const motionUntilRef = useRef(0);
   const expiryTimerRef = useRef(null);
   const [motionPredictor] = useState(() => new AnchorMotionPredictor());
 
   const updateObservation = useCallback(
     (state) => {
       liveStateRef.current = state;
-      motionUntilRef.current = Number.isFinite(state.sampledAt)
-        ? state.sampledAt + ANCHOR_PRESENTATION_MOTION_CONFIG.maxPredictionAgeMs
-        : 0;
       window.clearTimeout(expiryTimerRef.current);
       if (Number.isFinite(state.sampledAt)) {
         expiryTimerRef.current = window.setTimeout(
@@ -237,7 +233,7 @@ const LiveAnchorGroup = ({
     group.position.set(...transform.position);
     group.rotation.set(...transform.rotation);
     group.scale.setScalar(transform.scale);
-    if (now < motionUntilRef.current) {
+    if (motionPredictor.needsRender) {
       invalidate();
     }
   });

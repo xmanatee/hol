@@ -93,6 +93,7 @@ export class AnchorMotionPredictor {
       y: this.sample.position.y + this.sample.velocity.y * predictionAge,
       z: this.sample.position.z,
     };
+    this.needsRender = predictionAge < this.maxPredictionAgeMs;
     if (!this.projectedPosition) {
       this.projectedPosition = target;
       this.lastProjectionAt = timestamp;
@@ -101,6 +102,9 @@ export class AnchorMotionPredictor {
 
     const elapsed = timestamp - this.lastProjectionAt;
     const maxStep = Math.min(this.maxPresentationStepPx, this.maxPresentationSpeedPxPerMs * elapsed);
+    // Late delivery can leave bounded correction unfinished after extrapolation ends.
+    this.needsRender ||=
+      Math.hypot(target.x - this.projectedPosition.x, target.y - this.projectedPosition.y) > maxStep;
     const delta = clampVectorLength(
       target.x - this.projectedPosition.x,
       target.y - this.projectedPosition.y,
@@ -119,5 +123,6 @@ export class AnchorMotionPredictor {
     this.sample = null;
     this.projectedPosition = null;
     this.lastProjectionAt = -Infinity;
+    this.needsRender = false;
   }
 }
