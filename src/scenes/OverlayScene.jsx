@@ -261,7 +261,6 @@ const OverlayScene = ({
   manualRotation = { x: 0, y: 0, z: 0 },
   onMeshNamesDiscovered,
   onMicrophoneTelemetry,
-  onSpeechTelemetry,
   microphoneMode = false,
   microphoneService,
   ttsService,
@@ -336,7 +335,6 @@ const OverlayScene = ({
             manualRotation={manualRotation}
             onMeshNamesDiscovered={onMeshNamesDiscovered}
             onMicrophoneTelemetry={onMicrophoneTelemetry}
-            onSpeechTelemetry={onSpeechTelemetry}
             microphoneService={microphoneService}
             ttsService={ttsService}
             facialExpression={facialExpression}

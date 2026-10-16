@@ -367,6 +367,14 @@ test('field controls preserve one controlled state across close, reopen, and cam
   browserName,
 }) => {
   test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');
+  const expectCameraMeasurements = async () => {
+    const fps = page.getByText('Capture FPS', { exact: true }).locator('..');
+    const frameCost = page.getByText('Camera frame cost', { exact: true }).locator('..');
+    await expect(fps).toContainText(/\d+\.\d FPS/);
+    await expect(frameCost).toContainText(/\d+\.\d ms/);
+    const value = (await fps.textContent()).replace('Capture FPS', '').trim();
+    expect(Number.parseFloat(value)).toBeGreaterThan(0);
+  };
   await page.goto('/');
   await page.waitForLoadState('networkidle');
   await startCamera(page);
@@ -379,7 +387,7 @@ test('field controls preserve one controlled state across close, reopen, and cam
   const drawerTrigger = page.getByRole('button', { name: 'Debug drawer', exact: true });
   await drawerTrigger.click();
   await page.getByRole('tab', { name: 'System' }).click();
-  await expect(page.getByText('Capture FPS', { exact: true })).toBeVisible();
+  await expectCameraMeasurements();
 
   const showCanvasDebug = page.getByRole('button', { name: 'Show canvas debug' });
   await showCanvasDebug.click();
@@ -411,6 +419,7 @@ test('field controls preserve one controlled state across close, reopen, and cam
   await expect(drawerTrigger).toHaveAttribute('aria-expanded', 'false');
   await drawerTrigger.click();
   await expect(page.getByRole('tab', { name: 'System' })).toHaveAttribute('aria-selected', 'true');
+  await expectCameraMeasurements();
   await expect(page.getByRole('button', { name: 'Hide canvas debug' })).toHaveAttribute(
     'aria-pressed',
     'true',
@@ -423,6 +432,8 @@ test('field controls preserve one controlled state across close, reopen, and cam
   const restartedDrawerTrigger = page.getByRole('button', { name: 'Debug drawer', exact: true });
   await expect(restartedDrawerTrigger).toHaveAttribute('aria-expanded', 'false');
   await restartedDrawerTrigger.click();
+  await page.getByRole('tab', { name: 'System' }).click();
+  await expectCameraMeasurements();
   await page.getByRole('tab', { name: 'Model' }).click();
   await expect(page.locator('#field-controls-panel input[type="range"]').first()).toHaveValue('69');
 });

@@ -4,7 +4,6 @@ import {
   disposeCameraSessionServices,
 } from '../services/CameraSessionServices.js';
 import { AnchorSelectionGate } from '../services/AnchorSelectionGate.js';
-import { collectAnchorMetrics } from '../utils/anchorMetrics.js';
 import { createAnchorStateStore } from '../utils/anchorStateStore.js';
 import { copyImageData } from '../utils/imageDataTransfer.js';
 import { LatestValueMailbox } from '../utils/latestValueMailbox.js';
@@ -87,7 +86,6 @@ export const useCameraSystem = (config = {}) => {
   const [depthStateStore] = useState(() => createDepthStateStore(createIdleDepthState()));
   const visionInitializationRef = useRef(null);
   const visionGenerationRef = useRef(0);
-  const metricUpdateRef = useRef(config.onMetricUpdate || null);
 
   const [cameraState, setCameraState] = useState('idle');
   const [cameraError, setCameraError] = useState(null);
@@ -100,29 +98,6 @@ export const useCameraSystem = (config = {}) => {
     sessionRef.current = session;
   }, [session]);
 
-  useEffect(() => {
-    metricUpdateRef.current = config.onMetricUpdate || null;
-  }, [config.onMetricUpdate]);
-
-  const updateMetric = useCallback((name, value) => {
-    metricUpdateRef.current?.(name, value);
-  }, []);
-  const resetSpeechMetrics = useCallback(() => {
-    updateMetric('Audio energy', 0);
-    updateMetric('Audio centroid', 0);
-  }, [updateMetric]);
-
-  useEffect(
-    () =>
-      anchorStateStore.subscribe((state) => {
-        const metrics = collectAnchorMetrics(state);
-        Object.entries(metrics).forEach(([name, value]) => {
-          updateMetric(name, value);
-        });
-      }),
-    [anchorStateStore, updateMetric],
-  );
-
   useEffect(() => () => anchorStateStore.dispose(), [anchorStateStore]);
   useEffect(() => () => depthStateStore.dispose(), [depthStateStore]);
 
@@ -132,15 +107,9 @@ export const useCameraSystem = (config = {}) => {
         return;
       }
 
-      removeDepthListenerRef.current = depthService.addListener((state) => {
-        depthStateStore.update(state);
-        updateMetric('Depth model state', state.state);
-        updateMetric('Depth provider', state.provider || 'None');
-        updateMetric('Depth inference', state.processingTime ?? 0);
-        updateMetric('Depth error', state.error || 'None');
-      });
+      removeDepthListenerRef.current = depthService.addListener(depthStateStore.update);
     },
-    [depthStateStore, updateMetric],
+    [depthStateStore],
   );
 
   const getDepthService = useCallback(() => {
@@ -207,12 +176,11 @@ export const useCameraSystem = (config = {}) => {
     setVisionError(null);
     setPersonalityData(createIdlePersonalityData());
     setTTSData(createIdleTTSData());
-    resetSpeechMetrics();
 
     const nextSession = createCameraSessionServices(sessionConfig);
     sessionRef.current = nextSession;
     setSession(nextSession);
-  }, [anchorSelectionGate, anchorStateStore, releaseDepthRuntime, resetSpeechMetrics, sessionConfig]);
+  }, [anchorSelectionGate, anchorStateStore, releaseDepthRuntime, sessionConfig]);
 
   const initializeVisionServices = useCallback(() => {
     if (cameraState !== 'active') {
@@ -262,13 +230,12 @@ export const useCameraSystem = (config = {}) => {
         }
         logger.error('CameraSystem', 'Vision service initialization failed:', error);
         setVisionError(error.message);
-        updateMetric('Vision error', error.message);
         throw error;
       });
 
     visionInitializationRef.current = initialization;
     return initialization;
-  }, [anchorStateStore, cameraState, session, updateMetric, videoDimensions]);
+  }, [anchorStateStore, cameraState, session, videoDimensions]);
 
   useEffect(() => {
     if (
@@ -310,7 +277,6 @@ export const useCameraSystem = (config = {}) => {
           visionInitializationRef.current = null;
           setVisionError(null);
           depthFrameMailbox.reset();
-          updateMetric('Camera calibration', `${data.width}x${data.height}`);
         } else if (lifecycleAction === 'replace-session') {
           replaceCameraSession();
         }
@@ -322,7 +288,6 @@ export const useCameraSystem = (config = {}) => {
         anchorStateStore.update(state);
         if (state.error !== null) {
           setVisionError(state.error);
-          updateMetric('Vision error', state.error);
         }
       },
     });
@@ -342,7 +307,6 @@ export const useCameraSystem = (config = {}) => {
           lastRTT: rtt,
           error: error || null,
         }));
-        updateMetric('Persona RTT', rtt);
       },
     });
 
@@ -355,7 +319,6 @@ export const useCameraSystem = (config = {}) => {
           emotionalDelivery,
           requestId,
         });
-        resetSpeechMetrics();
         setTTSData((prev) => ({
           ...prev,
           isSynthesizing: true,
@@ -370,11 +333,9 @@ export const useCameraSystem = (config = {}) => {
           isPlaying: true,
           lastLatency: latencyToFirstAudio,
         }));
-        updateMetric('TTS latency to first audio', latencyToFirstAudio);
       },
       onPlaybackComplete: () => {
         logger.info('CameraSystem', 'TTS playback completed');
-        resetSpeechMetrics();
         setTTSData((prev) => ({
           ...prev,
           isPlaying: false,
@@ -387,11 +348,9 @@ export const useCameraSystem = (config = {}) => {
           emotionalDelivery,
           latency,
         });
-        updateMetric('TTS total latency', latency);
       },
       onError: ({ error }) => {
         logger.error('CameraSystem', 'TTS error:', error);
-        resetSpeechMetrics();
         setTTSData((prev) => ({
           ...prev,
           isSynthesizing: false,
@@ -418,9 +377,7 @@ export const useCameraSystem = (config = {}) => {
     depthFrameMailbox,
     disposeDepthRuntime,
     replaceCameraSession,
-    resetSpeechMetrics,
     session,
-    updateMetric,
   ]);
 
   const initializeDepthForActiveMode = useCallback(() => {
@@ -525,16 +482,12 @@ export const useCameraSystem = (config = {}) => {
 
         if (result.success) {
           captureFrame();
-          updateMetric(
-            'Anchor created',
-            `${result.keypoints} keypoints, quality: ${result.quality.toFixed(2)}`,
-          );
         }
 
         return result;
       });
     },
-    [anchorSelectionGate, session, updateMetric, visionError],
+    [anchorSelectionGate, session, visionError],
   );
 
   const clearAnchor = useCallback(() => {
@@ -543,10 +496,7 @@ export const useCameraSystem = (config = {}) => {
     depthFrameMailbox.reset();
     setPersonalityData(createIdlePersonalityData());
     setTTSData(createIdleTTSData());
-    resetSpeechMetrics();
-
-    updateMetric('Anchor cleared', 'Returned to selection mode');
-  }, [depthFrameMailbox, resetSpeechMetrics, session, updateMetric]);
+  }, [depthFrameMailbox, session]);
 
   const setAnchorTrackingMode = useCallback(
     (mode) => {
@@ -557,9 +507,8 @@ export const useCameraSystem = (config = {}) => {
       } else {
         releaseDepthRuntime();
       }
-      updateMetric('Anchor tracking mode', mode);
     },
-    [depthFrameMailbox, initializeDepthForActiveMode, releaseDepthRuntime, session, updateMetric],
+    [depthFrameMailbox, initializeDepthForActiveMode, releaseDepthRuntime, session],
   );
 
   const generatePersonality = useCallback(

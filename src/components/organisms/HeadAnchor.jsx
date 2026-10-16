@@ -20,7 +20,6 @@ const HeadAnchor = ({
   manualRotation = { x: 0, y: 0, z: 0 },
   onMeshNamesDiscovered,
   onMicrophoneTelemetry,
-  onSpeechTelemetry,
   microphoneService,
   ttsService,
   facialExpression = 'neutral',
@@ -40,7 +39,6 @@ const HeadAnchor = ({
     microphoneService,
     ttsService,
     onMicrophoneTelemetry,
-    onSpeechTelemetry,
   );
 
   useEffect(() => {

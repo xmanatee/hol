@@ -79,34 +79,30 @@ const LogsSection = () => {
   );
 };
 
-const MetricsGrid = ({ metricStore }) => {
-  const metrics = useSyncExternalStore(
-    metricStore.subscribe,
-    metricStore.getSnapshot,
-    metricStore.getSnapshot,
+const CameraMetrics = ({ store }) => {
+  const { captureFps, frameWorkMs } = useSyncExternalStore(
+    store.subscribe,
+    store.getSnapshot,
+    store.getSnapshot,
   );
 
   return (
     <div className="grid gap-1 text-xs">
-      {Object.entries(metrics)
-        .slice(0, 12)
-        .map(([name, metric]) => (
-          <MetricPill
-            key={name}
-            label={name}
-            value={
-              metric.value !== null
-                ? `${typeof metric.value === 'number' ? metric.value.toFixed(1) : metric.value}${metric.unit ? ` ${metric.unit}` : ''}`
-                : 'N/A'
-            }
-            tone={metric.isRed ? 'bad' : 'neutral'}
-          />
-        ))}
+      <MetricPill
+        label="Capture FPS"
+        value={captureFps === null ? 'N/A' : `${captureFps.toFixed(1)} FPS`}
+        tone={captureFps !== null && captureFps < 28 ? 'bad' : 'neutral'}
+      />
+      <MetricPill
+        label="Camera frame cost"
+        value={frameWorkMs === null ? 'N/A' : `${frameWorkMs.toFixed(1)} ms`}
+        tone={frameWorkMs !== null && frameWorkMs > 4 ? 'bad' : 'neutral'}
+      />
     </div>
   );
 };
 
-export const FieldControlsSystem = ({ showStats, onShowStatsChange, metricStore }) => {
+export const FieldControlsSystem = ({ showStats, onShowStatsChange, cameraMetricsStore }) => {
   const [runtimeReadiness, setRuntimeReadiness] = useState(null);
   const readinessCollectedRef = useRef(false);
 
@@ -132,7 +128,7 @@ export const FieldControlsSystem = ({ showStats, onShowStatsChange, metricStore 
             {showStats ? 'Hide canvas debug' : 'Show canvas debug'}
           </button>
         </div>
-        <MetricsGrid metricStore={metricStore} />
+        <CameraMetrics store={cameraMetricsStore} />
         <LogsSection />
       </div>
     </DrawerSection>

@@ -2,28 +2,14 @@ import { useRef, useCallback, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { MorphController, VisemeMapper, VisemePicker } from '../audio/lipSync.js';
 
-const createSilentTelemetrySnapshot = () => ({
-  currentViseme: 'M',
-  audioEnergy: 0,
-  audioCentroid: 0,
-  isVoiceActive: false,
-});
-
-const resetTelemetrySnapshot = (snapshot) => {
-  snapshot.currentViseme = 'M';
-  snapshot.audioEnergy = 0;
-  snapshot.audioCentroid = 0;
-  snapshot.isVoiceActive = false;
-};
-
-export const useLipSync = (microphoneService, ttsService, onMicrophoneTelemetry, onSpeechTelemetry) => {
+export const useLipSync = (microphoneService, ttsService, onMicrophoneTelemetry) => {
   const visemePickerRef = useRef(null);
   const morphControllerRef = useRef(null);
   const lastFrameTimeRef = useRef(null);
   const agentSpeakingRef = useRef(false);
   const microphoneServiceRef = useRef(microphoneService);
   const ttsServiceRef = useRef(ttsService);
-  const telemetrySnapshotRef = useRef(createSilentTelemetrySnapshot());
+  const telemetrySnapshotRef = useRef({ currentViseme: 'M', audioEnergy: 0, isVoiceActive: false });
   useEffect(() => {
     microphoneServiceRef.current = microphoneService;
   }, [microphoneService]);
@@ -73,7 +59,6 @@ export const useLipSync = (microphoneService, ttsService, onMicrophoneTelemetry,
     if (!isActive) {
       morphController.setRestPose();
       morphController.update(deltaTime);
-      resetTelemetrySnapshot(telemetrySnapshotRef.current);
       return;
     }
 
@@ -95,15 +80,12 @@ export const useLipSync = (microphoneService, ttsService, onMicrophoneTelemetry,
     morphController.setSpeechFrame(selectedViseme, voiceActive ? audioData.energy : 0, voiceActive);
     morphController.update(deltaTime);
 
-    const telemetrySnapshot = telemetrySnapshotRef.current;
-    telemetrySnapshot.currentViseme = selectedViseme;
-    telemetrySnapshot.audioEnergy = audioData.energy;
-    telemetrySnapshot.audioCentroid = audioData.centroid;
-    telemetrySnapshot.isVoiceActive = voiceActive;
     if (activeMicrophone) {
+      const telemetrySnapshot = telemetrySnapshotRef.current;
+      telemetrySnapshot.currentViseme = selectedViseme;
+      telemetrySnapshot.audioEnergy = audioData.energy;
+      telemetrySnapshot.isVoiceActive = voiceActive;
       onMicrophoneTelemetry(telemetrySnapshot);
-    } else {
-      onSpeechTelemetry(telemetrySnapshot);
     }
   });
 

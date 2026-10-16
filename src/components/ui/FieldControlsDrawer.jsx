@@ -17,7 +17,7 @@ const FieldControlsDrawer = ({
   discoveredMeshes,
   hasActiveAnchor,
   hiddenMeshes,
-  metricStore,
+  cameraMetricsStore,
   microphoneActive,
   microphoneDebugMode,
   microphoneError,
@@ -151,7 +151,7 @@ const FieldControlsDrawer = ({
           <FieldControlsSystem
             showStats={showStats}
             onShowStatsChange={onShowStatsChange}
-            metricStore={metricStore}
+            cameraMetricsStore={cameraMetricsStore}
           />
         )}
       </div>

@@ -2,7 +2,7 @@ import { lazy, Suspense, useRef, useCallback, useEffect, useMemo, useState } fro
 import { useVideoFrames } from '../hooks/useVideoFrames.js';
 import { useCameraSystem } from '../hooks/useCameraSystem.js';
 import { ANCHOR_SELECTION_IN_PROGRESS_REASON } from '../services/AnchorSelectionGate.js';
-import { useHudMetrics } from '../hooks/useHudMetrics.js';
+import { useCameraMetrics } from '../hooks/useCameraMetrics.js';
 import { useMicrophoneRuntime } from '../hooks/useMicrophoneRuntime.js';
 import { useTransientFeedback } from '../hooks/useTransientFeedback.js';
 
@@ -130,7 +130,7 @@ const CameraView = () => {
   const { feedback: anchorFeedback, showFeedback: showAnchorFeedback } = useTransientFeedback();
   const [fieldControlsOpen, setFieldControlsOpen] = useState(false);
 
-  const { metricStore, updateMetric } = useHudMetrics();
+  const cameraMetricsStore = useCameraMetrics();
 
   // Use the camera system hook with image-based anchors
   const {
@@ -157,7 +157,7 @@ const CameraView = () => {
     stopTTS,
     speakGreeting,
     setAnchorTrackingMode,
-  } = useCameraSystem({ onMetricUpdate: updateMetric });
+  } = useCameraSystem();
   const cameraViewportStyle = useMemo(() => ({}), []);
   const overlaySceneEnabled = shouldMountOverlayScene({
     cameraState,
@@ -167,8 +167,10 @@ const CameraView = () => {
   useEffect(() => {
     if (cameraState !== 'active') {
       frameCountRef.current = 0;
+      lastCameraFrameCostRef.current = 0;
+      cameraMetricsStore.reset();
     }
-  }, [cameraState]);
+  }, [cameraMetricsStore, cameraState]);
 
   const captureCurrentCameraFrame = useCallback(() => {
     if (!captureCanvasRef.current) {
@@ -205,16 +207,6 @@ const CameraView = () => {
     stopTTS,
     onUnavailable: handleMicrophoneUnavailable,
   });
-  const publishSpeechTelemetry = useCallback(
-    ({ audioEnergy, audioCentroid }) => {
-      if (!metricStore.hasSubscribers()) {
-        return;
-      }
-      updateMetric('Audio energy', audioEnergy);
-      updateMetric('Audio centroid', audioCentroid);
-    },
-    [metricStore, updateMetric],
-  );
 
   // Handle camera start/resume
   const handleStartClick = useCallback(async () => {
@@ -402,7 +394,6 @@ const CameraView = () => {
           }
         } catch (error) {
           logger.warn('CameraView', `Anchor not created: ${error.message}`);
-          updateMetric('Anchor creation', error.message);
           showAnchorFeedback(`Anchor not created: ${error.message}`, 'bad');
         }
       } else if (liveAnchorSystemState.mode === 'anchor') {
@@ -416,7 +407,6 @@ const CameraView = () => {
       cameraState,
       captureCurrentCameraFrame,
       selectAnchorFromTap,
-      updateMetric,
       showAnchorFeedback,
       generateAndSpeakForAnchor,
       getAnchorSystemState,
@@ -554,9 +544,6 @@ const CameraView = () => {
         renderDiscoveryOverlay(ctx, liveAnchorSystemState.candidate);
       }
 
-      if (typeof captureFps === 'number' && !isNaN(captureFps)) {
-        updateMetric('Capture FPS', captureFps);
-      }
       if (showStats) {
         renderDebugStats(ctx, {
           fps: captureFps ?? 0,
@@ -571,7 +558,7 @@ const CameraView = () => {
 
       const cameraFrameCost = performance.now() - frameWorkStartedAt;
       lastCameraFrameCostRef.current = cameraFrameCost;
-      updateMetric('Camera frame cost', cameraFrameCost);
+      cameraMetricsStore.recordFrame(captureFps, cameraFrameCost);
     }
   });
 
@@ -638,7 +625,6 @@ const CameraView = () => {
               manualRotation={manualRotation}
               onMeshNamesDiscovered={handleMeshNamesDiscovered}
               onMicrophoneTelemetry={publishMicrophoneTelemetry}
-              onSpeechTelemetry={publishSpeechTelemetry}
               microphoneMode={microphoneMode}
               microphoneService={services.microphone}
               ttsService={services.tts}
@@ -664,7 +650,7 @@ const CameraView = () => {
           onClearAnchor={handleClearAnchor}
           onStopCamera={handleStopClick}
           onAnchorTrackingModeChange={handleAnchorTrackingModeChange}
-          metricStore={metricStore}
+          cameraMetricsStore={cameraMetricsStore}
           depthStateStore={depthStateStore}
           cameraState={cameraState}
           anchorSystemState={anchorSystemState}
