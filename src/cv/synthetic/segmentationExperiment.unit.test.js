@@ -58,6 +58,18 @@ const pins = [
     'e2cc2a1fa6131cf4d86faa3baf78851f35a36853e2467c257b3df9d89e85cce5',
     0,
   ],
+  [
+    'demo-landscape',
+    '49aeb620845c1cee2d2808be6d9b5770ad0aeb54c009d69d1de22908682991b7',
+    'f09414c7fa753e2274e43a048faa9ab71e203085d3692179334e4229178e6ada',
+    131883,
+  ],
+  [
+    'demo-portrait',
+    'bb4fc09714f7612b484d02acd25be6eb9d30deadb3fc40f3415b6c0891da9aa3',
+    '26d44b0d3668b86e7eb29a5490589c5c480deb31afc50c04c7bef4aa9313c612',
+    126481,
+  ],
 ];
 test('every probe has pinned RGBA pixels, independent binary labels and meaningful positive/negative support', () => {
   assert.deepEqual(

@@ -77,6 +77,7 @@ for (const backend of listSegmentationBackends()) {
             roundTripMedianMs: sample.timing.roundTripMs.medianMs,
             segmentCallMedianMs: sample.timing.segmentCallMs.medianMs,
             maskReadbackAndSyncMedianMs: sample.timing.maskReadbackAndSyncMs.medianMs,
+            maskPostprocessMedianMs: sample.timing.maskPostprocessMs.medianMs,
             falseForegroundFraction: sample.maximumFalseForegroundFraction,
           })),
         },
@@ -101,7 +102,6 @@ for (const backend of listSegmentationBackends()) {
     });
     expect(['completed', 'unavailable'], report.error).toContain(report.status);
     if (report.status !== 'completed') return;
-    expect(report.samples).toHaveLength(8);
     expect(report.coldStart.cold).toBe(true);
     expect(
       report.samples.map(({ id, inputSha256, truthSha256 }) => ({ id, inputSha256, truthSha256 })),

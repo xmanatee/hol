@@ -5,7 +5,11 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exportSegmentationProbes } from '../../../scripts/export-segmentation-probes.mjs';
-import { createSegmentationProbe, SEGMENTATION_EXPERIMENT_PROTOCOL } from './segmentationExperiment.js';
+import {
+  createSegmentationProbe,
+  SEGMENTATION_EXPERIMENT_CASES,
+  SEGMENTATION_EXPERIMENT_PROTOCOL,
+} from './segmentationExperiment.js';
 
 test('native experiments receive identical source bytes, labels, coordinates and hash ownership', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'hol-segmentation-probes-'));
@@ -14,7 +18,10 @@ test('native experiments receive identical source bytes, labels, coordinates and
     const saved = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
     assert.deepEqual(saved, exported);
     assert.equal(saved.protocol, SEGMENTATION_EXPERIMENT_PROTOCOL);
-    assert.equal(saved.cases.length, 8);
+    assert.deepEqual(
+      saved.cases.map(({ id }) => id),
+      SEGMENTATION_EXPERIMENT_CASES.map(({ id }) => id),
+    );
     for (const entry of saved.cases) {
       const probe = createSegmentationProbe(entry.id);
       assert.deepEqual(entry.point, probe.point);

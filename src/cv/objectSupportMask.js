@@ -52,39 +52,31 @@ export const getObjectSupportBounds = (objectSupportMask) => summarizePositivePi
 
 export const keepConnectedComponentContainingPoint = ({ width, height, data, point }) => {
   const output = new Uint8Array(width * height);
-  const start = { x: Math.trunc(point.x), y: Math.trunc(point.y) };
-  if (!(data[start.y * width + start.x] > 0)) {
+  const start = Math.trunc(point.y) * width + Math.trunc(point.x);
+  if (!(data[start] > 0)) {
     return output;
   }
 
-  const visited = new Uint8Array(width * height);
-  const queue = [start];
-  visited[start.y * width + start.x] = 1;
+  const queue = new Uint32Array(output.length);
+  const offsets = [1, -1, width, -width];
+  let tail = 1;
+  queue[0] = start;
+  output[start] = 255;
 
-  for (let index = 0; index < queue.length; index++) {
-    const current = queue[index];
-    const currentIndex = current.y * width + current.x;
-    output[currentIndex] = 255;
-
-    const neighbors = [
-      { x: current.x + 1, y: current.y },
-      { x: current.x - 1, y: current.y },
-      { x: current.x, y: current.y + 1 },
-      { x: current.x, y: current.y - 1 },
-    ];
-
-    for (const neighbor of neighbors) {
-      if (neighbor.x < 0 || neighbor.y < 0 || neighbor.x >= width || neighbor.y >= height) {
+  for (let head = 0; head < tail; head++) {
+    const current = queue[head];
+    const x = current % width;
+    for (let direction = 0; direction < offsets.length; direction++) {
+      if ((direction === 0 && x === width - 1) || (direction === 1 && x === 0)) {
         continue;
       }
-
-      const neighborIndex = neighbor.y * width + neighbor.x;
-      if (visited[neighborIndex] || data[neighborIndex] === 0) {
+      const neighbor = current + offsets[direction];
+      if (neighbor < 0 || neighbor >= output.length || output[neighbor] || data[neighbor] === 0) {
         continue;
       }
-
-      visited[neighborIndex] = 1;
-      queue.push(neighbor);
+      // Mark when enqueuing: each foreground pixel occupies exactly one queue entry.
+      output[neighbor] = 255;
+      queue[tail++] = neighbor;
     }
   }
 

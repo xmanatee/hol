@@ -41,6 +41,16 @@ export const SEGMENTATION_EXPERIMENT_CASES = Object.freeze(
     },
     { id: 'edge-crop', width: 320, height: 240, shape: 'ellipse', light: 1, shift: -130, distractor: false },
     { id: 'empty-background', width: 320, height: 240, shape: 'none', light: 1, shift: 0, distractor: false },
+    {
+      id: 'demo-landscape',
+      width: 960,
+      height: 540,
+      shape: 'ellipse',
+      light: 1,
+      shift: 0,
+      distractor: false,
+    },
+    { id: 'demo-portrait', width: 540, height: 960, shape: 'bottle', light: 1, shift: 0, distractor: false },
   ].map((value) => Object.freeze(value)),
 );
 

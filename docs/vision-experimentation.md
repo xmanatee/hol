@@ -53,15 +53,17 @@
 
 Эксперименты с запретом восстановления старых outliers и удалением unmatched landmarks после descriptor recovery выявили зависимость текущего стека от этих эвристик. Их прямое отключение ухудшило hard risk с 42.85 до 44.40, а отдельное удаление unmatched points нарушило query floor TAP-Vid RGB stacking (AJ 0.200–0.206 при минимуме 0.24). Эти варианты **не включены** и пороги не изменены. Для исправления устаревших наблюдений нужен проверяемый путь повторного наблюдения, а не только более раннее скрытие лица. Принцип проверки соответствий свежим изображением есть в [официальном LK tracking sample OpenCV](https://github.com/opencv/opencv/blob/4.x/samples/python/lk_track.py); [WOFT](https://arxiv.org/abs/2301.10057) исследует отбрасывание неверных flow correspondences, но не интегрирован и не является готовым решением цилиндрического трекинга.
 
-Предыдущая browser-приёмка выявляла отказы выбора по freshness и остановку отрисовки после успешного выбора. Контрольная сборка до исправления ошибок CV также отвергала выбор; причинная связь с тем исправлением не установлена. В одном контрольном кадре доставка заняла около 501 ms — больше действующего 300 ms observation budget. После оптимизации масок текущий отдельный последовательный Chromium-прогон проходит 4/4 camera→readiness→tap→face/animation/error cases. Это результат текущего harness, не доказательство устранения всех latency spikes и не приёмка физических устройств; пороги и тесты воронки сохранены.
-
 ### Стоимость масок и следующие эксперименты
 
 Убраны две повторные операции: смена reference point больше не копирует и не пересчитывает уже проверенный бинарный raster; неизменная проекция переиспользует пиксели между кадрами. Новый `updatedAtFrame` получает отдельный metadata object, поэтому опубликованные старые кадры не мутируют. Изменение позиции, масштаба, поворота или исходной маски по-прежнему требует новой проекции. Это не продлевает tracking evidence и не меняет freshness budget.
 
 Локальное сравнение с `fa3460b`: Node 22.23.3, 960×540, прямоугольная маска 480×260, пять чередующихся batches; по 60 проекций **неизменной позы** и 30 mask refresh на batch. Медиана batch means: projection 0.6224 → 0.00023 ms, mask refresh 1.2250 → 0.6963 ms. До замеров проверены равенство полных масок контрольной версии при разных переносах/масштабах/поворотах и после refresh. Это не browser/device benchmark, не время model inference и не end-to-end ускорение; движущаяся геометрия всё ещё требует resampling. Удалена лишняя factory-обёртка, новые зависимости и backend не добавлялись.
 
-Приёмка оптимизации: 1068 source tests без ошибок/пропусков, 84/84 quality cases. Hard (28) и cadence (84) сохраняют прежние метрики и regression contracts; их строгие product targets всё ещё не достигнуты в 26 и 63 случаях соответственно. Независимый annotated pack (623 кадра, 18 queries) сохраняет все aggregate metrics, включая AJ 0.17682: точность не улучшена и не объявляется достаточной. Browser Chromium/WebKit: 46 pass, 22 явных platform skips при `--workers=1 --trace=off`, включая все четыре реальные rendered-video funnel cases в Chromium. Build, lint, форматирование, head/asset/bundle budgets и аудит 127 файлов воронки проходят. Текущие отчёты — `artifacts/mask-cache-source-tests.xml`, `artifacts/mask-cache-final-{quality,hard,quick,annotated}.json`.
+Выделение компоненты использует плоские pixel indices в ограниченной `Uint32Array` вместо очереди объектов координат и четырёх новых соседей на каждый пиксель. Выходной бинарный raster одновременно отмечает уже добавленные точки, поэтому отдельный `visited` buffer не нужен. Сохраняется [стандартная 4-связность flood fill](https://docs.opencv.org/4.12.0/d7/d1b/group__imgproc__misc.html): касание углами не соединяет объекты, строка не заворачивается через край. Каждый пиксель попадает в очередь не более одного раза; её ёмкость ограничена числом пикселей (16 MiB на предельных 4,194,304 px), без рекурсии и дополнительного OpenCV runtime в segmentation worker. Качество модели, пороги и координатная политика не менялись.
+
+Проверки семантики: все 512 бинарных raster 3×3 × 9 seeds сверяются с независимой bitset-реконструкцией; положительные входы включают 1/127/255, дробные координаты seed и неизменность входа. Отдельно проверены 1×1 / 1×257 / 257×1, извилистый однопиксельный путь и полностью связный 2048×2048 raster. Сравнение полной постобработки с `5d0f654` на аналитической confidence grid 512×512, размерах 320×240 / 960×540 / 540×960 и радиусах null/28/160 сохраняет байты маски и все metadata, включая confidence. Новые camera-sized пробы проверяют реальную стоимость стадии, а не переносят время с 320×240 на телефон по предположению.
+
+Приёмка оптимизации: 1071 source tests без ошибок/пропусков, 84/84 quality cases. Hard (28) и cadence (84) сохраняют прежние метрики и regression contracts; их строгие product targets всё ещё не достигнуты в 26 и 63 случаях соответственно. Независимый annotated pack (623 кадра, 18 queries) сохраняет все aggregate metrics, включая AJ 0.17682: точность не улучшена и не объявляется достаточной. Browser suite: 46 pass, 22 явных platform skips при `--workers=1 --trace=off`; четыре camera→readiness→tap→face/animation/error cases проходят в Chromium, WebKit выполняет реальные ImageData model probes, но не этот MediaStream funnel. Это не приёмка физических устройств и не обещание отсутствия latency spikes. Build, lint, форматирование, head/asset/bundle budgets и аудит 127 файлов воронки проходят. Текущие отчёты — `artifacts/segmentation-queue-source-tests.xml`, `artifacts/segmentation-queue-{quality,hard,quick,annotated}.json`.
 
 Проверен и **отклонён** более глубокий эксперимент: учитывать масштаб/поворот, уже содержащиеся в новой сегментации, вместо повторного применения накопленной позы. Контрпример без движения: измеренная маска 640 px становилась 1440 px при сохранённом scale 1.5 и quarter turn. Но один пересчёт базы дал 72/84 quality passes; вариант с полной привязкой к текущей позиции — 73/84 и ухудшение стандартного cylinder replay. Оба варианта полностью удалены, допуски сохранены. Маска участвует в ownership, выборе точек и recovery: исправление координат требует совместного изменения estimator/reference model, а не одной формулы в renderer. Отчёты эксперимента: `artifacts/mask-reference-quality.json`, `artifacts/mask-pose-quality.json`.
 
@@ -84,7 +86,7 @@ npm run vision:probes
 
 Протокол `hol.point-segmentation.v1`:
 
-- Восемь analytic cases: текстурный эллипс, portrait bottle, тонкий объект, слабый свет, блик, независимый похожий distractor, crop у края и фон без целевого предмета.
+- Десять analytic cases: текстурный эллипс, portrait bottle, тонкий объект, слабый свет, блик, независимый похожий distractor, crop у края, фон без целевого предмета и два camera-sized raster — 960×540 / 540×960. Первые восемь входов и их хеши сохранены; новые два отдельно закреплены SHA-256 и включены в native export.
 - Для каждого raster: фиксированные SHA-256 RGBA и ground truth; исходные размеры и координаты prompt. Node и браузер независимо сверяют байты; unit-тест фиксирует сами хеши.
 - Два warmup и двадцать measured samples на случай; первый sample отдельно отмечен как cold-worker. Это **не** гарантированный cold-network старт: browser/SW/OS caches могут быть тёплыми.
 - Сохраняются сырые samples, nearest-rank median/p95/max, IoU/precision/recall и доля ложного foreground. Пустые множества имеют явную семантику; маска должна быть бинарной 0/255.
@@ -92,24 +94,33 @@ npm run vision:probes
 - Имя backend, frame ID, raster и timing envelopes проверяются. Неуспех не превращается в CPU-результат. Отсутствующий worker WebGL2 явно `unavailable`; прочие ошибки — `failed`.
 - Записываются модель/hash/precision, browser/version, признаки окружения и реальный GL renderer, если браузер раскрывает его. Mobile UA/viewport на desktop не считается физическим устройством. Запрошенный delegate не является per-kernel профилем исполнения.
 
-`completed` означает корректно завершённый эксперимент. Это **не** означает, что все quality targets достигнуты. `targetMet` хранится отдельно для каждого случая: IoU ≥0.85 на positives; false foreground ≤1% на empty scene. Эти восемь статичных примеров — sanity suite для сравнения backend, а не новый «сложный real-world benchmark».
+`completed` означает корректно завершённый эксперимент. Это **не** означает, что все quality targets достигнуты. `targetMet` хранится отдельно для каждого случая: IoU ≥0.85 на positives; false foreground ≤1% на empty scene. Эти статичные примеры проверяют sanity и стоимость при разных размерах входа, а не надёжность на real-world видео.
 
 ### Что уже показал запуск
 
 CPU и Chromium WebGL выделяют положительные analytic fixtures с IoU примерно 0.970–0.997. Они выделяют около 79% foreground на empty-background; эта отрицательная цель **не достигнута**. Point-prompt segmentation не является object detector: уверенная маска фона не доказывает наличие отдельного предмета. Нужна отдельная оценка objectness/discovery на независимых отрицательных видео; запрещать все большие маски одним порогом было бы неверно для крупного предмета у камеры.
 
-Последний отдельный прогон: Apple M4 Max, arm64, Darwin 25.6.0; 640 measured samples (20 × 8 cases × 4 browser/backend combinations), без параллельного тяжёлого тестирования. Латентность ниже — **диапазон медиан по случаям**, не среднее из percentile и не скорость физического iPhone.
+Текущий прогон: Apple M4 Max, arm64, Darwin 25.6.0; 800 measured samples (20 × 10 cases × 4 browser/backend combinations) для исходного `5d0f654` и ещё 800 после замены очереди. Browser/backend combinations выполнялись последовательно; native measurements не совмещались с другими нашими тяжёлыми тестами. Латентность ниже — **диапазон медиан по случаям** оптимизированной версии, не среднее из percentile и не скорость физического iPhone.
 
 | Browser / backend            | Ready-mask median range | Positive targets ≥0.85 | Худший positive IoU | False foreground на empty |
 | ---------------------------- | ----------------------- | ---------------------- | ------------------- | ------------------------- |
-| Chromium CPU/WASM            | 211.8–214.0 ms          | 7/7                    | 0.970               | 79.5%                     |
-| Chromium WebGL / SwiftShader | 659.5–800.1 ms          | 7/7                    | 0.971               | 79.1%                     |
-| WebKit CPU/WASM              | 208.7–210.0 ms          | 7/7                    | 0.970               | 79.5%                     |
-| WebKit WebGL / Apple GPU     | 15.2–18.8 ms            | 5/7                    | 0.072               | 50.2%                     |
+| Chromium CPU/WASM            | 210.5–222.3 ms          | 9/9                    | 0.970               | 79.5%                     |
+| Chromium WebGL / SwiftShader | 564.4–664.9 ms          | 9/9                    | 0.971               | 79.1%                     |
+| WebKit CPU/WASM              | 207.4–217.7 ms          | 9/9                    | 0.970               | 79.5%                     |
+| WebKit WebGL / Apple GPU     | 14.0–26.7 ms            | 6/9                    | 0.072               | 50.2%                     |
 
-Сырые отчёты: `artifacts/vision-experiments/**/segmentation-report.json`, Chromium 151.0.7922.34 / WebKit 26.5; время завершения 02:50–02:53 UTC. У Chromium WebGL сам API-вызов занимает около 1.4–1.6 ms, но последующий readback/synchronization — 656.8–797.9 ms: «1.6 ms inference» было бы неверным выводом. Это **SwiftShader**, не аппаратный GPU.
+Сырые отчёты: `artifacts/segmentation-queue-{before,after}/**/segmentation-report.json`, Chromium 151.0.7922.34 / WebKit 26.5. Все 800 quality observations совпали с контролем, как и RGBA/truth hashes. Native warm CPU/WASM постобработка (не сама модель):
 
-На Apple GPU bottle IoU **0.724**, thin-object IoU **0.072** против CPU 0.997 и 0.970. Поэтому GPU не проходит quality policy, даже когда эксперимент корректно завершается; отрицательная цель не достигнута ни одним backend. Расхождение масок воспроизводится в изолированных GPU-прогонах. Изоляция backend tests не доказывает надёжность многократной смены моделей внутри одной сессии. Storage precision f32 не является доказательством одинаковой арифметики delegate; причина расхождения качества пока не установлена.
+| Browser / raster | Median до → после | p95 до → после   |
+| ---------------- | ----------------- | ---------------- |
+| Chromium 960×540 | 6.885 → 3.295 ms  | 7.730 → 3.685 ms |
+| Chromium 540×960 | 7.015 → 3.260 ms  | 7.905 → 3.505 ms |
+| WebKit 960×540   | 5.600 → 2.640 ms  | 5.760 → 2.920 ms |
+| WebKit 540×960   | 5.380 → 2.660 ms  | 5.820 → 2.920 ms |
+
+Это примерно двукратное ускорение конкретной стадии. Оно не означает двукратного ускорения pipeline: CPU model inference по-прежнему занимает около 200 ms. У Chromium WebGL короткий API-вызов не включает длительный readback/synchronization; это **SwiftShader**, не аппаратный GPU. Полные round-trip samples сохранены отдельно, чтобы изменение времени model/GPU не приписывалось работе очереди.
+
+На Apple GPU bottle IoU **0.724**, thin-object IoU **0.072** против CPU 0.997 и 0.970; новая native portrait проба тоже выявляет слабое качество, **0.487** против CPU **0.991**. Поэтому GPU не проходит quality policy, даже когда эксперимент корректно завершается; отрицательная цель не достигнута ни одним backend. Расхождение масок воспроизводится в изолированных GPU-прогонах. Изоляция backend tests не доказывает надёжность многократной смены моделей внутри одной сессии. Storage precision f32 не является доказательством одинаковой арифметики delegate; причина расхождения качества пока не установлена.
 
 Полные измерения и renderer находятся в JSON; ни Apple GPU desktop WebKit, ни SwiftShader не прогнозируют Safari на iPhone. CPU default не меняется на основании рекламных FPS или одного быстрого desktop-прогона.
 

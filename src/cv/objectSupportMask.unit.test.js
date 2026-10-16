@@ -243,6 +243,92 @@ test('object support mask keeps only the connected component containing the tap 
   assert.equal(filtered[5 * 12 + 9], 0);
 });
 
+test('component selection matches independent four-connected reconstruction for every 3x3 raster and seed', () => {
+  for (let bits = 0; bits < 512; bits++) {
+    const data = Uint8Array.from({ length: 9 }, (_, index) =>
+      bits & (1 << index) ? [1, 127, 255][index % 3] : 0,
+    );
+    for (let seed = 0; seed < 9; seed++) {
+      // Bitset reconstruction has no traversal queue and cannot wrap across row edges.
+      let component = bits & (1 << seed);
+      let previous;
+      do {
+        previous = component;
+        component =
+          (component |
+            ((component & ~0b100100100) << 1) |
+            ((component & ~0b001001001) >>> 1) |
+            (component << 3) |
+            (component >>> 3)) &
+          bits;
+      } while (component !== previous);
+      const expected = Uint8Array.from({ length: 9 }, (_, index) => (component & (1 << index) ? 255 : 0));
+      assert.deepEqual(
+        keepConnectedComponentContainingPoint({
+          width: 3,
+          height: 3,
+          data,
+          point: { x: (seed % 3) + 0.75, y: Math.floor(seed / 3) + 0.25 },
+        }),
+        expected,
+        `Raster ${bits}, seed ${seed}`,
+      );
+    }
+    assert.deepEqual(
+      data,
+      Uint8Array.from({ length: 9 }, (_, index) => (bits & (1 << index) ? [1, 127, 255][index % 3] : 0)),
+      'The selected component must not mutate model-owned input',
+    );
+  }
+});
+
+test('component selection supports one-pixel dimensions and winding paths without diagonal shortcuts', () => {
+  for (const [width, height] of [
+    [1, 257],
+    [257, 1],
+    [1, 1],
+    [257, 257],
+  ]) {
+    const data = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (y % 2 === 0 || x === (y % 4 === 1 ? width - 1 : 0)) data[y * width + x] = 255;
+      }
+    }
+    assert.deepEqual(
+      keepConnectedComponentContainingPoint({ width, height, data, point: { x: 0, y: 0 } }),
+      data,
+    );
+    const empty = keepConnectedComponentContainingPoint({
+      width,
+      height,
+      data: new Uint8Array(data.length),
+      point: { x: width - 1, y: height - 1 },
+    });
+    assert.equal(
+      empty.some((value) => value !== 0),
+      false,
+    );
+  }
+});
+
+test('component selection covers the largest permitted segmentation raster without truncation', () => {
+  const width = 2048;
+  const height = 2048;
+  const data = new Uint8Array(width * height).fill(255);
+  const selected = keepConnectedComponentContainingPoint({
+    width,
+    height,
+    data,
+    point: { x: width - 1, y: height - 1 },
+  });
+  assert.equal(selected.length, data.length);
+  assert.equal(
+    selected.findIndex((value) => value !== 255),
+    -1,
+  );
+});
+
 test('tap-local support radius is frame-scaled and bounded', () => {
   assert.equal(calculateTapLocalRadius({ width: 320, height: 240 }), 28);
   assert.equal(calculateTapLocalRadius({ width: 1280, height: 720 }), 39.6);
