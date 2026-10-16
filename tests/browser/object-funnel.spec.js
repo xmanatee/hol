@@ -12,10 +12,23 @@ test('rendered object video reaches green readiness before tap and mounts a surf
   // Segmentation, worker tracking, readiness, selection and the GLB renderer are unmodified.
   await page.addInitScript(() => {
     const NativeWorker = window.Worker;
+    window.__holDepthSourcePairs = [];
     window.Worker = new Proxy(NativeWorker, {
       construct(target, args) {
         const worker = Reflect.construct(target, args);
         if (/\/anchor\.worker-[\w-]+\.js$/.test(String(args[0]))) {
+          const postMessage = worker.postMessage.bind(worker);
+          worker.postMessage = (message, transfers) => {
+            const context = message.payload?.depthContext;
+            if (context?.depthRequestTimestamp != null) {
+              window.__holDepthSourcePairs.push([message.payload.capturedAt, context.depthRequestTimestamp]);
+            }
+            const result = postMessage(message, transfers);
+            if (context?.depthFrame) {
+              window.__holDepthTransferred = context.depthFrame.data.buffer.byteLength === 0;
+            }
+            return result;
+          };
           worker.addEventListener('message', ({ data }) => {
             window.__holLatestAnchorState = data.state;
           });
@@ -132,6 +145,23 @@ test('rendered object video reaches green readiness before tap and mounts a surf
       .locator('.overlay-scene canvas')
       .evaluate((canvas, original) => canvas === original, overlayCanvas),
   ).toBe(true);
+  await page.getByRole('button', { name: 'Debug drawer' }).click();
+  await page.getByRole('tab', { name: 'model', exact: true }).click();
+  await page.getByRole('button', { name: 'Depth Fusion', exact: true }).click();
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => window.__holLatestAnchorState.anchorState?.metrics.reconstructionDepthFrameTimestamp || 0,
+        ),
+      { timeout: 90_000 },
+    )
+    .toBeGreaterThan(0);
+  const depthSources = await page.evaluate(() => window.__holDepthSourcePairs);
+  expect(depthSources.length).toBeGreaterThan(0);
+  expect(depthSources.every(([capturedAt, requestedAt]) => capturedAt === requestedAt)).toBe(true);
+  expect(await page.evaluate(() => window.__holDepthTransferred)).toBe(true);
+  await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Clear anchor' }).click();
   await expect(discovery).toBeVisible();
   expect(errors).toEqual([]);

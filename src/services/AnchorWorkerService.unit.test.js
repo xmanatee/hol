@@ -367,7 +367,7 @@ test('anchor frames combine tracking and segmentation in one zero-copy worker re
   const first = service.processFrame(imageData, {
     update: true,
     refreshSegmentation: true,
-    depthContext: { timestamp: 12 },
+    depthContext: { depthFrame: { timestamp: 12, data: new Float32Array(16) } },
     capturedAt: 100,
   });
   await waitForWorkerPost();
@@ -379,7 +379,10 @@ test('anchor frames combine tracking and segmentation in one zero-copy worker re
   assert.equal(worker.messages[0].payload.imageData.data, imageData.data);
   assert.equal(worker.messages[0].payload.update, true);
   assert.equal(worker.messages[0].payload.refreshSegmentation, true);
-  assert.deepEqual(worker.transferLists[0], [imageData.data.buffer]);
+  assert.deepEqual(worker.transferLists[0], [
+    imageData.data.buffer,
+    worker.messages[0].payload.depthContext.depthFrame.data.buffer,
+  ]);
   assert.equal(service.canProcessFrame(), false);
 
   const blocked = service.processFrame(createImageData(), {

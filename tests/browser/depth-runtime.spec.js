@@ -122,8 +122,9 @@ test('production depth service runs real worker inference in a mobile browser', 
   await page.goto('/');
 
   const result = await page.evaluate(
-    async ({ serviceUrl, config }) => {
+    async ({ serviceUrl, fusionUrl, config }) => {
       const { DepthEstimationService } = await import(new URL(serviceUrl, window.location.href).href);
+      const { DepthFusionReconstructor } = await import(new URL(fusionUrl, window.location.href).href);
       const service = new DepthEstimationService({
         inputSize: config.inputSize,
         intervalMs: 0,
@@ -140,6 +141,44 @@ test('production depth service runs real worker inference in a mobile browser', 
           data[offset + 3] = 255;
         }
       }
+      const sourceImage = { width: config.sourceWidth, height: config.sourceHeight, data: data.slice() };
+      const maskData = new Uint8Array(config.sourceWidth * config.sourceHeight);
+      const points = [];
+      for (let y = 10; y < 38; y++) {
+        for (let x = 16; x < 48; x++) maskData[y * config.sourceWidth + x] = 255;
+      }
+      for (let y = 14; y < 36; y += 5) {
+        for (let x = 20; x < 46; x += 5) {
+          points.push({
+            id: points.length,
+            original: { x, y },
+            current: { x, y },
+            status: 'active',
+            age: 24,
+            stabilityScore: 1,
+          });
+        }
+      }
+      const sourceContext = {
+        depthRequestTimestamp: 1234,
+        imageData: sourceImage,
+        objectSupportMask: {
+          width: config.sourceWidth,
+          height: config.sourceHeight,
+          data: maskData,
+          bbox: { x: 16, y: 10, width: 32, height: 28 },
+        },
+      };
+      const engines = Array.from({ length: 2 }, () => {
+        const engine = new DepthFusionReconstructor({ minFrames: 1, minSurfels: 10, sampleStride: 2 });
+        engine.configure({ cameraParams: { fx: 60, fy: 60, cx: 32, cy: 24 } });
+        engine.reset({
+          anchorReference: { x: 32, y: 24 },
+          templateRegion: { x: 16, y: 10, width: 32, height: 28 },
+        });
+        return engine;
+      });
+      engines[1].addFrameFromTrackedPoints(points, 1234, sourceContext);
       const sourceBuffer = data.buffer;
       const depth = await service.estimate(
         {
@@ -152,6 +191,20 @@ test('production depth service runs real worker inference in a mobile browser', 
           timestamp: 1234,
         },
       );
+      const synchronousMap = engines[0].addFrameFromTrackedPoints(points, 1234, {
+        ...sourceContext,
+        depthFrame: depth,
+      });
+      sourceImage.data.fill(0);
+      maskData.fill(0);
+      const movedPoints = points.map((point) => ({
+        ...point,
+        current: { x: point.current.x + 3, y: point.current.y + 2 },
+      }));
+      const delayedMap = engines[1].addFrameFromTrackedPoints(movedPoints, 1274, { depthFrame: depth });
+      const currentPose = engines[1].estimatePoseFromTrackedPoints(movedPoints);
+      const sourceAligned =
+        JSON.stringify(delayedMap.preview.points) === JSON.stringify(synchronousMap.preview.points);
       let min = Infinity;
       let max = -Infinity;
       let finiteCount = 0;
@@ -180,6 +233,9 @@ test('production depth service runs real worker inference in a mobile browser', 
       return {
         initialized,
         ready,
+        sourceAligned,
+        mappedFrames: delayedMap.frameCount,
+        currentPose,
         secondTimestamp: second.timestamp,
         skipped,
         skippedBytes: skippedInput.byteLength,
@@ -198,6 +254,10 @@ test('production depth service runs real worker inference in a mobile browser', 
     },
     {
       serviceUrl: productionDepthServiceUrl(),
+      fusionUrl: productionAssetUrl({
+        label: 'depth fusion engine',
+        pattern: /^anchor\.depthFusion-[\w-]+\.js$/,
+      }),
       config: {
         inputSize: DEPTH_INPUT_SIZE,
         sourceWidth: SOURCE_WIDTH,
@@ -236,6 +296,11 @@ test('production depth service runs real worker inference in a mobile browser', 
     error: null,
   });
   expect(result.ready.processingTime).toBeGreaterThan(0);
+  expect(result.sourceAligned).toBe(true);
+  expect(result.mappedFrames).toBe(1);
+  expect(result.currentPose.success).toBe(true);
+  expect(result.currentPose.position.x).toBeCloseTo(35, 6);
+  expect(result.currentPose.position.y).toBeCloseTo(26, 6);
   expect(result.secondTimestamp).toBe(1235);
   expect(result.skipped).toBe(null);
   expect(result.skippedBytes).toBe(SOURCE_WIDTH * SOURCE_HEIGHT * 4);

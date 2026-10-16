@@ -466,16 +466,17 @@ export const useCameraSystem = (config = {}) => {
       }
 
       let currentDepthState = depthStateStore.getSnapshot();
+      let depthRequestTimestamp = null;
       if (shouldInitializeDepthForTrackingMode(currentAnchorState.trackingMode)) {
         initializeDepthForActiveMode();
         const depthService = depthServiceRef.current;
         currentDepthState = depthService?.getState() ?? currentDepthState;
-        if (depthService?.shouldEstimate()) {
-          const timestamp = performance.now();
+        if (update && depthService?.shouldEstimate()) {
+          depthRequestTimestamp = capturedAt;
           const depthImageData = copyImageData(imageData);
           const mailboxGeneration = depthFrameMailbox.captureGeneration();
           depthService
-            .estimate(depthImageData, { timestamp })
+            .estimate(depthImageData, { timestamp: capturedAt })
             .then((estimatedDepthFrame) => {
               if (estimatedDepthFrame) {
                 depthFrameMailbox.publish(estimatedDepthFrame, mailboxGeneration);
@@ -487,13 +488,14 @@ export const useCameraSystem = (config = {}) => {
         }
       }
 
-      const depthFrame = depthFrameMailbox.take();
+      const depthFrame = update ? depthFrameMailbox.take() : null;
       return session.anchor.processFrame(imageData, {
         update,
         refreshSegmentation,
         capturedAt,
         depthContext: {
           depthFrame,
+          depthRequestTimestamp,
           depthState: currentDepthState,
         },
       });

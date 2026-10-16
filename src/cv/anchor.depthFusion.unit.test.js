@@ -40,6 +40,8 @@ const createDepthFrame = ({
   return {
     width,
     height,
+    sourceWidth: width,
+    sourceHeight: height,
     data,
     timestamp,
     processingTime: 8.4,
@@ -95,6 +97,182 @@ const configureCamera = (engine) => {
   });
 };
 
+const createSourceJoinEngine = () => {
+  const engine = new DepthFusionReconstructor({ minFrames: 1, minSurfels: 24 });
+  configureCamera(engine);
+  engine.reset({
+    anchorReference: { x: 48, y: 48 },
+    templateRegion: { x: 12, y: 12, width: 72, height: 72 },
+  });
+  return engine;
+};
+
+const captureSource = (engine, timestamp, points = createTrackedPoints()) =>
+  engine.addFrameFromTrackedPoints(points, timestamp, {
+    depthRequestTimestamp: timestamp,
+    imageData: createImageData(),
+    objectSupportMask: createMask(),
+  });
+
+test('depth delivery and the next source capture can share one tracking update', () => {
+  const engine = createSourceJoinEngine();
+  captureSource(engine, 1000);
+  const first = engine.addFrameFromTrackedPoints(createTrackedPoints({ tx: 5 }), 1040, {
+    depthRequestTimestamp: 1040,
+    imageData: createImageData(),
+    objectSupportMask: createMask(),
+    depthFrame: createDepthFrame(),
+  });
+  assert.equal(first.frameCount, 1);
+  const second = engine.addFrameFromTrackedPoints(createTrackedPoints({ tx: 10 }), 1080, {
+    depthFrame: createDepthFrame({ timestamp: 1040 }),
+  });
+  assert.equal(second.frameCount, 2);
+  assert.equal(second.depthFrameTimestamp, 1040);
+});
+
+for (const action of ['reset', 'updateReferenceRegion', 'configure', 'error', 'dispose']) {
+  test(`${action} invalidates delayed depth instead of attaching it to another reference`, () => {
+    const engine = createSourceJoinEngine();
+    captureSource(engine, 1000);
+    if (action === 'reset') {
+      engine.reset({ anchorReference: { x: 48, y: 48 } });
+    }
+    if (action === 'updateReferenceRegion') {
+      engine.updateReferenceRegion({ x: 10, y: 10, width: 72, height: 72 });
+    }
+    if (action === 'dispose') {
+      engine.dispose();
+    }
+    if (action === 'configure') {
+      configureCamera(engine);
+    }
+    if (action === 'error') {
+      engine.addFrameFromTrackedPoints(createTrackedPoints(), 1020, {
+        depthState: { state: 'error', error: 'Inference failed' },
+      });
+    }
+    const state = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1040, {
+      depthFrame: createDepthFrame(),
+    });
+    assert.equal(state.frameCount, 0);
+    assert.equal(state.landmarkCount, 0);
+    assert.equal(state.lastFailureReason, 'Depth source frame is unavailable');
+  });
+}
+
+test('only the outstanding depth source is retained and an unmatched reply cannot consume it', () => {
+  const engine = createSourceJoinEngine();
+  captureSource(engine, 1000);
+  captureSource(engine, 1040);
+  const stale = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1080, {
+    depthFrame: createDepthFrame(),
+  });
+  assert.equal(stale.frameCount, 0);
+  assert.equal(stale.lastFailureReason, 'Depth source frame is unavailable');
+  const current = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1120, {
+    depthFrame: createDepthFrame({ timestamp: 1040 }),
+  });
+  assert.equal(current.frameCount, 1);
+  assert.equal(current.depthFrameTimestamp, 1040);
+});
+
+test('a depth result cannot guess its source raster or repair a weak source pose with later landmarks', () => {
+  const engine = createSourceJoinEngine();
+  captureSource(engine, 1000);
+  const mismatched = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1040, {
+    depthFrame: { ...createDepthFrame(), sourceWidth: 192 },
+  });
+  assert.equal(mismatched.frameCount, 0);
+  assert.equal(mismatched.lastFailureReason, 'Depth source raster mismatch');
+  captureSource(engine, 1080, createTrackedPoints().slice(0, 4));
+  const weak = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1120, {
+    depthFrame: createDepthFrame({ timestamp: 1080 }),
+  });
+  assert.equal(weak.frameCount, 0);
+  assert.equal(weak.lastFailureReason, 'Insufficient landmarks for depth fusion pose');
+});
+
+test('source timestamps reject invalid values and preserve zero without substituting worker time', () => {
+  const engine = createSourceJoinEngine();
+  for (const timestamp of [-1, NaN, Infinity]) {
+    assert.throws(() => captureSource(engine, timestamp), /finite and non-negative/);
+  }
+  captureSource(engine, 0);
+  const state = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1040, {
+    depthFrame: createDepthFrame({ timestamp: 0 }),
+  });
+  assert.equal(state.frameCount, 1);
+  assert.equal(state.depthFrameTimestamp, 0);
+});
+
+test('delayed depth preserves the source map across translation, scale and rotation', () => {
+  const motions = [
+    { tx: 0, ty: 0, scale: 1, rotation: 0 },
+    { tx: 8, ty: -5, scale: 0.85, rotation: -0.4 },
+    { tx: -10, ty: 4, scale: 1.2, rotation: 0.3 },
+  ];
+  const pointsFor = ({ tx, ty, scale, rotation }) =>
+    createTrackedPoints().map((point) => {
+      const x = point.original.x - 48;
+      const y = point.original.y - 48;
+      return {
+        ...point,
+        current: {
+          x: 48 + tx + scale * (Math.cos(rotation) * x - Math.sin(rotation) * y),
+          y: 48 + ty + scale * (Math.sin(rotation) * x + Math.cos(rotation) * y),
+        },
+      };
+    });
+  for (const sourceMotion of motions) {
+    for (const currentMotion of motions) {
+      const synchronous = createSourceJoinEngine();
+      const delayed = createSourceJoinEngine();
+      const sourceImage = createImageData();
+      const sourceMask = createMask();
+      const depthFrame = createDepthFrame();
+      const sourceContext = {
+        depthRequestTimestamp: 1000,
+        imageData: sourceImage,
+        objectSupportMask: sourceMask,
+        depthState: { state: 'ready' },
+      };
+      const sourcePoints = pointsFor(sourceMotion);
+      const expected = synchronous.addFrameFromTrackedPoints(sourcePoints, 1000, {
+        ...sourceContext,
+        depthFrame,
+      });
+      delayed.addFrameFromTrackedPoints(sourcePoints, 1000, sourceContext);
+      sourceImage.data.fill(0);
+      sourceMask.data.fill(0);
+      sourceMask.bbox.x = 24;
+      sourceMask.bbox.width = 60;
+      const currentImage = createImageData();
+      currentImage.data.fill(220);
+      const currentPoints = pointsFor(currentMotion);
+      sourcePoints.forEach((point, index) => {
+        point.current = currentPoints[index].current;
+      });
+      const points = sourcePoints;
+      const actual = delayed.addFrameFromTrackedPoints(points, 1040, {
+        depthFrame,
+        imageData: currentImage,
+        objectSupportMask: createMask({ x1: 24, x2: 96 }),
+        depthState: { state: 'ready' },
+      });
+      assert.equal(actual.frameCount, 1);
+      assert.deepEqual(actual.preview.points, expected.preview.points);
+      const pose = delayed.estimatePoseFromTrackedPoints(points);
+      assert.equal(pose.success, true);
+      assert.ok(Math.abs(pose.position.x - (48 + currentMotion.tx)) < 1e-6);
+      assert.ok(Math.abs(pose.position.y - (48 + currentMotion.ty)) < 1e-6);
+    }
+  }
+});
+
+const captureAndDeliverDepth = (engine, points, timestamp, context) =>
+  engine.addFrameFromTrackedPoints(points, timestamp, { depthRequestTimestamp: timestamp, ...context });
+
 test('depth fusion waits for a real depth frame before mapping', () => {
   const engine = new DepthFusionReconstructor({ minFrames: 2, minSurfels: 24 });
   engine.reset({
@@ -103,7 +281,7 @@ test('depth fusion waits for a real depth frame before mapping', () => {
     targetClass: 'cup',
   });
 
-  const state = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+  const state = captureAndDeliverDepth(engine, createTrackedPoints(), 1000, {
     depthState: { state: 'loading' },
     objectSupportMask: createMask(),
   });
@@ -121,15 +299,15 @@ test('depth fusion reports missing required fusion inputs without guessing', () 
     targetClass: 'cup',
   });
 
-  const withoutMask = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+  const withoutMask = captureAndDeliverDepth(engine, createTrackedPoints(), 1000, {
     depthFrame: createDepthFrame(),
     depthState: { state: 'ready' },
     imageData: createImageData(),
   });
   assert.equal(withoutMask.lastFailureReason, 'Waiting for object support mask');
 
-  const withoutIntrinsics = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1040, {
-    depthFrame: createDepthFrame(),
+  const withoutIntrinsics = captureAndDeliverDepth(engine, createTrackedPoints(), 1040, {
+    depthFrame: createDepthFrame({ timestamp: 1040 }),
     depthState: { state: 'ready' },
     objectSupportMask: createMask(),
     imageData: createImageData(),
@@ -162,7 +340,7 @@ test('depth fusion can return hot-path state without sampling preview points', (
     return originalPreviewPoints(options);
   };
 
-  const state = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+  const state = captureAndDeliverDepth(engine, createTrackedPoints(), 1000, {
     depthFrame: createDepthFrame(),
     depthState: { state: 'ready' },
     objectSupportMask: createMask(),
@@ -200,13 +378,13 @@ test('depth fusion builds a dense masked surfel map and estimates pose', () => {
     targetClass: 'cup',
   });
 
-  engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+  captureAndDeliverDepth(engine, createTrackedPoints(), 1000, {
     depthFrame: createDepthFrame(),
     depthState: { state: 'ready' },
     objectSupportMask: mask,
     imageData,
   });
-  const state = engine.addFrameFromTrackedPoints(createTrackedPoints({ tx: 4, ty: -3, scale: 1.04 }), 1040, {
+  const state = captureAndDeliverDepth(engine, createTrackedPoints({ tx: 4, ty: -3, scale: 1.04 }), 1040, {
     depthFrame: createDepthFrame({ offset: 0.01, timestamp: 1040 }),
     depthState: { state: 'ready' },
     objectSupportMask: mask,
@@ -265,7 +443,7 @@ test('depth fusion reuses one completed pose fit for the immediate same-snapshot
     return fitPoseObservations(observations);
   };
 
-  const state = engine.addFrameFromTrackedPoints(trackedPoints, 1000, {
+  const state = captureAndDeliverDepth(engine, trackedPoints, 1000, {
     depthFrame: createDepthFrame(),
     depthState: { state: 'ready' },
     objectSupportMask: createMask(),
@@ -304,7 +482,7 @@ test('depth fusion reuses a completed failed fit but rejects stale snapshot evid
     return fitPoseObservations(observations);
   };
 
-  const state = engine.addFrameFromTrackedPoints(collapsedPoints, 1000, {
+  const state = captureAndDeliverDepth(engine, collapsedPoints, 1000, {
     depthFrame: createDepthFrame(),
     depthState: { state: 'ready' },
     objectSupportMask: createMask(),
@@ -318,7 +496,7 @@ test('depth fusion reuses a completed failed fit but rejects stale snapshot evid
   assert.equal(failedPose.reason, state.lastFailureReason);
   assert.equal(fitCount, 1);
 
-  engine.addFrameFromTrackedPoints(createTrackedPoints(), 1040, {
+  captureAndDeliverDepth(engine, createTrackedPoints(), 1040, {
     depthFrame: createDepthFrame({ timestamp: 1040 }),
     depthState: { state: 'ready' },
     objectSupportMask: createMask(),
@@ -346,7 +524,7 @@ test('depth fusion clears pending pose evidence on skipped depth and reference c
     return fitPoseObservations(observations);
   };
 
-  engine.addFrameFromTrackedPoints(trackedPoints, 1000, {
+  captureAndDeliverDepth(engine, trackedPoints, 1000, {
     depthFrame,
     depthState: { state: 'ready' },
     objectSupportMask: createMask(),
@@ -354,7 +532,7 @@ test('depth fusion clears pending pose evidence on skipped depth and reference c
     includePreview: false,
   });
   fitCount = 0;
-  engine.addFrameFromTrackedPoints(trackedPoints, 1040, {
+  captureAndDeliverDepth(engine, trackedPoints, 1040, {
     depthFrame,
     depthState: { state: 'ready' },
     objectSupportMask: createMask(),
@@ -364,7 +542,7 @@ test('depth fusion clears pending pose evidence on skipped depth and reference c
   engine.estimatePoseFromTrackedPoints(trackedPoints, { includePreview: false });
   assert.equal(fitCount, 1);
 
-  engine.addFrameFromTrackedPoints(trackedPoints, 1080, {
+  captureAndDeliverDepth(engine, trackedPoints, 1080, {
     depthFrame: createDepthFrame({ timestamp: 1080 }),
     depthState: { state: 'ready' },
     objectSupportMask: createMask(),
@@ -392,13 +570,13 @@ test('depth fusion pose reuses ranked surfel points during pose estimation', () 
     targetClass: 'cup',
   });
 
-  engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+  captureAndDeliverDepth(engine, createTrackedPoints(), 1000, {
     depthFrame: createDepthFrame(),
     depthState: { state: 'ready' },
     objectSupportMask: mask,
     imageData,
   });
-  engine.addFrameFromTrackedPoints(createTrackedPoints({ tx: 4, ty: -3, scale: 1.04 }), 1040, {
+  captureAndDeliverDepth(engine, createTrackedPoints({ tx: 4, ty: -3, scale: 1.04 }), 1040, {
     depthFrame: createDepthFrame({ offset: 0.01, timestamp: 1040 }),
     depthState: { state: 'ready' },
     objectSupportMask: mask,
@@ -433,7 +611,7 @@ test('depth fusion raw geometry exactly matches the complete ranked surfel proje
     targetClass: 'cup',
   });
 
-  engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+  captureAndDeliverDepth(engine, createTrackedPoints(), 1000, {
     depthFrame: createDepthFrame(),
     depthState: { state: 'ready' },
     objectSupportMask: createMask(),
@@ -468,13 +646,13 @@ test('depth fusion can estimate hot-path pose without live preview geometry', ()
     targetClass: 'cup',
   });
 
-  engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+  captureAndDeliverDepth(engine, createTrackedPoints(), 1000, {
     depthFrame: createDepthFrame(),
     depthState: { state: 'ready' },
     objectSupportMask: mask,
     imageData,
   });
-  engine.addFrameFromTrackedPoints(createTrackedPoints({ tx: 4, ty: -3, scale: 1.04 }), 1040, {
+  captureAndDeliverDepth(engine, createTrackedPoints({ tx: 4, ty: -3, scale: 1.04 }), 1040, {
     depthFrame: createDepthFrame({ offset: 0.01, timestamp: 1040 }),
     depthState: { state: 'ready' },
     objectSupportMask: mask,
@@ -517,7 +695,7 @@ test('depth fusion caps live preview density while retaining the dense surfel ma
     targetClass: 'cup',
   });
 
-  const state = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+  const state = captureAndDeliverDepth(engine, createTrackedPoints(), 1000, {
     depthFrame: createDepthFrame(),
     depthState: { state: 'ready' },
     objectSupportMask: createMask(),
@@ -543,7 +721,7 @@ test('depth fusion only fuses interior object-support pixels', () => {
     targetClass: 'book',
   });
 
-  const state = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+  const state = captureAndDeliverDepth(engine, createTrackedPoints(), 1000, {
     depthFrame: createDepthFrame(),
     depthState: { state: 'ready' },
     objectSupportMask: tightMask,
@@ -574,7 +752,7 @@ test('depth fusion maps compact depth frames across the full source image', () =
     targetClass: 'cup',
   });
 
-  const state = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+  const state = captureAndDeliverDepth(engine, createTrackedPoints(), 1000, {
     depthFrame: {
       width: 32,
       height: 32,
@@ -611,7 +789,7 @@ test('depth fusion rejects temporally inconsistent depth buckets', () => {
     targetClass: 'cup',
   });
 
-  engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+  captureAndDeliverDepth(engine, createTrackedPoints(), 1000, {
     depthFrame: createDepthFrame({ timestamp: 1000 }),
     depthState: { state: 'ready' },
     objectSupportMask: mask,
@@ -620,7 +798,7 @@ test('depth fusion rejects temporally inconsistent depth buckets', () => {
   engine.surfels.forEach((surfel) => {
     surfel.z += 40;
   });
-  const state = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1040, {
+  const state = captureAndDeliverDepth(engine, createTrackedPoints(), 1040, {
     depthFrame: createDepthFrame({ timestamp: 1040 }),
     depthState: { state: 'ready' },
     objectSupportMask: mask,
@@ -647,7 +825,7 @@ test('depth fusion counts each inferred depth frame as evidence exactly once', (
     targetClass: 'cup',
   });
 
-  const first = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1000, {
+  const first = captureAndDeliverDepth(engine, createTrackedPoints(), 1000, {
     depthFrame: firstDepthFrame,
     depthState: { state: 'ready' },
     objectSupportMask: mask,
@@ -657,7 +835,7 @@ test('depth fusion counts each inferred depth frame as evidence exactly once', (
     (total, surfel) => total + surfel.observations,
     0,
   );
-  const duplicate = engine.addFrameFromTrackedPoints(createTrackedPoints({ tx: 3, ty: -2 }), 1040, {
+  const duplicate = captureAndDeliverDepth(engine, createTrackedPoints({ tx: 3, ty: -2 }), 1040, {
     depthFrame: firstDepthFrame,
     depthState: { state: 'ready' },
     objectSupportMask: mask,
@@ -673,7 +851,7 @@ test('depth fusion counts each inferred depth frame as evidence exactly once', (
   assert.equal(duplicate.ready, false);
   assert.equal(observationsAfterDuplicate, observationsAfterFirstFrame);
 
-  const stale = engine.addFrameFromTrackedPoints(createTrackedPoints(), 1060, {
+  const stale = captureAndDeliverDepth(engine, createTrackedPoints(), 1060, {
     depthFrame: createDepthFrame({ timestamp: 900 }),
     depthState: { state: 'ready' },
     objectSupportMask: mask,
@@ -685,7 +863,7 @@ test('depth fusion counts each inferred depth frame as evidence exactly once', (
     observationsAfterFirstFrame,
   );
 
-  const unique = engine.addFrameFromTrackedPoints(createTrackedPoints({ tx: 3, ty: -2 }), 1080, {
+  const unique = captureAndDeliverDepth(engine, createTrackedPoints({ tx: 3, ty: -2 }), 1080, {
     depthFrame: createDepthFrame({ offset: 0.01, timestamp: 1080 }),
     depthState: { state: 'ready' },
     objectSupportMask: mask,

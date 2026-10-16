@@ -194,8 +194,8 @@ export class DepthFusionSurfelMap {
   _samples({ depthFrame, objectSupportMask, imageData }) {
     const samples = [];
     const bbox = objectSupportMask.bbox;
-    const sourceWidth = depthFrame.sourceWidth || depthFrame.width;
-    const sourceHeight = depthFrame.sourceHeight || depthFrame.height;
+    const sourceWidth = depthFrame.sourceWidth;
+    const sourceHeight = depthFrame.sourceHeight;
     const startX = clamp(
       Math.floor((bbox.x / Math.max(sourceWidth, 1)) * depthFrame.width),
       0,

@@ -4,6 +4,7 @@ import { modelFromRegion } from './anchor.parametricGeometry.js';
 import { calculateDepthGeometry, calculateDepthQuality, median } from './anchor.depthFusion.geometry.js';
 import { DepthFusionSurfelMap } from './anchor.depthFusion.surfels.js';
 import { DEPTH_FUSION_POSE_MODEL } from './anchor.reconstructionModes.js';
+import { copyImageData } from '../utils/imageDataTransfer.js';
 
 export { DEPTH_FUSION_POSE_MODEL };
 
@@ -59,12 +60,14 @@ export class DepthFusionReconstructor {
 
   configure({ cameraParams } = {}) {
     this.cameraParams = cameraParams ? { ...cameraParams } : null;
+    this.pendingDepthSource = null;
   }
 
   dispose() {
     this.frames = [];
     this.surfelMap.reset();
     this.pendingPoseEvidence = null;
+    this.pendingDepthSource = null;
   }
 
   reset({ anchorReference, templateRegion = { x: 0, y: 0, width: 1, height: 1 }, targetClass = null }) {
@@ -83,6 +86,7 @@ export class DepthFusionReconstructor {
     this.lastDepthTimestamp = 0;
     this.lastConsumedDepthTimestamp = null;
     this.pendingPoseEvidence = null;
+    this.pendingDepthSource = null;
   }
 
   updateReferenceRegion(templateRegion, targetClass = this.targetClass) {
@@ -90,66 +94,69 @@ export class DepthFusionReconstructor {
     this.targetClass = targetClass;
     this.surfaceModel = modelFromRegion(templateRegion, targetClass);
     this.pendingPoseEvidence = null;
+    this.pendingDepthSource = null;
   }
 
   get surfels() {
     return this.surfelMap.surfels;
   }
 
-  addFrameFromTrackedPoints(trackedPoints, timestamp = performance.now(), context = {}) {
+  addFrameFromTrackedPoints(trackedPoints, _timestamp, context = {}) {
     this.pendingPoseEvidence = null;
+    const previousSource = this.pendingDepthSource;
+    const requestedAt = context.depthRequestTimestamp ?? null;
+    if (requestedAt !== null) {
+      if (!Number.isFinite(requestedAt) || requestedAt < 0) {
+        throw new TypeError('Depth source timestamp must be finite and non-negative');
+      }
+      this.pendingDepthSource = this._captureDepthSource(trackedPoints, requestedAt, context);
+    }
     const stateOptions = { includePreview: context.includePreview !== false };
     const depthFrame = context.depthFrame;
     const depthStatus = context.depthState?.state || (depthFrame ? 'ready' : this.lastDepthStatus);
     this.lastDepthStatus = depthStatus;
 
     if (!depthFrame) {
+      if (depthStatus === 'error') {
+        this.pendingDepthSource = null;
+      }
       this.lastFailureReason = context.depthState?.error || 'Waiting for depth map';
-      return this.getState(stateOptions);
-    }
-
-    if (!context.objectSupportMask) {
-      this.lastFailureReason = 'Waiting for object support mask';
-      return this.getState(stateOptions);
-    }
-
-    if (!context.imageData) {
-      this.lastFailureReason = 'Waiting for RGB frame';
-      return this.getState(stateOptions);
-    }
-
-    if (!this.cameraParams) {
-      this.lastFailureReason = 'Waiting for camera intrinsics';
       return this.getState(stateOptions);
     }
 
     if (this.lastConsumedDepthTimestamp !== null && depthFrame.timestamp <= this.lastConsumedDepthTimestamp) {
       return this.getState(stateOptions);
     }
-
-    const poseEvidence = this._createPoseEvidence(trackedPoints);
-    this.pendingPoseEvidence = poseEvidence;
-    if (poseEvidence.observations.length < this.minPoseLandmarks) {
-      this.lastFailureReason = 'Insufficient landmarks for depth fusion pose';
+    const source = [previousSource, this.pendingDepthSource].find(
+      (candidate) => candidate?.timestamp === depthFrame.timestamp,
+    );
+    if (!source) {
+      this.lastFailureReason = 'Depth source frame is unavailable';
       return this.getState(stateOptions);
     }
-
-    const fit = this._completePoseEvidence(poseEvidence);
-    if (!fit.success) {
-      this.lastFailureReason = fit.reason;
-      return this.getState(stateOptions);
+    if (source === this.pendingDepthSource) {
+      this.pendingDepthSource = null;
     }
-
     this.lastConsumedDepthTimestamp = depthFrame.timestamp;
-
+    if (source.failureReason) {
+      this.lastFailureReason = source.failureReason;
+      return this.getState(stateOptions);
+    }
+    if (
+      depthFrame.sourceWidth !== source.imageData.width ||
+      depthFrame.sourceHeight !== source.imageData.height
+    ) {
+      this.lastFailureReason = 'Depth source raster mismatch';
+      return this.getState(stateOptions);
+    }
     const fused = this.surfelMap.fuse({
       depthFrame,
-      fit: fit.transform,
-      objectSupportMask: context.objectSupportMask,
-      imageData: context.imageData,
-      timestamp,
-      templateRegion: this.templateRegion,
-      cameraParams: this.cameraParams,
+      fit: source.fit,
+      objectSupportMask: source.objectSupportMask,
+      imageData: source.imageData,
+      timestamp: source.timestamp,
+      templateRegion: source.templateRegion,
+      cameraParams: source.cameraParams,
     });
 
     if (fused.accepted < this.minSurfels * 0.22) {
@@ -158,7 +165,7 @@ export class DepthFusionReconstructor {
     }
 
     this.frames.push({
-      timestamp,
+      timestamp: source.timestamp,
       accepted: fused.accepted,
       rejected: fused.rejected,
       consistency: fused.consistency,
@@ -171,11 +178,48 @@ export class DepthFusionReconstructor {
 
     this.lastDepthProvider = depthFrame.provider || null;
     this.lastDepthInferenceTime = depthFrame.processingTime || 0;
-    this.lastDepthTimestamp = depthFrame.timestamp || timestamp;
+    this.lastDepthTimestamp = depthFrame.timestamp;
     const stats = this._statistics();
     this.state = this.frames.length >= this.minFrames && stats.mapConfidence >= 0.5 ? 'ready' : 'mapping';
     this.lastFailureReason = this.state === 'ready' ? null : 'Collecting stable depth keyframes';
     return this._createState(stats, stateOptions);
+  }
+
+  _captureDepthSource(trackedPoints, timestamp, { objectSupportMask, imageData }) {
+    let failureReason = !objectSupportMask
+      ? 'Waiting for object support mask'
+      : !imageData
+        ? 'Waiting for RGB frame'
+        : !this.cameraParams
+          ? 'Waiting for camera intrinsics'
+          : null;
+    if (failureReason) {
+      return { timestamp, failureReason };
+    }
+
+    const evidence = this._createPoseEvidence(trackedPoints);
+    this.pendingPoseEvidence = evidence;
+    if (evidence.observations.length < this.minPoseLandmarks) {
+      failureReason = 'Insufficient landmarks for depth fusion pose';
+    } else {
+      const fit = this._completePoseEvidence(evidence);
+      if (fit.success) {
+        return {
+          timestamp,
+          fit: { ...fit.transform },
+          imageData: copyImageData(imageData),
+          objectSupportMask: {
+            ...objectSupportMask,
+            bbox: { ...objectSupportMask.bbox },
+            data: new Uint8Array(objectSupportMask.data),
+          },
+          templateRegion: { ...this.templateRegion },
+          cameraParams: { ...this.cameraParams },
+        };
+      }
+      failureReason = fit.reason;
+    }
+    return { timestamp, failureReason };
   }
 
   estimatePoseFromTrackedPoints(trackedPoints, { includePreview = true } = {}) {

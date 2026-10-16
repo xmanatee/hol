@@ -250,6 +250,8 @@ export const createSyntheticDepthFrame = ({ frame, sequence, index, timestamp })
   return {
     width,
     height,
+    sourceWidth: width,
+    sourceHeight: height,
     data,
     timestamp,
     processingTime: 7.5,
@@ -360,6 +362,7 @@ export const replayImageAnchorSequence = async ({
         depthFrame
           ? {
               depthFrame,
+              depthRequestTimestamp: replayTime,
               depthState: { state: 'ready', provider: depthFrame.provider },
             }
           : {

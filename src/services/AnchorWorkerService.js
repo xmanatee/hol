@@ -105,6 +105,9 @@ export class AnchorWorkerService {
     }
 
     const transfer = prepareImageDataTransfer(imageData);
+    if (depthContext?.depthFrame) {
+      transfer.transferList.push(depthContext.depthFrame.data.buffer);
+    }
     const workerGeneration = this.workerGeneration;
     this.frameRequestId = this.nextRequestId;
     this.frameCapturedAt = capturedAt;
