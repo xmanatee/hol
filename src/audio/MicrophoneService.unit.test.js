@@ -59,7 +59,7 @@ const createStream = () => {
   };
 };
 
-test('microphone frame reads each analyser domain exactly once', () => {
+test('microphone samples each analyser domain once and never learns sustained speech as noise', () => {
   const service = new MicrophoneService();
   let frequencyReads = 0;
   let timeReads = 0;
@@ -85,6 +85,15 @@ test('microphone frame reads each analyser domain exactly once', () => {
   assert.equal(frequencyReads, 1);
   assert.equal(timeReads, 1);
   assert.equal(frame.voiceActive, frame.energy > service.voiceActivityThreshold);
+  assert.equal(frame.voiceActive, true);
+  const sustainedEnergy = frame.energy;
+  for (let index = 1; index < 200; index++) {
+    const sustained = service.readFrame();
+    assert.equal(sustained.voiceActive, true);
+    assert.equal(sustained.energy, sustainedEnergy);
+  }
+  assert.equal(frequencyReads, 200);
+  assert.equal(timeReads, 200);
 });
 
 test('microphone initialization coalesces concurrent permission requests', async () => {

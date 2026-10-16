@@ -1,14 +1,10 @@
-import { RECONSTRUCTION_MODES, RECONSTRUCTION_POSE_MODEL } from '../../cv/anchor.reconstructionModes.js';
+import { OBJECT_POSE_MODEL, RECONSTRUCTION_MODES } from '../../cv/anchor.reconstructionModes.js';
 import { DrawerSection, DynamicText } from './FieldControlPrimitives.jsx';
 import { cx } from './uiClassNames.js';
 
 const ADVANCED_POSE_OPTIONS = [
-  ['auto', 'Auto'],
-  ...RECONSTRUCTION_MODES.filter((mode) => mode.id !== RECONSTRUCTION_POSE_MODEL).map((mode) => [
-    mode.id,
-    mode.label,
-  ]),
-  ['object-pose', 'Object pose'],
+  [OBJECT_POSE_MODEL, 'Object pose'],
+  ...RECONSTRUCTION_MODES.map((mode) => [mode.id, mode.label]),
 ];
 
 const MeshControls = ({
@@ -70,21 +66,22 @@ export const FieldControlsModel = ({
   onMeshVisibilityChange,
   onRotationChange,
 }) => {
-  const selectedMode = anchorTrackingMode === RECONSTRUCTION_POSE_MODEL ? 'auto' : anchorTrackingMode;
-
   return (
     <DrawerSection title="Model">
       <div className="space-y-3 text-xs">
+        <p className="text-gray-300">
+          Object pose is recommended for the phone demo. Reconstruction modes are experimental.
+        </p>
         <div className="grid grid-cols-2 gap-1">
           {ADVANCED_POSE_OPTIONS.map(([mode, label]) => (
             <button
               key={mode}
               type="button"
-              aria-pressed={selectedMode === mode}
+              aria-pressed={anchorTrackingMode === mode}
               onClick={() => onAnchorTrackingModeChange(mode)}
               className={cx(
                 'min-h-10 rounded-md border px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70',
-                selectedMode === mode
+                anchorTrackingMode === mode
                   ? 'border-emerald-500 bg-emerald-950 text-emerald-100'
                   : 'border-white/10 bg-white/5 text-gray-300',
               )}

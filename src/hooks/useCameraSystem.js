@@ -4,6 +4,7 @@ import {
   disposeCameraSessionServices,
 } from '../services/CameraSessionServices.js';
 import { AnchorSelectionGate } from '../services/AnchorSelectionGate.js';
+import { OBJECT_POSE_MODEL } from '../cv/anchor.reconstructionModes.js';
 import { createAnchorStateStore } from '../utils/anchorStateStore.js';
 import { copyImageData } from '../utils/imageDataTransfer.js';
 import { LatestValueMailbox } from '../utils/latestValueMailbox.js';
@@ -25,7 +26,7 @@ const createIdleAnchorState = () => ({
   candidate: null,
   anchorState: null,
   sampledAt: null,
-  trackingMode: 'sparse-reconstruction',
+  trackingMode: OBJECT_POSE_MODEL,
   initialized: false,
   error: null,
 });
@@ -461,8 +462,8 @@ export const useCameraSystem = (config = {}) => {
   );
 
   const selectAnchorFromTap = useCallback(
-    ({ candidateId, tapPosition, captureFrame }) => {
-      return anchorSelectionGate.run(async () => {
+    ({ candidateId, tapPosition }) => {
+      return anchorSelectionGate.run(() => {
         if (!session.anchor.initialized) {
           return {
             success: false,
@@ -474,17 +475,11 @@ export const useCameraSystem = (config = {}) => {
         if (candidateId === null) {
           return { success: false, reason: 'Wait for an object to be highlighted before tapping' };
         }
-        const result = await session.anchor.selectCandidate({
+        return session.anchor.selectCandidate({
           candidateId,
           tapPosition,
           capturedAt: performance.now(),
         });
-
-        if (result.success) {
-          captureFrame();
-        }
-
-        return result;
       });
     },
     [anchorSelectionGate, session, visionError],

@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger.js';
+import { OBJECT_POSE_MODEL } from '../cv/anchor.reconstructionModes.js';
 import { prepareImageDataTransfer } from '../utils/imageDataTransfer.js';
 import { assertWorkerRequestTimeout, WorkerRequestRegistry } from '../utils/workerRequestRegistry.js';
 
@@ -23,7 +24,7 @@ export class AnchorWorkerService {
     this.anchorState = null;
     this.segmentationRefresh = null;
     this.sampledAt = null;
-    this.trackingMode = 'sparse-reconstruction';
+    this.trackingMode = OBJECT_POSE_MODEL;
     this.worker = null;
     this.workerPromise = null;
     this.loadWorkerClass = loadWorkerClass;

@@ -1,6 +1,4 @@
-import { isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
-
-const OBJECT_POSE_MODEL = 'object-pose';
+import { isReconstructionMode, OBJECT_POSE_MODEL } from '../cv/anchor.reconstructionModes.js';
 
 export const shouldAutoStartObjectVoice = ({ trackingMode, reconstructionReady, hasUserGesture }) => {
   if (!hasUserGesture) {

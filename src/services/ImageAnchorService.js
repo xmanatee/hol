@@ -12,6 +12,7 @@ import { AffineParallaxPoseEstimator } from '../cv/anchor.affinePose.js';
 import {
   DEPTH_FUSION_POSE_MODEL,
   DIRECT_PHOTOMETRIC_POSE_MODEL,
+  OBJECT_POSE_MODEL,
   isReconstructionMode,
   PARAMETRIC_SURFACE_POSE_MODEL,
   RECONSTRUCTION_MODE_IDS,
@@ -61,8 +62,7 @@ import {
   mergeObjectSupportRefreshSignal,
 } from '../cv/objectSupportRefreshSignal.js';
 
-const POSE_MODEL = 'object-pose';
-const TRACKING_MODES = new Set([POSE_MODEL, ...RECONSTRUCTION_MODE_IDS]);
+const TRACKING_MODES = new Set([OBJECT_POSE_MODEL, ...RECONSTRUCTION_MODE_IDS]);
 const PLANAR_TARGET_CLASS_PATTERN =
   /book|notebook|paper|document|poster|photo|picture|painting|card|ticket|label|badge|laptop|keyboard|cell phone|smartphone|phone|tablet|tv|screen|sign|whiteboard|bag/i;
 const RIGID_PLANAR_TARGET_CLASS_PATTERN =
@@ -312,7 +312,7 @@ export class ImageAnchorService {
     this.expandedObjectSupportRegion = false;
     this.anchorTargetClass = null;
     this.rigidPlanarRecoveryEligible = false;
-    this.trackingMode = POSE_MODEL;
+    this.trackingMode = OBJECT_POSE_MODEL;
     this.planarDominanceScore = 0;
     this.framesSinceRefresh = 0;
     this.refreshInterval = 15; // Refresh keypoints every N frames
@@ -338,7 +338,7 @@ export class ImageAnchorService {
       lostFrameCount: 0,
       keypointFailureCount: 0,
       targetPresent: false,
-      poseModel: POSE_MODEL,
+      poseModel: OBJECT_POSE_MODEL,
       trackingMode: this.trackingMode,
       poseSource: null,
       poseSourceHoldReason: null,
@@ -451,7 +451,7 @@ export class ImageAnchorService {
 
     this.trackingMode = mode;
     this.metrics.trackingMode = mode;
-    this.metrics.poseModel = isReconstructionMode(mode) ? mode : POSE_MODEL;
+    this.metrics.poseModel = isReconstructionMode(mode) ? mode : OBJECT_POSE_MODEL;
     this._notifyStateChange();
   }
 
@@ -732,7 +732,7 @@ export class ImageAnchorService {
         homographyInliers: 0,
         affinePoseInliers: 0,
         poseInliers: 0,
-        poseModel: isReconstructionMode(this.trackingMode) ? this.trackingMode : POSE_MODEL,
+        poseModel: isReconstructionMode(this.trackingMode) ? this.trackingMode : OBJECT_POSE_MODEL,
         trackingMode: this.trackingMode,
         poseSource: null,
         readiness,
@@ -1681,7 +1681,7 @@ export class ImageAnchorService {
     this.metrics.poseNormalReason = null;
     this.metrics.poseNormalCandidateSource = null;
     this.metrics.planarPnpBranchSelection = null;
-    this.metrics.poseModel = isReconstructionMode(this.trackingMode) ? this.trackingMode : POSE_MODEL;
+    this.metrics.poseModel = isReconstructionMode(this.trackingMode) ? this.trackingMode : OBJECT_POSE_MODEL;
     const poseEstimationStart = this._startUpdateTiming(updateTimings);
     stageStart = this._startUpdateTiming(updateTimings);
     const objectPose = this._estimateObjectPoseFromTracker();

@@ -1,4 +1,5 @@
 import { DynamicText } from './FieldControlPrimitives.jsx';
+import { readLocalAISetup } from '../../api/localAISetup.js';
 
 export const PersonalityPanel = ({
   personalityData,
@@ -9,6 +10,7 @@ export const PersonalityPanel = ({
 }) => {
   const { isProcessing, currentPersona, error, lastRTT } = personalityData;
   const { isSynthesizing, isPlaying, error: ttsError, lastLatency } = ttsData || {};
+  const { personalityReady, speechReady } = readLocalAISetup();
 
   if (!hasActiveTrack) {
     return (
@@ -51,6 +53,18 @@ export const PersonalityPanel = ({
             Retry
           </button>
         )}
+      </div>
+    );
+  }
+
+  if (!personalityReady) {
+    return (
+      <div role="status" className="space-y-2 text-xs text-gray-300 [overflow-wrap:anywhere]">
+        <p>AI personality is not configured. Camera tracking and microphone lip-sync work locally.</p>
+        <p>
+          Set VITE_LOCAL_AI_BASE_URL and VITE_LOCAL_AI_MODEL to your self-hosted multimodal server, then
+          rebuild.
+        </p>
       </div>
     );
   }
@@ -106,10 +120,10 @@ export const PersonalityPanel = ({
             <button
               type="button"
               onClick={onSpeakGreeting}
-              disabled={isSynthesizing || isPlaying}
+              disabled={!speechReady || isSynthesizing || isPlaying}
               aria-busy={isSynthesizing}
               className={`px-3 py-1 text-xs rounded font-medium ${
-                isSynthesizing || isPlaying
+                !speechReady || isSynthesizing || isPlaying
                   ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
                   : 'bg-green-600 text-white hover:bg-green-700'
               }`}
@@ -121,6 +135,12 @@ export const PersonalityPanel = ({
               <div aria-hidden="true" className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
             )}
           </div>
+
+          {!speechReady && (
+            <p className="text-xs text-gray-300 [overflow-wrap:anywhere]">
+              Set VITE_LOCAL_AI_TTS_MODEL and VITE_LOCAL_AI_TTS_VOICE to enable generated speech.
+            </p>
+          )}
 
           {lastLatency > 0 && (
             <div className="text-xs text-gray-400">Last TTS latency: {Math.round(lastLatency)}ms</div>

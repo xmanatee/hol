@@ -18,6 +18,16 @@ for (const [failure, failedUrl, title] of [
     test.skip(browserName !== 'chromium', 'Canvas video capture is a Chromium fixture');
     test.setTimeout(120_000);
     const errors = [];
+    const optionalAIRequests = [];
+    page.on('request', (request) => {
+      if (
+        /\/assets\/(?:PersonalityService|localAIClient|ttsClient)-|\/chat\/completions$|\/audio\/speech$/.test(
+          request.url(),
+        )
+      ) {
+        optionalAIRequests.push(request.url());
+      }
+    });
     let navigations = 0;
     page.on('framenavigated', (frame) => {
       if (frame === page.mainFrame()) navigations++;
@@ -33,12 +43,20 @@ for (const [failure, failedUrl, title] of [
       window.__holDepthSourcePairs = [];
       window.__holModeSnapshots = [];
       window.__holSelectionCommands = [];
+      window.__holCameraReadbacks = 0;
+      window.__holAnchorFrameCommands = 0;
+      const getImageData = CanvasRenderingContext2D.prototype.getImageData;
+      CanvasRenderingContext2D.prototype.getImageData = function (...args) {
+        window.__holCameraReadbacks++;
+        return getImageData.apply(this, args);
+      };
       window.Worker = new Proxy(NativeWorker, {
         construct(target, args) {
           const worker = Reflect.construct(target, args);
           if (/\/anchor\.worker-[\w-]+\.js$/.test(String(args[0]))) {
             const postMessage = worker.postMessage.bind(worker);
             worker.postMessage = (message, transfers) => {
+              if (message.command === 'processFrame') window.__holAnchorFrameCommands++;
               if (message.command === 'selectCandidate') {
                 window.__holSelectionCommands.push({
                   selection: message.payload,
@@ -84,8 +102,56 @@ for (const [failure, failedUrl, title] of [
         window.__holLastDrawAt = performance.now();
         return drawElements.apply(this, args);
       };
+      const uniformNames = new WeakMap();
+      window.__holMicrophoneAnalysisReads = 0;
+      const getByteTimeDomainData = AnalyserNode.prototype.getByteTimeDomainData;
+      AnalyserNode.prototype.getByteTimeDomainData = function (data) {
+        window.__holMicrophoneAnalysisReads++;
+        return getByteTimeDomainData.call(this, data);
+      };
+      const getUniformLocation = WebGL2RenderingContext.prototype.getUniformLocation;
+      WebGL2RenderingContext.prototype.getUniformLocation = function (program, name) {
+        const location = getUniformLocation.call(this, program, name);
+        if (location) uniformNames.set(location, name);
+        return location;
+      };
+      const uniform1fv = WebGL2RenderingContext.prototype.uniform1fv;
+      let referenceMorphs = null;
+      window.__holSpeechMorphChange = 0;
+      WebGL2RenderingContext.prototype.uniform1fv = function (location, values, ...rest) {
+        if (
+          window.__holObserveSpeechMorphs &&
+          uniformNames.get(location)?.startsWith('morphTargetInfluences')
+        ) {
+          referenceMorphs ??= Array.from(values);
+          for (let index = 0; index < values.length; index++) {
+            window.__holSpeechMorphChange = Math.max(
+              window.__holSpeechMorphChange,
+              Math.abs(values[index] - referenceMorphs[index]),
+            );
+          }
+        }
+        return uniform1fv.call(this, location, values, ...rest);
+      };
       const physicalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
       navigator.mediaDevices.getUserMedia = async (constraints) => {
+        if (!constraints.video && constraints.audio) {
+          const audio = new AudioContext();
+          await audio.resume();
+          const source = audio.createOscillator();
+          const gain = audio.createGain();
+          const destination = audio.createMediaStreamDestination();
+          source.frequency.value = 330;
+          gain.gain.value = 0.15;
+          source.connect(gain).connect(destination);
+          source.start();
+          window.__holMicrophoneTrack = destination.stream.getAudioTracks()[0];
+          window.__holCloseAudioFixture = async () => {
+            source.stop();
+            await audio.close();
+          };
+          return destination.stream;
+        }
         if (!constraints.video) return physicalGetUserMedia(constraints);
         const canvas = document.createElement('canvas');
         canvas.width = 320;
@@ -228,6 +294,42 @@ for (const [failure, failedUrl, title] of [
         .evaluate((canvas, original) => canvas === original, overlayCanvas),
     ).toBe(true);
     await page.getByRole('button', { name: 'Debug drawer' }).click();
+    if (failure === null) {
+      await page.getByRole('tab', { name: 'voice', exact: true }).click();
+      await expect(page.getByText('AI personality is not configured.', { exact: false })).toBeVisible();
+      await expect(page.getByText('Microphone mode animates the face', { exact: false })).toBeVisible();
+      await page.evaluate(() => {
+        window.__holObserveSpeechMorphs = true;
+      });
+      await page.getByRole('button', { name: 'Microphone mode off', exact: true }).click();
+      const mic = page.getByText('Mic', { exact: true }).locator('..');
+      const energy = page.getByText('Energy', { exact: true }).locator('..');
+      await expect(mic).toContainText('active');
+      await expect
+        .poll(() => page.evaluate(() => window.__holMicrophoneAnalysisReads), { timeout: 15_000 })
+        .toBeGreaterThanOrEqual(90);
+      await expect
+        .poll(() => page.evaluate(() => window.__holSpeechMorphChange), { timeout: 15_000 })
+        .toBeGreaterThan(0.01);
+      await expect
+        .poll(async () => Number.parseInt((await energy.textContent()).replace('Energy', ''), 10), {
+          timeout: 15_000,
+        })
+        .toBeGreaterThan(0);
+      await expect
+        .poll(() => page.evaluate(() => window.__holSpeechMorphChange), { timeout: 15_000 })
+        .toBeGreaterThan(0.01);
+      await page.screenshot({ path: testInfo.outputPath('microphone-lip-sync.png') });
+      await page.getByRole('button', { name: 'Microphone mode on', exact: true }).click();
+      await expect(mic).toContainText('idle');
+      await expect(energy).toContainText('0%');
+      expect(await page.evaluate(() => window.__holMicrophoneTrack.readyState)).toBe('ended');
+      await page.evaluate(() => window.__holCloseAudioFixture());
+      expect(await page.evaluate(() => window.__holCameraReadbacks - window.__holAnchorFrameCommands)).toBe(
+        0,
+      );
+      expect(optionalAIRequests).toEqual([]);
+    }
     await page.getByRole('tab', { name: 'model', exact: true }).click();
     await page.getByRole('button', { name: 'Depth Fusion', exact: true }).click();
     if (failure === 'depth') {
@@ -260,7 +362,7 @@ for (const [failure, failedUrl, title] of [
     expect(depthSources.every(([capturedAt, requestedAt]) => capturedAt === requestedAt)).toBe(true);
     expect(await page.evaluate(() => window.__holDepthTransferred)).toBe(true);
     for (const [label, mode] of [
-      ['Auto', 'sparse-reconstruction'],
+      ['Sparse SfM', 'sparse-reconstruction'],
       ['Surface Fit', 'parametric-surface'],
       ['Photometric', 'direct-photometric'],
       ['Object pose', 'object-pose'],

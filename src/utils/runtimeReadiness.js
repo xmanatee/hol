@@ -1,10 +1,9 @@
 import { readViteEnv } from '../api/viteEnv.js';
+import { assessLocalAISetup } from '../api/localAISetup.js';
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
 const isLocalOrigin = (hostname) => LOCAL_HOSTS.has(hostname);
-
-const normalizePresent = (value) => Boolean(value && String(value).trim());
 
 export const probeWebGLSupport = (documentObject) => {
   const canvas = documentObject.createElement('canvas');
@@ -38,9 +37,14 @@ export const assessRuntimeReadiness = ({
   localTTSVoice,
 }) => {
   const secureContext = Boolean(isSecureContext) || protocol === 'https:' || isLocalOrigin(hostname);
-  const hasLocalAIModels =
-    normalizePresent(localAIModel) ||
-    (normalizePresent(localAIPersonaModel) && normalizePresent(localAIVisionModel));
+  const { personalityReady, speechReady } = assessLocalAISetup({
+    localAIBaseUrl,
+    localAIModel,
+    localAIPersonaModel,
+    localAIVisionModel,
+    localTTSModel,
+    localTTSVoice,
+  });
   const cameraChecks = [
     {
       id: 'secureContext',
@@ -93,25 +97,20 @@ export const assessRuntimeReadiness = ({
     {
       id: 'localAI',
       label: 'Local AI',
-      ok: normalizePresent(localAIBaseUrl) && hasLocalAIModels,
+      ok: personalityReady,
       severity: 'optional',
-      detail:
-        normalizePresent(localAIBaseUrl) && hasLocalAIModels
-          ? 'Self-hosted vision and personality generation configured'
-          : 'Set the local AI URL and either one shared model or both stage-specific models',
+      detail: personalityReady
+        ? 'Self-hosted vision and personality generation configured'
+        : 'Set the local AI URL and either one shared model or both stage-specific models',
     },
     {
       id: 'localSpeech',
       label: 'Local speech',
-      ok:
-        normalizePresent(localAIBaseUrl) &&
-        normalizePresent(localTTSModel) &&
-        normalizePresent(localTTSVoice),
+      ok: speechReady,
       severity: 'optional',
-      detail:
-        normalizePresent(localAIBaseUrl) && normalizePresent(localTTSModel) && normalizePresent(localTTSVoice)
-          ? 'Self-hosted speech synthesis configured'
-          : 'Set VITE_LOCAL_AI_TTS_MODEL and VITE_LOCAL_AI_TTS_VOICE for object speech',
+      detail: speechReady
+        ? 'Self-hosted speech synthesis configured'
+        : 'Set VITE_LOCAL_AI_TTS_MODEL and VITE_LOCAL_AI_TTS_VOICE for object speech',
     },
   ];
   const performanceChecks = [

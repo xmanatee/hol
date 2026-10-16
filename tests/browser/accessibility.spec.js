@@ -249,7 +249,10 @@ test('every field-control section meets the supported WCAG A and AA rules', asyn
     'false',
   );
   await page.getByRole('tab', { name: 'Model' }).click();
-  await expect(page.getByRole('button', { name: 'Auto' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Object pose', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
 });
 
 test('field controls reflow long bidirectional runtime text at 320 CSS pixels', async ({

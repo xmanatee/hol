@@ -64,7 +64,7 @@ const createState = (overrides = {}) => ({
   nextObservationAt: 0,
   anchorState: null,
   segmentationRefresh: null,
-  trackingMode: 'sparse-reconstruction',
+  trackingMode: 'object-pose',
   initialized: false,
   error: null,
   sampledAt: null,
@@ -122,7 +122,8 @@ test('anchor worker client does not publish or allocate for a duplicate tracking
     publications++;
   });
 
-  service.setTrackingMode('sparse-reconstruction');
+  assert.equal(service.getState().trackingMode, 'object-pose');
+  service.setTrackingMode('object-pose');
 
   assert.equal(publications, 0);
   assert.equal(FakeAnchorWorker.instances.length, 0);
@@ -251,7 +252,7 @@ test('anchor reset cancels lazy worker creation and starts only the latest calib
     viewportWidth: 640,
     viewportHeight: 360,
     fov: 70,
-    trackingMode: 'sparse-reconstruction',
+    trackingMode: 'object-pose',
   });
 
   FakeAnchorWorker.instances[0].reply({

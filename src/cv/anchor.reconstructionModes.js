@@ -1,3 +1,4 @@
+export const OBJECT_POSE_MODEL = 'object-pose';
 export const RECONSTRUCTION_POSE_MODEL = 'sparse-reconstruction';
 export const PARAMETRIC_SURFACE_POSE_MODEL = 'parametric-surface';
 export const DIRECT_PHOTOMETRIC_POSE_MODEL = 'direct-photometric';

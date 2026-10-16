@@ -45,6 +45,9 @@ const VoiceControls = ({
   ttsData,
 }) => (
   <div className="space-y-3 text-xs">
+    <p className="text-gray-300">
+      Microphone mode animates the face from your voice locally. It does not transcribe speech or chat.
+    </p>
     <button
       type="button"
       aria-pressed={microphoneMode}

@@ -86,7 +86,7 @@ test('cancelled depth imports cannot start or orphan a superseded runtime', asyn
 
   await page.getByRole('button', { name: 'Depth Fusion' }).click();
   await depthChunkRequested;
-  await page.getByRole('button', { name: 'Auto', exact: true }).click();
+  await page.getByRole('button', { name: 'Object pose', exact: true }).click();
   await page.getByRole('button', { name: 'Depth Fusion' }).click();
   releaseDepthChunk();
 
@@ -105,7 +105,7 @@ test('cancelled depth imports cannot start or orphan a superseded runtime', asyn
     terminated: 0,
   });
 
-  await page.getByRole('button', { name: 'Auto', exact: true }).click();
+  await page.getByRole('button', { name: 'Object pose', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.__depthWorkerLifecycle.terminated)).toBe(1);
 });
 

@@ -2,7 +2,7 @@
 
 HOL is a mobile-first, privacy-preserving camera app. Point at an object, wait for its green highlight, then tap to attach an animated talking face. Discovery and object-owned landmark tracking start before selection; tapping commits the prepared object without rebuilding its map.
 
-The default camera and animation path is fully local. Optional object understanding, persona generation, and speech use keyless OpenAI-compatible HTTP contracts pointed at infrastructure you control.
+The default camera and animation path is fully local. Object-pose tracking is the phone-demo default; reconstruction modes are explicit experiments, not an automatic quality upgrade. Optional object understanding, persona generation, and speech use keyless OpenAI-compatible HTTP contracts pointed at infrastructure you control.
 
 ## Runtime architecture
 
@@ -24,7 +24,7 @@ The frame path is deliberately classical and cheap:
 
 1. A user gesture starts the rear camera.
 2. The browser compositor presents the video directly. `requestVideoFrameCallback` supplies newly presented frames with backpressure, while the transparent 2D canvas contains diagnostics only.
-3. One private capture canvas reads pixels only for admitted scheduled CV work (15 Hz maximum, one frame in flight). With no candidate, discovery attempts are spaced by at least 750 ms. CV pixels stay in native sensor coordinates; display mirroring, pointer inversion, and WebGL projection share one explicit transform at their boundaries. A tap sends only selection metadata; a successful commit can capture a separate persona image.
+3. One private capture canvas reads pixels only for admitted scheduled CV work (15 Hz maximum, one frame in flight). With no candidate, discovery attempts are spaced by at least 750 ms. CV pixels stay in native sensor coordinates; display mirroring, pointer inversion, and WebGL projection share one explicit transform at their boundaries. A tap sends only selection metadata. Persona generation captures a separate current image only after its service configuration and selected-object ownership are verified.
 4. The anchor worker owns full-resolution masks and CV buffers. `ObjectObservationSession` owns the discovered subject, freshness, continuous-observation readiness, focus release, and explicit selection. The manager owns segmentation and tracking, and waits for each RGB frame's requested mask refresh before releasing its transaction. Only interactive object masks can become candidates; tap-local provisional support cannot become green. Selection requires three successful updates spanning at least 180 ms, underlying face readiness, a sample at most 300 ms old, and a tap inside the current object mask. An unselected object leaving the center is released after 700 ms; a selected identity is retained for recovery. Worker initialization is single-flight and generation-bound; every mutation is FIFO. UI messages contain compact snapshots only.
 5. LK handles normal motion. Pose availability and target presence are separate contracts: a short pose hold can preserve internal continuity, but it immediately hides the overlay. After the bounded LK failure budget, the target enters `lost`; `degraded` gets one local evidence attempt and enters `lost` immediately if it fails, so local templates cannot create an identity lock or an endless hold loop. Re-entry from `lost` requires image-wide ORB relocalization. XFeat is consulted only after ORB fails: immediately for conservatively proven planes, or after normal tracking has produced accepted mature ORB evidence for an unknown/generic free tap. Those targets retain at most two learned views: the initial accepted keyframe and the third accepted keyframe. One query extraction is matched against each view independently, and the strongest valid geometry wins; a rejected extension cannot discard the initial view. Known curved classes retain their class-specific recovery. ORB runs on every admitted recovery update; XFeat is limited to every second failed-ORB update. Global and learned recovery require at least eight descriptor inliers and eight restored landmarks (local ORB continuity requires five); a verified match atomically reseeds position, scale, and rotation filters in its absolute coordinate frame.
 6. The optional depth runtime is generation-bound from lazy page import through result publication. It shares the anchor/XFeat FIFO command handler; transport, deadline, and model errors retire it until explicit reinitialization. Estimates return a newly computed frame or `null`, never a cached map for skipped work. Each request carries its camera capture timestamp. The anchor worker retains one source RGB/mask/pose-fit snapshot while tracking continues; returned depth is fused against that source, never the latest RGB or pose. Reference changes and failures release the snapshot; missing sources and raster mismatches explicitly reject fusion. The latest-value mailbox delivers each inferred frame at most once, and fusion rejects duplicate or older timestamps. Depth buffers transfer directly into the anchor worker; source RGB/mask copies are made only for accepted depth requests, not every tracking update.
@@ -43,6 +43,19 @@ npm run dev
 ```
 
 Camera access on iPhone requires a secure context. Use a trusted local certificate or HTTPS tunnel. To expose Vite to the LAN, pass --host 0.0.0.0 and terminate TLS in front of it.
+
+## Android phone demo
+
+Use current Chrome. Defaults are rear camera, ideal 960×540 at 30 FPS, bounded 15 Hz tracking, object-pose attachment, and rendering capped at 1.5× pixel ratio; depth inference and debug drawing stay off. Start with one well-lit, matte, textured object (for example printed packaging), centered and filling roughly half the view. Wait for green, tap once, and move slowly. Blank/glossy surfaces, rapid turns, occlusion, and large viewpoint changes remain difficult tracking cases.
+
+For a private USB demo without installing a phone certificate:
+
+1. Connect Android to the computer, enable USB debugging, and authorize the computer on the phone.
+2. Run `npm run build` and `npm run preview` here.
+3. In desktop Chrome, open `chrome://inspect/#devices`, enable USB discovery, and forward device port `4274` to `127.0.0.1:4274` using **Port forwarding**.
+4. On the phone, open `http://localhost:4274`, tap Start Camera, and allow rear-camera access. Loopback is a trusted camera origin. For untethered use, serve the production build over trusted HTTPS; a plain HTTP LAN address is not sufficient.
+
+The microphone button requests microphone access separately and animates the face from your voice, entirely locally. It does not transcribe or provide conversational replies. Object-generated greetings require the self-hosted vision/personality and TTS configuration below; without it, the app explicitly shows setup status and does not attempt model requests or capture a persona image. Configuration is not a provider-health check. Device-specific camera/GPU performance still needs physical-phone validation.
 
 ## Optional local AI and speech
 

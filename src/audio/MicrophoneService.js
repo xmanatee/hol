@@ -28,7 +28,6 @@ export class MicrophoneService {
     this.inputGain = 3.0;
     this.debugMode = false;
     this.debugCounter = 0;
-    this.energyHistory = [];
     this.baselineNoise = 0;
     this.stateChangeHandler = null;
     this.latestFrame = createSilentFrame();
@@ -139,26 +138,17 @@ export class MicrophoneService {
     this.analyserNode.getByteFrequencyData(this.frequencyData);
     this.analyserNode.getByteTimeDomainData(this.timeData);
 
-    let energy = 0;
+    let squaredSum = 0;
     for (let index = 0; index < this.timeData.length; index++) {
       const sample = (this.timeData[index] - 128) / 128;
-      energy += sample * sample;
+      squaredSum += sample * sample;
     }
-    energy = Math.sqrt(energy / this.timeData.length) * this.inputGain;
-
-    if (this.energyHistory.length < 10) {
-      this.energyHistory.push(energy);
-      if (this.energyHistory.length === 10) {
-        this.baselineNoise = Math.min(...this.energyHistory) * 1.5;
-        if (this.debugMode) {
-          logger.info('MicrophoneService', 'Baseline noise level set to:', this.baselineNoise);
-        }
-      }
-    } else {
-      this.baselineNoise = this.baselineNoise * 0.995 + energy * 0.005;
+    const rms = Math.sqrt(squaredSum / this.timeData.length);
+    const energy = Math.min(1, Math.max(0, rms - this.baselineNoise) * this.inputGain * 2);
+    const voiceActive = energy > this.voiceActivityThreshold;
+    if (!voiceActive) {
+      this.baselineNoise += (rms - this.baselineNoise) * 0.005;
     }
-
-    energy = Math.min(1, Math.max(0, energy - this.baselineNoise) * 2);
 
     let weightedSum = 0;
     let magnitudeSum = 0;
@@ -168,7 +158,6 @@ export class MicrophoneService {
       magnitudeSum += magnitude;
     }
     const centroid = magnitudeSum > 0 ? weightedSum / magnitudeSum : 0;
-    const voiceActive = energy > this.voiceActivityThreshold;
     this.latestFrame.energy = energy;
     this.latestFrame.centroid = centroid;
     this.latestFrame.voiceActive = voiceActive;
@@ -200,7 +189,6 @@ export class MicrophoneService {
   }
 
   resetBaseline() {
-    this.energyHistory = [];
     this.baselineNoise = 0;
   }
 
@@ -228,7 +216,6 @@ export class MicrophoneService {
     this.analyserNode = null;
     this.frequencyData = null;
     this.timeData = null;
-    this.energyHistory = [];
     this.baselineNoise = 0;
     this.debugCounter = 0;
 
