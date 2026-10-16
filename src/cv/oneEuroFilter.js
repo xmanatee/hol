@@ -1,46 +1,20 @@
-// =============================================================================
-// One-Euro Filter
-//
-// Source: http://www.lifl.fr/~casiez/1euro/
-//
-// This implementation accepts either seconds or performance.now() milliseconds.
-// =============================================================================
-
-class LowPassFilter {
-  constructor(alpha) {
-    this.y = 0;
-    this.a = alpha;
-    this.s = 0;
-    this.initialized = false;
-  }
-
-  setAlpha(alpha) {
-    this.a = alpha;
-  }
-
-  filter(value) {
-    if (this.initialized) {
-      this.s = this.a * value + (1.0 - this.a) * this.s;
-    } else {
-      this.s = value;
-      this.initialized = true;
-    }
-    return this.s;
-  }
-}
-
-const timestampDeltaToSeconds = (delta) => (delta > 10 ? delta / 1000 : delta);
-
+// One Euro-style filtering with sample-domain velocity smoothing: https://gery.casiez.net/1euro/
+// Sample timestamps use performance.now() milliseconds, including zero.
 export class OneEuroFilter {
   constructor(freq, minCutOff = 1.0, beta = 0.0, dCutOff = 1.0) {
+    if (![freq, minCutOff, dCutOff].every((value) => Number.isFinite(value) && value > 0)) {
+      throw new RangeError('Filter frequency and cutoffs must be positive finite numbers.');
+    }
+    if (!Number.isFinite(beta) || beta < 0) {
+      throw new RangeError('Filter speed coefficient must be a non-negative finite number.');
+    }
     this.freq = freq;
     this.minCutOff = minCutOff;
     this.beta = beta;
-    this.dCutOff = dCutOff;
-    this.x = new LowPassFilter(this.alpha(minCutOff));
-    this.dx = new LowPassFilter(this.alpha(dCutOff));
-    this.lastTime = 0;
-    this.initialized = false;
+    this.derivativeAlpha = this.alpha(dCutOff);
+    this.value = null;
+    this.derivative = 0;
+    this.lastTime = null;
   }
 
   alpha(cutOff) {
@@ -49,18 +23,26 @@ export class OneEuroFilter {
     return 1.0 / (1.0 + tau / te);
   }
 
-  filter(value, timestamp = null) {
-    if (this.lastTime && timestamp && this.lastTime !== timestamp) {
-      this.freq = 1.0 / timestampDeltaToSeconds(timestamp - this.lastTime);
+  filter(value, timestamp) {
+    if (!Number.isFinite(value) || !Number.isFinite(timestamp) || timestamp < 0) {
+      throw new RangeError('Filter samples require a finite value and a non-negative millisecond timestamp.');
     }
-    this.lastTime = timestamp || this.lastTime + 1.0 / this.freq;
+    if (this.lastTime !== null) {
+      const elapsedMs = timestamp - this.lastTime;
+      if (elapsedMs < 0) throw new RangeError('Filter timestamps must not move backwards.');
+      if (elapsedMs > 0) this.freq = 1 / (elapsedMs / 1000);
+    }
+    this.lastTime = timestamp;
+    if (this.value === null) {
+      this.value = value;
+      return value;
+    }
 
-    const previous = this.x.s;
-    const dvalue = this.initialized ? (value - previous) * this.freq : 0.0;
-    const edvalue = this.dx.filter(dvalue);
-    const cutOff = this.minCutOff + this.beta * Math.abs(edvalue);
-    this.x.setAlpha(this.alpha(cutOff));
-    this.initialized = true;
-    return this.x.filter(value);
+    const velocity = (value - this.value) * this.freq;
+    this.derivative = this.derivativeAlpha * velocity + (1 - this.derivativeAlpha) * this.derivative;
+    const cutOff = this.minCutOff + this.beta * Math.abs(this.derivative);
+    const valueAlpha = this.alpha(cutOff);
+    this.value = valueAlpha * value + (1 - valueAlpha) * this.value;
+    return this.value;
   }
 }

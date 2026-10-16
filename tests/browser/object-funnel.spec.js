@@ -194,7 +194,6 @@ for (const [failure, failedUrl, title] of [
     await page.evaluate(() => {
       window.__holOriginalStream = document.querySelector('video').srcObject;
     });
-    await page.screenshot({ path: testInfo.outputPath('discovery.png') });
     await expect(page.locator('.overlay-scene')).toHaveCount(0);
     const selectionCanvas = page.getByRole('button', { name: 'Select the object at the camera center' });
     await selectionCanvas.click();

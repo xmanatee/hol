@@ -131,15 +131,31 @@ test('depth delivery and the next source capture can share one tracking update',
   assert.equal(second.depthFrameTimestamp, 1040);
 });
 
-for (const action of ['reset', 'updateReferenceRegion', 'configure', 'error', 'dispose']) {
+test('a tracking-region refresh preserves delayed depth in its captured coordinate reference', () => {
+  const control = createSourceJoinEngine();
+  const refreshed = createSourceJoinEngine();
+  captureSource(control, 1000);
+  captureSource(refreshed, 1000);
+  refreshed.updateReferenceRegion({ x: 10, y: 10, width: 76, height: 76 });
+  const deliver = (engine) =>
+    engine.addFrameFromTrackedPoints(createTrackedPoints({ tx: 5 }), 1040, {
+      depthFrame: createDepthFrame(),
+    });
+  const expected = deliver(control);
+  const actual = deliver(refreshed);
+  assert.equal(actual.frameCount, 1);
+  assert.equal(actual.depthFrameTimestamp, 1000);
+  assert.ok(actual.preview.points.length > 0);
+  assert.equal(actual.landmarkCount, expected.landmarkCount);
+  assert.deepEqual(actual.preview.points, expected.preview.points);
+});
+
+for (const action of ['reset', 'configure', 'error', 'dispose']) {
   test(`${action} invalidates delayed depth instead of attaching it to another reference`, () => {
     const engine = createSourceJoinEngine();
     captureSource(engine, 1000);
     if (action === 'reset') {
       engine.reset({ anchorReference: { x: 48, y: 48 } });
-    }
-    if (action === 'updateReferenceRegion') {
-      engine.updateReferenceRegion({ x: 10, y: 10, width: 72, height: 72 });
     }
     if (action === 'dispose') {
       engine.dispose();

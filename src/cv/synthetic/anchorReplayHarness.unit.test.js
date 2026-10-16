@@ -2,9 +2,58 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { ANCHOR_TRACKING_INTERVAL_MS } from '../../utils/cvScheduling.js';
+import { OBJECT_POSE_MODEL } from '../anchor.reconstructionModes.js';
 import { replayImageAnchorSequence, summarizeReplay } from './anchorReplayHarness.js';
+import { scoreHeadPoseReplay } from './headPoseReplayHarness.js';
 import { loadOpenCvForNode } from './opencvNodeLoader.js';
-import { createPlanarBookSequence } from './visionFixtures.js';
+import {
+  createCylindricalCanSequence,
+  createGlossyCanSequence,
+  createPlanarBookSequence,
+} from './visionFixtures.js';
+
+// Ground-truth masks isolate tracking from segmentation. Neither fixture certifies physical devices.
+test('default object-pose attachment stays bounded on a classless printed cylinder at production cadence', async () => {
+  const cv = await loadOpenCvForNode();
+  const sequence = createCylindricalCanSequence();
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence,
+    trackingMode: OBJECT_POSE_MODEL,
+    targetClassOverride: 'unknown',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+    updateIntervalMs: ANCHOR_TRACKING_INTERVAL_MS,
+  });
+  const summary = summarizeReplay(replay);
+  assert.equal(replay.anchorCreated, true);
+  assert.equal(summary.frameCount, sequence.frames.length - 1);
+  assert.equal(summary.successfulFrames, summary.frameCount);
+  assert.equal(summary.failedFrames, 0);
+  assert.ok(summary.meanAnchorError <= 6, `Mean anchor error: ${summary.meanAnchorError}px`);
+  assert.ok(summary.maxAnchorError <= 15, `Maximum anchor error: ${summary.maxAnchorError}px`);
+  assert.ok(summary.maxFrameJump <= 12 + 1e-9, `Frame jump: ${summary.maxFrameJump}px`);
+  assert.ok(scoreHeadPoseReplay({ replay, sequence }).frames.some((frame) => frame.predicted.visible));
+});
+
+test('a glossy classless cylinder hides its face when tracking loses the object', async () => {
+  const cv = await loadOpenCvForNode();
+  const sequence = createGlossyCanSequence();
+  const replay = await replayImageAnchorSequence({
+    cv,
+    sequence,
+    trackingMode: OBJECT_POSE_MODEL,
+    targetClassOverride: 'unknown',
+    useObjectSupportMask: true,
+    refreshObjectSupportMask: true,
+    updateIntervalMs: ANCHOR_TRACKING_INTERVAL_MS,
+  });
+  assert.equal(replay.anchorCreated, true);
+  const head = scoreHeadPoseReplay({ replay, sequence });
+  assert.equal(head.frames.length, sequence.frames.length - 1);
+  const lost = head.frames.filter((frame) => !frame.success);
+  assert.ok(lost.every((frame) => frame.predicted.visible === false));
+});
 
 test('production-cadence replay scores every source frame while holding poses between admitted updates', async () => {
   const cv = await loadOpenCvForNode();

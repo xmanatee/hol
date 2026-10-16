@@ -967,8 +967,9 @@ export class ImageAnchorService {
     });
     this.positionFilterX = createPositionFilter();
     this.positionFilterY = createPositionFilter();
-    this.positionFilterX.filter(corrected.x, this.now());
-    this.positionFilterY.filter(corrected.y, this.now());
+    const timestamp = this.now();
+    this.positionFilterX.filter(corrected.x, timestamp);
+    this.positionFilterY.filter(corrected.y, timestamp);
     this.metrics.objectSupportPositionCorrection = reason;
     this.metrics.objectSupportPositionSource = objectSupportMask.source;
     this.metrics.objectSupportPositionDelta = distance;
@@ -2109,6 +2110,7 @@ export class ImageAnchorService {
           anchorPosition: recoveryAnchor,
           resetReconstruction: true,
           reason: 'support-recovery-reference-collapse',
+          timestamp,
           updateTimings,
         });
         this.metrics.landmarkRefreshCandidateCount = reinitializationOutcome.candidateCount;
@@ -3468,6 +3470,7 @@ export class ImageAnchorService {
       anchorPosition = null,
       resetReconstruction = false,
       reason = 'keypoint-reinitialization',
+      timestamp,
       updateTimings = null,
     } = {},
   ) {
@@ -3525,8 +3528,8 @@ export class ImageAnchorService {
     };
     this.positionFilterX = createPositionFilter();
     this.positionFilterY = createPositionFilter();
-    this.positionFilterX.filter(this.currentPosition.x, this.now());
-    this.positionFilterY.filter(this.currentPosition.y, this.now());
+    this.positionFilterX.filter(this.currentPosition.x, timestamp);
+    this.positionFilterY.filter(this.currentPosition.y, timestamp);
     this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, grayImage, {
       tapPosition: this.currentPosition,
       admission: 'trusted-selection',

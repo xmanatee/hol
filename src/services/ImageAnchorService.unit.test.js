@@ -6804,6 +6804,7 @@ test('keypoint reinitialization reports actual failure and resets reconstruction
       objectSupportMask: null,
       resetReconstruction: true,
       reason: 'test-recovery',
+      timestamp: 1000,
     },
   );
 
@@ -6844,6 +6845,7 @@ test('keypoint reinitialization reports actual failure and resets reconstruction
       objectSupportMask: null,
       resetReconstruction: true,
       reason: 'test-recovery',
+      timestamp: 1000,
     },
   );
 
@@ -6896,6 +6898,7 @@ test('support recovery reinitialization shares the current frame position envelo
       anchorPosition: { x: 96, y: 68, z: 0 },
       resetReconstruction: true,
       reason: 'support-recovery-reference-collapse',
+      timestamp: 1000,
     },
   );
   const frameStep = Math.hypot(
@@ -6906,6 +6909,9 @@ test('support recovery reinitialization shares the current frame position envelo
   assert.equal(result.success, true);
   assert.equal(result.frameStepLimited, true);
   assert.ok(frameStep <= 9.6 + 1e-6);
+  assert.doesNotThrow(() =>
+    service._filterPositionCandidate(service.currentPosition, 1000, 'reference_similarity_transform'),
+  );
 });
 
 test('partial-occlusion flow admission requires a present mature curved map', async () => {

@@ -94,7 +94,7 @@ export class DepthFusionReconstructor {
     this.targetClass = targetClass;
     this.surfaceModel = modelFromRegion(templateRegion, targetClass);
     this.pendingPoseEvidence = null;
-    this.pendingDepthSource = null;
+    // A tracking ROI refresh does not change the coordinate reference of the captured depth source.
   }
 
   get surfels() {
