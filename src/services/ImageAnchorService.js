@@ -18,6 +18,7 @@ import {
   RECONSTRUCTION_POSE_MODEL,
 } from '../cv/anchor.reconstructionModes.js';
 import { createReconstructionEngine } from '../cv/anchor.reconstructionEngineFactory.js';
+import { SparseObjectReconstructor } from '../cv/anchor.reconstruction.js';
 import {
   isConfirmedObjectOwnedLandmark,
   isProbationaryObjectOwnedLandmark,
@@ -275,7 +276,7 @@ export class ImageAnchorService {
     this.learnedReferencePromise = null;
     this.homographyEstimator = new HomographyEstimator();
     this.affinePoseEstimator = new AffineParallaxPoseEstimator();
-    this.reconstructor = createReconstructionEngine(RECONSTRUCTION_POSE_MODEL);
+    this.reconstructor = new SparseObjectReconstructor();
     this.objectSurfaceModel = new ObjectSurfaceModel();
     this.persistenceSystem = new AnchorPersistenceSystem();
 
@@ -403,8 +404,8 @@ export class ImageAnchorService {
     this.reconstructor.updateReferenceRegion(region, this.anchorTargetClass);
   }
 
-  _createConfiguredReconstructor(mode) {
-    const reconstructor = createReconstructionEngine(mode);
+  async _createConfiguredReconstructor(mode) {
+    const reconstructor = await createReconstructionEngine(mode);
     if (this.cv && this.cameraParams) {
       reconstructor.configure({
         cv: this.cv,
@@ -414,7 +415,7 @@ export class ImageAnchorService {
     return reconstructor;
   }
 
-  setTrackingMode(mode) {
+  async setTrackingMode(mode) {
     if (!TRACKING_MODES.has(mode)) {
       throw new Error(`Unsupported anchor tracking mode: ${mode}`);
     }
@@ -422,15 +423,17 @@ export class ImageAnchorService {
       return;
     }
 
-    this.trackingMode = mode;
-    this.metrics.trackingMode = mode;
-    this.metrics.poseModel = isReconstructionMode(mode) ? mode : POSE_MODEL;
-
     if (this.anchored && this.currentPosition) {
-      this.reconstructor.dispose();
-      this.reconstructor = this._createConfiguredReconstructor(
+      const previousReconstructor = this.reconstructor;
+      const reconstructor = await this._createConfiguredReconstructor(
         isReconstructionMode(mode) ? mode : RECONSTRUCTION_POSE_MODEL,
       );
+      if (!this.anchored || this.reconstructor !== previousReconstructor) {
+        reconstructor.dispose();
+        throw new Error('Anchor changed during reconstruction mode change');
+      }
+      previousReconstructor.dispose();
+      this.reconstructor = reconstructor;
       this.reconstructor.reset({
         anchorReference: this.keypointTracker.anchorOriginalPosition || this.currentPosition,
         templateRegion: this.trackingRegion ||
@@ -446,6 +449,9 @@ export class ImageAnchorService {
       this.metrics.reconstructionReady = false;
     }
 
+    this.trackingMode = mode;
+    this.metrics.trackingMode = mode;
+    this.metrics.poseModel = isReconstructionMode(mode) ? mode : POSE_MODEL;
     this._notifyStateChange();
   }
 
@@ -588,7 +594,7 @@ export class ImageAnchorService {
         });
       }
       this.reconstructor.dispose();
-      this.reconstructor = this._createConfiguredReconstructor(
+      this.reconstructor = await this._createConfiguredReconstructor(
         isReconstructionMode(this.trackingMode) ? this.trackingMode : RECONSTRUCTION_POSE_MODEL,
       );
       this.reconstructor.reset({
@@ -596,9 +602,6 @@ export class ImageAnchorService {
         templateRegion: reconstructionRegion,
         targetClass,
       });
-      if (this.reconstructor.ready) {
-        await this.reconstructor.ready;
-      }
       const tapDescriptorRecoveryEligible =
         this.rigidPlanarRecoveryEligible ||
         (this.trackingMode === RECONSTRUCTION_POSE_MODEL &&

@@ -288,7 +288,7 @@ export const replayImageAnchorSequence = async ({
       featureExtractorFactory: createXFeatFeatureExtractorForNode,
     }),
   });
-  service.setTrackingMode(trackingMode);
+  await service.setTrackingMode(trackingMode);
   await service.initialize(cv, getCameraParams(sequence));
 
   const firstFrame = sequence.frames[0];

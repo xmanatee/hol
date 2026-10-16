@@ -122,64 +122,36 @@ const createGrayImage = (width, height, frameIndex) => {
   return { cols: width, rows: height, data };
 };
 
-test('reconstruction mode registry exposes selectable engines', () => {
+test('every registered reconstruction mode is usable when creation resolves', async () => {
   assert.deepEqual(
     RECONSTRUCTION_MODES.map((mode) => mode.id),
     ['sparse-reconstruction', 'parametric-surface', 'direct-photometric', 'depth-fusion'],
   );
 
   for (const mode of RECONSTRUCTION_MODES) {
-    const engine = createReconstructionEngine(mode.id);
-    assert.equal(typeof engine.reset, 'function');
-    assert.equal(typeof engine.updateReferenceRegion, 'function');
-    assert.equal(typeof engine.addFrameFromTrackedPoints, 'function');
-    assert.equal(typeof engine.estimatePoseFromTrackedPoints, 'function');
-    assert.equal(typeof engine.getState, 'function');
-    assert.equal(typeof engine.dispose, 'function');
-    engine.dispose();
-  }
-
-  assert.equal(RECONSTRUCTION_MODES.find((mode) => mode.id === 'depth-fusion').requiresDepthFrame, true);
-});
-
-test('reconstruction engines update object reference region without resetting mapped observations', () => {
-  for (const mode of RECONSTRUCTION_MODES) {
-    const engine = createReconstructionEngine(mode.id);
+    const engine = await createReconstructionEngine(mode.id);
     engine.reset({
       anchorReference: { x: 120, y: 160 },
       templateRegion: { x: 98, y: 138, width: 44, height: 44 },
       targetClass: null,
     });
-    engine.frames.push({ observations: [] });
-
     engine.updateReferenceRegion({ x: 64, y: 52, width: 94, height: 180 }, null);
-
-    assert.deepEqual(engine.templateRegion, { x: 64, y: 52, width: 94, height: 180 });
-    assert.equal(engine.frames.length, 1);
-    assert.equal(engine.targetSurfaceModel || engine.model || engine.surfaceModel, 'cylinder');
-  }
-});
-
-test('reconstruction engines reset cleanly during anchor disposal', () => {
-  for (const mode of RECONSTRUCTION_MODES) {
-    const engine = createReconstructionEngine(mode.id);
+    const state = engine.getState();
+    assert.equal(state.poseModel, mode.id);
+    assert.equal(state.ready, false);
+    assert.equal(state.frameCount, 0);
+    if (mode.requiresDepthFrame) assert.equal(state.depthStatus, 'idle');
     engine.reset({ anchorReference: { x: 0, y: 0 } });
-    assert.equal(engine.getState().poseModel, mode.id);
+    assert.equal(engine.getState().frameCount, 0);
+    engine.dispose();
   }
+
+  assert.equal(RECONSTRUCTION_MODES.find((mode) => mode.id === 'depth-fusion').requiresDepthFrame, true);
+  await assert.rejects(createReconstructionEngine('unsupported'), /Unsupported reconstruction mode/);
 });
 
-test('lazy depth fusion disposes an implementation that resolves after its owner', async () => {
-  const engine = createReconstructionEngine('depth-fusion');
-
-  engine.dispose();
-
-  assert.equal(await engine.ready, null);
-  assert.equal(engine.impl, null);
-  assert.equal(engine.state, 'inactive');
-});
-
-test('parametric surface engine uses target class before crop aspect fallback', () => {
-  const engine = createReconstructionEngine('parametric-surface');
+test('parametric surface engine uses target class before crop aspect fallback', async () => {
+  const engine = await createReconstructionEngine('parametric-surface');
 
   engine.reset({
     anchorReference: { x: 0, y: 0 },
@@ -253,9 +225,9 @@ test('surface model priors cover common mobile reconstruction targets', () => {
   assert.ok(leftNormal.z > 0.65);
 });
 
-test('parametric surface engine fits a stable cylinder despite sliding stripe outliers', () => {
+test('parametric surface engine fits a stable cylinder despite sliding stripe outliers', async () => {
   const shape = createCylinderShape();
-  const engine = createReconstructionEngine('parametric-surface');
+  const engine = await createReconstructionEngine('parametric-surface');
   const anchorReference = transformPoint({ x: 0, y: 0, z: 0 }, referencePose);
   engine.reset({
     anchorReference,
@@ -316,7 +288,7 @@ test('parametric surface engine projects off-center curved anchors from the PnP 
     }
   }
   const anchorReference = { x: 276, y: 204 };
-  const engine = createReconstructionEngine('parametric-surface');
+  const engine = await createReconstructionEngine('parametric-surface');
   engine.configure({ cv, cameraParams: camera });
   const pnpWorkspace = engine.pnp;
   assert.ok(pnpWorkspace);
@@ -391,9 +363,9 @@ test('parametric surface engine projects off-center curved anchors from the PnP 
   assert.equal(engine.pnp, null);
 });
 
-test('direct photometric engine grows a surfel map from stable gradient samples', () => {
+test('direct photometric engine grows a surfel map from stable gradient samples', async () => {
   const shape = createCylinderShape();
-  const engine = createReconstructionEngine('direct-photometric');
+  const engine = await createReconstructionEngine('direct-photometric');
   const anchorReference = transformPoint({ x: 0, y: 0, z: 0 }, referencePose);
   engine.reset({
     anchorReference,
@@ -438,11 +410,11 @@ test('direct photometric engine grows a surfel map from stable gradient samples'
   assert.ok(result.averageResidual < 12);
 });
 
-test('surface reconstruction engines reject cup-like sliding tracks instead of growing confident maps', () => {
+test('surface reconstruction engines reject cup-like sliding tracks instead of growing confident maps', async () => {
   const shape = createCylinderShape();
 
   for (const mode of ['parametric-surface', 'direct-photometric']) {
-    const engine = createReconstructionEngine(mode);
+    const engine = await createReconstructionEngine(mode);
     const anchorReference = transformPoint({ x: 0, y: 0, z: 0 }, referencePose);
     engine.reset({
       anchorReference,

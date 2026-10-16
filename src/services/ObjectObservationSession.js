@@ -190,7 +190,7 @@ export class ObjectObservationSession {
 
   setTrackingMode(mode) {
     this._assertActive();
-    this.manager.setTrackingMode(mode);
+    return this.manager.setTrackingMode(mode);
   }
 
   dispose() {

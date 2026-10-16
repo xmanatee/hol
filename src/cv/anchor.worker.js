@@ -29,7 +29,7 @@ const createManager = async ({ viewportWidth, viewportHeight, fov, trackingMode 
     }),
   });
   await nextManager.initialize(cv, viewportWidth, viewportHeight, fov);
-  nextManager.setTrackingMode(trackingMode);
+  await nextManager.setTrackingMode(trackingMode);
   manager = new ObjectObservationSession({
     manager: nextManager,
     width: viewportWidth,
@@ -46,8 +46,8 @@ const handlers = {
     ensureManager().clearAnchor();
     return true;
   },
-  setTrackingMode: ({ mode }) => {
-    ensureManager().setTrackingMode(mode);
+  setTrackingMode: async ({ mode }) => {
+    await ensureManager().setTrackingMode(mode);
     return true;
   },
   dispose: () => {

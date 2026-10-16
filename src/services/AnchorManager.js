@@ -1,7 +1,6 @@
 import { ImageAnchorService } from './ImageAnchorService.js';
 import { InteractiveSegmenterService } from './InteractiveSegmenterService.js';
 import { HomographyEstimator } from '../cv/anchor.homography.js';
-import { RECONSTRUCTION_POSE_MODEL } from '../cv/anchor.reconstructionModes.js';
 import { calculateTapLocalRadius, isPointInsideObjectSupport } from '../cv/objectSupportMask.js';
 import {
   CURVED_OBJECT_RECOVERY_REASON,
@@ -67,8 +66,6 @@ export class AnchorManager {
   } = {}) {
     this.imageAnchorService = imageAnchorService;
     this.interactiveSegmenterService = interactiveSegmenterService;
-    this.trackingMode = RECONSTRUCTION_POSE_MODEL;
-    this.imageAnchorService.setTrackingMode(this.trackingMode);
 
     this.mode = 'selection';
     this.activeAnchor = null;
@@ -193,7 +190,6 @@ export class AnchorManager {
         quality: creationResult.quality,
         method: creationResult.method,
         state: creationResult.state,
-        trackingMode: this.trackingMode,
         readiness: creationResult.readiness,
         overlaySceneReady: creationResult.readiness?.faceReady === true,
         evidence: creationResult.evidence,
@@ -400,7 +396,7 @@ export class AnchorManager {
   _hasPoseDropout() {
     const metrics = this.anchorState?.metrics || {};
     const targetClass = this.activeAnchor?.selectionRegion?.surfaceHint || metrics.targetClass || '';
-    const trackingMode = this.activeAnchor?.trackingMode || this.trackingMode || metrics.trackingMode;
+    const trackingMode = this.imageAnchorService.trackingMode;
     return hasPosePositionDropout(metrics, { targetClass, trackingMode });
   }
 
@@ -412,12 +408,8 @@ export class AnchorManager {
 
   _shouldDeferObjectSupportRefresh() {
     const metrics = this.anchorState?.metrics || {};
-    return this._shouldDeferSparseMugPoseDropoutRecovery(metrics);
-  }
-
-  _shouldDeferSparseMugPoseDropoutRecovery(metrics) {
     const targetClass = this.activeAnchor?.selectionRegion?.surfaceHint || metrics.targetClass;
-    const trackingMode = this.activeAnchor?.trackingMode || this.trackingMode || metrics.trackingMode;
+    const trackingMode = this.imageAnchorService.trackingMode;
     return shouldDeferSparseMugPoseDropoutRecovery(metrics, targetClass, trackingMode);
   }
 
@@ -555,22 +547,20 @@ export class AnchorManager {
   getState() {
     return {
       mode: this.mode,
-      activeAnchor: this.activeAnchor,
+      activeAnchor: this.activeAnchor
+        ? { ...this.activeAnchor, trackingMode: this.imageAnchorService.trackingMode }
+        : null,
       anchorState: this.anchorState,
       segmentationRefresh: this.segmentationRefresh,
-      trackingMode: this.trackingMode,
+      trackingMode: this.imageAnchorService.trackingMode,
       initialized: this.initialized,
     };
   }
 
-  setTrackingMode(mode) {
-    if (this.trackingMode === mode) {
-      return;
-    }
-
-    this.trackingMode = mode;
-    this.imageAnchorService.setTrackingMode(mode);
-    this._notifyUpdate();
+  async setTrackingMode(mode) {
+    this._assertNotDisposedDuring('tracking mode change');
+    await this.imageAnchorService.setTrackingMode(mode);
+    this._releaseLateImageAnchorWorkIfDisposed('tracking mode change');
   }
 
   /**

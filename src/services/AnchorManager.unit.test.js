@@ -34,25 +34,18 @@ const createTapMask = () =>
     updatedAtFrame: 0,
   });
 
-test('anchor manager ignores a duplicate tracking-mode selection', () => {
-  let childUpdates = 0;
-  const manager = new AnchorManager({
-    imageAnchorService: {
-      setTrackingMode: () => {
-        childUpdates++;
-      },
-    },
-    interactiveSegmenterService: {},
-  });
+test('anchor manager ignores a duplicate tracking-mode selection', async () => {
+  const manager = new AnchorManager();
+  const before = manager.getState();
   let publications = 0;
   manager.addListener(() => {
     publications++;
   });
 
-  manager.setTrackingMode('sparse-reconstruction');
+  await manager.setTrackingMode(before.trackingMode);
 
-  assert.equal(childUpdates, 1);
   assert.equal(publications, 0);
+  assert.deepEqual(manager.getState(), before);
 });
 
 const createTapFrame = () => ({
@@ -67,7 +60,7 @@ test('anchor manager initialization is single-flight', async () => {
   let listenerCount = 0;
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       initialize: () => {
         initializationCount++;
         return initialization.promise;
@@ -97,7 +90,7 @@ test('anchor manager disposal wins initialization already in flight', async () =
   let listenerCount = 0;
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       initialize: () => initialization.promise,
       addListener: () => {
         listenerCount++;
@@ -142,7 +135,7 @@ test('anchor manager disposal cleans up initialization that rejects late', async
   let imageAnchorDisposals = 0;
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       initialize: () => initialization.promise,
       dispose: () => {
         imageAnchorDisposals++;
@@ -171,7 +164,7 @@ test('anchor manager disposal cancels tap creation before image-anchor work star
   let createAnchorCount = 0;
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       createAnchor: async () => {
         createAnchorCount++;
         return { success: false };
@@ -200,7 +193,7 @@ test('anchor manager disposal rejects a late image-anchor creation result', asyn
   let imageAnchorDisposals = 0;
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       createAnchor: () => creation.promise,
       dispose: () => {
         imageAnchorDisposals++;
@@ -238,7 +231,7 @@ test('anchor manager disposal rejects a late tracking result', async () => {
   let imageAnchorDisposals = 0;
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       updateAnchor: () => update.promise,
       dispose: () => {
         imageAnchorDisposals++;
@@ -265,7 +258,7 @@ test('anchor manager disposal ignores a queued child state callback', async () =
   let childListener = null;
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       initialize: async () => {},
       addListener: (listener) => {
         childListener = listener;
@@ -296,7 +289,7 @@ test('anchor manager disposes every runtime it owns', () => {
   let segmenterDisposals = 0;
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       dispose: () => {
         imageAnchorDisposals++;
       },
@@ -334,7 +327,6 @@ test('anchor manager attaches tap-time segmenter mask before creating image anch
   });
   let receivedSelectionRegion = null;
   const imageAnchorService = {
-    setTrackingMode: () => {},
     createAnchor: async (imageData, tapPosition, selectionRegion) => {
       receivedSelectionRegion = selectionRegion;
       return {
@@ -390,7 +382,7 @@ test('anchor manager creates a free-tap anchor when segmentation succeeds', asyn
   objectSupportMask.bbox = { x: 4, y: 24, width: 33, height: 33 };
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       createAnchor: async (imageData, tapPosition, selectionRegion) => ({
         success: true,
         position: tapPosition,
@@ -441,7 +433,7 @@ test('discovery fails before feature extraction when segmentation is empty, unav
     let creations = 0;
     const manager = new AnchorManager({
       imageAnchorService: {
-        setTrackingMode: () => {},
+        trackingMode: 'sparse-reconstruction',
         createAnchor: async () => {
           creations++;
           throw new Error('No object mask');
@@ -479,7 +471,7 @@ test('anchor manager propagates live object mask preview into active-anchor diag
   };
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
     },
     interactiveSegmenterService: {},
   });
@@ -513,7 +505,7 @@ test('anchor manager propagates live object mask preview into active-anchor diag
 test('anchor manager records overlay readiness once and never regresses it during pose loss', () => {
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
     },
     interactiveSegmenterService: {},
   });
@@ -562,7 +554,7 @@ test('anchor manager refreshes segmentation when object-owned landmark ratio dro
   let receivedMaxRadius = null;
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       updateObjectSupportMask: (mask, { reason }) => {
         updateReason = reason;
         assert.equal(mask, refreshedMask);
@@ -627,7 +619,7 @@ test('segmentation refresh cannot invent object support when the segmenter retur
 
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       updateObjectSupportMask: (mask, { reason }) => {
         appliedMask = mask;
         updateReason = reason;
@@ -688,8 +680,8 @@ test('the frame transaction waits until its exact segmentation result has been a
   let requestedFrame = null;
   const manager = new AnchorManager({
     imageAnchorService: {
+      trackingMode: 'sparse-reconstruction',
       frameIndex: 7,
-      setTrackingMode: () => {},
       updateObjectSupportMask: () => {
         applied = true;
         return true;
@@ -754,7 +746,7 @@ test('pose dropout records accepted and service-rejected overlapping support ref
   let applyMask = true;
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       updateObjectSupportMask: (mask, { reason }) => {
         assert.equal(mask, refreshedMask);
         updateReason = reason;
@@ -841,7 +833,7 @@ test('pose dropout records accepted and service-rejected overlapping support ref
 test('failed recovery segmentation clears the in-flight latch for later attempts', async () => {
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       updateObjectSupportMask: () => {
         throw new Error('refresh should not apply after segmentation failure');
       },
@@ -923,7 +915,7 @@ test('clearing an anchor invalidates an in-flight segmentation refresh', async (
   let applied = false;
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       clearAnchor: () => {},
       updateObjectSupportMask: () => {
         applied = true;
@@ -999,7 +991,7 @@ test('curved motion hold requests recovery segmentation before interval elapses'
   let updateReason = null;
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       updateObjectSupportMask: (mask, { reason }) => {
         assert.equal(mask, refreshedMask);
         updateReason = reason;
@@ -1063,7 +1055,7 @@ test('curved motion hold requests recovery segmentation before interval elapses'
 test('curved motion hold does not request mug recovery for textured cups', () => {
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       updateObjectSupportMask: () => {
         throw new Error('cup support refresh should not run mug-specific recovery');
       },
@@ -1116,7 +1108,7 @@ test('curved motion hold does not request mug recovery for textured cups', () =>
 test('sparse mug pose dropout skips support refresh when tracker and reconstruction agree', () => {
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
       updateObjectSupportMask: () => {
         throw new Error('low-delta sparse mug dropout should not refresh support');
       },
@@ -1130,7 +1122,6 @@ test('sparse mug pose dropout skips support refresh when tracker and reconstruct
   manager.initialized = true;
   manager.mode = 'anchor';
   manager.lastSegmentationRefreshAt = 0;
-  manager.trackingMode = 'sparse-reconstruction';
   manager.activeAnchor = {
     position: { x: 126, y: 60, z: 0 },
     trackingMode: 'sparse-reconstruction',
@@ -1172,7 +1163,7 @@ test('sparse mug pose dropout skips support refresh when tracker and reconstruct
 test('pose dropout recovery distinguishes orientation loss from measured position loss', () => {
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
     },
     interactiveSegmenterService: {},
   });
@@ -1205,7 +1196,6 @@ test('pose dropout recovery distinguishes orientation loss from measured positio
     'sparse-reconstruction': 'weak-normal-innovation',
   };
   manager.anchorState.metrics.poseObs = 0.006;
-  manager.activeAnchor.trackingMode = 'sparse-reconstruction';
   assert.equal(manager._hasPoseDropout(), false);
 
   manager.anchorState.metrics.poseObs = null;
@@ -1219,7 +1209,7 @@ test('pose dropout recovery distinguishes orientation loss from measured positio
 test('segmentation refresh radius starts local and grows with object evidence', () => {
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
     },
     interactiveSegmenterService: {},
   });
@@ -1254,7 +1244,7 @@ test('segmentation refresh radius starts local and grows with object evidence', 
 test('anchor manager explains oversized and discontinuous segmentation refresh rejections', () => {
   const manager = new AnchorManager({
     imageAnchorService: {
-      setTrackingMode: () => {},
+      trackingMode: 'sparse-reconstruction',
     },
     interactiveSegmenterService: {},
   });

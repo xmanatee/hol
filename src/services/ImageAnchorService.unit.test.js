@@ -862,7 +862,7 @@ test('planar pose-owned positions blend toward raw measurements while fallback s
   assert.equal(fallbackService.metrics.positionFilterAdjustment, null);
 });
 
-test('book target positions bypass smoothing while retaining step limits', () => {
+test('book target positions bypass smoothing while retaining step limits', async () => {
   const rawService = new ImageAnchorService();
   rawService.anchorTargetClass = 'book';
   rawService.positionFilterX.filter(0, 1000);
@@ -875,7 +875,7 @@ test('book target positions bypass smoothing while retaining step limits', () =>
   assert.equal(rawService.metrics.positionFilterAdjustment, 'book-step-position');
 
   const cappedService = new ImageAnchorService();
-  cappedService.setTrackingMode('parametric-surface');
+  await cappedService.setTrackingMode('parametric-surface');
   cappedService.anchorTargetClass = 'book';
   cappedService.currentPosition = { x: 200, y: 160, z: 0 };
   cappedService.templateRegion = { width: 120, height: 120 };
@@ -894,7 +894,7 @@ test('book target positions bypass smoothing while retaining step limits', () =>
   assert.equal(capped.y, 160);
 });
 
-test('high-confidence reference transforms bypass smoothing lag while weak transforms stay smoothed', () => {
+test('high-confidence reference transforms bypass smoothing lag while weak transforms stay smoothed', async () => {
   const fastService = new ImageAnchorService();
   fastService.currentPosition = { x: 200, y: 160, z: 0 };
   fastService.templateRegion = { width: 120, height: 120 };
@@ -942,7 +942,7 @@ test('high-confidence reference transforms bypass smoothing lag while weak trans
   assert.equal(smoothedService.metrics.positionFilterAdjustment, null);
 
   const sparseService = new ImageAnchorService();
-  sparseService.setTrackingMode('sparse-reconstruction');
+  await sparseService.setTrackingMode('sparse-reconstruction');
   sparseService.currentPosition = { x: 200, y: 160, z: 0 };
   sparseService.templateRegion = { width: 120, height: 120 };
   sparseService.metrics.lastUpdateResult = 'success';
@@ -966,10 +966,10 @@ test('high-confidence reference transforms bypass smoothing lag while weak trans
   assert.equal(sparseService.metrics.positionFilterAdjustment, null);
 });
 
-test('fresh coherent curved motion reduces bootstrap lag without releasing divergent tracker measurements', () => {
-  const createService = () => {
+test('fresh coherent curved motion reduces bootstrap lag without releasing divergent tracker measurements', async () => {
+  const createService = async () => {
     const service = new ImageAnchorService();
-    service.setTrackingMode('direct-photometric');
+    await service.setTrackingMode('direct-photometric');
     service.anchorTargetClass = 'mug';
     service.currentPosition = { x: 200, y: 160, z: 0 };
     service.templateRegion = { width: 120, height: 120 };
@@ -987,7 +987,7 @@ test('fresh coherent curved motion reduces bootstrap lag without releasing diver
     return service;
   };
 
-  const coherentService = createService();
+  const coherentService = await createService();
   const coherent = coherentService._filterPositionCandidate(
     {
       x: 205,
@@ -1005,7 +1005,7 @@ test('fresh coherent curved motion reduces bootstrap lag without releasing diver
   assert.ok(coherent.x < 205);
   assert.equal(coherentService.metrics.positionFilterAdjustment, 'coherent-curved-tracker-motion-blend');
 
-  const divergentService = createService();
+  const divergentService = await createService();
   const divergent = divergentService._filterPositionCandidate(
     {
       x: 214,
@@ -1022,7 +1022,7 @@ test('fresh coherent curved motion reduces bootstrap lag without releasing diver
   assert.ok(divergent.x < 214);
   assert.equal(divergentService.metrics.positionFilterAdjustment, null);
 
-  const staleService = createService();
+  const staleService = await createService();
   const stale = staleService._filterPositionCandidate(
     {
       x: 205,
@@ -1040,7 +1040,7 @@ test('fresh coherent curved motion reduces bootstrap lag without releasing diver
   assert.equal(staleService.metrics.positionFilterAdjustment, null);
 });
 
-test('unready handled-mug modes reject a high-residual reference innovation against recent motion', () => {
+test('unready handled-mug modes reject a high-residual reference innovation against recent motion', async () => {
   for (const trackingMode of [
     'sparse-reconstruction',
     'parametric-surface',
@@ -1048,7 +1048,7 @@ test('unready handled-mug modes reject a high-residual reference innovation agai
     'depth-fusion',
   ]) {
     const service = new ImageAnchorService();
-    service.setTrackingMode(trackingMode);
+    await service.setTrackingMode(trackingMode);
     service.anchorTargetClass = 'handled mug';
     service.objectSupportMask = {
       width: 320,
@@ -1089,10 +1089,10 @@ test('unready handled-mug modes reject a high-residual reference innovation agai
   }
 });
 
-test('selected curved surface modes use bounded motion hold for weak dropout transforms', () => {
+test('selected curved surface modes use bounded motion hold for weak dropout transforms', async () => {
   let now = 1000;
   const service = new ImageAnchorService({ now: () => now });
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'can';
   service.currentPosition = { x: 200, y: 160, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
@@ -1136,7 +1136,7 @@ test('selected curved surface modes use bounded motion hold for weak dropout tra
   assert.ok(held.y < 170);
 
   const sparseService = new ImageAnchorService({ now: () => now });
-  sparseService.setTrackingMode('sparse-reconstruction');
+  await sparseService.setTrackingMode('sparse-reconstruction');
   sparseService.anchorTargetClass = 'can';
   sparseService.currentPosition = { x: 200, y: 160, z: 0 };
   sparseService.templateRegion = { width: 120, height: 120 };
@@ -1166,10 +1166,10 @@ test('selected curved surface modes use bounded motion hold for weak dropout tra
   assert.equal(sparseService.metrics.positionFilterAdjustment, null);
 });
 
-test('selected curved surface modes blend coherent weak reference motion into prediction', () => {
+test('selected curved surface modes blend coherent weak reference motion into prediction', async () => {
   let now = 1000;
   const service = new ImageAnchorService({ now: () => now });
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'can';
   service.currentPosition = { x: 194, y: 154, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
@@ -1214,10 +1214,10 @@ test('selected curved surface modes blend coherent weak reference motion into pr
   assert.ok(Math.abs(blended.y - 154) < 1);
 });
 
-test('selected curved modes hold severe zero-confidence reference drift to recent motion', () => {
+test('selected curved modes hold severe zero-confidence reference drift to recent motion', async () => {
   let now = 1000;
   const service = new ImageAnchorService({ now: () => now });
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'cup';
   service.currentPosition = { x: 288, y: 224, z: 0 };
   service.templateRegion = { width: 118, height: 118 };
@@ -1257,9 +1257,9 @@ test('selected curved modes hold severe zero-confidence reference drift to recen
   assert.ok(held.y < 224);
 });
 
-test('selected curved modes hold severe reference drift even when stored tracker delta is stale', () => {
+test('selected curved modes hold severe reference drift even when stored tracker delta is stale', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'can';
   service.currentPosition = { x: 316, y: 232, z: 0 };
   service.metrics.lastUpdateResult = 'success';
@@ -1299,10 +1299,10 @@ test('selected curved modes hold severe reference drift even when stored tracker
   assert.ok(held.y < 236);
 });
 
-test('selected curved modes refresh motion samples from coherent reference transforms', () => {
+test('selected curved modes refresh motion samples from coherent reference transforms', async () => {
   let now = 1000;
   const service = new ImageAnchorService({ now: () => now });
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'cup';
   service.metrics.reconstructionReady = true;
   service.metrics.reconstructionMapConfidence = 0.82;
@@ -1332,10 +1332,10 @@ test('selected curved modes refresh motion samples from coherent reference trans
   assert.ok(service.curvedMotionSample.velocity.y < -0.04);
 });
 
-test('high-residual direct poses cannot reverse a coherent curved motion sample', () => {
+test('high-residual direct poses cannot reverse a coherent curved motion sample', async () => {
   const now = 1033.33;
   const service = new ImageAnchorService({ now: () => now });
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'mug';
   service.curvedMotionSample = {
     position: { x: 354, y: 258 },
@@ -1361,10 +1361,10 @@ test('high-residual direct poses cannot reverse a coherent curved motion sample'
   });
 });
 
-test('fresh direct handled-mug motion bridges a weak-geometry position reversal', () => {
-  const createService = ({ trackerWeak }) => {
+test('fresh direct handled-mug motion bridges a weak-geometry position reversal', async () => {
+  const createService = async ({ trackerWeak }) => {
     const service = new ImageAnchorService();
-    service.setTrackingMode('direct-photometric');
+    await service.setTrackingMode('direct-photometric');
     service.anchorTargetClass = 'handled mug';
     service.currentPosition = { x: 353.6, y: 258, z: 0 };
     service.templateRegion = { width: 120, height: 120 };
@@ -1397,7 +1397,7 @@ test('fresh direct handled-mug motion bridges a weak-geometry position reversal'
     return service;
   };
 
-  const weakTrackerService = createService({ trackerWeak: true });
+  const weakTrackerService = await createService({ trackerWeak: true });
   const bridged = weakTrackerService._filterPositionCandidate(
     {
       x: 339.5,
@@ -1415,7 +1415,7 @@ test('fresh direct handled-mug motion bridges a weak-geometry position reversal'
   assert.ok(bridged.x > weakTrackerService.currentPosition.x);
   assert.ok(bridged.y < weakTrackerService.currentPosition.y);
 
-  const strongTrackerService = createService({ trackerWeak: false });
+  const strongTrackerService = await createService({ trackerWeak: false });
   strongTrackerService._filterPositionCandidate(
     {
       x: 339.5,
@@ -1431,8 +1431,8 @@ test('fresh direct handled-mug motion bridges a weak-geometry position reversal'
 
   assert.notEqual(strongTrackerService.metrics.positionFilterAdjustment, 'weak-mug-motion-bridge');
 
-  const parametricService = createService({ trackerWeak: true });
-  parametricService.setTrackingMode('parametric-surface');
+  const parametricService = await createService({ trackerWeak: true });
+  await parametricService.setTrackingMode('parametric-surface');
   parametricService._filterPositionCandidate(
     {
       x: 339.5,
@@ -1448,7 +1448,7 @@ test('fresh direct handled-mug motion bridges a weak-geometry position reversal'
 
   assert.notEqual(parametricService.metrics.positionFilterAdjustment, 'weak-mug-motion-bridge');
 
-  const immatureDirectService = createService({ trackerWeak: true });
+  const immatureDirectService = await createService({ trackerWeak: true });
   immatureDirectService.metrics.reconstructionMatureLandmarks = 16;
   immatureDirectService._filterPositionCandidate(
     {
@@ -1466,9 +1466,9 @@ test('fresh direct handled-mug motion bridges a weak-geometry position reversal'
   assert.notEqual(immatureDirectService.metrics.positionFilterAdjustment, 'weak-mug-motion-bridge');
 });
 
-test('direct curved relocalization preserves a fresh coherent attachment motion prior', () => {
+test('direct curved relocalization preserves a fresh coherent attachment motion prior', async () => {
   const service = new ImageAnchorService({ now: () => 1133.32 });
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'mug';
   service.currentPosition = { x: 353.6, y: 253.2, z: 0 };
   service.metrics.reconstructionReady = true;
@@ -1501,10 +1501,10 @@ test('direct curved relocalization preserves a fresh coherent attachment motion 
   assert.equal(service.metrics.relocalizationAnchorAdjustment, 'curved-motion-prior');
 });
 
-test('curved reconstruction bootstrap records reliable planar and object position owners', () => {
+test('curved reconstruction bootstrap records reliable planar and object position owners', async () => {
   let now = 1000;
   const service = new ImageAnchorService({ now: () => now });
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'handled mug';
 
   service._recordCurvedMotionSample({
@@ -1530,7 +1530,7 @@ test('curved reconstruction bootstrap records reliable planar and object positio
   assert.ok(service.curvedMotionSample.velocity.y > 0.03);
 
   const depthMugService = new ImageAnchorService();
-  depthMugService.setTrackingMode('depth-fusion');
+  await depthMugService.setTrackingMode('depth-fusion');
   depthMugService.anchorTargetClass = 'handled mug';
   depthMugService._recordCurvedMotionSample({
     success: true,
@@ -1544,7 +1544,7 @@ test('curved reconstruction bootstrap records reliable planar and object positio
   assert.deepEqual(depthMugService.curvedMotionSample.position, { x: 300, y: 220 });
 
   const sparseMugService = new ImageAnchorService();
-  sparseMugService.setTrackingMode('sparse-reconstruction');
+  await sparseMugService.setTrackingMode('sparse-reconstruction');
   sparseMugService.anchorTargetClass = 'handled mug';
   sparseMugService.objectSupportMask = {
     width: 320,
@@ -1564,7 +1564,7 @@ test('curved reconstruction bootstrap records reliable planar and object positio
   assert.deepEqual(sparseMugService.curvedMotionSample.position, { x: 300, y: 220 });
 
   const depthCanService = new ImageAnchorService();
-  depthCanService.setTrackingMode('depth-fusion');
+  await depthCanService.setTrackingMode('depth-fusion');
   depthCanService.anchorTargetClass = 'can';
   depthCanService._recordCurvedMotionSample({
     success: true,
@@ -1578,10 +1578,10 @@ test('curved reconstruction bootstrap records reliable planar and object positio
   assert.equal(depthCanService.curvedMotionSample, null);
 });
 
-test('selected parametric poses do not reverse mature curved motion samples when map support is weak', () => {
+test('selected parametric poses do not reverse mature curved motion samples when map support is weak', async () => {
   let now = 1000;
   const service = new ImageAnchorService({ now: () => now });
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'cup';
   service.metrics.reconstructionReady = true;
   service.metrics.reconstructionMapConfidence = 0.65;
@@ -1609,10 +1609,10 @@ test('selected parametric poses do not reverse mature curved motion samples when
   assert.deepEqual(service.curvedMotionSample.velocity, { x: -0.21, y: -0.07 });
 });
 
-test('a marginal just-ready parametric pose cannot overwrite fresh bootstrap motion', () => {
+test('a marginal just-ready parametric pose cannot overwrite fresh bootstrap motion', async () => {
   const now = 1033.33;
   const service = new ImageAnchorService({ now: () => now });
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'handled mug';
   service.metrics.reconstructionReady = true;
   service.metrics.reconstructionMapConfidence = 0.78;
@@ -1645,10 +1645,10 @@ test('a marginal just-ready parametric pose cannot overwrite fresh bootstrap mot
   });
 });
 
-test('handled-mug reversal thresholds do not suppress a cup pose with mature map support', () => {
+test('handled-mug reversal thresholds do not suppress a cup pose with mature map support', async () => {
   let now = 1033.33;
   const service = new ImageAnchorService({ now: () => now });
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'cup';
   service.metrics.reconstructionReady = true;
   service.metrics.reconstructionMapConfidence = 0.78;
@@ -1677,9 +1677,9 @@ test('handled-mug reversal thresholds do not suppress a cup pose with mature map
   assert.deepEqual(service.curvedMotionSample.position, { x: 350, y: 257 });
 });
 
-test('selected parametric position filter does not hold reversed poses to stale motion', () => {
+test('selected parametric position filter does not hold reversed poses to stale motion', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'cup';
   service.currentPosition = { x: 288, y: 225, z: 0 };
   service.metrics.lastUpdateResult = 'success';
@@ -1702,9 +1702,9 @@ test('selected parametric position filter does not hold reversed poses to stale 
   assert.ok(filtered.x > 288);
 });
 
-test('selected parametric position filter releases reversed motion when surface and tracker agree', () => {
+test('selected parametric position filter releases reversed motion when surface and tracker agree', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'cup';
   service.currentPosition = { x: 276, y: 217, z: 0 };
   service.metrics.lastUpdateResult = 'success';
@@ -1733,9 +1733,9 @@ test('selected parametric position filter releases reversed motion when surface 
   assert.ok(filtered.y > 219);
 });
 
-test('selected curved motion prediction releases weak references when surface and tracker agree', () => {
+test('selected curved motion prediction releases weak references when surface and tracker agree', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'cup';
   service.currentPosition = { x: 276, y: 217, z: 0 };
   service.metrics.lastUpdateResult = 'success';
@@ -1775,9 +1775,9 @@ test('selected curved motion prediction releases weak references when surface an
   assert.ok(filtered.y > 219);
 });
 
-test('selected bottle targets do not use cup-style curved motion hold', () => {
+test('selected bottle targets do not use cup-style curved motion hold', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'bottle';
   service.currentPosition = { x: 320, y: 220, z: 0 };
   service.metrics.lastUpdateResult = 'success';
@@ -1813,10 +1813,10 @@ test('selected bottle targets do not use cup-style curved motion hold', () => {
   assert.ok(filtered.x > 320);
 });
 
-test('depth-fusion bridges high-support tapered drift without holding low-support recovery', () => {
-  const createService = (targetClass, activeLandmarkCount = 16) => {
+test('depth-fusion bridges high-support tapered drift without holding low-support recovery', async () => {
+  const createService = async (targetClass, activeLandmarkCount = 16) => {
     const service = new ImageAnchorService();
-    service.setTrackingMode('depth-fusion');
+    await service.setTrackingMode('depth-fusion');
     service.anchorTargetClass = targetClass;
     service.currentPosition = { x: 320, y: 220, z: 0 };
     service.metrics.lastUpdateResult = 'success';
@@ -1844,15 +1844,15 @@ test('depth-fusion bridges high-support tapered drift without holding low-suppor
     averageResidual: 24,
     inlierCount: 9,
   };
-  const lowSupportCup = createService('cup');
+  const lowSupportCup = await createService('cup');
   lowSupportCup._filterPositionCandidate(candidate, 1033.33, 'reference_similarity_transform');
   assert.notEqual(lowSupportCup.metrics.positionFilterAdjustment, 'curved-motion-hold');
 
-  const driftingCup = createService('cup', 36);
+  const driftingCup = await createService('cup', 36);
   driftingCup._filterPositionCandidate(candidate, 1033.33, 'reference_similarity_transform');
   assert.equal(driftingCup.metrics.positionFilterAdjustment, 'curved-motion-hold');
 
-  const coherentCup = createService('cup', 36);
+  const coherentCup = await createService('cup', 36);
   coherentCup._filterPositionCandidate(
     {
       ...candidate,
@@ -1865,15 +1865,15 @@ test('depth-fusion bridges high-support tapered drift without holding low-suppor
   );
   assert.notEqual(coherentCup.metrics.positionFilterAdjustment, 'curved-motion-hold');
 
-  const can = createService('can');
+  const can = await createService('can');
   can._filterPositionCandidate(candidate, 1033.33, 'reference_similarity_transform');
   assert.equal(can.metrics.positionFilterAdjustment, 'curved-motion-hold');
 });
 
-test('mature sparse cylinder maps use bounded motion hold during full pose dropout', () => {
+test('mature sparse cylinder maps use bounded motion hold during full pose dropout', async () => {
   let now = 1000;
   const service = new ImageAnchorService({ now: () => now });
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'can';
   service.currentPosition = { x: 200, y: 160, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
@@ -1919,9 +1919,9 @@ test('mature sparse cylinder maps use bounded motion hold during full pose dropo
   assert.ok(held.y < 154);
 });
 
-test('support recovery treats agreeing mask and tracker evidence as an absolute reinitialization anchor', () => {
+test('support recovery treats agreeing mask and tracker evidence as an absolute reinitialization anchor', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'generic-object';
   service.currentPosition = { x: 100, y: 100, z: 0 };
   service.objectSupportAnchorUv = { u: 0.5, v: 0.5 };
@@ -1972,9 +1972,9 @@ test('support recovery treats agreeing mask and tracker evidence as an absolute 
   assert.equal(service._createSupportRecoveryPosition(trackerPosition), null);
 });
 
-test('sparse mug motion hold expires before stale reversal dominates recovery', () => {
+test('sparse mug motion hold expires before stale reversal dominates recovery', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'mug';
   service.currentPosition = { x: 300, y: 220, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
@@ -2011,10 +2011,10 @@ test('sparse mug motion hold expires before stale reversal dominates recovery', 
   assert.notEqual(service.metrics.positionFilterAdjustment, 'curved-motion-hold');
 });
 
-test('curved motion hold predictions do not extend the motion sample', () => {
+test('curved motion hold predictions do not extend the motion sample', async () => {
   const now = 1033.33;
   const service = new ImageAnchorService({ now: () => now });
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'mug';
   service.metrics.reconstructionReady = true;
   service.metrics.reconstructionMapConfidence = 0.91;
@@ -2042,10 +2042,10 @@ test('curved motion hold predictions do not extend the motion sample', () => {
   });
 });
 
-test('mature sparse mug maps release motion hold when many landmarks still track', () => {
+test('mature sparse mug maps release motion hold when many landmarks still track', async () => {
   let now = 1000;
   const service = new ImageAnchorService({ now: () => now });
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'mug';
   service.currentPosition = { x: 200, y: 160, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
@@ -2091,9 +2091,9 @@ test('mature sparse mug maps release motion hold when many landmarks still track
   assert.ok(filtered.y > 154);
 });
 
-test('mature sparse curved maps keep weak dropout tracking out of centroid fallback', () => {
+test('mature sparse curved maps keep weak dropout tracking out of centroid fallback', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'cup';
   service.objectSupportMask = { bbox: { x: 80, y: 80, width: 120, height: 160 } };
   service.metrics.reconstructionReady = true;
@@ -2125,9 +2125,9 @@ test('mature sparse curved maps keep weak dropout tracking out of centroid fallb
   assert.equal(service.metrics.trackerAnchorAdjustment, null);
 });
 
-test('reconstruction position updates are step-limited to prevent head teleports', () => {
+test('reconstruction position updates are step-limited to prevent head teleports', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.currentPosition = { x: 200, y: 160, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
   service.metrics.lastUpdateResult = 'success';
@@ -2141,9 +2141,9 @@ test('reconstruction position updates are step-limited to prevent head teleports
   assert.equal(limited.z, 0);
 });
 
-test('rigid planar targets get a larger bounded position step for fast camera motion', () => {
+test('rigid planar targets get a larger bounded position step for fast camera motion', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'card';
   service.currentPosition = { x: 200, y: 160, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
@@ -2155,9 +2155,9 @@ test('rigid planar targets get a larger bounded position step for fast camera mo
   assert.equal(limited.y, 160);
 });
 
-test('book targets keep a tighter planar position step for shelf-like motion', () => {
+test('book targets keep a tighter planar position step for shelf-like motion', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'book';
   service.currentPosition = { x: 200, y: 160, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
@@ -2170,9 +2170,9 @@ test('book targets keep a tighter planar position step for shelf-like motion', (
   assert.equal(limited.y, 160);
 });
 
-test('non-rigid reconstruction targets keep the conservative position step', () => {
+test('non-rigid reconstruction targets keep the conservative position step', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'bag';
   service.currentPosition = { x: 200, y: 160, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
@@ -2185,9 +2185,9 @@ test('non-rigid reconstruction targets keep the conservative position step', () 
   assert.equal(limited.y, 160);
 });
 
-test('generic reconstruction targets can catch up without segmentation recentering', () => {
+test('generic reconstruction targets can catch up without segmentation recentering', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'generic-object';
   service.currentPosition = { x: 200, y: 160, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
@@ -2199,9 +2199,9 @@ test('generic reconstruction targets can catch up without segmentation recenteri
   assert.equal(limited.y, 160);
 });
 
-test('mature curved reconstruction can take a larger bounded recovery step', () => {
+test('mature curved reconstruction can take a larger bounded recovery step', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'can';
   service.currentPosition = { x: 200, y: 160, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
@@ -2226,9 +2226,9 @@ test('mature curved reconstruction can take a larger bounded recovery step', () 
   assert.equal(service.metrics.positionFilterAdjustment, 'curved-recovery-step-position');
 });
 
-test('mature direct photometric recovery keeps the standard curved position bound', () => {
+test('mature direct photometric recovery keeps the standard curved position bound', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'mug';
   service.currentPosition = { x: 200, y: 160, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
@@ -2246,9 +2246,9 @@ test('mature direct photometric recovery keeps the standard curved position boun
   assert.equal(limited.y, 160);
 });
 
-test('selected curved pose dropout holds weak reference scale', () => {
+test('selected curved pose dropout holds weak reference scale', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'cup';
   service.currentPlanarTransform = {
     scale: 1.02,
@@ -2282,9 +2282,9 @@ test('selected curved pose dropout holds weak reference scale', () => {
   assert.equal(transform.method, 'reference_similarity_transform');
 });
 
-test('selected curved pose dropout follows coherent low-confidence reference scale', () => {
+test('selected curved pose dropout follows coherent low-confidence reference scale', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'cup';
   service.currentPlanarTransform = {
     scale: 1.15,
@@ -2317,9 +2317,9 @@ test('selected curved pose dropout follows coherent low-confidence reference sca
   assert.equal(transform.method, 'reference_similarity_transform');
 });
 
-test('parametric curved pose dropout keeps low-confidence reference scale held', () => {
+test('parametric curved pose dropout keeps low-confidence reference scale held', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'cup';
   service.currentPlanarTransform = {
     scale: 1.15,
@@ -2352,9 +2352,9 @@ test('parametric curved pose dropout keeps low-confidence reference scale held',
   assert.equal(transform.method, 'reference_similarity_transform');
 });
 
-test('selected curved modes can catch up from a held pose with strong reference tracking', () => {
+test('selected curved modes can catch up from a held pose with strong reference tracking', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'can';
   service.currentPosition = { x: 200, y: 160, z: 0 };
   service.templateRegion = { width: 120, height: 120 };
@@ -2507,7 +2507,7 @@ test('records usable weak-anchor diagnostics after creation', async () => {
 
 test('anchor creation passes selected object support mask into keypoint extraction', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   class FakeMat {
     delete() {}
   }
@@ -2990,9 +2990,9 @@ test('tracking region ignores broad selection bounds when object support is loca
   assert.ok(trackingRegion.height < 360);
 });
 
-test('overlay readiness fails when object-owned landmark ratio is too low', () => {
+test('overlay readiness fails when object-owned landmark ratio is too low', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.metrics = {
     activeLandmarkCount: 20,
     objectOwnedLandmarks: 8,
@@ -3012,9 +3012,9 @@ test('overlay readiness fails when object-owned landmark ratio is too low', () =
   assert.equal(readiness.faceReady, false);
 });
 
-test('reconstruction pose recovery does not downgrade healthy 2D tracking state', () => {
+test('reconstruction pose recovery does not downgrade healthy 2D tracking state', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('depth-fusion');
+  await service.setTrackingMode('depth-fusion');
   service.metrics.reconstructionReady = true;
 
   assert.equal(
@@ -3026,9 +3026,9 @@ test('reconstruction pose recovery does not downgrade healthy 2D tracking state'
   );
 });
 
-test('reconstruction face readiness requires a current usable pose source', () => {
+test('reconstruction face readiness requires a current usable pose source', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
 
   assert.deepEqual(
     service._createReadiness({
@@ -3069,9 +3069,9 @@ test('reconstruction face readiness requires a current usable pose source', () =
   );
 });
 
-test('reconstruction face readiness blocks weak measured attachment poses', () => {
+test('reconstruction face readiness blocks weak measured attachment poses', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
 
   const weakPose = service._createReadiness({
     state: 'stable',
@@ -3172,9 +3172,9 @@ test('reconstruction face readiness blocks weak measured attachment poses', () =
   assert.equal(strongPlanarPose.faceReady, true);
 });
 
-test('reconstruction face readiness requires an object-local attachment source', () => {
+test('reconstruction face readiness requires an object-local attachment source', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
 
   const screenSpaceAttachment = service._createReadiness({
     state: 'stable',
@@ -5086,7 +5086,7 @@ test('refreshed object support recenters a drifted anchor at the original mask-r
   assert.equal(service.metrics.objectSupportPositionSource, 'interactive-segmenter');
 });
 
-test('support recovery shares the current frame motion envelope with tracking', () => {
+test('support recovery shares the current frame motion envelope with tracking', async () => {
   const service = new ImageAnchorService({ now: () => 1040 });
   const data = new Uint8Array(160 * 100);
   for (let y = 20; y < 70; y++) {
@@ -5104,7 +5104,7 @@ test('support recovery shares the current frame motion envelope with tracking', 
     createdAtFrame: 8,
   });
 
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'can';
   service.templateRegion = { x: 20, y: 10, width: 120, height: 80 };
   service.trackingRegion = { x: 16, y: 8, width: 128, height: 88 };
@@ -5176,7 +5176,7 @@ test('periodic curved support refresh updates mask without recentering anchor', 
   assert.equal(service.metrics.objectSupportMaskSource, 'interactive-segmenter');
 });
 
-test('periodic sparse mug support refresh can recenter stale sparse drift', () => {
+test('periodic sparse mug support refresh can recenter stale sparse drift', async () => {
   const service = new ImageAnchorService({ now: () => 1040 });
   const data = new Uint8Array(140 * 100);
   for (let y = 24; y < 84; y++) {
@@ -5194,7 +5194,7 @@ test('periodic sparse mug support refresh can recenter stale sparse drift', () =
     createdAtFrame: 8,
   });
 
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.currentPosition = { x: 58, y: 78, z: 0 };
   service.currentPlanarTransform = {
     scale: 1,
@@ -5220,9 +5220,9 @@ test('periodic sparse mug support refresh can recenter stale sparse drift', () =
   assert.ok(service.currentPosition.y < 75);
 });
 
-test('sparse mug support correction hold rejects reconstruction backtracking', () => {
+test('sparse mug support correction hold rejects reconstruction backtracking', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'mug';
   service.frameIndex = 14;
   service.currentPosition = { x: 120, y: 80, z: 0 };
@@ -5340,7 +5340,7 @@ test('curved support recovery corrects a stale motion hold when support disagree
   assert.ok(service.currentPosition.y > 36);
 });
 
-test('dense generic depth-fusion support recovery can rebuild collapsed reference landmarks', () => {
+test('dense generic depth-fusion support recovery can rebuild collapsed reference landmarks', async () => {
   const service = new ImageAnchorService();
   const data = new Uint8Array(80 * 140).fill(255);
   const objectSupportMask = createObjectSupportMask({
@@ -5353,7 +5353,7 @@ test('dense generic depth-fusion support recovery can rebuild collapsed referenc
     createdAtFrame: 0,
   });
 
-  service.setTrackingMode('depth-fusion');
+  await service.setTrackingMode('depth-fusion');
   service.anchorTargetClass = 'generic-object';
   service.objectSupportMask = objectSupportMask;
   service.currentObjectSupportMask = objectSupportMask;
@@ -5415,7 +5415,7 @@ test('rigid planar support refresh does not recenter homography-owned anchors', 
   assert.equal(service.metrics.objectSupportMaskSource, 'interactive-segmenter');
 });
 
-test('handled mug parametric recovery uses support correction only for lateral recentering', () => {
+test('handled mug parametric recovery uses support correction only for lateral recentering', async () => {
   const service = new ImageAnchorService({ now: () => 1040 });
   const data = new Uint8Array(200 * 160);
   for (let y = 40; y < 130; y++) {
@@ -5433,7 +5433,7 @@ test('handled mug parametric recovery uses support correction only for lateral r
     createdAtFrame: 4,
   });
 
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.currentPosition = { x: 96, y: 108, z: 0 };
   service.currentPlanarTransform = {
     scale: 1,
@@ -5459,7 +5459,7 @@ test('handled mug parametric recovery uses support correction only for lateral r
   assert.equal(service.currentPosition.y, 108);
 });
 
-test('immature handled mug recovery keeps high-active tracker position while refreshing support', () => {
+test('immature handled mug recovery keeps high-active tracker position while refreshing support', async () => {
   const service = new ImageAnchorService({ now: () => 1040 });
   const data = new Uint8Array(200 * 160);
   for (let y = 40; y < 130; y++) {
@@ -5477,7 +5477,7 @@ test('immature handled mug recovery keeps high-active tracker position while ref
     createdAtFrame: 4,
   });
 
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.currentPosition = { x: 160, y: 108, z: 0 };
   service.currentPlanarTransform = {
     scale: 1,
@@ -5501,10 +5501,10 @@ test('immature handled mug recovery keeps high-active tracker position while ref
   assert.equal(service.metrics.objectSupportMaskSource, 'interactive-segmenter');
 });
 
-test('every unready dense handled-mug mode keeps high-active tracker position during support refresh', () => {
+test('every unready dense handled-mug mode keeps high-active tracker position during support refresh', async () => {
   for (const trackingMode of ['parametric-surface', 'direct-photometric', 'depth-fusion']) {
     const service = new ImageAnchorService();
-    service.setTrackingMode(trackingMode);
+    await service.setTrackingMode(trackingMode);
     service.anchorTargetClass = 'handled mug';
     service.metrics.reconstructionReady = false;
     service.metrics.reconstructionMatureLandmarks = trackingMode === 'depth-fusion' ? 551 : 0;
@@ -5514,7 +5514,7 @@ test('every unready dense handled-mug mode keeps high-active tracker position du
   }
 });
 
-test('immature handled mug recovery caps low-active support recentering', () => {
+test('immature handled mug recovery caps low-active support recentering', async () => {
   const service = new ImageAnchorService({ now: () => 1040 });
   const data = new Uint8Array(200 * 160);
   for (let y = 40; y < 130; y++) {
@@ -5532,7 +5532,7 @@ test('immature handled mug recovery caps low-active support recentering', () => 
     createdAtFrame: 4,
   });
 
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.currentPosition = { x: 160, y: 108, z: 0 };
   service.currentPlanarTransform = {
     scale: 1,
@@ -5557,14 +5557,14 @@ test('immature handled mug recovery caps low-active support recentering', () => 
   assert.ok(service.currentPosition.y > 107);
 });
 
-test('sparse cup recovery refreshes support without recentering the anchor', () => {
+test('sparse cup recovery refreshes support without recentering the anchor', async () => {
   const service = new ImageAnchorService();
   const objectSupportMask = {
     bbox: { x: 12, y: 16, width: 80, height: 72 },
   };
 
   service.anchorTargetClass = 'cup';
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
 
   assert.equal(
     service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'),
@@ -5581,14 +5581,14 @@ test('sparse cup recovery refreshes support without recentering the anchor', () 
   );
 });
 
-test('depth-fusion cup recovery uses a conservative support recentering cap', () => {
+test('depth-fusion cup recovery uses a conservative support recentering cap', async () => {
   const service = new ImageAnchorService();
   const objectSupportMask = {
     bbox: { x: 12, y: 16, width: 80, height: 72 },
   };
 
   service.anchorTargetClass = 'cup';
-  service.setTrackingMode('depth-fusion');
+  await service.setTrackingMode('depth-fusion');
   service.metrics.reconstructionTrackerDelta = 4;
 
   assert.equal(
@@ -5603,14 +5603,14 @@ test('depth-fusion cup recovery uses a conservative support recentering cap', ()
   );
 });
 
-test('bootstrap sparse cylinder recovery uses a conservative support recentering cap', () => {
+test('bootstrap sparse cylinder recovery uses a conservative support recentering cap', async () => {
   const service = new ImageAnchorService();
   const objectSupportMask = {
     bbox: { x: 12, y: 16, width: 80, height: 72 },
   };
 
   service.anchorTargetClass = 'can';
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.metrics.reconstructionReady = false;
 
   assert.equal(
@@ -5619,14 +5619,14 @@ test('bootstrap sparse cylinder recovery uses a conservative support recentering
   );
 });
 
-test('mature sparse cylinder recovery leaves room for same-frame tracked motion', () => {
+test('mature sparse cylinder recovery leaves room for same-frame tracked motion', async () => {
   const service = new ImageAnchorService();
   const objectSupportMask = {
     bbox: { x: 12, y: 16, width: 80, height: 72 },
   };
 
   service.anchorTargetClass = 'can';
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.metrics.reconstructionReady = true;
   service.metrics.reconstructionMatureLandmarks = 24;
   service.metrics.poseAverageResidual = 4;
@@ -5637,7 +5637,7 @@ test('mature sparse cylinder recovery leaves room for same-frame tracked motion'
   );
 });
 
-test('handled mug support correction caps follow reconstruction mode ownership', () => {
+test('handled mug support correction caps follow reconstruction mode ownership', async () => {
   const service = new ImageAnchorService();
   const objectSupportMask = {
     bbox: { x: 12, y: 16, width: 80, height: 72 },
@@ -5645,21 +5645,21 @@ test('handled mug support correction caps follow reconstruction mode ownership',
 
   service.anchorTargetClass = 'mug';
 
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
   assert.equal(
     service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'),
     6,
   );
 
-  service.setTrackingMode('depth-fusion');
+  await service.setTrackingMode('depth-fusion');
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
   assert.equal(
     service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'),
     4,
   );
 
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.metrics.reconstructionMatureLandmarks = 16;
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
   assert.equal(
@@ -5667,7 +5667,7 @@ test('handled mug support correction caps follow reconstruction mode ownership',
     12,
   );
 
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 0);
   assert.equal(
     service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'),
@@ -5696,7 +5696,7 @@ test('handled mug support correction caps follow reconstruction mode ownership',
   );
 
   service.anchorTargetClass = 'generic-object';
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   assert.equal(
     service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask, 'pose-dropout-recovery'),
     0,
@@ -5709,9 +5709,9 @@ test('handled mug support correction caps follow reconstruction mode ownership',
   assert.equal(service._getObjectSupportPositionCorrectionMaxStep(objectSupportMask), 16);
 });
 
-test('mature reconstruction dropout uses object-owned centroid instead of raw similarity drift', () => {
+test('mature reconstruction dropout uses object-owned centroid instead of raw similarity drift', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'book';
   service.currentPosition = { x: 96, y: 84, z: 0 };
   service.objectSupportMask = { source: 'interactive-segmenter' };
@@ -5923,12 +5923,12 @@ test('mature rigid-planar map with sparse active support triggers descriptor rel
   );
 });
 
-test('ready direct mug relocalizes a deformed reference before active support collapses', () => {
+test('ready direct mug relocalizes a deformed reference before active support collapses', async () => {
   const service = new ImageAnchorService();
   service.relocalizer = {
     hasKeyframes: () => true,
   };
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'handled mug';
   Object.assign(service.metrics, {
     keypointCount: 24,
@@ -5980,12 +5980,12 @@ test('ready direct mug relocalizes a deformed reference before active support co
   );
 });
 
-test('ready sparse mug relocalizes catastrophic reference drift while its 3D pose still has support', () => {
+test('ready sparse mug relocalizes catastrophic reference drift while its 3D pose still has support', async () => {
   const service = new ImageAnchorService();
   service.relocalizer = {
     hasKeyframes: () => true,
   };
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'handled mug';
   Object.assign(service.metrics, {
     keypointCount: 32,
@@ -6050,21 +6050,21 @@ test('ready sparse mug relocalizes catastrophic reference drift while its 3D pos
   );
 });
 
-test('ready dense mugs explicitly prefer object-wide similarity recovery', () => {
+test('ready dense mugs explicitly prefer object-wide similarity recovery', async () => {
   const service = new ImageAnchorService();
   service.anchorTargetClass = 'handled mug';
   service.metrics.reconstructionReady = true;
 
-  service.setTrackingMode('depth-fusion');
+  await service.setTrackingMode('depth-fusion');
   assert.equal(service._shouldPreferObjectWideTrackerSimilarity(), true);
 
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   assert.equal(service._shouldPreferObjectWideTrackerSimilarity(), true);
 
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   assert.equal(service._shouldPreferObjectWideTrackerSimilarity(), false);
 
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'cup';
   assert.equal(service._shouldPreferObjectWideTrackerSimilarity(), false);
 
@@ -6257,9 +6257,9 @@ test('failed support refresh reinitialization is limited to recoverable support-
   assert.equal(eligible._shouldReinitializeAfterFailedSupportRefresh(), false);
 });
 
-test('immature handled-mug recovery keeps only motion-aligned tracker displacement', () => {
+test('immature handled-mug recovery keeps only motion-aligned tracker displacement', async () => {
   const service = new ImageAnchorService({ now: () => 1300 });
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'handled mug';
   service.currentPosition = { x: 347, y: 250, z: 0 };
   service.objectSupportMask = createObjectSupportMask({
@@ -6421,10 +6421,10 @@ test('fresh support-recovery landmarks use map probation only for depth-fusion c
   assert.equal(service._shouldQuarantineFreshRecoveryLandmarks(), false);
 });
 
-test('mature parametric handled-mug recovery derives a reference transform from the accepted attachment', () => {
+test('mature parametric handled-mug recovery derives a reference transform from the accepted attachment', async () => {
   const now = 1000;
   const service = new ImageAnchorService({ now: () => now });
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'handled mug';
   service.frameIndex = 20;
   service.currentPosition = { x: 148, y: 112, z: 0 };
@@ -6497,9 +6497,9 @@ test('mature parametric handled-mug recovery derives a reference transform from 
   assert.equal(service._createRecoveryReferenceTransform(), null);
 });
 
-test('established parametric can maps expose a recovery reference only after multi-view evidence', () => {
+test('established parametric can maps expose a recovery reference only after multi-view evidence', async () => {
   const service = new ImageAnchorService({ now: () => 1000 });
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'glossy can';
   service.frameIndex = 30;
   service.currentPosition = { x: 148, y: 112, z: 0 };
@@ -6857,9 +6857,9 @@ test('keypoint reinitialization reports actual failure and resets reconstruction
   assert.equal(reconstructionResets, 1);
 });
 
-test('support recovery reinitialization shares the current frame position envelope', () => {
+test('support recovery reinitialization shares the current frame position envelope', async () => {
   const service = new ImageAnchorService({ now: () => 1040 });
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.cv = {};
   service.currentPosition = { x: 68, y: 50, z: 0 };
   service.frameStartPosition = { x: 60, y: 50, z: 0 };
@@ -6908,9 +6908,9 @@ test('support recovery reinitialization shares the current frame position envelo
   assert.ok(frameStep <= 9.6 + 1e-6);
 });
 
-test('partial-occlusion flow admission requires a present mature curved map', () => {
+test('partial-occlusion flow admission requires a present mature curved map', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'bottle';
   service.metrics = {
     targetPresent: true,
@@ -6931,10 +6931,10 @@ test('partial-occlusion flow admission requires a present mature curved map', ()
 
   assert.equal(service._canAdmitPartialFlow(trackingResult), true);
 
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   assert.equal(service._canAdmitPartialFlow(trackingResult), false);
 
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.metrics.targetPresent = false;
   assert.equal(service._canAdmitPartialFlow(trackingResult), false);
 
@@ -7143,9 +7143,9 @@ test('planar transform smoothing dampens one-frame scale and roll jumps', () => 
   assert.ok(jumped.rotation < 0.38);
 });
 
-test('rigid planar tracker scale follows measured changes without filter lag', () => {
+test('rigid planar tracker scale follows measured changes without filter lag', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'book';
   service.planarDominanceScore = 8;
 
@@ -7299,7 +7299,7 @@ test('reconstruction tracking mode drives the overlay from the sparse 3D map whe
     },
   };
 
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.initialized = true;
   service.anchored = true;
   service.anchorState = 'tracking';
@@ -7432,7 +7432,7 @@ test('strong curved reconstruction can replace a drifting tracker attachment', a
     },
   };
 
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.initialized = true;
   service.anchored = true;
   service.anchorState = 'tracking';
@@ -7556,7 +7556,7 @@ test('mature curved reconstruction can replace a moderately drifting tracker att
     },
   };
 
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.initialized = true;
   service.anchored = true;
   service.anchorState = 'tracking';
@@ -7679,7 +7679,7 @@ test('depth-fusion keeps tracker positioning as the anchor spine', async () => {
     },
   };
 
-  service.setTrackingMode('depth-fusion');
+  await service.setTrackingMode('depth-fusion');
   service.initialized = true;
   service.anchored = true;
   service.anchorState = 'tracking';
@@ -7778,9 +7778,9 @@ test('depth-fusion keeps tracker positioning as the anchor spine', async () => {
   assert.equal(readiness.attachmentSourceReady, true);
 });
 
-test('parametric planar position consensus uses arbiter scores and excludes weak tracker geometry', () => {
+test('parametric planar position consensus uses arbiter scores and excludes weak tracker geometry', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'book';
   service.planarDominanceScore = 8;
 
@@ -7849,9 +7849,9 @@ test('parametric planar position consensus uses arbiter scores and excludes weak
   );
 });
 
-test('mature depth-fusion curved pose can own position when reference geometry is weak', () => {
+test('mature depth-fusion curved pose can own position when reference geometry is weak', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('depth-fusion');
+  await service.setTrackingMode('depth-fusion');
   service.anchorTargetClass = 'can';
   service.metrics.reconstructionReady = true;
   service.metrics.reconstructionMapConfidence = 0.9;
@@ -7978,7 +7978,7 @@ test('arbiter-selected planar pose owns position when reference similarity is we
     method: 'reference_similarity_transform',
   };
 
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.initialized = true;
   service.anchored = true;
   service.anchorState = 'tracking';
@@ -8053,7 +8053,7 @@ test('arbiter-selected planar pose owns position when reference similarity is we
   assert.equal(service.metrics.rejectedPoseCandidates.reference_similarity_transform.reason, 'weak-geometry');
 });
 
-test('parametric mug reconstruction position does not own attachment normal', () => {
+test('parametric mug reconstruction position does not own attachment normal', async () => {
   const service = new ImageAnchorService();
   const reconstructionPose = createObjectPose({
     method: 'parametric-surface',
@@ -8086,7 +8086,7 @@ test('parametric mug reconstruction position does not own attachment normal', ()
     },
   };
 
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'cup';
   service.metrics.reconstructionReady = true;
   service.metrics.reconstructionMapConfidence = 0.82;
@@ -8143,7 +8143,7 @@ test('curved reconstruction relaxes stale normals when pose drops out', async ()
   const service = new ImageAnchorService();
   const staleNormal = { x: 0.55, y: -0.2, z: 0.81 };
 
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.initialized = true;
   service.anchored = true;
   service.anchorState = 'tracking';
@@ -8256,7 +8256,7 @@ test('planar homography dominates sparse reconstruction for flat textured object
     },
   };
 
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.initialized = true;
   service.anchored = true;
   service.anchorState = 'tracking';
@@ -8373,9 +8373,9 @@ test('planar homography dominates sparse reconstruction for flat textured object
   assert.equal(service.getState().metrics.poseSource, 'planar-homography');
 });
 
-test('selected surface reconstruction owns pose over planar homography when its map is ready', () => {
+test('selected surface reconstruction owns pose over planar homography when its map is ready', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.planarDominanceScore = 8;
   service.metrics = {
     reconstructionMapConfidence: 0.66,
@@ -8434,9 +8434,9 @@ test('selected surface reconstruction owns pose over planar homography when its 
   );
 });
 
-test('rigid planar targets keep strong homography ownership over selected surface reconstruction', () => {
+test('rigid planar targets keep strong homography ownership over selected surface reconstruction', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'card';
   service.planarDominanceScore = 8;
   service.metrics = {
@@ -8494,9 +8494,9 @@ test('rigid planar targets keep strong homography ownership over selected surfac
   );
 });
 
-test('mature selected planar surface can report pose source through glare recovery', () => {
+test('mature selected planar surface can report pose source through glare recovery', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'cell phone';
   service.planarDominanceScore = 8;
   service.metrics = {
@@ -8553,9 +8553,9 @@ test('mature selected planar surface can report pose source through glare recove
   );
 });
 
-test('rigid planar reconstruction normals are not trusted external corrections', () => {
+test('rigid planar reconstruction normals are not trusted external corrections', async () => {
   const bookService = new ImageAnchorService();
-  bookService.setTrackingMode('parametric-surface');
+  await bookService.setTrackingMode('parametric-surface');
   bookService.anchorTargetClass = 'book';
 
   assert.equal(
@@ -8570,7 +8570,7 @@ test('rigid planar reconstruction normals are not trusted external corrections',
   );
 
   const cupService = new ImageAnchorService();
-  cupService.setTrackingMode('parametric-surface');
+  await cupService.setTrackingMode('parametric-surface');
   cupService.anchorTargetClass = 'cup';
 
   assert.equal(
@@ -8608,7 +8608,7 @@ test('rigid planar reconstruction normals are not trusted external corrections',
   );
 });
 
-test('weak support-held sparse mug normals are not trusted fast corrections', () => {
+test('weak support-held sparse mug normals are not trusted fast corrections', async () => {
   const service = new ImageAnchorService();
   const reconstructionPose = createObjectPose({
     method: 'sparse-reconstruction',
@@ -8626,7 +8626,7 @@ test('weak support-held sparse mug normals are not trusted fast corrections', ()
     surface: { model: 'tapered-cylinder' },
   };
 
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'mug';
   service.metrics.positionFilterAdjustment = 'sparse-mug-support-correction-hold';
   service.metrics.reconstructionMapConfidence = 0.94;
@@ -8647,7 +8647,7 @@ test('weak support-held sparse mug normals are not trusted fast corrections', ()
   assert.equal(service._shouldTrustNormalPose(reconstructionPose), true);
 });
 
-test('weakly observed sparse curved support rejects only a large normal innovation', () => {
+test('weakly observed sparse curved support rejects only a large normal innovation', async () => {
   const service = new ImageAnchorService();
   const reconstructionPose = createObjectPose({
     method: 'sparse-reconstruction',
@@ -8666,7 +8666,7 @@ test('weakly observed sparse curved support rejects only a large normal innovati
     surface: { model: 'tapered-cylinder' },
   };
 
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'handled mug';
   service.currentNormal = { x: 0.42, y: -0.16, z: 0.89 };
   service.metrics.reconstructionReady = true;
@@ -8703,7 +8703,7 @@ test('weakly observed sparse curved support rejects only a large normal innovati
   assert.equal(supported.byRole.reconstruction.normalAllowed, true);
 });
 
-test('curved reconstruction targets reject planar homography normals during pose dropout', () => {
+test('curved reconstruction targets reject planar homography normals during pose dropout', async () => {
   const service = new ImageAnchorService();
   const correspondences = Array.from({ length: 28 }, (_, index) => ({
     prev: { x: 70 + (index % 7) * 16, y: 80 + Math.floor(index / 7) * 15 },
@@ -8721,7 +8721,7 @@ test('curved reconstruction targets reject planar homography normals during pose
     averageResidual: 1.1,
   };
 
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'can';
   service.metrics.reconstructionPreview = { surface: { model: 'cylinder' } };
 
@@ -8742,7 +8742,7 @@ test('curved reconstruction targets reject planar homography normals during pose
   );
 });
 
-test('recent mature reconstruction holds through one-frame planar normal dropout', () => {
+test('recent mature reconstruction holds through one-frame planar normal dropout', async () => {
   const service = new ImageAnchorService();
   const correspondences = Array.from({ length: 30 }, (_, index) => ({
     prev: { x: 62 + (index % 6) * 18, y: 76 + Math.floor(index / 6) * 16 },
@@ -8760,7 +8760,7 @@ test('recent mature reconstruction holds through one-frame planar normal dropout
     averageResidual: 1.7,
   };
 
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.lastNormalPoseSource = 'parametric-surface';
   service.framesWithoutNormalPose = 0;
   service.metrics.reconstructionReady = true;
@@ -8807,9 +8807,9 @@ test('raw homography normal candidates report the canonical planar pose source',
   assert.equal(selected.inlierCount, 24);
 });
 
-test('normal observability rejects weak sources without changing their position eligibility', () => {
+test('normal observability rejects weak sources without changing their position eligibility', async () => {
   const rigidPlanarService = new ImageAnchorService();
-  rigidPlanarService.setTrackingMode('sparse-reconstruction');
+  await rigidPlanarService.setTrackingMode('sparse-reconstruction');
   rigidPlanarService.anchorTargetClass = 'laminated card';
   rigidPlanarService.planarDominanceScore = 8;
   const rigidArbitration = rigidPlanarService._recordPoseCandidates({
@@ -8840,7 +8840,7 @@ test('normal observability rejects weak sources without changing their position 
   assert.equal(rigidArbitration.byRole.planar.normalRejectionReason, 'low-normal-confidence');
 
   const curvedService = new ImageAnchorService();
-  curvedService.setTrackingMode('sparse-reconstruction');
+  await curvedService.setTrackingMode('sparse-reconstruction');
   curvedService.anchorTargetClass = 'handled mug';
   curvedService.metrics.reconstructionMapConfidence = 0.69;
 
@@ -8893,7 +8893,7 @@ test('normal observability rejects weak sources without changing their position 
   assert.equal(strongArbitration.byRole.reconstruction.normalAllowed, true);
 });
 
-test('selected reconstruction modes accept robust surface residuals without relaxing object pose gates', () => {
+test('selected reconstruction modes accept robust surface residuals without relaxing object pose gates', async () => {
   const service = new ImageAnchorService();
   const correspondences = Array.from({ length: 28 }, (_, index) => ({
     prev: { x: 40 + index * 4, y: 70 + (index % 6) * 11 },
@@ -8909,10 +8909,10 @@ test('selected reconstruction modes accept robust surface residuals without rela
     averageResidual: 14,
   };
 
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   assert.equal(service._isUsablePoseResult(pose, correspondences), true);
 
-  service.setTrackingMode('object-pose');
+  await service.setTrackingMode('object-pose');
   assert.equal(
     service._isUsablePoseResult({ ...pose, method: 'object-pose-affine' }, correspondences),
     false,
@@ -8978,7 +8978,7 @@ test('real-depth sparse reconstruction owns orientation while local planar patch
     },
   };
 
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.initialized = true;
   service.anchored = true;
   service.anchorState = 'tracking';
@@ -9221,7 +9221,7 @@ test('planar reconstruction targets hold tracker attachment and prior normal dur
     averageResidual: 1.6,
   });
 
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.initialized = true;
   service.anchored = true;
   service.anchorState = 'tracking';
@@ -9641,9 +9641,9 @@ test('inconsistent reconstruction does not replace tracked attachment scale', ()
   assert.equal(transform.method, 'reference_similarity_transform');
 });
 
-test('curved sparse reconstruction uses tracker-local scale when its attachment is only reference similarity', () => {
+test('curved sparse reconstruction uses tracker-local scale when its attachment is only reference similarity', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'bottle';
   service.metrics.reconstructionPreview = {
     surface: { model: 'cylinder' },
@@ -9692,9 +9692,9 @@ test('curved sparse reconstruction uses tracker-local scale when its attachment 
   assert.equal(transform.rotation, trackerAnchorPosition.rotation);
 });
 
-test('selected curved reconstruction blends tracker scale when selected scale diverges', () => {
+test('selected curved reconstruction blends tracker scale when selected scale diverges', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchorTargetClass = 'can';
   service.metrics.reconstructionPreview = {
     surface: { model: 'cylinder' },
@@ -9756,9 +9756,9 @@ test('selected curved reconstruction blends tracker scale when selected scale di
   );
 });
 
-test('mature curved pose dropout uses centroid position while preserving tracker transform', () => {
+test('mature curved pose dropout uses centroid position while preserving tracker transform', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'cup';
   service.metrics.reconstructionReady = true;
   service.metrics.reconstructionMapConfidence = 0.82;
@@ -9809,9 +9809,9 @@ test('mature curved pose dropout uses centroid position while preserving tracker
   assert.equal(service.metrics.trackerAnchorAdjustment, 'curved-dropout-centroid-position');
 });
 
-test('mature curved pose dropout centroid ignores active landmarks demoted from object ownership', () => {
+test('mature curved pose dropout centroid ignores active landmarks demoted from object ownership', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'cup';
   service.objectSupportMask = createObjectSupportMask({
     width: 160,
@@ -9879,10 +9879,10 @@ test('mature curved pose dropout centroid ignores active landmarks demoted from 
   );
 });
 
-test('selected curved reconstruction modes do not use sparse centroid dropout fallback', () => {
+test('selected curved reconstruction modes do not use sparse centroid dropout fallback', async () => {
   for (const mode of ['parametric-surface', 'direct-photometric']) {
     const service = new ImageAnchorService();
-    service.setTrackingMode(mode);
+    await service.setTrackingMode(mode);
     service.anchorTargetClass = 'mug';
     service.metrics.reconstructionReady = true;
     service.metrics.reconstructionMapConfidence = 0.84;
@@ -9929,9 +9929,9 @@ test('selected curved reconstruction modes do not use sparse centroid dropout fa
   }
 });
 
-test('mature curved reconstruction owns position when tracker transform is incoherent', () => {
+test('mature curved reconstruction owns position when tracker transform is incoherent', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'cup';
   service.templateRegion = { width: 132, height: 118 };
   service.metrics.reconstructionReady = true;
@@ -9967,9 +9967,9 @@ test('mature curved reconstruction owns position when tracker transform is incoh
   );
 });
 
-test('compact mature curved reconstruction recovers position when tracker transform is incoherent', () => {
+test('compact mature curved reconstruction recovers position when tracker transform is incoherent', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.anchorTargetClass = 'mug';
   service.templateRegion = { width: 140, height: 118 };
   service.metrics.reconstructionReady = true;
@@ -10005,9 +10005,9 @@ test('compact mature curved reconstruction recovers position when tracker transf
   );
 });
 
-test('curved recovery rejects divergent poses that lack mode-appropriate geometric support', () => {
+test('curved recovery rejects divergent poses that lack mode-appropriate geometric support', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('direct-photometric');
+  await service.setTrackingMode('direct-photometric');
   service.anchorTargetClass = 'cup';
   service.templateRegion = { width: 118, height: 118 };
   service.metrics.reconstructionReady = true;
@@ -10049,7 +10049,7 @@ test('curved recovery rejects divergent poses that lack mode-appropriate geometr
     false,
   );
 
-  service.setTrackingMode('sparse-reconstruction');
+  await service.setTrackingMode('sparse-reconstruction');
   service.metrics.reconstructionTrackerDelta = 27.5;
   const sparsePose = {
     ...reconstructionPose,
@@ -10067,20 +10067,20 @@ test('curved recovery rejects divergent poses that lack mode-appropriate geometr
   assert.equal(service._shouldRejectDivergentCurvedPosition(sparsePose), false);
 });
 
-test('reselecting the active tracking mode preserves the current reconstruction map', () => {
+test('reselecting the active tracking mode preserves the current reconstruction map', async () => {
   const service = new ImageAnchorService();
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
   service.anchored = true;
   service.currentPosition = { x: 80, y: 60, z: 0 };
   service.trackingRegion = { x: 20, y: 20, width: 120, height: 80 };
   const reconstructor = service.reconstructor;
 
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
 
   assert.equal(service.reconstructor, reconstructor);
 });
 
-test('tracking mode replacement and service disposal release their reconstruction engines', () => {
+test('tracking mode replacement and service disposal release their reconstruction engines', async () => {
   const service = new ImageAnchorService();
   service.anchored = true;
   service.currentPosition = { x: 80, y: 60, z: 0 };
@@ -10090,7 +10090,7 @@ test('tracking mode replacement and service disposal release their reconstructio
     previousDisposals++;
   };
 
-  service.setTrackingMode('parametric-surface');
+  await service.setTrackingMode('parametric-surface');
 
   assert.equal(previousDisposals, 1);
   let activeDisposals = 0;
