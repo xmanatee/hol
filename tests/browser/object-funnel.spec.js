@@ -12,6 +12,8 @@ const countGreenPixels = (canvas) => {
 for (const [scenario, failedUrl, title] of [
   [null, null, 'rendered object video reaches green readiness before tap and mounts a surface-attached face'],
   ['stale', null, 'frozen discovery removes its green outline and resumes the same selectable object'],
+  ['static', null, 'camera-to-face flow works under static hosting CSP without isolation headers'],
+  ['slow-head', null, 'face loading stays visible until the actual head asset is ready'],
   ['resize', null, 'intrinsic camera resize rebuilds object coordinates without replacing the video stream'],
   [
     'depth',
@@ -29,6 +31,7 @@ for (const [scenario, failedUrl, title] of [
     test.skip(browserName !== 'chromium', 'Canvas video capture is a Chromium fixture');
     test.setTimeout(120_000);
     const errors = [];
+    const faceDownload = Promise.withResolvers();
     const optionalAIRequests = [];
     page.on('request', (request) => {
       if (
@@ -46,6 +49,23 @@ for (const [scenario, failedUrl, title] of [
     page.on('pageerror', (error) => errors.push(error.message));
     if (failedUrl) {
       await browserContext.route(failedUrl, (route) => route.abort('failed'));
+    }
+    if (scenario === 'slow-head') {
+      await browserContext.route('**/head-*.glb', async (route) => {
+        await faceDownload.promise;
+        await route.continue();
+      });
+    }
+    if (scenario === 'static') {
+      await browserContext.route('**/', async (route) => {
+        const response = await route.fetch();
+        const headers = response.headers();
+        delete headers['cross-origin-embedder-policy'];
+        delete headers['cross-origin-opener-policy'];
+        headers['content-security-policy'] =
+          "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https: wss: data:; worker-src 'self' blob:; base-uri 'self'";
+        await route.fulfill({ response, headers });
+      });
     }
     // A real MediaStream from a rendered scene replaces only the physical camera input.
     // Segmentation, worker tracking, readiness, selection and the GLB renderer are unmodified.
@@ -243,6 +263,7 @@ for (const [scenario, failedUrl, title] of [
       };
     });
     await page.goto('/');
+    if (scenario === 'static') expect(await page.evaluate(() => crossOriginIsolated)).toBe(false);
     await page.getByRole('button', { name: 'Start Camera' }).click();
     const discovery = page.getByTestId('object-discovery');
     await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
@@ -280,6 +301,13 @@ for (const [scenario, failedUrl, title] of [
     }
     await selectionCanvas.click();
     await expect(discovery).toHaveCount(0);
+    if (scenario === 'slow-head') {
+      const loading = page.getByRole('status').filter({ hasText: 'Loading face…' });
+      await expect(loading).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath('face-loading.png') });
+      faceDownload.resolve();
+      await expect(loading).toBeHidden();
+    }
     if (scenario === 'overlay' || scenario === 'head') {
       await expect(page.getByRole('alert')).toContainText('3D overlay unavailable');
       await page.screenshot({ path: testInfo.outputPath('overlay-error.png') });
@@ -324,6 +352,11 @@ for (const [scenario, failedUrl, title] of [
       .poll(() => page.evaluate(() => window.__holLastDrawAt - window.__holFirstDrawAt))
       .toBeGreaterThan(500);
     await page.screenshot({ path: testInfo.outputPath('ready.png') });
+    if (scenario === 'slow-head') {
+      expect(errors).toEqual([]);
+      expect(optionalAIRequests).toEqual([]);
+      return;
+    }
     if (scenario === 'stale') {
       await expect
         .poll(() => page.evaluate(() => window.__holLastVisibleFaceAt - window.__holFirstVisibleFaceAt))
@@ -467,14 +500,23 @@ for (const [scenario, failedUrl, title] of [
     await page.getByRole('button', { name: 'Depth Fusion', exact: true }).click();
     if (scenario === 'depth') {
       await expect(discovery).toHaveAttribute('data-stage', 'error');
-      await expect(discovery).toHaveText(
-        'Object discovery is unavailable. Stop and restart the camera to retry.',
-      );
+      await expect(discovery).toContainText('Object discovery unavailable');
+      await expect(
+        page.getByRole('dialog').getByRole('button', { name: 'Retry vision', exact: true }),
+      ).toBeVisible();
       await expect(page.locator('.overlay-scene')).toHaveCount(0);
       await browserContext.unroute('**/anchor.depthFusion-*.js');
+      await page.getByRole('dialog').getByRole('button', { name: 'Retry vision', exact: true }).click();
+      await expect(discovery).not.toHaveAttribute('data-stage', /initializing|error/, { timeout: 30_000 });
+      await expect(page.getByRole('button', { name: 'Depth Fusion', exact: true })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      await page.getByRole('button', { name: 'Object pose', exact: true }).click();
       await page.keyboard.press('Escape');
-      await page.getByRole('button', { name: 'Stop camera', exact: true }).click();
-      await page.getByRole('button', { name: 'Start Camera' }).click();
+      expect(
+        await page.evaluate(() => document.querySelector('video').srcObject === window.__holOriginalStream),
+      ).toBe(true);
       await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
       await page.getByRole('button', { name: 'Select the object at the camera center' }).click();
       await expect(page.locator('.overlay-scene canvas')).toBeVisible();

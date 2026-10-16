@@ -257,26 +257,30 @@ test('every field-control section meets the supported WCAG A and AA rules', asyn
 
 test('field controls reflow long bidirectional runtime text at 320 CSS pixels', async ({
   page,
+  context,
   browserName,
 }) => {
   test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');
+  const longRtlToken = `م${'runtimevalue'.repeat(48)}`;
+  await context.route(/\/assets\/opencv-[\w-]+\.js$/, (route) =>
+    route.fulfill({
+      contentType: 'application/javascript',
+      body: `throw new Error(${JSON.stringify(longRtlToken)});`,
+    }),
+  );
   await page.setViewportSize({ width: 320, height: 720 });
   await page.goto('/');
-  await page.waitForLoadState('networkidle');
   await startCamera(page);
+  await expect(page.getByTestId('object-discovery')).toHaveAttribute('data-stage', 'error');
   await page.getByRole('button', { name: 'Debug drawer' }).click();
   await expect(page.getByRole('dialog', { name: 'Field controls' })).toBeVisible();
   await page.evaluate(() => {
     document.documentElement.style.fontSize = '200%';
   });
 
-  const longRtlToken = `م${'runtimevalue'.repeat(48)}`;
-  const diagnosticRow = page.getByText('Pose rejection', { exact: true }).locator('..');
-  const diagnosticValue = diagnosticRow.locator(':scope > :nth-child(2)');
+  await page.getByRole('dialog').getByText('Technical details', { exact: true }).click();
+  const diagnosticValue = page.getByRole('dialog').getByText(longRtlToken, { exact: true });
   await expect(diagnosticValue).toHaveAttribute('dir', 'auto');
-  await diagnosticValue.evaluate((element, value) => {
-    element.textContent = value;
-  }, longRtlToken);
 
   await expect
     .poll(() =>
@@ -286,7 +290,7 @@ test('field controls reflow long bidirectional runtime text at 320 CSS pixels', 
         textAlign: getComputedStyle(element).textAlign,
       })),
     )
-    .toEqual({ direction: 'rtl', overflowWrap: 'anywhere', textAlign: 'end' });
+    .toEqual({ direction: 'rtl', overflowWrap: 'anywhere', textAlign: 'start' });
 
   await page.getByRole('tab', { name: 'System' }).click();
   const metric = page.getByText('Capture FPS', { exact: true }).locator('..');

@@ -5,6 +5,7 @@ import { FieldControlsSystem } from './FieldControlsSystem.jsx';
 import { FieldControlsVoice } from './FieldControlsVoice.jsx';
 import { cx } from './uiClassNames.js';
 import FieldControlsDialog from './FieldControlsDialog.jsx';
+import { AnchorStatusMessage } from './AnchorStatusMessage.jsx';
 
 const TAB_IDS = ['anchor', 'voice', 'model', 'system'];
 
@@ -34,6 +35,7 @@ const FieldControlsDrawer = ({
   onMicrophoneModeChange,
   onOpenChange,
   onResetMicrophoneBaseline,
+  onRetryVision,
   onRotationChange,
   onShowStatsChange,
   onSpeakGreeting,
@@ -104,12 +106,23 @@ const FieldControlsDrawer = ({
         tabIndex={0}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70"
       >
+        {activeTab !== 'anchor' &&
+          (anchorStatus.status === 'error' || anchorStatus.status === 'initializing') && (
+            <div className="p-4">
+              <AnchorStatusMessage
+                status={anchorStatus}
+                error={anchorSystemState.error}
+                onRetry={onRetryVision}
+              />
+            </div>
+          )}
         {activeTab === 'anchor' && (
           <FieldControlsAnchor
             anchorStatus={anchorStatus}
             anchorSystemState={anchorSystemState}
             anchorTrackingMode={anchorTrackingMode}
             depthStateStore={depthStateStore}
+            onRetryVision={onRetryVision}
           />
         )}
 

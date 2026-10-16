@@ -168,21 +168,119 @@ for (const [dependency, runtimeUrl] of [
     page,
     context,
     browserName,
-  }) => {
+  }, testInfo) => {
     test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');
     await context.route(runtimeUrl, (route) => route.abort());
     await page.goto('/');
     await page.getByRole('button', { name: 'Start Camera' }).click();
     const discovery = page.getByTestId('object-discovery');
     await expect(discovery).toHaveAttribute('data-stage', 'error', { timeout: 30_000 });
-    await expect(discovery).toContainText('Stop and restart the camera');
-    await page.getByRole('button', { name: 'Stop camera' }).click();
+    await expect(discovery).toContainText('Object discovery unavailable');
+    await page.evaluate(() => {
+      window.__originalCameraStream = document.querySelector('video').srcObject;
+    });
+    await page.getByRole('button', { name: 'Debug drawer' }).click();
+    const drawer = page.getByRole('dialog', { name: 'Field controls' });
+    await expect(drawer.getByRole('alert')).toContainText('Object discovery unavailable');
+    await expect(drawer.getByText('Loading on-device vision', { exact: true })).toHaveCount(0);
+    await expect(drawer.getByText('Keypoints', { exact: true })).toHaveCount(0);
+    await drawer.getByText('Technical details', { exact: true }).click();
+    await page.screenshot({ path: testInfo.outputPath('vision-error.png') });
     await context.unroute(runtimeUrl);
-    await page.getByRole('button', { name: 'Start Camera' }).click();
-    await expect(discovery).not.toContainText('Preparing', { timeout: 30_000 });
-    await expect(discovery).not.toHaveAttribute('data-stage', 'error');
+    await drawer.getByRole('button', { name: 'Retry vision', exact: true }).click();
+    await expect(discovery).not.toHaveAttribute('data-stage', /initializing|error/, { timeout: 30_000 });
+    await expect(drawer.getByRole('status')).toBeFocused();
+    expect(
+      await page.evaluate(() => document.querySelector('video').srcObject === window.__originalCameraStream),
+    ).toBe(true);
+    await page.getByRole('button', { name: 'Close debug drawer' }).click();
+    await expect(discovery).toBeVisible();
   });
 }
+
+test('slow first model download remains loading without capturing stale camera frames', async ({
+  page,
+  context,
+  browserName,
+}, testInfo) => {
+  test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');
+  test.setTimeout(60_000);
+  await instrumentCanvasReadbacks(page);
+  const download = Promise.withResolvers();
+  let requestedAt = null;
+  await context.route(/\/assets\/magic-touch-f32-[\w-]+\.tflite$/, async (route) => {
+    requestedAt = Date.now();
+    await download.promise;
+    await route.continue();
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Start Camera' }).click();
+  await expect.poll(() => requestedAt).not.toBeNull();
+  const discovery = page.getByTestId('object-discovery');
+  await expect(discovery).toHaveAttribute('data-stage', 'initializing');
+  await expect(discovery).toContainText('Loading on-device vision');
+  await page.getByRole('button', { name: 'Debug drawer' }).click();
+  const drawer = page.getByRole('dialog', { name: 'Field controls' });
+  await expect(drawer.getByText('Loading on-device vision', { exact: true })).toBeVisible();
+  await expect(drawer.getByText('Keypoints', { exact: true })).toHaveCount(0);
+  await drawer.getByRole('tab', { name: 'model', exact: true }).click();
+  await drawer.getByRole('button', { name: 'Surface Fit', exact: true }).click();
+  await drawer.getByRole('tab', { name: 'anchor', exact: true }).click();
+  // Intentionally exceed the former 6 s cold inference deadline; this is a delayed network fault, not a readiness sleep.
+  await expect.poll(() => Date.now() - requestedAt, { timeout: 10_000 }).toBeGreaterThan(6500);
+  await expect(drawer.getByText('Loading on-device vision', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.__holCameraCaptures.length)).toBe(0);
+  await page.screenshot({ path: testInfo.outputPath('vision-loading.png') });
+  for (const viewport of [
+    { width: 844, height: 390 },
+    { width: 1024, height: 1366 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(drawer.getByRole('button', { name: 'Stop camera', exact: true })).toBeVisible();
+    const bounds = await drawer.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height);
+    await page.screenshot({ path: testInfo.outputPath(`vision-loading-${viewport.width}.png`) });
+  }
+  download.resolve();
+  await expect(discovery).not.toHaveAttribute('data-stage', /initializing|error/, { timeout: 30_000 });
+  await expect.poll(() => page.evaluate(() => window.__holCameraCaptures.length)).toBeGreaterThan(0);
+  await drawer.getByRole('tab', { name: 'model', exact: true }).click();
+  await expect(drawer.getByRole('button', { name: 'Surface Fit', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+});
+
+test('stopping during model loading retires startup and a new camera session loads cleanly', async ({
+  page,
+  context,
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');
+  const download = Promise.withResolvers();
+  const requested = Promise.withResolvers();
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await context.route(/\/assets\/magic-touch-f32-[\w-]+\.tflite$/, async (route) => {
+    requested.resolve();
+    await download.promise;
+    await route.continue();
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Start Camera' }).click();
+  await requested.promise;
+  await expect(page.getByTestId('object-discovery')).toHaveAttribute('data-stage', 'initializing');
+  await page.getByRole('button', { name: 'Stop camera', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Start Camera' })).toBeVisible();
+  download.resolve();
+  await page.getByRole('button', { name: 'Start Camera' }).click();
+  await expect(page.getByTestId('object-discovery')).not.toHaveAttribute('data-stage', /initializing|error/, {
+    timeout: 30_000,
+  });
+  expect(errors).toEqual([]);
+});
 
 test('active camera canvas follows portrait and landscape viewport changes', async ({
   page,

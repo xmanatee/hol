@@ -10,6 +10,8 @@ import CameraVideo from '../components/CameraVideo.jsx';
 import CameraCanvas from '../components/CameraCanvas.jsx';
 import FeatureBoundary, { FeatureError } from '../components/FeatureBoundary.jsx';
 import FieldControls from '../components/ui/FieldControls.jsx';
+import { AnchorStatusMessage } from '../components/ui/AnchorStatusMessage.jsx';
+import { describeAnchorStatus } from '../utils/anchorStatus.js';
 import {
   renderAnchorOverlay,
   renderDiscoveryOverlay,
@@ -84,7 +86,7 @@ const AnchorFeedback = ({ feedback }) => {
       role={feedback.severity === 'bad' ? 'alert' : 'status'}
       aria-live={feedback.severity === 'bad' ? 'assertive' : 'polite'}
       aria-atomic="true"
-      className={`fixed left-1/2 bottom-24 z-50 w-[min(92vw,28rem)] -translate-x-1/2 rounded border px-3 py-2 text-center text-sm shadow-lg ${toneClass}`}
+      className={`fixed left-1/2 bottom-[calc(6rem_+_env(safe-area-inset-bottom))] z-50 w-[min(92vw,28rem)] -translate-x-1/2 rounded border px-3 py-2 text-center text-sm shadow-lg ${toneClass}`}
     >
       {feedback.message}
     </div>
@@ -148,6 +150,7 @@ const CameraView = () => {
     startCamera,
     resumeCamera,
     stopCamera,
+    retryVision,
     canProcessAnchorFrame,
     processAnchorFrame,
     selectAnchorFromTap,
@@ -159,6 +162,10 @@ const CameraView = () => {
     setAnchorTrackingMode,
   } = useCameraSystem();
   const cameraViewportStyle = useMemo(() => ({}), []);
+  const anchorStatus = useMemo(
+    () => describeAnchorStatus({ cameraState, anchorSystemState }),
+    [cameraState, anchorSystemState],
+  );
   const overlaySceneEnabled = shouldMountOverlayScene({
     cameraState,
     activeAnchor: anchorSystemState.activeAnchor,
@@ -299,10 +306,7 @@ const CameraView = () => {
         if (!ownsRequest()) return;
         const setup = readLocalAISetup();
         if (!setup.personalityReady || !setup.speechReady) {
-          showAnchorFeedback(
-            'Face attached. Microphone mode animates your voice. AI speech needs setup in Voice controls.',
-            'warn',
-          );
+          showAnchorFeedback('Object selected. Use the microphone button to animate its face.', 'good');
           return;
         }
         showAnchorFeedback('Generating object voice...', 'warn');
@@ -597,17 +601,12 @@ const CameraView = () => {
       <AnchorFeedback feedback={anchorFeedback} />
       {cameraState === 'active' && anchorSystemState.mode === 'selection' && (
         <div
-          role={visionError ? 'alert' : 'status'}
           data-testid="object-discovery"
-          data-stage={visionError ? 'error' : anchorSystemState.candidate?.status || 'searching'}
-          className="fixed top-[max(1rem,env(safe-area-inset-top))] left-1/2 z-30 w-[min(90vw,26rem)] -translate-x-1/2 rounded-xl bg-black/75 px-4 py-3 text-center text-sm text-white pointer-events-none"
+          data-stage={anchorStatus.status}
+          hidden={fieldControlsOpen}
+          className="fixed top-[max(1rem,env(safe-area-inset-top))] left-1/2 z-30 w-[min(90vw,26rem)] -translate-x-1/2 text-white pointer-events-none"
         >
-          {visionError
-            ? 'Object discovery is unavailable. Stop and restart the camera to retry.'
-            : anchorSystemState.candidate?.reason ||
-              (anchorSystemState.initialized
-                ? 'Point at one object near the center'
-                : 'Preparing object discovery…')}
+          <AnchorStatusMessage status={anchorStatus} error={visionError} onRetry={retryVision} />
         </div>
       )}
 
@@ -616,11 +615,19 @@ const CameraView = () => {
         <FeatureBoundary
           name="OverlayScene"
           renderError={(error) => (
-            <div className="fixed left-1/2 top-4 z-40 max-h-[70dvh] w-[min(90vw,26rem)] -translate-x-1/2 overflow-y-auto rounded border border-red-700 bg-red-950 p-3">
+            <div className="fixed left-1/2 top-[max(1rem,env(safe-area-inset-top))] z-40 max-h-[70dvh] w-[min(90vw,26rem)] -translate-x-1/2 overflow-y-auto rounded border border-red-700 bg-red-950 p-3">
               <FeatureError name="3D overlay" error={error} />
             </div>
           )}
         >
+          {discoveredMeshes.length === 0 && (
+            <p
+              role="status"
+              className="fixed left-1/2 top-[max(1rem,env(safe-area-inset-top))] z-30 w-[min(90vw,26rem)] -translate-x-1/2 rounded-lg border border-white/15 bg-zinc-950/90 p-3 text-sm text-zinc-100 pointer-events-none"
+            >
+              Loading face…
+            </p>
+          )}
           <Suspense fallback={null}>
             <OverlayScene
               width={videoDimensions?.width || 1280}
@@ -659,6 +666,8 @@ const CameraView = () => {
           depthStateStore={depthStateStore}
           cameraState={cameraState}
           anchorSystemState={anchorSystemState}
+          anchorStatus={anchorStatus}
+          onRetryVision={retryVision}
           anchorTrackingMode={anchorSystemState.trackingMode}
           personalityData={personalityData}
           ttsData={ttsData}

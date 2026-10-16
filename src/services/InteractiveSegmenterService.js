@@ -6,11 +6,17 @@ export class InteractiveSegmenterService {
   constructor({
     WorkerClass = null,
     backendId = 'mediapipe-wasm',
+    initializationTimeoutMs = 45_000,
     requestTimeoutMs = 6000,
     scheduleRequestTimeout,
   } = {}) {
     this.backend = getSegmentationBackend(backendId);
     this.WorkerClass = WorkerClass;
+    this.initializationTimeoutMs = assertWorkerRequestTimeout(
+      initializationTimeoutMs,
+      'Interactive segmenter initialization timeout',
+    );
+    this.initializationPromise = null;
     this.requestTimeoutMs = assertWorkerRequestTimeout(
       requestTimeoutMs,
       'Interactive segmenter request timeout',
@@ -24,6 +30,16 @@ export class InteractiveSegmenterService {
     this.nextRequestId = 1;
   }
 
+  initialize() {
+    if (!this.initializationPromise) {
+      this.initializationPromise = this._request(
+        { type: 'initialize', backendId: this.backend.id },
+        this.initializationTimeoutMs,
+      );
+    }
+    return this.initializationPromise;
+  }
+
   segmentTap({
     imageData,
     tapPosition,
@@ -33,31 +49,35 @@ export class InteractiveSegmenterService {
   }) {
     assertWorkerRequestTimeout(timeoutMs, 'Interactive segmenter request timeout');
     assertSegmentationInput({ imageData, tapPosition, createdAtFrame, maxRadius });
-    const requestId = this.nextRequestId++;
     const copiedImageData = copyImageData(imageData);
+    return this._request(
+      {
+        type: 'segment',
+        backendId: this.backend.id,
+        imageData: copiedImageData,
+        tapPosition: { ...tapPosition },
+        createdAtFrame,
+        maxRadius,
+      },
+      timeoutMs,
+      [copiedImageData.data.buffer],
+    );
+  }
+
+  _request(message, timeoutMs, transferables = []) {
+    const requestId = this.nextRequestId++;
     const workerGeneration = this.workerGeneration;
 
     const request = this.pendingRequests.start({
       id: requestId,
       timeoutMs,
-      timeoutMessage: `Interactive segmenter request timed out after ${timeoutMs}ms`,
+      timeoutMessage: `Interactive segmenter ${message.type === 'initialize' ? 'initialization' : 'request'} timed out after ${timeoutMs}ms`,
       send: async () => {
         const worker = await this._getWorker();
         if (!this.pendingRequests.has(requestId)) {
           return;
         }
-        worker.postMessage(
-          {
-            type: 'segment',
-            backendId: this.backend.id,
-            requestId,
-            imageData: copiedImageData,
-            tapPosition: { ...tapPosition },
-            createdAtFrame,
-            maxRadius,
-          },
-          [copiedImageData.data.buffer],
-        );
+        worker.postMessage({ ...message, requestId }, transferables);
       },
       onTimeout: (error) => this._handleWorkerError(error.message),
     });
@@ -128,7 +148,9 @@ export class InteractiveSegmenterService {
       this._handleWorkerError('Interactive segmenter response backend mismatch');
       return;
     }
-    if (message.type === 'segment-result') {
+    if (message.type === 'initialize-result') {
+      this.pendingRequests.resolve(message.requestId, true);
+    } else if (message.type === 'segment-result') {
       this.pendingRequests.resolve(message.requestId, message.objectSupportMask);
     } else if (message.type === 'segment-error') {
       this._handleWorkerError(message.reason);
@@ -151,6 +173,7 @@ export class InteractiveSegmenterService {
     this.worker = null;
     this.workerGeneration++;
     this.workerPromise = null;
+    this.initializationPromise = null;
     worker?.terminate();
   }
 }

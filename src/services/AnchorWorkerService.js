@@ -50,6 +50,7 @@ export class AnchorWorkerService {
       scheduleTimeout: scheduleRequestTimeout,
     });
     this.nextRequestId = 1;
+    this.minimumStateRequestId = 0;
     this.frameRequestId = null;
     this.frameCapturedAt = null;
     this.frameUpdatesAnchor = false;
@@ -69,12 +70,21 @@ export class AnchorWorkerService {
 
     if (!this.initializationPromise) {
       const workerGeneration = this.workerGeneration;
+      const trackingMode = this.trackingMode;
       const initializationPromise = this._request('initialize', {
         viewportWidth,
         viewportHeight,
         fov,
-        trackingMode: this.trackingMode,
+        trackingMode,
       })
+        .then(async (result) => {
+          let appliedMode = trackingMode;
+          while (workerGeneration === this.workerGeneration && appliedMode !== this.trackingMode) {
+            appliedMode = this.trackingMode;
+            await this._request('setTrackingMode', { mode: appliedMode });
+          }
+          return result;
+        })
         .catch((error) => {
           if (workerGeneration === this.workerGeneration) {
             this._handleWorkerFailure(error);
@@ -164,7 +174,11 @@ export class AnchorWorkerService {
     }
 
     this.trackingMode = mode;
-    if (this.initialized) {
+    this.minimumStateRequestId = this.nextRequestId;
+    this.candidate = null;
+    this.sampledAt = null;
+    this._scheduleCandidateExpiry();
+    if (this.initialized && !this.initializationPromise) {
       this._send('setTrackingMode', { mode });
     }
     this._notifyUpdate();
@@ -304,9 +318,12 @@ export class AnchorWorkerService {
   }
 
   _handleWorkerMessage(message) {
-    const completed = Object.hasOwn(message, 'error')
-      ? this.pendingRequests.reject(message.id, new Error(message.error))
-      : this.pendingRequests.resolve(message.id, message.result);
+    if (Object.hasOwn(message, 'error')) {
+      const error = new Error(message.error);
+      if (this.pendingRequests.reject(message.id, error)) this._handleWorkerFailure(error);
+      return;
+    }
+    const completed = this.pendingRequests.resolve(message.id, message.result);
     if (!completed) {
       return;
     }
@@ -317,7 +334,7 @@ export class AnchorWorkerService {
       this.frameCapturedAt = null;
       this.frameUpdatesAnchor = false;
     }
-    if (message.state) {
+    if (message.state && message.id >= this.minimumStateRequestId) {
       this._applyState(message.state, sampledAt);
     }
   }
@@ -330,7 +347,6 @@ export class AnchorWorkerService {
     this.nextObservationAt = state.nextObservationAt;
     this.anchorState = state.anchorState;
     this.segmentationRefresh = state.segmentationRefresh;
-    this.trackingMode = state.trackingMode;
     this.initialized = state.initialized;
     this.sampledAt = sampledAt;
     this._scheduleCandidateExpiry();

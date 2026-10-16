@@ -1,5 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { describeAnchorStatus } from '../../utils/anchorStatus.js';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { FieldControlsHud } from './FieldControlsHud.jsx';
 import FieldControlsDialog from './FieldControlsDialog.jsx';
 import FeatureBoundary, { FeatureError } from '../FeatureBoundary.jsx';
@@ -22,8 +21,7 @@ const FieldControlsDrawerStatus = ({ error = null, onOpenChange }) => (
 
 const FieldControls = (props) => {
   const {
-    anchorSystemState,
-    cameraState,
+    anchorStatus,
     hasActiveAnchor,
     microphoneActive,
     microphoneMode,
@@ -37,10 +35,6 @@ const FieldControls = (props) => {
   const [activeTab, setActiveTab] = useState('anchor');
   const triggerRef = useRef(null);
   const wasOpenRef = useRef(false);
-  const anchorStatus = useMemo(
-    () => describeAnchorStatus({ cameraState, anchorSystemState }),
-    [cameraState, anchorSystemState],
-  );
 
   useEffect(() => {
     if (open) {

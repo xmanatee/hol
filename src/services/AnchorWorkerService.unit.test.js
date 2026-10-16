@@ -378,6 +378,132 @@ test('anchor worker initialization is single-flight across concurrent callers', 
   assert.equal(FakeAnchorWorker.instances[0].messages.length, 1);
 });
 
+test('a failed mode switch cannot publish its old snapshot or lose the requested mode on retry', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const service = new TestAnchorWorkerService();
+  t.after(() => service.dispose());
+  const initialized = service.initialize(null, 320, 240);
+  await waitForWorkerPost();
+  const worker = FakeAnchorWorker.instances.at(-1);
+  const candidate = { id: 7, status: 'ready', capturedAt: performance.now() };
+  worker.reply({
+    id: worker.messages.at(-1).id,
+    result: true,
+    state: createState({ initialized: true, candidate }),
+  });
+  await initialized;
+  assert.equal(service.getState().candidate.status, 'ready');
+  service.processFrame(createImageData(), { update: true, capturedAt: 1000 });
+  await waitForWorkerPost();
+  const frameRequest = worker.messages.at(-1);
+  service.setTrackingMode('depth-fusion');
+  assert.equal(service.getState().candidate, null);
+  await waitForWorkerPost();
+  worker.reply({
+    id: frameRequest.id,
+    result: true,
+    state: createState({ initialized: true, trackingMode: 'object-pose', candidate }),
+  });
+  assert.equal(service.getState().trackingMode, 'depth-fusion');
+  assert.equal(service.getState().candidate, null);
+  const states = [];
+  service.addListener((state) => states.push(state));
+  worker.reply({
+    id: worker.messages.at(-1).id,
+    error: 'Depth module failed to load',
+    state: createState({ initialized: true, trackingMode: 'object-pose' }),
+  });
+  await waitForRequestHandlers();
+  assert.equal(worker.terminated, true);
+  assert.equal(service.getState().trackingMode, 'depth-fusion');
+  assert.equal(states.length, 1);
+  assert.equal(states[0].initialized, false);
+  assert.equal(states[0].error, 'Depth module failed to load');
+  const retried = service.initialize(null, 320, 240);
+  await waitForWorkerPost();
+  const replacement = FakeAnchorWorker.instances.at(-1);
+  assert.equal(replacement.messages[0].payload.trackingMode, 'depth-fusion');
+  replacement.reply({
+    id: replacement.messages[0].id,
+    result: true,
+    state: createState({ initialized: true, trackingMode: 'depth-fusion' }),
+  });
+  await retried;
+});
+
+test('startup applies the latest mode even when choices change during initialization', async (t) => {
+  const service = new TestAnchorWorkerService();
+  t.after(() => service.dispose());
+  const initialized = service.initialize(null, 320, 240);
+  await waitForWorkerPost();
+  const worker = FakeAnchorWorker.instances.at(-1);
+  const initializationRequest = worker.messages[0];
+  service.setTrackingMode('depth-fusion');
+  worker.reply({
+    id: initializationRequest.id,
+    result: true,
+    state: createState({ initialized: true, trackingMode: 'object-pose' }),
+  });
+  await waitForWorkerPost();
+  assert.equal(worker.messages.at(-1).command, 'setTrackingMode');
+  assert.equal(worker.messages.at(-1).payload.mode, 'depth-fusion');
+  assert.equal(service.getState().trackingMode, 'depth-fusion');
+  service.setTrackingMode('direct-photometric');
+  worker.reply({
+    id: worker.messages.at(-1).id,
+    result: true,
+    state: createState({ initialized: true, trackingMode: 'depth-fusion' }),
+  });
+  await waitForWorkerPost();
+  assert.equal(worker.messages.at(-1).payload.mode, 'direct-photometric');
+  worker.reply({
+    id: worker.messages.at(-1).id,
+    result: true,
+    state: createState({ initialized: true, trackingMode: 'direct-photometric' }),
+  });
+  await initialized;
+  assert.equal(service.getState().error, null);
+  assert.equal(service.getState().initialized, true);
+  assert.equal(service.getState().trackingMode, 'direct-photometric');
+});
+
+test('switching away and back cannot restore readiness from an earlier in-flight frame', async (t) => {
+  const service = new TestAnchorWorkerService(FakeAnchorWorker, { now: () => 1000 });
+  t.after(() => service.dispose());
+  const initialized = service.initialize(null, 320, 240);
+  await waitForWorkerPost();
+  const worker = FakeAnchorWorker.instances.at(-1);
+  const candidate = { id: 7, status: 'ready', capturedAt: 1000 };
+  worker.reply({
+    id: worker.messages.at(-1).id,
+    result: true,
+    state: createState({ initialized: true, candidate }),
+  });
+  await initialized;
+  service.processFrame(createImageData(), { update: true, capturedAt: 1000 });
+  await waitForWorkerPost();
+  const frameRequest = worker.messages.at(-1);
+  service.setTrackingMode('depth-fusion');
+  service.setTrackingMode('object-pose');
+  await waitForWorkerPost();
+  worker.reply({ id: frameRequest.id, result: true, state: createState({ initialized: true, candidate }) });
+  assert.equal(service.getState().candidate, null);
+  assert.equal(service.getState().sampledAt, null);
+  const modeRequests = worker.messages.filter(({ command }) => command === 'setTrackingMode');
+  for (const [index, request] of modeRequests.entries()) {
+    worker.reply({
+      id: request.id,
+      result: true,
+      state: createState({
+        initialized: true,
+        trackingMode: request.payload.mode,
+        candidate: { ...candidate, status: 'segmented' },
+      }),
+    });
+    assert.equal(service.getState().candidate?.status ?? null, index === 0 ? null : 'segmented');
+  }
+});
+
 test('anchor initialization shares runtime loading and permits retry after a load failure', async (t) => {
   t.mock.method(console, 'error', () => {});
   let loadAttempts = 0;

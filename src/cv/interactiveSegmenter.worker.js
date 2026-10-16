@@ -117,6 +117,15 @@ const executeSerially = createSerialExecutor();
 self.onmessage = (event) =>
   executeSerially(async () => {
     try {
+      if (event.data.type === 'initialize') {
+        await getSegmenter(event.data.backendId);
+        self.postMessage({
+          type: 'initialize-result',
+          backendId: activeBackendId,
+          requestId: event.data.requestId,
+        });
+        return;
+      }
       if (event.data.type !== 'segment')
         throw new Error(`Unsupported segmentation command: ${event.data.type}`);
       await segmentFrame(event.data);

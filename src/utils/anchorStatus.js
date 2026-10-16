@@ -12,12 +12,21 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
     };
   }
 
+  if (anchorSystemState.error) {
+    return {
+      status: 'error',
+      severity: 'bad',
+      message: 'Object discovery unavailable',
+      recommendation: 'Check your connection, then retry vision or stop and restart the camera.',
+    };
+  }
+
   if (anchorSystemState.initialized === false) {
     return {
       status: 'initializing',
-      severity: 'warn',
-      message: 'CV services are initializing',
-      recommendation: 'Wait for selection and anchoring services to finish loading.',
+      severity: 'idle',
+      message: 'Loading on-device vision',
+      recommendation: 'First use downloads the tracking engine and object model. Keep this tab open.',
     };
   }
 
@@ -27,7 +36,10 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
       status: candidate?.status || 'searching',
       severity: candidate?.status === 'ready' ? 'good' : 'idle',
       message: candidate?.reason || 'Point the camera at an object',
-      recommendation: 'Keep one object near the center until its outline turns green.',
+      recommendation:
+        candidate?.status === 'ready'
+          ? 'Keep the object visible as you tap.'
+          : 'Keep one object near the center until its outline turns green.',
     };
   }
 

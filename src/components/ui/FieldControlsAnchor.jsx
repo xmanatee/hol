@@ -1,13 +1,13 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { collectAnchorDetails } from '../../utils/anchorDiagnostics.js';
 import { DiagnosticRow } from './DiagnosticRow.jsx';
-import { DrawerSection, DynamicText } from './FieldControlPrimitives.jsx';
+import { DrawerSection } from './FieldControlPrimitives.jsx';
+import { AnchorStatusMessage } from './AnchorStatusMessage.jsx';
+import { isReconstructionMode } from '../../cv/anchor.reconstructionModes.js';
 import { ReconstructionPreviewSection } from './ReconstructionPreviewSection.jsx';
 import { formatNumber, formatPercent, formatRegion } from './diagnosticFormat.js';
-import { cx } from './uiClassNames.js';
 
-const AnchorDiagnostics = ({ diagnostics }) => {
-  const details = diagnostics.details;
+const AnchorDiagnostics = ({ details }) => {
   const refreshCoverage =
     details.landmarkRefreshCoverageCellCount != null
       ? ` · cells ${details.landmarkRefreshOccupiedBefore}→${details.landmarkRefreshOccupiedAfter}/${details.landmarkRefreshCoverageCellCount}`
@@ -42,22 +42,6 @@ const AnchorDiagnostics = ({ diagnostics }) => {
 
   return (
     <div className="space-y-1 text-xs">
-      <div
-        className={cx(
-          'mb-2 rounded-md border px-2 py-2',
-          diagnostics.severity === 'good'
-            ? 'border-emerald-600 bg-emerald-950/60 text-emerald-100'
-            : diagnostics.severity === 'bad'
-              ? 'border-red-600 bg-red-950/60 text-red-100'
-              : diagnostics.severity === 'warn'
-                ? 'border-yellow-600 bg-yellow-950/60 text-yellow-100'
-                : 'border-white/10 bg-white/5 text-gray-200',
-        )}
-      >
-        <DynamicText className="block font-medium">{diagnostics.message}</DynamicText>
-        <DynamicText className="mt-1 block text-[10px] opacity-75">{diagnostics.recommendation}</DynamicText>
-      </div>
-      <DiagnosticRow label="Status" value={diagnostics.status} tone={diagnostics.severity} />
       <DiagnosticRow
         label="Keypoints"
         value={details.keypointCount}
@@ -155,39 +139,46 @@ export const FieldControlsAnchor = ({
   anchorSystemState,
   anchorTrackingMode,
   depthStateStore,
+  onRetryVision,
 }) => {
   const depthState = useSyncExternalStore(depthStateStore.subscribe, depthStateStore.getSnapshot);
-  const anchorDiagnostics = useMemo(
-    () => ({
-      ...anchorStatus,
-      details: collectAnchorDetails({
+  const details = useMemo(
+    () =>
+      collectAnchorDetails({
         anchorState: anchorSystemState.anchorState,
         segmentationRefresh: anchorSystemState.segmentationRefresh,
       }),
-    }),
-    [anchorStatus, anchorSystemState.anchorState, anchorSystemState.segmentationRefresh],
+    [anchorSystemState.anchorState, anchorSystemState.segmentationRefresh],
   );
 
   return (
     <>
-      <DrawerSection title="Anchor">
-        <AnchorDiagnostics diagnostics={anchorDiagnostics} />
+      <DrawerSection title="Object">
+        <AnchorStatusMessage status={anchorStatus} error={anchorSystemState.error} onRetry={onRetryVision} />
+        {anchorSystemState.anchorState && (
+          <details className="mt-3">
+            <summary className="min-h-11 cursor-pointer py-3 text-sm text-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">
+              Tracking diagnostics
+            </summary>
+            <AnchorDiagnostics details={details} />
+          </details>
+        )}
       </DrawerSection>
-      <DrawerSection title="3D reconstruction">
-        <ReconstructionPreviewSection
-          details={{
-            ...anchorDiagnostics.details,
-            poseModel: anchorDiagnostics.details.poseModel || anchorTrackingMode,
-            reconstructionDepthStatus:
-              anchorDiagnostics.details.reconstructionDepthStatus ?? depthState.state,
-            reconstructionDepthProvider:
-              anchorDiagnostics.details.reconstructionDepthProvider ?? depthState.provider,
-            reconstructionDepthInferenceTime:
-              anchorDiagnostics.details.reconstructionDepthInferenceTime ?? depthState.processingTime,
-          }}
-          embedded
-        />
-      </DrawerSection>
+      {anchorSystemState.anchorState && isReconstructionMode(anchorTrackingMode) && (
+        <DrawerSection title="3D reconstruction">
+          <ReconstructionPreviewSection
+            details={{
+              ...details,
+              poseModel: details.poseModel || anchorTrackingMode,
+              reconstructionDepthStatus: details.reconstructionDepthStatus ?? depthState.state,
+              reconstructionDepthProvider: details.reconstructionDepthProvider ?? depthState.provider,
+              reconstructionDepthInferenceTime:
+                details.reconstructionDepthInferenceTime ?? depthState.processingTime,
+            }}
+            embedded
+          />
+        </DrawerSection>
+      )}
     </>
   );
 };

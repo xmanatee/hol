@@ -90,7 +90,7 @@ export const useCameraSystem = (config = {}) => {
 
   const [cameraState, setCameraState] = useState('idle');
   const [cameraError, setCameraError] = useState(null);
-  const [visionError, setVisionError] = useState(null);
+  const visionError = anchorSystemState.error;
   const [videoDimensions, setVideoDimensions] = useState({ width: 1280, height: 720 });
   const [personalityData, setPersonalityData] = useState(createIdlePersonalityData);
   const [ttsData, setTTSData] = useState(createIdleTTSData);
@@ -174,7 +174,6 @@ export const useCameraSystem = (config = {}) => {
     visionGenerationRef.current += 1;
     visionInitializationRef.current = null;
     anchorStateStore.reset(createIdleAnchorState());
-    setVisionError(null);
     setPersonalityData(createIdlePersonalityData());
     setTTSData(createIdleTTSData());
 
@@ -230,13 +229,21 @@ export const useCameraSystem = (config = {}) => {
           return false;
         }
         logger.error('CameraSystem', 'Vision service initialization failed:', error);
-        setVisionError(error.message);
         throw error;
       });
 
     visionInitializationRef.current = initialization;
     return initialization;
   }, [anchorStateStore, cameraState, session, videoDimensions]);
+
+  const retryVision = useCallback(() => {
+    anchorSelectionGate.reset();
+    retireObjectVoiceSession(session);
+    releaseDepthRuntime();
+    visionGenerationRef.current += 1;
+    visionInitializationRef.current = null;
+    session.anchor.reset();
+  }, [anchorSelectionGate, releaseDepthRuntime, session]);
 
   useEffect(() => {
     if (
@@ -276,7 +283,6 @@ export const useCameraSystem = (config = {}) => {
           visionGenerationRef.current += 1;
           anchorManager.reset();
           visionInitializationRef.current = null;
-          setVisionError(null);
           depthFrameMailbox.reset();
         } else if (lifecycleAction === 'replace-session') {
           replaceCameraSession();
@@ -284,14 +290,7 @@ export const useCameraSystem = (config = {}) => {
       },
     });
 
-    const removeAnchorListener = anchorManager.addListener({
-      onAnchorUpdate: (state) => {
-        anchorStateStore.update(state);
-        if (state.error !== null) {
-          setVisionError(state.error);
-        }
-      },
-    });
+    const removeAnchorListener = anchorManager.addListener(anchorStateStore.update);
 
     const personalityService = session.personality;
     const removePersonalityListener = personalityService.addListener({
@@ -570,6 +569,7 @@ export const useCameraSystem = (config = {}) => {
     startCamera,
     resumeCamera,
     stopCamera,
+    retryVision,
 
     canProcessAnchorFrame,
     processAnchorFrame,

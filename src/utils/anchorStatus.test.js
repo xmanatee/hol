@@ -41,10 +41,28 @@ test('describes camera and initialization boundaries before anchor state', () =>
   });
   assert.deepEqual(describeTrackedState({ state: null, initialized: false }), {
     status: 'initializing',
-    severity: 'warn',
-    message: 'CV services are initializing',
-    recommendation: 'Wait for selection and anchoring services to finish loading.',
+    severity: 'idle',
+    message: 'Loading on-device vision',
+    recommendation: 'First use downloads the tracking engine and object model. Keep this tab open.',
   });
+});
+
+test('vision failures take precedence over initialization and previous tracking success', () => {
+  for (const initialized of [false, true]) {
+    const status = describeAnchorStatus({
+      cameraState: 'active',
+      anchorSystemState: {
+        initialized,
+        error: 'Model download failed',
+        mode: 'anchor',
+        anchorState: { state: 'stable' },
+      },
+    });
+    assert.equal(status.status, 'error');
+    assert.equal(status.severity, 'bad');
+    assert.equal(status.message, 'Object discovery unavailable');
+    assert.match(status.recommendation, /retry vision/i);
+  }
 });
 
 test('describes stable and tracking states without allocating rich diagnostics', () => {

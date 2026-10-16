@@ -26,7 +26,7 @@ export const FieldControlsHud = ({
   const voiceActive = microphoneMode ? microphoneActive : ttsData.isPlaying;
 
   return (
-    <div className="fixed bottom-4 left-1/2 z-40 w-[min(94vw,42rem)] -translate-x-1/2 text-white">
+    <div className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 z-40 w-[min(94vw,42rem)] -translate-x-1/2 text-white">
       <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/70 p-2 shadow-2xl backdrop-blur-md">
         <MetricPill label="Anchor" value={anchorLabel} tone={anchorTone} />
         <MetricPill

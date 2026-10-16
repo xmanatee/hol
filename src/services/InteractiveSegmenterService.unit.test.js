@@ -75,6 +75,79 @@ class FailingWorkerConstruction {
   }
 }
 
+test('model initialization is single-flight, sends no camera pixels, and is reused for inference', async () => {
+  const deadlines = [];
+  const service = new InteractiveSegmenterService({
+    WorkerClass: DeferredWorker,
+    scheduleRequestTimeout: (_callback, timeoutMs) => {
+      deadlines.push(timeoutMs);
+      return () => {};
+    },
+  });
+  const initialized = service.initialize();
+  assert.equal(service.initialize(), initialized);
+  await Promise.resolve();
+  const worker = service.worker;
+  assert.deepEqual(worker.messages, [{ type: 'initialize', backendId: 'mediapipe-wasm', requestId: 1 }]);
+  assert.deepEqual(deadlines, [45000]);
+  worker.onmessage({ data: { type: 'initialize-result', backendId: 'mediapipe-wasm', requestId: 1 } });
+  await initialized;
+  await service.initialize();
+  assert.equal(worker.messages.length, 1);
+
+  const segmented = service.segmentTap({
+    imageData: { width: 2, height: 2, data: new Uint8ClampedArray(16) },
+    tapPosition: { x: 1, y: 1 },
+    createdAtFrame: 1,
+    timeoutMs: 1400,
+  });
+  await Promise.resolve();
+  assert.deepEqual(deadlines, [45000, 1400]);
+  assert.equal(worker.messages.at(-1).type, 'segment');
+  worker.onmessage({
+    data: {
+      type: 'segment-result',
+      backendId: 'mediapipe-wasm',
+      requestId: 2,
+      objectSupportMask: { data: new Uint8Array([255]) },
+    },
+  });
+  assert.deepEqual((await segmented).data, new Uint8Array([255]));
+  service.dispose();
+});
+
+test('cancelled or failed initialization cannot survive into a replacement worker', async () => {
+  for (const failure of ['dispose', 'error', 'timeout']) {
+    let expire;
+    const service = new InteractiveSegmenterService({
+      WorkerClass: DeferredWorker,
+      scheduleRequestTimeout: (callback) => {
+        expire = callback;
+        return () => {};
+      },
+    });
+    const pending = service.initialize();
+    await Promise.resolve();
+    const oldWorker = service.worker;
+    if (failure === 'dispose') service.dispose();
+    else if (failure === 'error') oldWorker.onerror({ message: 'Model could not load' });
+    else expire();
+    await assert.rejects(pending, /disposed|could not load|timed out/);
+    assert.equal(oldWorker.terminated, true);
+    const retry = service.initialize();
+    await Promise.resolve();
+    const worker = service.worker;
+    assert.notEqual(worker, oldWorker);
+    oldWorker.onmessage({ data: { type: 'initialize-result', backendId: 'mediapipe-wasm', requestId: 1 } });
+    worker.onmessage({
+      data: { type: 'initialize-result', backendId: 'mediapipe-wasm', requestId: 2 },
+    });
+    await retry;
+    assert.equal(worker.terminated, false);
+    service.dispose();
+  }
+});
+
 test('interactive segmenter rejects invalid deadlines before copying a frame or creating a worker', () => {
   assert.throws(
     () => new InteractiveSegmenterService({ requestTimeoutMs: 0 }),

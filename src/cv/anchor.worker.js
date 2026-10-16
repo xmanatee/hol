@@ -5,6 +5,7 @@ import { createWorkerCommandHandler } from '../utils/workerCommandHandler.js';
 import { createAnchorWorkerSnapshot } from './anchorWorkerSnapshot.js';
 import { createXFeatWorkerRelocalizer } from './xfeatWorkerProvider.js';
 import { ObjectObservationSession } from '../services/ObjectObservationSession.js';
+import { InteractiveSegmenterService } from '../services/InteractiveSegmenterService.js';
 
 let manager = null;
 let initializationStarted = false;
@@ -22,8 +23,10 @@ const createManager = async ({ viewportWidth, viewportHeight, fov, trackingMode 
   }
   initializationStarted = true;
 
-  const cv = await loadOpenCVRuntimeInWorker();
+  const interactiveSegmenterService = new InteractiveSegmenterService();
+  const [cv] = await Promise.all([loadOpenCVRuntimeInWorker(), interactiveSegmenterService.initialize()]);
   const nextManager = new AnchorManager({
+    interactiveSegmenterService,
     imageAnchorService: new ImageAnchorService({
       learnedRelocalizer: createXFeatWorkerRelocalizer(),
     }),
