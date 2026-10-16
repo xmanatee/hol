@@ -431,43 +431,45 @@ test('anchor frames combine tracking and segmentation in one zero-copy worker re
   service.dispose();
 });
 
-test('anchor worker deadline retires a stalled frame and releases the frame gate', async (t) => {
-  const originalError = console.error;
-  console.error = () => {};
-  t.after(() => {
-    console.error = originalError;
+for (const failure of ['deadline', 'frame error']) {
+  test(`anchor worker ${failure} retires the frame and releases its gate`, async (t) => {
+    const originalError = console.error;
+    console.error = () => {};
+    t.after(() => {
+      console.error = originalError;
+    });
+
+    FakeAnchorWorker.instances = [];
+    const scheduler = createManualTimeoutScheduler();
+    const service = new TestAnchorWorkerService(FakeAnchorWorker, {
+      requestTimeoutMs: 1000,
+      scheduleRequestTimeout: scheduler.schedule,
+    });
+    service.initialized = true;
+    service.mode = 'anchor';
+
+    service.processFrame(createImageData(), {
+      update: true,
+      refreshSegmentation: false,
+      depthContext: null,
+      capturedAt: 200,
+    });
+    await waitForWorkerPost();
+    const stalledWorker = FakeAnchorWorker.instances[0];
+    assert.equal(service.canProcessFrame(), false);
+
+    const error =
+      failure === 'deadline' ? 'Anchor worker processFrame timed out after 1000ms' : 'OpenCV runtime failed';
+    if (failure === 'deadline') scheduler.run();
+    else stalledWorker.reply({ id: stalledWorker.messages[0].id, error });
+    await waitForRequestHandlers();
+
+    assert.equal(stalledWorker.terminated, true);
+    assert.equal(service.canProcessFrame(), false);
+    assert.equal(service.pendingRequests.size, 0);
+    assert.deepEqual(service.getState(), createState({ error }));
   });
-
-  FakeAnchorWorker.instances = [];
-  const scheduler = createManualTimeoutScheduler();
-  const service = new TestAnchorWorkerService(FakeAnchorWorker, {
-    requestTimeoutMs: 1000,
-    scheduleRequestTimeout: scheduler.schedule,
-  });
-  service.initialized = true;
-  service.mode = 'anchor';
-
-  service.processFrame(createImageData(), {
-    update: true,
-    refreshSegmentation: false,
-    depthContext: null,
-    capturedAt: 200,
-  });
-  await waitForWorkerPost();
-  const stalledWorker = FakeAnchorWorker.instances[0];
-  assert.equal(service.canProcessFrame(), false);
-
-  scheduler.run();
-  await waitForRequestHandlers();
-
-  assert.equal(stalledWorker.terminated, true);
-  assert.equal(service.canProcessFrame(), false);
-  assert.equal(service.pendingRequests.size, 0);
-  assert.deepEqual(
-    service.getState(),
-    createState({ error: 'Anchor worker processFrame timed out after 1000ms' }),
-  );
-});
+}
 
 test('anchor clear in selection mode does not create a worker request', async () => {
   FakeAnchorWorker.instances = [];

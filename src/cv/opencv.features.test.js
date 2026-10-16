@@ -21,14 +21,13 @@ test('OpenCV critical feature check validates the required image-anchor symbols'
   assert.deepEqual(result.missing, []);
 });
 
-test('OpenCV critical feature check reports missing symbols without probing optional APIs', () => {
-  const cv = Object.fromEntries(
-    getRequiredFeatures()
-      .filter((feature) => feature !== 'findHomography')
-      .map((feature) => [feature, () => {}]),
-  );
-  const result = checkCriticalFeatures(cv);
-
-  assert.equal(result.allAvailable, false);
-  assert.deepEqual(result.missing, ['findHomography']);
+test('OpenCV rejects missing and non-callable bindings before starting CV work', () => {
+  for (const unavailable of [undefined, null, false, 0, 'function', {}]) {
+    const cv = Object.fromEntries(getRequiredFeatures().map((feature) => [feature, () => {}]));
+    cv.findHomography = unavailable;
+    cv.exceptionFromPtr = unavailable;
+    const result = checkCriticalFeatures(cv);
+    assert.equal(result.allAvailable, false);
+    assert.deepEqual(result.missing, ['findHomography', 'exceptionFromPtr']);
+  }
 });

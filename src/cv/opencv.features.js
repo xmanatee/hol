@@ -2,6 +2,7 @@ export const REQUIRED_OPENCV_FEATURES = [
   'goodFeaturesToTrack',
   'calcOpticalFlowPyrLK',
   'findHomography',
+  'exceptionFromPtr',
   'matchTemplate',
   'warpAffine',
   'cvtColor',
@@ -24,8 +25,8 @@ export const checkCriticalFeatures = (cv = globalThis.window?.cv) => {
     };
   }
 
-  const available = required.filter((feature) => typeof cv[feature] !== 'undefined');
-  const missing = required.filter((feature) => typeof cv[feature] === 'undefined');
+  const available = required.filter((feature) => typeof cv[feature] === 'function');
+  const missing = required.filter((feature) => typeof cv[feature] !== 'function');
 
   return {
     allAvailable: missing.length === 0,

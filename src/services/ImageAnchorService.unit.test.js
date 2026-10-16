@@ -5,6 +5,29 @@ import { KeypointDetector } from '../cv/anchor.keypoints.js';
 import { createObjectSupportMask, isPointInsideObjectSupport } from '../cv/objectSupportMask.js';
 import { CURVED_OBJECT_RECOVERY_REASON } from '../cv/curvedObjectRecovery.js';
 import { loadOpenCvForNode } from '../cv/synthetic/opencvNodeLoader.js';
+import { createCylindricalCanSequence } from '../cv/synthetic/visionFixtures.js';
+
+test('native optical-flow failure rejects the frame instead of entering object recovery', async (t) => {
+  const cv = await loadOpenCvForNode();
+  const sequence = createCylindricalCanSequence({ frameCount: 2, occlusionFrames: [] });
+  const service = new ImageAnchorService();
+  t.after(() => service.dispose());
+  await service.initialize(cv, sequence.camera);
+  const created = await service.createAnchor(sequence.frames[0].imageData, sequence.tap, {
+    ...sequence.boundingBox,
+    surfaceHint: 'unknown',
+  });
+  assert.equal(created.success, true);
+  await assert.rejects(
+    service.updateAnchor({ width: 1, height: 1, data: new Uint8ClampedArray([0, 0, 0, 255]) }),
+    (error) => error instanceof Error && /OpenCV.*Assertion failed/s.test(error.message),
+  );
+  const { metrics } = service.getState();
+  assert.equal(metrics.lastFailureStage, 'update-exception');
+  assert.equal(metrics.targetPresent, false);
+  assert.equal(metrics.readiness.faceReady, false);
+  assert.equal(metrics.keypointFailureCount, 0);
+});
 
 test('physical plane presentation owns an immutable initial footprint and retires after reference replacement', () => {
   const service = new ImageAnchorService();
@@ -4769,7 +4792,7 @@ test('degraded recovery gets one local evidence attempt and keeps the frame aliv
   const result = await service.updateAnchor({ width: 320, height: 240 });
 
   assert.equal(result.success, true);
-  assert.equal(recoveryOptions, undefined);
+  assert.deepEqual(recoveryOptions, { requireGlobalRelocalization: false });
   assert.equal(matrixAliveAfterAsyncBoundary, true);
   assert.equal(matrices.length, 3);
   assert.equal(matrices[0].deleted, true);

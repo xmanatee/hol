@@ -78,7 +78,6 @@ export class HomographyEstimator {
     }
 
     let homography = null;
-    let keepHomography = false;
 
     try {
       prepareHomographyWorkspace(cv, this.homographyWorkspace, correspondences.length);
@@ -142,10 +141,8 @@ export class HomographyEstimator {
       });
       const averageResidual = totalResidual / inlierCorrespondences.length;
 
-      keepHomography = true;
-      const result = {
+      return {
         success: true,
-        homography,
         inlierCount,
         inlierRatio: inlierCount / correspondences.length,
         averageResidual,
@@ -153,17 +150,8 @@ export class HomographyEstimator {
         matrix: homographyData,
         inlierCorrespondences,
       };
-
-      return result;
-    } catch (error) {
-      logger.error('HomographyEstimator', 'Error estimating homography:', error);
-      return {
-        success: false,
-        reason: 'Estimation error: ' + error.message,
-        inlierCount: 0,
-      };
     } finally {
-      if (homography && !keepHomography) {
+      if (homography) {
         homography.delete();
       }
     }
@@ -184,12 +172,9 @@ export class HomographyEstimator {
 
     const poseResult = this.estimatePlanarPnPPose(
       cv,
-      homographyResult.inlierCorrespondences || correspondences,
+      homographyResult.inlierCorrespondences,
       anchorReference,
     );
-
-    // Clean up homography matrix
-    homographyResult.homography.delete();
 
     if (!poseResult.success) {
       return {

@@ -73,11 +73,25 @@ const createPlanarPnPCorrespondences = ({ anchorReference, pose, cameraParams })
   return correspondences;
 };
 
-test('homography estimator has one planar pose solver and no unused stability state', () => {
-  assert.equal('decomposeHomography' in HomographyEstimator.prototype, false);
-  assert.equal('_extractPoseFromHomography' in HomographyEstimator.prototype, false);
-  assert.equal('isHomographyStable' in HomographyEstimator.prototype, false);
-  assert.equal('homographyHistory' in new HomographyEstimator(), false);
+test('invalid correspondence data is an error, not an unobservable surface', async (t) => {
+  const cv = await loadOpenCvForNode();
+  const estimator = new HomographyEstimator();
+  t.after(() => estimator.dispose());
+  estimator.initialize(cv, camera);
+  const valid = Array.from({ length: 12 }, (_, index) => ({
+    prev: { x: (index % 4) * 24, y: Math.floor(index / 4) * 24 },
+    curr: { x: (index % 4) * 24 + 3, y: Math.floor(index / 4) * 24 + 2 },
+  }));
+  const invalid = valid.map((correspondence) => ({ ...correspondence, curr: null }));
+  assert.throws(() => estimator.estimatePose(cv, invalid), TypeError);
+  let nativeHomography;
+  const observedCv = Object.create(cv);
+  observedCv.findHomography = (...args) => {
+    nativeHomography = cv.findHomography(...args);
+    return nativeHomography;
+  };
+  assert.throws(() => estimator.estimatePose(observedCv, valid, null), TypeError);
+  assert.equal(nativeHomography.isDeleted(), true, 'Pose failure must release native homography memory');
 });
 
 test('homography estimator owns and reuses immutable native camera inputs for its session', async () => {
@@ -243,9 +257,9 @@ test('homography consensus reuses one native point workspace across corresponden
   const first = estimator.estimateHomography(instrumentedCv, correspondences);
   const second = estimator.estimateHomography(instrumentedCv, correspondences.slice(0, 20));
   const third = estimator.estimateHomography(instrumentedCv, correspondences);
-  first.homography.delete();
-  second.homography.delete();
-  third.homography.delete();
+  assert.ok([first, second, third].every((result) => result.success));
+  assert.notStrictEqual(first.matrix, third.matrix);
+  assert.deepEqual(first.matrix, third.matrix);
 
   assert.deepEqual(
     calls.map((call) => call.pointCount),
@@ -301,7 +315,6 @@ test('homography estimation uses the bounded deterministic RANSAC budget', async
     confidence: 0.99,
   });
 
-  result.homography.delete();
   estimator.dispose();
 });
 
@@ -346,7 +359,6 @@ test('homography residual summary contains only ordered RANSAC inliers', async (
   assert.equal(result.maxResidual, Math.max(...residuals));
   assert.equal(Object.hasOwn(result, 'conditionNumber'), false);
 
-  result.homography.delete();
   estimator.dispose();
 });
 

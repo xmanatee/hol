@@ -116,6 +116,8 @@ const createPlanarRotationFilter = () => new OneEuroFilter(60, 1.1, 0.08, 1.0);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const vectorMagnitude = (vector) => Math.hypot(vector.x, vector.y);
 const pointDistance = (left, right) => Math.hypot(left.x - right.x, left.y - right.y);
+const openCvRuntimeError = (cv, error) =>
+  typeof error === 'number' ? new Error(cv.exceptionFromPtr(error).msg, { cause: error }) : error;
 const learnedRuntimeFailure = (error) => ({
   success: false,
   reason: `XFeat runtime failure: ${error.message}`,
@@ -785,7 +787,8 @@ export class ImageAnchorService {
         reconstructionState: this.metrics.reconstructionState,
         reconstructionReady: this.metrics.reconstructionReady,
       };
-    } catch (error) {
+    } catch (caught) {
+      const error = openCvRuntimeError(this.cv, caught);
       if (!this.metrics.lastFailureReason) {
         this._recordAnchorFailure('create-anchor', error.message, {
           processingTime: this.now() - startTime,
@@ -1319,7 +1322,8 @@ export class ImageAnchorService {
         } else if (updateResult.success) {
           this.keypointFailureCount = 0;
         }
-      } else if (this.anchorState === 'degraded') {
+      } else if (this.anchorState === 'degraded' || this.anchorState === 'lost') {
+        const requireGlobalRelocalization = this.anchorState === 'lost';
         const stageStart = this._startUpdateTiming(updateTimings);
         const recoveryResult = await this._updateWithKeypoints(
           gray,
@@ -1327,13 +1331,14 @@ export class ImageAnchorService {
           depthContext,
           updateTimings,
           imageData,
+          { requireGlobalRelocalization },
         );
         this._recordUpdateTiming(updateTimings, 'keypointUpdateMs', stageStart);
         if (recoveryResult.success) {
           this.anchorState = 'tracking';
           this.keypointFailureCount = 0;
           updateResult = { ...recoveryResult, targetPresent: true, state: this.anchorState };
-        } else if (this._canResumeProgressiveBootstrap()) {
+        } else if (!requireGlobalRelocalization && this._canResumeProgressiveBootstrap()) {
           this.anchorState = 'candidate';
           const readiness = this._createReadiness({
             state: this.anchorState,
@@ -1353,36 +1358,6 @@ export class ImageAnchorService {
             readiness,
             recoverable: true,
           };
-        } else {
-          this.anchorState = 'lost';
-          updateResult = {
-            ...recoveryResult,
-            success: false,
-            targetPresent: false,
-            position: this.currentPosition,
-            normal: this.currentNormal,
-            planarTransform: this.currentPlanarTransform,
-            confidence: 0,
-            method: 'global-relocalization-search',
-            state: this.anchorState,
-            recoverable: true,
-          };
-        }
-      } else if (this.anchorState === 'lost') {
-        const stageStart = this._startUpdateTiming(updateTimings);
-        const recoveryResult = await this._updateWithKeypoints(
-          gray,
-          timestamp,
-          depthContext,
-          updateTimings,
-          imageData,
-          { requireGlobalRelocalization: true },
-        );
-        this._recordUpdateTiming(updateTimings, 'keypointUpdateMs', stageStart);
-        if (recoveryResult.success) {
-          this.anchorState = 'tracking';
-          this.keypointFailureCount = 0;
-          updateResult = { ...recoveryResult, targetPresent: true, state: this.anchorState };
         } else {
           this.anchorState = 'lost';
           updateResult = {
@@ -1437,7 +1412,8 @@ export class ImageAnchorService {
 
       this._notifyStateChange();
       return updateResult;
-    } catch (error) {
+    } catch (caught) {
+      const error = openCvRuntimeError(this.cv, caught);
       const reason = `Update exception: ${error.message}`;
       this.metrics.lastFailureReason = reason;
       this.metrics.lastFailureStage = 'update-exception';
@@ -1448,20 +1424,14 @@ export class ImageAnchorService {
         {
           success: false,
           reason,
-          position: this.currentPosition,
-          normal: this.currentNormal,
-          planarTransform: this.currentPlanarTransform,
           confidence: 0,
           method: 'update-exception',
           targetPresent: false,
-          recoverable: false,
-          state: this.anchorState,
         },
         this.now() - startTime,
         updateTimings,
       );
       this._notifyStateChange();
-      logger.error('ImageAnchor', 'Update exception:', error);
       throw error;
     } finally {
       if (src) {

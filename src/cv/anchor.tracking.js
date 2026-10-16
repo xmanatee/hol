@@ -263,198 +263,193 @@ export class KeypointTracker {
       };
     }
 
-    try {
-      const {
-        previousPoints: prevPoints,
-        nextPoints,
-        status,
-        flowError,
-      } = this._prepareLucasKanadeWorkspace(cv, activePoints.length);
-      for (let i = 0; i < activePoints.length; i++) {
-        const pt = activePoints[i];
-        prevPoints.data32F[i * 2] = pt.current.x;
-        prevPoints.data32F[i * 2 + 1] = pt.current.y;
-      }
-
-      if (debugTracking) {
-        logger.debugEvery('KeypointTracker', 'matrix-initialization', 1000, 'Matrix initialization:', {
-          prevPointsSize: `${prevPoints.rows}x${prevPoints.cols}`,
-          nextPointsSize: `${nextPoints.rows}x${nextPoints.cols}`,
-          statusSize: `${status.rows}x${status.cols}`,
-          errorSize: `${flowError.rows}x${flowError.cols}`,
-        });
-      }
-
-      // Perform Lucas-Kanade tracking
-      cv.calcOpticalFlowPyrLK(
-        this.previousGray,
-        currentGray,
-        prevPoints,
-        nextPoints,
-        status,
-        flowError,
-        this.lkParams.winSize,
-        this.lkParams.maxLevel,
-        this.lkParams.criteria,
-      );
-
-      // Increment tracking attempts and determine adaptive thresholds with hysteresis
-      this.trackingAttempts++;
-      const isInitialTracking = this.trackingAttempts <= this.initialLeniencyFrames;
-
-      // Hysteresis thresholds: higher threshold to lose tracking, lower to keep it
-      const loseThreshold = isInitialTracking ? 60 : 40; // Threshold to mark as lost
-      const keepThreshold = isInitialTracking ? 50 : 25; // Threshold to keep active
-
-      // Update tracked points with results
-      let successCount = 0;
-      let totalError = 0;
-      const flowCandidates = isInitialTracking
-        ? activePoints.map((point, i) => {
-            const trackingStatus = status.data[i];
-            const trackingError = flowError.data32F[i];
-            const nextX = nextPoints.data32F[i * 2];
-            const nextY = nextPoints.data32F[i * 2 + 1];
-            const effectiveThreshold = point.isStable ? keepThreshold : loseThreshold;
-            const hasValidCoordinates = Number.isFinite(nextX) && Number.isFinite(nextY);
-            return {
-              point,
-              trackingStatus,
-              trackingError,
-              nextX,
-              nextY,
-              effectiveThreshold,
-              acceptedByLK:
-                trackingStatus === 1 &&
-                Number.isFinite(trackingError) &&
-                trackingError < effectiveThreshold &&
-                hasValidCoordinates,
-            };
-          })
-        : null;
-      const motionConsensusRejections = isInitialTracking
-        ? this._motionConsensusRejectedPointIds(flowCandidates)
-        : null;
-
-      for (let i = 0; i < activePoints.length; i++) {
-        const point = activePoints[i];
-        const candidate = flowCandidates?.[i];
-        const trackingStatus = candidate?.trackingStatus ?? status.data[i];
-        const trackingError = candidate?.trackingError ?? flowError.data32F[i];
-        const nextX = candidate?.nextX ?? nextPoints.data32F[i * 2];
-        const nextY = candidate?.nextY ?? nextPoints.data32F[i * 2 + 1];
-        const effectiveThreshold =
-          candidate?.effectiveThreshold ?? (point.isStable ? keepThreshold : loseThreshold);
-        const acceptedByLK =
-          candidate?.acceptedByLK ??
-          (trackingStatus === 1 &&
-            Number.isFinite(trackingError) &&
-            trackingError < effectiveThreshold &&
-            Number.isFinite(nextX) &&
-            Number.isFinite(nextY));
-        const rejectedByMotionConsensus = motionConsensusRejections?.has(point.id) === true;
-
-        if (acceptedByLK && !rejectedByMotionConsensus) {
-          // Successful tracking with valid coordinates
-          point.current.x = nextX;
-          point.current.y = nextY;
-          point.lastFlowResidual = trackingError;
-          point.errorHistory.push(trackingError);
-          point.age++;
-          point.status = 'active';
-          point.inactiveAge = 0;
-          point.recentDropout = false;
-          point.lastSeenAttempt = this.trackingAttempts;
-          point.observations = (point.observations || 0) + 1;
-
-          // Update stability tracking
-          point.successfulTrackingStreak++;
-          point.totalSuccessfulFrames++;
-
-          // Calculate stability score (weighted by streak and total success)
-          const streakFactor = Math.min(1.0, point.successfulTrackingStreak / 30); // 30 frames = max streak bonus
-          const totalFactor = Math.min(1.0, point.totalSuccessfulFrames / 100); // 100 frames = max total bonus
-          const errorFactor = Math.max(0, 1.0 - trackingError / effectiveThreshold); // Lower error = higher score
-          point.stabilityScore = streakFactor * 0.4 + totalFactor * 0.4 + errorFactor * 0.2;
-
-          // Mark as stable if high stability score and long tracking history
-          point.isStable = point.stabilityScore > 0.7 && point.totalSuccessfulFrames > 20;
-          this.updateLandmarkQuality(point);
-
-          successCount++;
-          totalError += trackingError;
-        } else {
-          // Tracking failed or invalid coordinates
-          point.status = 'lost';
-          point.errorHistory.push(999); // High error for failed tracking
-          point.recentDropout = true;
-
-          // Reset tracking streak but preserve total successful frames
-          point.successfulTrackingStreak = 0;
-          point.stabilityScore = Math.max(0, point.stabilityScore - 0.1); // Gradual decay
-          point.isStable = false; // Lose stable status on tracking failure
-          this.updateLandmarkQuality(point);
-        }
-
-        // Limit error history
-        if (point.errorHistory.length > 10) {
-          point.errorHistory.shift();
-        }
-      }
-
-      // Log detailed results (sample of first 5 points to avoid spam)
-      if (debugTracking) {
-        logger.debugEvery('KeypointTracker', 'lucas-kanade-results', 1000, 'Lucas-Kanade tracking results:', {
-          attempt: this.trackingAttempts,
-          isInitialTracking,
-          loseThreshold,
-          keepThreshold,
-          successCount,
-          totalPoints: activePoints.length,
-          successRate: `${((successCount / activePoints.length) * 100).toFixed(1)}%`,
-          avgError: successCount > 0 ? (totalError / successCount).toFixed(2) : 'N/A',
-        });
-      }
-
-      // Filter outliers using RANSAC-style consensus (skip during initial tracking)
-      if (!isInitialTracking) {
-        this._filterOutliers(cv);
-      } else if (debugTracking) {
-        logger.debugEvery(
-          'KeypointTracker',
-          'outlier-filter-initial-skip',
-          1000,
-          'Skipping outlier filtering during initial tracking phase',
-        );
-      }
-
-      this._replacePreviousGray(currentGray);
-
-      // Calculate success metrics
-      const successRate = successCount / activePoints.length;
-      const avgError = successCount > 0 ? totalError / successCount : 999;
-
-      const finalActiveCount = this.trackedPoints.filter((pt) => pt.status === 'active').length;
-      if (finalActiveCount < 12) {
-        this._recoverOutlierPoints();
-      }
-
-      this._cleanupInactiveKeypoints();
-
-      const success = successRate >= 0.5;
-      const partialFlow = success ? null : this._partialFlowConsensus(activePoints, prevPoints, nextPoints);
-      return {
-        success,
-        reason: success ? null : `Lucas-Kanade retained ${successCount}/${activePoints.length} points`,
-        successRate,
-        activePointCount: this.trackedPoints.filter((pt) => pt.status === 'active').length,
-        averageError: avgError,
-        partialFlow,
-      };
-    } catch (error) {
-      logger.error('KeypointTracker', 'Tracking error:', error);
-      return { success: false, reason: 'Tracking exception: ' + error.message };
+    const {
+      previousPoints: prevPoints,
+      nextPoints,
+      status,
+      flowError,
+    } = this._prepareLucasKanadeWorkspace(cv, activePoints.length);
+    for (let i = 0; i < activePoints.length; i++) {
+      const pt = activePoints[i];
+      prevPoints.data32F[i * 2] = pt.current.x;
+      prevPoints.data32F[i * 2 + 1] = pt.current.y;
     }
+
+    if (debugTracking) {
+      logger.debugEvery('KeypointTracker', 'matrix-initialization', 1000, 'Matrix initialization:', {
+        prevPointsSize: `${prevPoints.rows}x${prevPoints.cols}`,
+        nextPointsSize: `${nextPoints.rows}x${nextPoints.cols}`,
+        statusSize: `${status.rows}x${status.cols}`,
+        errorSize: `${flowError.rows}x${flowError.cols}`,
+      });
+    }
+
+    // Perform Lucas-Kanade tracking
+    cv.calcOpticalFlowPyrLK(
+      this.previousGray,
+      currentGray,
+      prevPoints,
+      nextPoints,
+      status,
+      flowError,
+      this.lkParams.winSize,
+      this.lkParams.maxLevel,
+      this.lkParams.criteria,
+    );
+
+    // Increment tracking attempts and determine adaptive thresholds with hysteresis
+    this.trackingAttempts++;
+    const isInitialTracking = this.trackingAttempts <= this.initialLeniencyFrames;
+
+    // Hysteresis thresholds: higher threshold to lose tracking, lower to keep it
+    const loseThreshold = isInitialTracking ? 60 : 40; // Threshold to mark as lost
+    const keepThreshold = isInitialTracking ? 50 : 25; // Threshold to keep active
+
+    // Update tracked points with results
+    let successCount = 0;
+    let totalError = 0;
+    const flowCandidates = isInitialTracking
+      ? activePoints.map((point, i) => {
+          const trackingStatus = status.data[i];
+          const trackingError = flowError.data32F[i];
+          const nextX = nextPoints.data32F[i * 2];
+          const nextY = nextPoints.data32F[i * 2 + 1];
+          const effectiveThreshold = point.isStable ? keepThreshold : loseThreshold;
+          const hasValidCoordinates = Number.isFinite(nextX) && Number.isFinite(nextY);
+          return {
+            point,
+            trackingStatus,
+            trackingError,
+            nextX,
+            nextY,
+            effectiveThreshold,
+            acceptedByLK:
+              trackingStatus === 1 &&
+              Number.isFinite(trackingError) &&
+              trackingError < effectiveThreshold &&
+              hasValidCoordinates,
+          };
+        })
+      : null;
+    const motionConsensusRejections = isInitialTracking
+      ? this._motionConsensusRejectedPointIds(flowCandidates)
+      : null;
+
+    for (let i = 0; i < activePoints.length; i++) {
+      const point = activePoints[i];
+      const candidate = flowCandidates?.[i];
+      const trackingStatus = candidate?.trackingStatus ?? status.data[i];
+      const trackingError = candidate?.trackingError ?? flowError.data32F[i];
+      const nextX = candidate?.nextX ?? nextPoints.data32F[i * 2];
+      const nextY = candidate?.nextY ?? nextPoints.data32F[i * 2 + 1];
+      const effectiveThreshold =
+        candidate?.effectiveThreshold ?? (point.isStable ? keepThreshold : loseThreshold);
+      const acceptedByLK =
+        candidate?.acceptedByLK ??
+        (trackingStatus === 1 &&
+          Number.isFinite(trackingError) &&
+          trackingError < effectiveThreshold &&
+          Number.isFinite(nextX) &&
+          Number.isFinite(nextY));
+      const rejectedByMotionConsensus = motionConsensusRejections?.has(point.id) === true;
+
+      if (acceptedByLK && !rejectedByMotionConsensus) {
+        // Successful tracking with valid coordinates
+        point.current.x = nextX;
+        point.current.y = nextY;
+        point.lastFlowResidual = trackingError;
+        point.errorHistory.push(trackingError);
+        point.age++;
+        point.status = 'active';
+        point.inactiveAge = 0;
+        point.recentDropout = false;
+        point.lastSeenAttempt = this.trackingAttempts;
+        point.observations = (point.observations || 0) + 1;
+
+        // Update stability tracking
+        point.successfulTrackingStreak++;
+        point.totalSuccessfulFrames++;
+
+        // Calculate stability score (weighted by streak and total success)
+        const streakFactor = Math.min(1.0, point.successfulTrackingStreak / 30); // 30 frames = max streak bonus
+        const totalFactor = Math.min(1.0, point.totalSuccessfulFrames / 100); // 100 frames = max total bonus
+        const errorFactor = Math.max(0, 1.0 - trackingError / effectiveThreshold); // Lower error = higher score
+        point.stabilityScore = streakFactor * 0.4 + totalFactor * 0.4 + errorFactor * 0.2;
+
+        // Mark as stable if high stability score and long tracking history
+        point.isStable = point.stabilityScore > 0.7 && point.totalSuccessfulFrames > 20;
+        this.updateLandmarkQuality(point);
+
+        successCount++;
+        totalError += trackingError;
+      } else {
+        // Tracking failed or invalid coordinates
+        point.status = 'lost';
+        point.errorHistory.push(999); // High error for failed tracking
+        point.recentDropout = true;
+
+        // Reset tracking streak but preserve total successful frames
+        point.successfulTrackingStreak = 0;
+        point.stabilityScore = Math.max(0, point.stabilityScore - 0.1); // Gradual decay
+        point.isStable = false; // Lose stable status on tracking failure
+        this.updateLandmarkQuality(point);
+      }
+
+      // Limit error history
+      if (point.errorHistory.length > 10) {
+        point.errorHistory.shift();
+      }
+    }
+
+    // Log detailed results (sample of first 5 points to avoid spam)
+    if (debugTracking) {
+      logger.debugEvery('KeypointTracker', 'lucas-kanade-results', 1000, 'Lucas-Kanade tracking results:', {
+        attempt: this.trackingAttempts,
+        isInitialTracking,
+        loseThreshold,
+        keepThreshold,
+        successCount,
+        totalPoints: activePoints.length,
+        successRate: `${((successCount / activePoints.length) * 100).toFixed(1)}%`,
+        avgError: successCount > 0 ? (totalError / successCount).toFixed(2) : 'N/A',
+      });
+    }
+
+    // Filter outliers using RANSAC-style consensus (skip during initial tracking)
+    if (!isInitialTracking) {
+      this._filterOutliers(cv);
+    } else if (debugTracking) {
+      logger.debugEvery(
+        'KeypointTracker',
+        'outlier-filter-initial-skip',
+        1000,
+        'Skipping outlier filtering during initial tracking phase',
+      );
+    }
+
+    this._replacePreviousGray(currentGray);
+
+    // Calculate success metrics
+    const successRate = successCount / activePoints.length;
+    const avgError = successCount > 0 ? totalError / successCount : 999;
+
+    const finalActiveCount = this.trackedPoints.filter((pt) => pt.status === 'active').length;
+    if (finalActiveCount < 12) {
+      this._recoverOutlierPoints();
+    }
+
+    this._cleanupInactiveKeypoints();
+
+    const success = successRate >= 0.5;
+    const partialFlow = success ? null : this._partialFlowConsensus(activePoints, prevPoints, nextPoints);
+    return {
+      success,
+      reason: success ? null : `Lucas-Kanade retained ${successCount}/${activePoints.length} points`,
+      successRate,
+      activePointCount: this.trackedPoints.filter((pt) => pt.status === 'active').length,
+      averageError: avgError,
+      partialFlow,
+    };
   }
 
   /**
