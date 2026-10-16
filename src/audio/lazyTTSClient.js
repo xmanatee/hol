@@ -1,6 +1,7 @@
 import { normalizeSpeechPerformance } from '../contracts/objectPerformance.js';
 import { SPEECH_INPUT_MAX_CHARACTERS, readBoundedText } from '../contracts/objectContent.js';
 import { SILENT_AUDIO_ANALYSIS } from './lipSync.js';
+import { LazyRuntime } from '../utils/lazyRuntime.js';
 
 const EMPTY_METRICS = {
   totalRequests: 0,
@@ -12,75 +13,16 @@ const EMPTY_METRICS = {
 
 const loadDefaultClient = () => import('./ttsClient.js');
 
-export class LazyTTSClient {
+export class LazyTTSClient extends LazyRuntime {
   constructor(config = {}) {
-    this.config = { ...config };
-    this.loadClient = config.loadClient ?? loadDefaultClient;
-    this.client = null;
-    this.clientPromise = null;
-    this.listenerRecords = [];
-    this.runtimeGeneration = 0;
+    const { loadClient = loadDefaultClient, ...clientConfig } = config;
+    super(loadClient, 'TTSClient', clientConfig);
     this.speechGeneration = 0;
     this.pendingSynthesis = null;
-    this.disposed = false;
-  }
-
-  addListener(listener) {
-    const record = {
-      listener,
-      removeRealListener: this.client ? this.client.addListener(listener) : null,
-    };
-    this.listenerRecords.push(record);
-
-    return () => {
-      if (record.removeRealListener) {
-        record.removeRealListener();
-      }
-      this.listenerRecords = this.listenerRecords.filter((candidate) => candidate !== record);
-    };
   }
 
   initialize() {
     return !this.disposed;
-  }
-
-  _getClient() {
-    if (this.disposed) {
-      return null;
-    }
-    if (this.client) {
-      return this.client;
-    }
-
-    if (!this.clientPromise) {
-      const runtimeGeneration = this.runtimeGeneration;
-      const clientPromise = this.loadClient().then(({ TTSClient }) => {
-        if (
-          this.disposed ||
-          runtimeGeneration !== this.runtimeGeneration ||
-          this.clientPromise !== clientPromise
-        ) {
-          return null;
-        }
-        const client = new TTSClient(this.config);
-        this.listenerRecords.forEach((record) => {
-          record.removeRealListener = client.addListener(record.listener);
-        });
-        this.client = client;
-        return client;
-      });
-      this.clientPromise = clientPromise;
-      clientPromise.then(
-        () => {},
-        () => {
-          if (this.clientPromise === clientPromise) {
-            this.clientPromise = null;
-          }
-        },
-      );
-    }
-
-    return this.clientPromise;
   }
 
   synthesizeSpeech(text, voiceStyle, emotionalDelivery) {
@@ -109,15 +51,8 @@ export class LazyTTSClient {
   }
 
   async _synthesizeSpeech(text, speechPerformance, speechGeneration) {
-    const runtimeGeneration = this.runtimeGeneration;
-    const client = await this._getClient();
-    if (
-      !client ||
-      this.disposed ||
-      this.speechGeneration !== speechGeneration ||
-      this.runtimeGeneration !== runtimeGeneration ||
-      this.client !== client
-    ) {
+    const client = await this.getRuntime();
+    if (!client || this.speechGeneration !== speechGeneration) {
       return false;
     }
     return client.synthesizeSpeech(text, speechPerformance.voiceStyle, speechPerformance.emotionalDelivery);
@@ -132,39 +67,20 @@ export class LazyTTSClient {
   stopCurrentAudio() {
     this.speechGeneration++;
     this.pendingSynthesis = null;
-    if (this.client) {
-      this.client.stopCurrentAudio();
-    }
+    this.runtime?.stopCurrentAudio();
   }
 
   readFrame() {
-    return this.client ? this.client.readFrame() : SILENT_AUDIO_ANALYSIS;
+    return this.runtime ? this.runtime.readFrame() : SILENT_AUDIO_ANALYSIS;
   }
 
   getMetrics() {
-    return this.client ? this.client.getMetrics() : { ...EMPTY_METRICS };
+    return this.runtime ? this.runtime.getMetrics() : { ...EMPTY_METRICS };
   }
 
   async dispose() {
-    if (this.disposed) {
-      return;
-    }
-    this.disposed = true;
-    this.runtimeGeneration++;
     this.speechGeneration++;
-    const client = this.client;
-    const listenerRecords = this.listenerRecords;
-    this.client = null;
-    this.clientPromise = null;
     this.pendingSynthesis = null;
-    this.listenerRecords = [];
-
-    listenerRecords.forEach((record) => {
-      record.removeRealListener?.();
-    });
-
-    if (client) {
-      await client.dispose();
-    }
+    await super.dispose();
   }
 }
