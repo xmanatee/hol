@@ -8,10 +8,11 @@ const FOCUS_RELEASE_MS = 700;
 
 // The manager owns CV buffers and geometry. This session owns subject identity and user commitment.
 export class ObjectObservationSession {
-  constructor({ manager, width, height }) {
+  constructor({ manager, width, height, now = () => performance.timeOrigin + performance.now() }) {
     this.manager = manager;
     this.width = width;
     this.height = height;
+    this.now = now;
     this.selected = false;
     this.subject = null;
     this.nextObjectId = 1;
@@ -31,9 +32,8 @@ export class ObjectObservationSession {
     if (capturedAt <= this.lastCapturedAt) {
       return { success: false, reason: 'Stale camera frame' };
     }
-    if (this.subject && capturedAt - this.lastCapturedAt > MAX_OBSERVATION_GAP_MS) {
-      this.subject.trackingSince = null;
-      this.subject.trackingObservations = 0;
+    if (this.subject && capturedAt - this.subject.capturedAt > MAX_OBSERVATION_GAP_MS) {
+      this._resetTrackingEvidence();
     }
     this.lastCapturedAt = capturedAt;
 
@@ -79,8 +79,7 @@ export class ObjectObservationSession {
         this.subject.trackingSince ??= capturedAt;
         this.subject.trackingObservations++;
       } else {
-        this.subject.trackingSince = null;
-        this.subject.trackingObservations = 0;
+        this._resetTrackingEvidence();
       }
       this.subject.capturedAt = capturedAt;
     }
@@ -100,8 +99,14 @@ export class ObjectObservationSession {
     return { updateResult };
   }
 
-  selectCandidate({ tapPosition, capturedAt }) {
+  selectCandidate({ candidateId, tapPosition, capturedAt, timeOrigin }) {
     this._assertActive();
+    if (!Number.isSafeInteger(candidateId) || candidateId <= 0) {
+      throw new TypeError('Selection requires a positive safe-integer candidate ID');
+    }
+    if (!Number.isFinite(timeOrigin) || timeOrigin < 0) {
+      throw new TypeError('Selection requires a finite non-negative time origin');
+    }
     if (!Number.isFinite(capturedAt) || capturedAt < 0) {
       throw new TypeError('Selection requires a finite capture timestamp');
     }
@@ -109,10 +114,14 @@ export class ObjectObservationSession {
       throw new TypeError('Selection requires a finite source point');
     }
     const candidate = this.getState().candidate;
+    const observationAge = candidate ? this.now() - (timeOrigin + candidate.capturedAt) : null;
     if (
       this.selected ||
       !candidate ||
+      candidate.id !== candidateId ||
       candidate.status !== 'ready' ||
+      observationAge < 0 ||
+      observationAge > MAX_OBJECT_OBSERVATION_AGE_MS ||
       capturedAt < candidate.capturedAt ||
       capturedAt - candidate.capturedAt > MAX_OBJECT_OBSERVATION_AGE_MS
     ) {
@@ -163,8 +172,8 @@ export class ObjectObservationSession {
     const tracked =
       this.subject.trackingObservations >= MIN_TRACKING_OBSERVATIONS &&
       this.subject.capturedAt - this.subject.trackingSince >= MIN_TRACKING_DURATION_MS;
-    const ready = tracked && metrics.readiness?.faceReady === true;
     const present = metrics.targetPresent === true;
+    const ready = present && tracked && metrics.readiness?.faceReady === true;
     const candidate = {
       id: this.subject.id,
       status: !present ? 'lost' : ready ? 'ready' : tracked ? 'tracking' : 'segmented',
@@ -188,9 +197,14 @@ export class ObjectObservationSession {
     this.nextDiscoveryAt = 0;
   }
 
-  setTrackingMode(mode) {
+  async setTrackingMode(mode) {
     this._assertActive();
-    return this.manager.setTrackingMode(mode);
+    const previousMode = this.manager.getState().trackingMode;
+    await this.manager.setTrackingMode(mode);
+    this._assertActive();
+    if (previousMode !== mode && this.subject) {
+      this._resetTrackingEvidence();
+    }
   }
 
   dispose() {
@@ -203,6 +217,11 @@ export class ObjectObservationSession {
     this.manager.clearAnchor();
     this.subject = null;
     this.selected = false;
+  }
+
+  _resetTrackingEvidence() {
+    this.subject.trackingSince = null;
+    this.subject.trackingObservations = 0;
   }
 
   _assertActive() {

@@ -504,7 +504,7 @@ export const useCameraSystem = (config = {}) => {
   );
 
   const selectAnchorFromTap = useCallback(
-    ({ tapPosition, captureFrame }) => {
+    ({ candidateId, tapPosition, captureFrame }) => {
       return anchorSelectionGate.run(async () => {
         if (!session.anchor.initialized) {
           return {
@@ -514,7 +514,14 @@ export const useCameraSystem = (config = {}) => {
               : 'Preparing object discovery',
           };
         }
-        const result = await session.anchor.selectCandidate(tapPosition, performance.now());
+        if (candidateId === null) {
+          return { success: false, reason: 'Wait for an object to be highlighted before tapping' };
+        }
+        const result = await session.anchor.selectCandidate({
+          candidateId,
+          tapPosition,
+          capturedAt: performance.now(),
+        });
 
         if (result.success) {
           captureFrame();

@@ -112,15 +112,11 @@ test('production worker discovers, prepares, commits and tracks one object witho
       );
       let warmedUp;
       let warmupDetached = true;
-      for (let observation = 0; observation < 3; observation++) {
-        // Exercise filters on a real video cadence, not three same-tick worker requests.
-        await new Promise((resolve) => {
-          setTimeout(resolve, 100);
-        });
+      const observeStaticObject = async () => {
         const capturedAt = performance.now();
         const warmupFrame = createFrame({ offsetX: 0, offsetY: 0 });
         const warmupBuffer = warmupFrame.data.buffer;
-        warmedUp = await request(
+        const response = await request(
           'processFrame',
           {
             imageData: warmupFrame,
@@ -132,12 +128,53 @@ test('production worker discovers, prepares, commits and tracks one object witho
           [warmupBuffer],
         );
         warmupDetached &&= warmupBuffer.byteLength === 0;
+        return response;
+      };
+      for (let observation = 0; observation < 3; observation++) {
+        // Exercise filters on a real video cadence, not three same-tick worker requests.
+        await new Promise((resolve) => {
+          setTimeout(resolve, 100);
+        });
+        warmedUp = await observeStaticObject();
       }
+      const candidateId = warmedUp.state.candidate.id;
+      const replaced = await request('selectCandidate', {
+        candidateId: candidateId + 1,
+        timeOrigin: performance.timeOrigin,
+        tapPosition,
+        capturedAt: performance.now(),
+      });
       const neighbor = await request('selectCandidate', {
+        candidateId,
+        timeOrigin: performance.timeOrigin,
         tapPosition: { x: 5, y: 5 },
         capturedAt: performance.now(),
       });
-      const created = await request('selectCandidate', { tapPosition, capturedAt: performance.now() });
+      const selectedAt = performance.now();
+      // Wait for this exact observation to expire; this tests a deadline, not model readiness.
+      await new Promise((resolve) => {
+        setTimeout(resolve, Math.max(0, 301 - (performance.now() - warmedUp.state.candidate.capturedAt)));
+      });
+      const expired = await request('selectCandidate', {
+        candidateId,
+        timeOrigin: performance.timeOrigin,
+        tapPosition,
+        capturedAt: selectedAt,
+      });
+      const modeChanged = await request('setTrackingMode', { mode: 'object-pose' });
+      await request('setTrackingMode', { mode: 'sparse-reconstruction' });
+      for (let observation = 0; observation < 3; observation++) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 100);
+        });
+        await observeStaticObject();
+      }
+      const created = await request('selectCandidate', {
+        candidateId,
+        timeOrigin: performance.timeOrigin,
+        tapPosition,
+        capturedAt: performance.now(),
+      });
 
       await new Promise((resolve) => {
         setTimeout(resolve, 100);
@@ -209,6 +246,9 @@ test('production worker discovers, prepares, commits and tracks one object witho
         initialized: initialized.state,
         discovered,
         neighbor,
+        replaced,
+        expired,
+        modeChanged,
         created: {
           result: created.result,
           state: created.state,
@@ -251,6 +291,12 @@ test('production worker discovers, prepares, commits and tracks one object witho
   expect(result.discovered.state.activeAnchor).toBeNull();
   expect(result.warmedUp.state.candidate.status, JSON.stringify(result.warmedUp)).toBe('ready');
   expect(result.neighbor.result.success).toBe(false);
+  expect(result.replaced.result.success).toBe(false);
+  expect(result.replaced.state.candidate.id).toBe(result.discovered.state.candidate.id);
+  expect(result.expired.result.success).toBe(false);
+  expect(result.expired.state.mode).toBe('selection');
+  expect(result.modeChanged.state.candidate.id).toBe(result.discovered.state.candidate.id);
+  expect(result.modeChanged.state.candidate.status).not.toBe('ready');
   expect(result.created.state.activeAnchor.id).toBe(result.discovered.state.candidate.id);
   expect(result.refreshed, JSON.stringify({ refreshed: result.refreshed, runtimeWarnings })).toEqual([
     {

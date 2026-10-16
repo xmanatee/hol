@@ -81,11 +81,16 @@ export class AnchorWorkerService {
     return this.initializationPromise;
   }
 
-  selectCandidate(tapPosition, capturedAt) {
+  selectCandidate({ candidateId, tapPosition, capturedAt }) {
     if (!this.initialized || this.mode !== 'selection') {
       return Promise.reject(new Error('Can only select a candidate in initialized selection mode'));
     }
-    return this._request('selectCandidate', { tapPosition, capturedAt });
+    return this._request('selectCandidate', {
+      candidateId,
+      tapPosition,
+      capturedAt,
+      timeOrigin: performance.timeOrigin,
+    });
   }
 
   canProcessFrame() {

@@ -18,7 +18,7 @@ src/runtime/capabilityPacks.js is the single runtime manifest. It declares activ
 
 Every request/response CV worker uses one bounded request registry. A missed deadline rejects the exact request, cancels sibling deadlines, retires the worker immediately, and makes the next attempt construct a clean runtime; cold model initialization has a separate budget from steady inference.
 
-A failed discovery dependency is a runtime error, not evidence that no object exists. It stops discovery until an explicit camera restart. Both selection and face visibility require an observation at most 300 ms old; the renderer schedules expiry even when the camera stops delivering frames. Losing visibility hides the face without discarding its identity or remounting its renderer.
+A failed discovery dependency is a runtime error, not evidence that no object exists. It stops discovery until an explicit camera restart. Both selection and face visibility require an observation at most 300 ms old; the renderer schedules expiry even when the camera stops delivering frames. Selection names the displayed candidate and is checked again at worker commit, including queue delay; page and worker timestamps are translated using their `performance.timeOrigin`, never compared as unrelated relative clocks. Mask-only refreshes cannot renew tracking continuity, and a changed tracking mode requires fresh preparation evidence without changing the object's identity. Losing visibility hides the face without discarding its identity or remounting its renderer.
 
 The frame path is deliberately classical and cheap:
 

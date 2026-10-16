@@ -19,12 +19,20 @@ for (const failDepthImport of [false, true]) {
         const NativeWorker = window.Worker;
         window.__holDepthSourcePairs = [];
         window.__holModeSnapshots = [];
+        window.__holSelectionCommands = [];
         window.Worker = new Proxy(NativeWorker, {
           construct(target, args) {
             const worker = Reflect.construct(target, args);
             if (/\/anchor\.worker-[\w-]+\.js$/.test(String(args[0]))) {
               const postMessage = worker.postMessage.bind(worker);
               worker.postMessage = (message, transfers) => {
+                if (message.command === 'selectCandidate') {
+                  window.__holSelectionCommands.push({
+                    selection: message.payload,
+                    shownId: window.__holLatestAnchorState.candidate?.id ?? null,
+                    pageTimeOrigin: performance.timeOrigin,
+                  });
+                }
                 const context = message.payload?.depthContext;
                 if (context?.depthRequestTimestamp != null) {
                   window.__holDepthSourcePairs.push([
@@ -110,6 +118,13 @@ for (const failDepthImport of [false, true]) {
       await selectionCanvas.click();
       await expect(discovery).toHaveCount(0);
       await expect(page.locator('.overlay-scene canvas')).toBeVisible({ timeout: 30_000 });
+      const [commit] = await page.evaluate(() => window.__holSelectionCommands);
+      expect(commit.selection).toEqual({
+        candidateId: commit.shownId,
+        timeOrigin: commit.pageTimeOrigin,
+        capturedAt: expect.any(Number),
+        tapPosition: expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+      });
       await expect(page.getByRole('button', { name: 'Clear anchor' })).toBeVisible();
       await expect
         .poll(() => page.evaluate(() => window.__holLastDrawAt - window.__holFirstDrawAt))

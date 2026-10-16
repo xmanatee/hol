@@ -310,23 +310,28 @@ test('selection commits a candidate without copying or transferring another came
     publicationCount++;
   });
 
-  const created = service.selectCandidate({ x: 1, y: 0 }, 100);
+  const created = service.selectCandidate({ candidateId: 7, tapPosition: { x: 1, y: 0 }, capturedAt: 100 });
 
   await waitForWorkerPost();
   const worker = FakeAnchorWorker.instances[0];
   const message = worker.messages[0];
   assert.equal(message.command, 'selectCandidate');
   assert.deepEqual(message.payload.tapPosition, { x: 1, y: 0 });
-  assert.deepEqual(message.payload, { tapPosition: { x: 1, y: 0 }, capturedAt: 100 });
+  assert.deepEqual(message.payload, {
+    candidateId: 7,
+    tapPosition: { x: 1, y: 0 },
+    capturedAt: 100,
+    timeOrigin: performance.timeOrigin,
+  });
   assert.deepEqual(worker.transferLists[0], []);
 
   worker.reply({
     id: message.id,
-    result: { success: true, id: 'anchor-1' },
+    result: { success: true, id: 7 },
     state: createState({ mode: 'anchor', initialized: true }),
   });
 
-  assert.deepEqual(await created, { success: true, id: 'anchor-1' });
+  assert.deepEqual(await created, { success: true, id: 7 });
   assert.equal(publicationCount, 1);
 });
 
@@ -334,7 +339,9 @@ test('anchor tap requests reject locally before selection is initialized without
   FakeAnchorWorker.instances = [];
   const service = new TestAnchorWorkerService();
 
-  const outcome = await outcomeAfterAsyncTurn(service.selectCandidate({ x: 1, y: 0 }, 100));
+  const outcome = await outcomeAfterAsyncTurn(
+    service.selectCandidate({ candidateId: 7, tapPosition: { x: 1, y: 0 }, capturedAt: 100 }),
+  );
 
   assert.equal(outcome.status, 'rejected');
   assert.match(outcome.error.message, /initialized selection mode/);

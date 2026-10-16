@@ -334,6 +334,7 @@ const CameraView = () => {
   }, [clearAnchor, showAnchorFeedback]);
 
   // Handle canvas selection for anchor creation or clearing
+  const candidateId = anchorSystemState.candidate?.id ?? null;
   const handleCanvasSelect = useCallback(
     async (position) => {
       if (cameraState !== 'active') {
@@ -350,6 +351,7 @@ const CameraView = () => {
           }
           let imageData = null;
           const result = await selectAnchorFromTap({
+            candidateId,
             tapPosition: position,
             captureFrame: () => {
               imageData = captureCurrentCameraFrame();
@@ -410,6 +412,7 @@ const CameraView = () => {
       }
     },
     [
+      candidateId,
       cameraState,
       captureCurrentCameraFrame,
       selectAnchorFromTap,
