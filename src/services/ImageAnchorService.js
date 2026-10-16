@@ -44,7 +44,6 @@ import { checkCriticalFeatures } from '../cv/opencv.features.js';
 import {
   calculateTapLocalRadius,
   createTapLocalObjectSupportMask,
-  createObjectSupportMask,
   createObjectSupportMaskPreview,
   isPointInsideObjectSupport,
   OBJECT_SUPPORT_MASK_SOURCES,
@@ -817,13 +816,15 @@ export class ImageAnchorService {
       );
     }
 
-    const correctedAnchorPosition = this._applyObjectSupportPositionCorrection(objectSupportMask, reason);
-    const anchoredSupportMask = this._createAnchorReferencedObjectSupportMask(
-      objectSupportMask,
-      correctedAnchorPosition ||
-        this._objectSupportAnchorPosition(objectSupportMask) ||
-        objectSupportMask.referencePoint,
-    );
+    const referencePoint =
+      this._applyObjectSupportPositionCorrection(objectSupportMask, reason) ||
+      this._objectSupportAnchorPosition(objectSupportMask) ||
+      objectSupportMask.referencePoint;
+    // A new reference point changes metadata, not the already-owned immutable raster.
+    const anchoredSupportMask = {
+      ...objectSupportMask,
+      referencePoint: { ...referencePoint },
+    };
 
     this.objectSupportMask = anchoredSupportMask;
     this.currentObjectSupportMask = anchoredSupportMask;
@@ -894,19 +895,6 @@ export class ImageAnchorService {
       y: bbox.y + bbox.height * this.objectSupportAnchorUv.v,
       z: 0,
     };
-  }
-
-  _createAnchorReferencedObjectSupportMask(objectSupportMask, referencePoint) {
-    return createObjectSupportMask({
-      width: objectSupportMask.width,
-      height: objectSupportMask.height,
-      data: objectSupportMask.data,
-      source: objectSupportMask.source,
-      confidence: objectSupportMask.confidence,
-      referencePoint,
-      createdAtFrame: objectSupportMask.createdAtFrame,
-      updatedAtFrame: objectSupportMask.updatedAtFrame,
-    });
   }
 
   _applyObjectSupportPositionCorrection(objectSupportMask, reason) {
@@ -3648,13 +3636,16 @@ export class ImageAnchorService {
     if (
       cache &&
       cache.sourceMask === this.objectSupportMask &&
-      cache.frameIndex === this.frameIndex &&
       cache.positionX === this.currentPosition.x &&
       cache.positionY === this.currentPosition.y &&
       cache.scale === this.currentPlanarTransform.scale &&
       cache.rotation === this.currentPlanarTransform.rotation
     ) {
-      return cache.mask;
+      if (cache.mask.updatedAtFrame !== this.frameIndex) {
+        cache.mask = { ...cache.mask, updatedAtFrame: this.frameIndex };
+      }
+      this.currentObjectSupportMask = cache.mask;
+      return this.currentObjectSupportMask;
     }
 
     this.currentObjectSupportMask = warpObjectSupportMask(this.objectSupportMask, {
@@ -3665,7 +3656,6 @@ export class ImageAnchorService {
     });
     this.objectSupportProjectionCache = {
       sourceMask: this.objectSupportMask,
-      frameIndex: this.frameIndex,
       positionX: this.currentPosition.x,
       positionY: this.currentPosition.y,
       scale: this.currentPlanarTransform.scale,

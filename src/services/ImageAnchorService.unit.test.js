@@ -2613,7 +2613,7 @@ test('anchor creation passes selected object support mask into keypoint extracti
   assert.equal(orbKeyframeStores, 1);
 });
 
-test('current object support projection is reused only for the same frame transform', () => {
+test('current object masks preserve frame metadata while reusing unchanged geometry', () => {
   const service = new ImageAnchorService();
   const width = 48;
   const height = 36;
@@ -2650,16 +2650,23 @@ test('current object support projection is reused only for the same frame transf
   const rescaled = service._getCurrentObjectSupportMask();
   assert.notStrictEqual(rescaled, moved);
 
+  service.currentPlanarTransform = { scale: 1.09, rotation: -0.35 };
+  const rotated = service._getCurrentObjectSupportMask();
+  assert.notStrictEqual(rotated, rescaled);
+
   service.objectSupportMask = createObjectSupportMask({
     ...service.objectSupportMask,
     updatedAtFrame: service.frameIndex,
   });
   const refreshed = service._getCurrentObjectSupportMask();
-  assert.notStrictEqual(refreshed, rescaled);
+  assert.notStrictEqual(refreshed, rotated);
 
   service.frameIndex++;
   const nextFrame = service._getCurrentObjectSupportMask();
   assert.notStrictEqual(nextFrame, refreshed);
+  assert.equal(nextFrame.data, refreshed.data, 'An unchanged projection reuses its immutable pixel buffer');
+  assert.equal(refreshed.updatedAtFrame, 12, 'Published mask metadata must remain immutable');
+  assert.equal(nextFrame.updatedAtFrame, 13);
 });
 
 test('anchor creation preserves detector-owned object-mask evidence', async () => {
