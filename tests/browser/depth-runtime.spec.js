@@ -162,15 +162,29 @@ test('production depth service runs real worker inference in a mobile browser', 
         finiteCount++;
       }
       const ready = service.getState();
-      const latestMatches = service.getLatestFrame() === depth;
+      const next = service.estimate(
+        {
+          width: config.sourceWidth,
+          height: config.sourceHeight,
+          data: new Uint8ClampedArray(config.sourceWidth * config.sourceHeight * 4).fill(127),
+        },
+        { force: true, timestamp: 1235 },
+      );
+      const skippedInput = new Uint8ClampedArray(config.sourceWidth * config.sourceHeight * 4);
+      const skipped = await service.estimate(
+        { width: config.sourceWidth, height: config.sourceHeight, data: skippedInput },
+        { force: true, timestamp: 1236 },
+      );
+      const second = await next;
       service.dispose();
       return {
         initialized,
         ready,
-        latestMatches,
+        secondTimestamp: second.timestamp,
+        skipped,
+        skippedBytes: skippedInput.byteLength,
         sourceDetached: sourceBuffer.byteLength === 0,
         disposed: service.getState(),
-        latestAfterDispose: service.getLatestFrame(),
         depth: {
           ...depth,
           data: {
@@ -222,10 +236,11 @@ test('production depth service runs real worker inference in a mobile browser', 
     error: null,
   });
   expect(result.ready.processingTime).toBeGreaterThan(0);
-  expect(result.latestMatches).toBe(true);
+  expect(result.secondTimestamp).toBe(1235);
+  expect(result.skipped).toBe(null);
+  expect(result.skippedBytes).toBe(SOURCE_WIDTH * SOURCE_HEIGHT * 4);
   expect(result.sourceDetached).toBe(true);
   expect(result.disposed.state).toBe('idle');
-  expect(result.latestAfterDispose).toBe(null);
   expect(capabilityRequests.some((url) => /DepthEstimationService-[\w-]+\.js$/.test(url))).toBe(true);
   expect(capabilityRequests.some((url) => /depth\.worker-[\w-]+\.js$/.test(url))).toBe(true);
   expect(capabilityRequests.some((url) => /depth-anything-v2-small-q4-[\w-]+\.onnx$/.test(url))).toBe(true);

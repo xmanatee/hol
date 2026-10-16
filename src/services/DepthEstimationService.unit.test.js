@@ -1,30 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-
 import { DepthEstimationService } from './DepthEstimationService.js';
 import { shouldInitializeDepthForTrackingMode } from '../hooks/useCameraSystem.js';
 
-class FakeDepthWorker {
-  constructor() {
-    this.messages = [];
-    this.transferLists = [];
-    this.onmessage = null;
-    this.onerror = null;
-    this.onmessageerror = null;
-    this.terminated = false;
-    this.postError = null;
+class WorkerTransport {
+  requests = [];
+  terminated = false;
+  postError = null;
+
+  postMessage(message, transfers = []) {
+    if (this.postError) throw this.postError;
+    this.requests.push({ ...message, transfers });
   }
 
-  postMessage(message, transferList = []) {
-    if (this.postError) {
-      throw this.postError;
-    }
-    this.messages.push(message);
-    this.transferLists.push(transferList);
-  }
-
-  reply(message) {
-    this.onmessage?.({ data: message });
+  reply(request, result) {
+    this.onmessage({ data: { id: request.id, result } });
   }
 
   terminate() {
@@ -32,482 +22,261 @@ class FakeDepthWorker {
   }
 }
 
-const createImageData = () => ({
+const createImageData = () => ({ width: 4, height: 4, data: new Uint8ClampedArray(64) });
+const modelConfig = { inputSize: 56, modelUrl: '/depth.onnx' };
+const initializedState = { provider: 'wasm', ...modelConfig };
+const createDepth = (timestamp) => ({
   width: 4,
   height: 4,
-  data: new Uint8ClampedArray(4 * 4 * 4),
+  sourceWidth: 8,
+  sourceHeight: 6,
+  data: new Float32Array(16),
+  timestamp,
+  processingTime: 6.5,
+  provider: 'wasm',
+  modelUrl: '/depth.onnx',
 });
 
-const createManualTimeoutScheduler = () => {
-  let callback = null;
-  return {
-    schedule: (nextCallback) => {
-      assert.equal(callback, null, 'depth worker scheduled more than one request deadline');
-      callback = nextCallback;
-      return () => {
-        callback = null;
-      };
+const createRuntime = (options = {}) => {
+  const workers = [];
+  const service = new DepthEstimationService({
+    ...modelConfig,
+    workerFactory: () => {
+      const worker = new WorkerTransport();
+      workers.push(worker);
+      return worker;
     },
-    run: () => {
-      assert.notEqual(callback, null, 'depth worker did not schedule a request deadline');
-      const scheduledCallback = callback;
-      callback = null;
-      scheduledCallback();
-    },
+    ...options,
+  });
+  const initialize = async () => {
+    const pending = service.initialize();
+    workers.at(-1).reply(workers.at(-1).requests.at(-1), initializedState);
+    return await pending;
   };
+  return { service, workers, initialize };
 };
 
-test('depth service rejects invalid request deadlines before creating a worker', () => {
-  assert.throws(
-    () => new DepthEstimationService({ requestTimeoutMs: 0 }),
-    /Depth worker request timeout must be a positive finite number/,
-  );
-  assert.throws(
-    () => new DepthEstimationService({ initializeTimeoutMs: Number.NaN }),
-    /Depth worker initialization timeout must be a positive finite number/,
-  );
+test('depth service validates deadlines before constructing its runtime', () => {
+  for (const [option, value] of [
+    ['requestTimeoutMs', 0],
+    ['initializeTimeoutMs', NaN],
+  ]) {
+    assert.throws(() => new DepthEstimationService({ [option]: value }), /positive finite number/);
+  }
 });
 
-test('depth initialization is reserved for the depth fusion tracking mode', () => {
-  assert.equal(shouldInitializeDepthForTrackingMode('sparse-reconstruction'), false);
-  assert.equal(shouldInitializeDepthForTrackingMode('parametric-surface'), false);
-  assert.equal(shouldInitializeDepthForTrackingMode('direct-photometric'), false);
-  assert.equal(shouldInitializeDepthForTrackingMode('object-pose'), false);
+test('only depth-fusion requests the optional depth runtime', () => {
+  for (const mode of ['sparse-reconstruction', 'parametric-surface', 'direct-photometric', 'object-pose']) {
+    assert.equal(shouldInitializeDepthForTrackingMode(mode), false);
+  }
   assert.equal(shouldInitializeDepthForTrackingMode('depth-fusion'), true);
 });
 
-test('depth estimation service retries initialization after worker model errors', async () => {
-  const workers = [];
+test('worker construction errors are visible and allow explicit initialization retry', async () => {
+  const worker = new WorkerTransport();
+  let attempts = 0;
   const service = new DepthEstimationService({
+    ...modelConfig,
     workerFactory: () => {
-      const worker = new FakeDepthWorker();
-      workers.push(worker);
+      if (++attempts === 1) throw new Error('Worker construction blocked');
       return worker;
     },
   });
-
-  const failed = service.initialize();
-  workers[0].reply({ type: 'error', stage: 'initialize', message: 'model missing' });
-  await assert.rejects(failed, /model missing/);
+  await assert.rejects(service.initialize(), /Worker construction blocked/);
   assert.equal(service.getState().state, 'error');
-  assert.equal(workers[0].terminated, true);
-
+  assert.equal(service.getState().error, 'Worker construction blocked');
   const retry = service.initialize();
-  workers[1].reply({
-    type: 'initialized',
-    provider: 'wasm',
-    inputSize: 518,
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
-  });
-
-  const state = await retry;
-  assert.equal(state.state, 'ready');
-  assert.equal(state.provider, 'wasm');
-});
-
-test('depth initialization deadline retires a stalled worker and permits a clean retry', async () => {
-  const scheduler = createManualTimeoutScheduler();
-  const workers = [];
-  const service = new DepthEstimationService({
-    initializeTimeoutMs: 1000,
-    scheduleRequestTimeout: scheduler.schedule,
-    workerFactory: () => {
-      const worker = new FakeDepthWorker();
-      workers.push(worker);
-      return worker;
-    },
-  });
-
-  const stalled = service.initialize();
-  scheduler.run();
-
-  await assert.rejects(stalled, /Depth worker initialize timed out after 1000ms/);
-  assert.equal(workers[0].terminated, true);
-  assert.equal(service.pending.size, 0);
-  assert.equal(service.getState().state, 'error');
-
-  const retry = service.initialize();
-  workers[1].reply({
-    type: 'initialized',
-    provider: 'wasm',
-    inputSize: 518,
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
-  });
-
+  worker.reply(worker.requests.at(-1), initializedState);
   assert.equal((await retry).state, 'ready');
-});
-
-test('depth estimation restart ignores every callback from the disposed worker', async () => {
-  const workers = [];
-  const service = new DepthEstimationService({
-    workerFactory: () => {
-      const worker = new FakeDepthWorker();
-      workers.push(worker);
-      return worker;
-    },
-  });
-
-  const disposedInitialization = service.initialize();
   service.dispose();
-  await assert.rejects(disposedInitialization, /disposed/);
-
-  let restartedSettled = false;
-  const restarted = service.initialize();
-  restarted.then(
-    () => {
-      restartedSettled = true;
-    },
-    () => {
-      restartedSettled = true;
-    },
-  );
-
-  workers[0].reply({
-    type: 'initialized',
-    provider: 'stale-webgpu',
-    inputSize: 518,
-    modelUrl: '/models/stale.onnx',
-  });
-  workers[0].onerror({ message: 'stale worker crash' });
-  workers[0].onmessageerror({ message: 'stale worker response' });
-  await Promise.resolve();
-
-  assert.equal(restartedSettled, false);
-  assert.equal(workers[1].terminated, false);
-  assert.equal(service.getState().state, 'loading');
-  assert.equal(service.getState().provider, null);
-
-  workers[1].reply({
-    type: 'initialized',
-    provider: 'wasm',
-    inputSize: 518,
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
-  });
-  await restarted;
-
-  workers[0].reply({
-    type: 'depth',
-    requestId: 1,
-    width: 1,
-    height: 1,
-    sourceWidth: 1,
-    sourceHeight: 1,
-    data: new Float32Array([1]),
-    timestamp: 10,
-    processingTime: 99,
-    provider: 'stale-webgpu',
-    modelUrl: '/models/stale.onnx',
-  });
-
-  assert.equal(service.getLatestFrame(), null);
-  assert.equal(service.getState().provider, 'wasm');
-  assert.equal(service.getState().processingTime, 0);
 });
 
-test('depth initialization post failures release the runtime for a fresh retry', async () => {
-  const failingWorker = new FakeDepthWorker();
-  failingWorker.postError = new Error('initialize could not be cloned');
-  const recoveredWorker = new FakeDepthWorker();
-  const workers = [failingWorker, recoveredWorker];
-  const service = new DepthEstimationService({
-    workerFactory: () => workers.shift(),
+for (const stage of ['initialize', 'estimate']) {
+  for (const failure of ['post', 'error', 'messageerror', 'reply', 'timeout']) {
+    test(`${stage} ${failure} failure retires depth until explicit reinitialization`, async () => {
+      let deadline;
+      const { service, workers, initialize } = createRuntime({
+        scheduleRequestTimeout: (callback) => {
+          deadline = callback;
+          return () => {
+            deadline = null;
+          };
+        },
+      });
+      if (stage === 'estimate') await initialize();
+      if (stage === 'initialize' && failure === 'post') {
+        service.workerFactory = () => {
+          const failingWorker = new WorkerTransport();
+          failingWorker.postError = new Error('post failed');
+          workers.push(failingWorker);
+          return failingWorker;
+        };
+      } else if (failure === 'post') {
+        workers.at(-1).postError = new Error('post failed');
+      }
+      const pending =
+        stage === 'initialize' ? service.initialize() : service.estimate(createImageData(), { force: true });
+      const worker = workers.at(-1);
+      if (failure === 'timeout') deadline();
+      if (failure === 'error') worker.onerror({ message: 'runtime crashed' });
+      if (failure === 'messageerror') worker.onmessageerror({ message: 'response not cloneable' });
+      if (failure === 'reply')
+        worker.onmessage({ data: { id: worker.requests.at(-1).id, error: 'model failed' } });
+      await assert.rejects(pending, /failed|crashed|cloneable|timed out/);
+      assert.equal(service.getState().state, 'error');
+      assert.equal(service.getState().provider, null);
+      assert.ok(service.getState().error);
+      assert.equal(worker.terminated, true);
+      assert.equal(service.shouldEstimate({ force: true }), false);
+      assert.equal(await service.estimate(createImageData()), null);
+      assert.equal(deadline, null);
+
+      service.workerFactory = () => {
+        const replacement = new WorkerTransport();
+        workers.push(replacement);
+        return replacement;
+      };
+      assert.equal((await initialize()).state, 'ready');
+      assert.equal(service.getState().error, null);
+      service.dispose();
+    });
+  }
+
+  test(`disposing during ${stage} rejects work and isolates every old worker callback`, async () => {
+    const { service, workers, initialize } = createRuntime();
+    if (stage === 'estimate') await initialize();
+    const pending =
+      stage === 'initialize' ? service.initialize() : service.estimate(createImageData(), { force: true });
+    const oldWorker = workers.at(-1);
+    const oldRequest = oldWorker.requests.at(-1);
+    service.dispose();
+    await assert.rejects(pending, /disposed/);
+    assert.equal(service.getState().state, 'idle');
+    assert.equal(oldWorker.terminated, true);
+
+    await initialize();
+    const state = service.getState();
+    oldWorker.reply(
+      oldRequest,
+      stage === 'initialize' ? { ...initializedState, provider: 'stale' } : createDepth(0),
+    );
+    oldWorker.onerror({ message: 'old crash' });
+    oldWorker.onmessageerror({ message: 'old message error' });
+    assert.deepEqual(service.getState(), state);
+    assert.equal(workers.at(-1).terminated, false);
+    service.dispose();
   });
-  const failed = service.initialize();
 
-  await assert.rejects(failed, /initialize could not be cloned/);
-  assert.equal(service.pending.size, 0);
-  assert.equal(service.initializePromise, null);
-  assert.equal(failingWorker.terminated, true);
-  assert.equal(service.getState().state, 'error');
-
-  const recovered = service.initialize();
-  recoveredWorker.reply({
-    type: 'initialized',
-    provider: 'wasm',
-    inputSize: 518,
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
+  test(`an already delivered ${stage} response cannot revive disposed depth`, async () => {
+    const { service, workers, initialize } = createRuntime();
+    if (stage === 'estimate') await initialize();
+    const pending =
+      stage === 'initialize' ? service.initialize() : service.estimate(createImageData(), { force: true });
+    const worker = workers.at(-1);
+    worker.reply(worker.requests.at(-1), stage === 'initialize' ? initializedState : createDepth(100));
+    service.dispose();
+    await assert.rejects(pending, /superseded/);
+    assert.equal(service.getState().state, 'idle');
+    assert.equal(service.getState().provider, null);
+    assert.equal(service.getState().lastFrameAt, 0);
   });
+}
 
-  assert.equal((await recovered).state, 'ready');
-});
-
-test('depth estimate post failures clear the in-flight request gate', async () => {
-  const worker = new FakeDepthWorker();
-  const service = new DepthEstimationService({ workerFactory: () => worker });
-  const initialized = service.initialize();
-  worker.reply({
-    type: 'initialized',
-    provider: 'wasm',
-    inputSize: 518,
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
-  });
-  await initialized;
-
-  worker.postError = new Error('depth frame could not be cloned');
-  await assert.rejects(
-    service.estimate(createImageData(), { force: true }),
-    /depth frame could not be cloned/,
-  );
-
-  assert.equal(service.pending.size, 0);
-  assert.equal(service.inFlight, false);
-  assert.equal(service.lastRequestAt, 0);
-  assert.equal(service.shouldEstimate({ force: true }), true);
-});
-
-test('depth disposal resets the complete public runtime snapshot', async () => {
-  const worker = new FakeDepthWorker();
-  const service = new DepthEstimationService({ workerFactory: () => worker });
-  const initialized = service.initialize();
-  worker.reply({
-    type: 'initialized',
-    provider: 'webgpu',
-    inputSize: 518,
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
-  });
-  await initialized;
-
-  const estimate = service.estimate(createImageData(), { force: true });
-  worker.reply({
-    type: 'depth',
-    requestId: 1,
-    width: 4,
-    height: 4,
-    sourceWidth: 4,
-    sourceHeight: 4,
-    data: new Float32Array(16),
-    timestamp: 10,
-    processingTime: 6.5,
-    provider: 'webgpu',
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
-  });
-  await estimate;
-
+test('depth initialization is single-flight before and after readiness', async () => {
+  const { service, workers } = createRuntime();
+  const pending = service.initialize();
+  assert.equal(service.initialize(), pending);
+  workers[0].reply(workers[0].requests[0], initializedState);
+  assert.equal((await pending).state, 'ready');
+  assert.equal((await service.initialize()).provider, 'wasm');
+  assert.equal(workers.length, 1);
+  assert.equal(workers[0].requests.length, 1);
   service.dispose();
-
-  assert.equal(service.getState().state, 'idle');
-  assert.equal(service.getState().provider, null);
-  assert.equal(service.getState().error, null);
-  assert.equal(service.getState().processingTime, 0);
-  assert.equal(service.getState().lastFrameAt, 0);
-  assert.equal(service.getLatestFrame(), null);
 });
 
-test('depth estimation service throttles in-flight and recent estimates', async () => {
-  let now = 1000;
-  const worker = new FakeDepthWorker();
-  const service = new DepthEstimationService({
-    intervalMs: 260,
-    now: () => now,
-    workerFactory: () => worker,
+for (const phase of ['loading', 'ready', 'estimate']) {
+  test(`disposal by a ${phase} subscriber cancels the public operation`, async () => {
+    const { service, workers, initialize } = createRuntime();
+    if (phase === 'estimate') await initialize();
+    const unsubscribe = service.addListener((state) => {
+      if (phase === 'estimate' ? state.processingTime > 0 : state.state === phase) {
+        unsubscribe();
+        service.dispose();
+      }
+    });
+    const pending =
+      phase === 'estimate' ? service.estimate(createImageData(), { force: true }) : service.initialize();
+    if (phase !== 'loading') {
+      const worker = workers.at(-1);
+      worker.reply(worker.requests.at(-1), phase === 'estimate' ? createDepth(100) : initializedState);
+    }
+    await assert.rejects(pending, /disposed|superseded/);
+    assert.equal(service.getState().state, 'idle');
   });
-  const initialized = service.initialize();
-  worker.reply({
-    type: 'initialized',
-    provider: 'webgpu',
-    inputSize: 518,
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
+}
+
+test('initialization subscribers can join the same in-progress operation', async () => {
+  const { service, workers } = createRuntime();
+  let joined;
+  service.addListener((state) => {
+    if (state.state === 'loading') joined = service.initialize();
   });
-  await initialized;
-
-  const first = service.estimate(createImageData(), { timestamp: now });
-  const throttledInFlight = await service.estimate(createImageData(), { timestamp: now + 1 });
-  assert.equal(throttledInFlight, null);
-  assert.equal(worker.messages.filter((message) => message.type === 'estimate').length, 1);
-
-  worker.reply({
-    type: 'depth',
-    requestId: 1,
-    width: 4,
-    height: 4,
-    sourceWidth: 8,
-    sourceHeight: 6,
-    data: new Float32Array(16),
-    timestamp: now,
-    processingTime: 6.5,
-    provider: 'webgpu',
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
-  });
-  const firstDepth = await first;
-  assert.equal(firstDepth.sourceWidth, 8);
-  assert.equal(firstDepth.sourceHeight, 6);
-  now += 80;
-  const throttledRecent = await service.estimate(createImageData(), { timestamp: now });
-
-  assert.equal(throttledRecent, firstDepth);
-  assert.equal(worker.messages.filter((message) => message.type === 'estimate').length, 1);
-});
-
-test('depth estimation takes ownership only when its cadence accepts the frame', async () => {
-  const now = 1000;
-  const worker = new FakeDepthWorker();
-  const service = new DepthEstimationService({
-    intervalMs: 260,
-    now: () => now,
-    workerFactory: () => worker,
-  });
-  const initialized = service.initialize();
-  worker.reply({
-    type: 'initialized',
-    provider: 'wasm',
-    inputSize: 518,
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
-  });
-  await initialized;
-
-  const acceptedFrame = createImageData();
-  const accepted = service.estimate(acceptedFrame, { timestamp: now });
-  const estimateMessageIndex = worker.messages.findIndex((message) => message.type === 'estimate');
-
-  assert.equal(service.shouldEstimate(), false);
-  assert.equal(worker.messages[estimateMessageIndex].imageData.data, acceptedFrame.data);
-  assert.deepEqual(worker.transferLists[estimateMessageIndex], [acceptedFrame.data.buffer]);
-
-  const rejectedFrame = createImageData();
-  const rejectedBuffer = rejectedFrame.data.buffer;
-  assert.equal(await service.estimate(rejectedFrame, { timestamp: now + 1 }), null);
-  assert.equal(rejectedBuffer.byteLength, 64);
-
+  const pending = service.initialize();
+  assert.equal(joined, pending);
+  workers[0].reply(workers[0].requests[0], initializedState);
+  await pending;
+  assert.equal(workers.length, 1);
   service.dispose();
-  await assert.rejects(accepted, /disposed/);
 });
 
-test('depth estimation never exposes a stale frame while the runtime is unavailable', async () => {
-  const service = new DepthEstimationService();
-  service.latestFrame = { timestamp: 12, data: new Float32Array([1]) };
-
+test('busy and cadence-skipped depth calls return no result and never consume their input', async () => {
+  let now = 0;
+  const { service, workers, initialize } = createRuntime({ now: () => now });
   assert.equal(await service.estimate(createImageData()), null);
-
+  await initialize();
+  assert.equal(service.shouldEstimate(), true);
+  const source = createImageData();
+  const pending = service.estimate(source, { timestamp: now });
+  const request = workers[0].requests.at(-1);
+  assert.equal(request.payload.imageData.data, source.data);
+  assert.deepEqual(request.transfers, [source.data.buffer]);
+  const skipped = createImageData();
+  assert.equal(await service.estimate(skipped, { force: true }), null);
+  assert.equal(skipped.data.byteLength, 64);
+  workers[0].reply(request, createDepth(now));
+  assert.equal((await pending).sourceWidth, 8);
+  now = 80;
+  assert.equal(await service.estimate(skipped), null);
+  assert.equal(skipped.data.byteLength, 64);
+  assert.equal(workers[0].requests.length, 2);
+  now = 260;
+  assert.equal(service.shouldEstimate(), true);
   service.dispose();
-  assert.equal(service.getLatestFrame(), null);
 });
 
-test('depth estimation service rejects pending work on dispose', async () => {
-  const worker = new FakeDepthWorker();
-  const service = new DepthEstimationService({
-    workerFactory: () => worker,
-  });
-  const initialized = service.initialize();
-  worker.reply({
-    type: 'initialized',
-    provider: 'webgpu',
-    inputSize: 518,
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
-  });
-  await initialized;
-
-  const estimate = service.estimate(createImageData(), { force: true });
-  service.dispose();
-
-  await assert.rejects(estimate, /disposed/);
-  assert.equal(worker.terminated, true);
-  assert.equal(service.getState().state, 'idle');
-});
-
-test('depth estimation service rejects in-flight estimates after fatal worker errors', async () => {
-  const workers = [];
-  const service = new DepthEstimationService({
-    workerFactory: () => {
-      const worker = new FakeDepthWorker();
-      workers.push(worker);
-      return worker;
-    },
-  });
-
-  const initialized = service.initialize();
-  workers[0].reply({
-    type: 'initialized',
-    provider: 'webgpu',
-    inputSize: 518,
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
-  });
-  await initialized;
-
-  const estimate = service.estimate(createImageData(), { force: true });
-  workers[0].onerror({ message: 'worker crashed' });
-
-  await assert.rejects(estimate, /worker crashed/);
-  assert.equal(workers[0].terminated, true);
-  assert.equal(service.getState().state, 'error');
-  assert.equal(service.getState().error, 'worker crashed');
-
-  const retry = service.initialize();
-  workers[1].reply({
-    type: 'initialized',
-    provider: 'wasm',
-    inputSize: 518,
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
-  });
-
-  const state = await retry;
-  assert.equal(state.state, 'ready');
-  assert.equal(state.provider, 'wasm');
-});
-
-test('depth estimation service rejects in-flight estimates after worker message errors', async () => {
-  const worker = new FakeDepthWorker();
-  const service = new DepthEstimationService({
-    workerFactory: () => worker,
-  });
-
-  const initialized = service.initialize();
-  worker.reply({
-    type: 'initialized',
-    provider: 'wasm',
-    inputSize: 518,
-    modelUrl: '/models/depth-anything-v2-small-q4.onnx',
-  });
-  await initialized;
-
-  const estimate = service.estimate(createImageData(), { force: true });
-  worker.onmessageerror({ message: 'depth result could not be cloned' });
-
-  await assert.rejects(estimate, /could not be cloned/);
-  assert.equal(worker.terminated, true);
-  assert.equal(service.getState().state, 'error');
-  assert.equal(service.getState().error, 'depth result could not be cloned');
-});
-
-test('depth replies cannot publish or release a frame without an outstanding request', async () => {
-  const worker = new FakeDepthWorker();
-  const service = new DepthEstimationService({ workerFactory: () => worker });
-  const initialized = service.initialize();
-  const initialization = { type: 'initialized', provider: 'wasm', inputSize: 518, modelUrl: '/depth.onnx' };
-  worker.reply(initialization);
-  await initialized;
-  let publications = 0;
-  service.addListener(() => publications++);
-  const frame = {
-    type: 'depth',
-    requestId: 1,
-    width: 4,
-    height: 4,
-    sourceWidth: 4,
-    sourceHeight: 4,
-    data: new Float32Array(16),
-    timestamp: 100,
-    processingTime: 4,
-    provider: 'wasm',
-    modelUrl: '/depth.onnx',
-  };
-  worker.reply(frame);
-  worker.reply({ ...initialization, provider: 'unowned' });
-  assert.equal(service.getLatestFrame(), null);
-  assert.equal(service.getState().provider, 'wasm');
-  assert.equal(publications, 0);
-
+test('unowned and duplicate replies cannot publish state or release the current estimate', async () => {
+  const { service, workers, initialize } = createRuntime();
+  await initialize();
+  const worker = workers[0];
+  const publications = [];
+  const unsubscribe = service.addListener((state) => publications.push(state));
+  worker.reply({ id: 1000 }, createDepth(0));
+  worker.reply(worker.requests[0], { ...initializedState, provider: 'duplicate' });
+  assert.equal(publications.length, 0);
   const first = service.estimate(createImageData(), { force: true });
-  worker.reply(frame);
-  await first;
+  const firstRequest = worker.requests.at(-1);
+  worker.reply(firstRequest, createDepth(100));
+  assert.equal((await first).timestamp, 100);
   const second = service.estimate(createImageData(), { force: true });
-  worker.reply({ ...frame, timestamp: 0 });
-  worker.reply({ type: 'error', stage: 'estimate', requestId: 1, message: 'duplicate error' });
-  assert.equal(service.getLatestFrame().timestamp, 100);
+  worker.reply(firstRequest, createDepth(0));
+  worker.onmessage({ data: { id: firstRequest.id, error: 'duplicate error' } });
   assert.equal(service.shouldEstimate({ force: true }), false);
   assert.equal(service.getState().error, null);
-  assert.equal(publications, 1);
-  worker.reply({ ...frame, requestId: 2, timestamp: 200 });
+  assert.equal(publications.length, 1);
+  worker.reply(worker.requests.at(-1), createDepth(200));
   assert.equal((await second).timestamp, 200);
   assert.equal(service.shouldEstimate({ force: true }), true);
+  unsubscribe();
   service.dispose();
+  assert.equal(publications.length, 2);
 });

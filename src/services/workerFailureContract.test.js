@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AnchorWorkerService } from './AnchorWorkerService.js';
+import { DepthEstimationService } from './DepthEstimationService.js';
 import { XFeatWorkerRelocalizer } from '../cv/xfeatWorkerClient.js';
 
 class FailedWorker {
@@ -11,6 +12,7 @@ class FailedWorker {
 }
 
 const requests = {
+  depth: () => new DepthEstimationService({ workerFactory: () => new FailedWorker() }).initialize(),
   anchor: () =>
     new AnchorWorkerService({ loadWorkerClass: async () => FailedWorker }).initialize(null, 320, 240),
   XFeat: () =>
