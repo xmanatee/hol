@@ -10,14 +10,11 @@ const assertReadOptions = (bodyName, maxBytes) => {
 };
 
 const assertReadableResponseBody = (response) => {
-  if (
-    response === null ||
-    typeof response !== 'object' ||
-    typeof response.headers?.get !== 'function' ||
-    typeof response.body?.getReader !== 'function' ||
-    typeof response.body?.cancel !== 'function'
-  ) {
+  if (!(response instanceof Response) || response.body === null) {
     throw new TypeError('Response must expose a readable byte stream.');
+  }
+  if (response.bodyUsed || response.body.locked) {
+    throw new TypeError('Response body must be unread and unlocked.');
   }
 };
 
@@ -36,102 +33,43 @@ const readContentLength = (response, bodyName) => {
   return contentLength;
 };
 
-const cancelAndThrow = async (cancel, error) => {
-  const cancellation = await cancel(error).then(
-    () => ({ succeeded: true }),
-    (failure) => ({ succeeded: false, failure }),
-  );
-  if (!cancellation.succeeded) {
-    throw new AggregateError([error, cancellation.failure], error.message);
-  }
-  throw error;
-};
-
-const assembleChunks = (chunks, totalBytes) => {
-  if (chunks.length === 0) {
-    return new ArrayBuffer(0);
-  }
-  if (chunks.length === 1) {
-    const chunk = chunks[0];
-    if (chunk.byteOffset === 0 && chunk.byteLength === chunk.buffer.byteLength) {
-      return chunk.buffer;
-    }
-    return chunk.slice().buffer;
-  }
-
-  const bytes = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes.buffer;
-};
-
-const createAbortWaiter = (signal) => {
-  let rejectAbort;
-  const promise = new Promise((_, reject) => {
-    rejectAbort = reject;
-  });
-  const handleAbort = () => {
-    rejectAbort(signal.reason ?? new DOMException('Response body read was aborted.', 'AbortError'));
-  };
-  signal.addEventListener('abort', handleAbort, { once: true });
-  return {
-    promise,
-    dispose: () => signal.removeEventListener('abort', handleAbort),
-  };
-};
-
 export const readBoundedResponseBytes = async (response, { bodyName, maxBytes, signal } = {}) => {
   assertReadOptions(bodyName, maxBytes);
   assertReadableResponseBody(response);
   if (signal !== undefined) {
     assertAbortSignal(signal, 'Response signal');
-    signal.throwIfAborted();
   }
 
-  let contentLength;
-  try {
-    contentLength = readContentLength(response, bodyName);
-  } catch (error) {
-    await cancelAndThrow((reason) => response.body.cancel(reason), error);
-  }
-  if (contentLength !== null && contentLength > maxBytes) {
-    const error = new RangeError(
-      `${bodyName} Content-Length ${contentLength} exceeds the ${maxBytes}-byte limit.`,
-    );
-    await cancelAndThrow((reason) => response.body.cancel(reason), error);
-  }
-
-  const reader = response.body.getReader();
-  const abortWaiter = signal === undefined ? null : createAbortWaiter(signal);
   const chunks = [];
   let totalBytes = 0;
-  try {
-    while (true) {
-      const read = reader.read();
-      const { done, value } = abortWaiter ? await Promise.race([read, abortWaiter.promise]) : await read;
-      if (done) {
-        break;
+  const sink = new WritableStream({
+    start(controller) {
+      try {
+        const contentLength = readContentLength(response, bodyName);
+        if (contentLength !== null && contentLength > maxBytes) {
+          throw new RangeError(
+            `${bodyName} Content-Length ${contentLength} exceeds the ${maxBytes}-byte limit.`,
+          );
+        }
+      } catch (error) {
+        // Error the sink so pipeTo cancels the source even when headers fail.
+        controller.error(error);
       }
+    },
+    write(value) {
       if (!(value instanceof Uint8Array)) {
-        const error = new TypeError(`${bodyName} stream must contain Uint8Array chunks.`);
-        await cancelAndThrow((reason) => reader.cancel(reason), error);
+        throw new TypeError(`${bodyName} stream must contain Uint8Array chunks.`);
       }
       totalBytes += value.byteLength;
       if (totalBytes > maxBytes) {
-        const error = new RangeError(`${bodyName} exceeded the ${maxBytes}-byte limit.`);
-        await cancelAndThrow((reason) => reader.cancel(reason), error);
+        throw new RangeError(`${bodyName} exceeded the ${maxBytes}-byte limit.`);
       }
-      chunks.push(value);
-    }
-  } finally {
-    abortWaiter?.dispose();
-    reader.releaseLock();
-  }
+      if (value.byteLength > 0) chunks.push(value);
+    },
+  });
+  await response.body.pipeTo(sink, { signal });
 
-  return assembleChunks(chunks, totalBytes);
+  return new Blob(chunks).arrayBuffer();
 };
 
 const decodeUtf8 = (buffer, bodyName) => {

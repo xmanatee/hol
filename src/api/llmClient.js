@@ -54,16 +54,7 @@ export class LLMClient {
     ) {
       throw new TypeError('Persona chatClient must implement createChatCompletion.');
     }
-    this.chatClient = Object.hasOwn(config, 'chatClient')
-      ? config.chatClient
-      : new LocalAIClient({
-          ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
-          ...(Object.hasOwn(config, 'fetchImpl') ? { fetchImpl: config.fetchImpl } : {}),
-          ...(config.requestTimeoutMs !== undefined ? { requestTimeoutMs: config.requestTimeoutMs } : {}),
-          ...(Object.hasOwn(config, 'scheduleRequestTimeout')
-            ? { scheduleRequestTimeout: config.scheduleRequestTimeout }
-            : {}),
-        });
+    this.chatClient = Object.hasOwn(config, 'chatClient') ? config.chatClient : new LocalAIClient(config);
   }
 
   async generatePersona(visionResult, { signal } = {}) {

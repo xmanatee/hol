@@ -33,16 +33,7 @@ export class TTSClient {
     if (Object.hasOwn(config, 'aiClient') && typeof config.aiClient?.createSpeech !== 'function') {
       throw new TypeError('Speech aiClient must implement createSpeech.');
     }
-    this.aiClient = Object.hasOwn(config, 'aiClient')
-      ? config.aiClient
-      : new LocalAIClient({
-          ...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
-          ...(Object.hasOwn(config, 'fetchImpl') ? { fetchImpl: config.fetchImpl } : {}),
-          ...(config.requestTimeoutMs !== undefined ? { requestTimeoutMs: config.requestTimeoutMs } : {}),
-          ...(Object.hasOwn(config, 'scheduleRequestTimeout')
-            ? { scheduleRequestTimeout: config.scheduleRequestTimeout }
-            : {}),
-        });
+    this.aiClient = Object.hasOwn(config, 'aiClient') ? config.aiClient : new LocalAIClient(config);
     this.AudioContextClass = config.AudioContextClass ?? null;
     this.audioContext = null;
     this.sourceNode = null;

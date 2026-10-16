@@ -135,20 +135,38 @@ test('local AI caller cancellation settles even when the injected transport igno
   await assert.rejects(request, (error) => error === reason);
 });
 
+test('a response arriving after retirement is cancelled rather than abandoned', async () => {
+  const transport = Promise.withResolvers();
+  const cancelled = Promise.withResolvers();
+  const caller = new AbortController();
+  const reason = new DOMException('selection cleared', 'AbortError');
+  const client = new LocalAIClient({ baseUrl: BASE_URL, fetchImpl: () => transport.promise });
+  const request = client.createChatCompletion({}, { signal: caller.signal });
+  await Promise.resolve();
+  caller.abort(reason);
+  await assert.rejects(request, (error) => error === reason);
+  const response = new Response(new ReadableStream({ cancel: cancelled.resolve }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+  transport.resolve(response);
+  assert.equal(await cancelled.promise, reason);
+});
+
 test('local AI transport reports non-JSON provider failures by HTTP status', async () => {
+  const response = new Response('service unavailable', {
+    status: 503,
+    headers: { 'Content-Type': 'text/plain' },
+  });
   const client = new LocalAIClient({
     baseUrl: BASE_URL,
-    fetchImpl: async () =>
-      new Response('service unavailable', {
-        status: 503,
-        headers: { 'Content-Type': 'text/plain' },
-      }),
+    fetchImpl: async () => response,
   });
 
   await assert.rejects(
     () => client.createChatCompletion({ model: 'offline', messages: [] }),
     /Local AI request failed with status 503/,
   );
+  assert.equal(response.bodyUsed, true);
 });
 
 test('local AI transport enforces separate byte budgets for chat, speech, and provider errors', async () => {
@@ -215,6 +233,12 @@ test('local AI transport rejects malformed fetch collaborators explicitly', asyn
 });
 
 test('vision and persona clients reject permissive numeric and collaborator configuration', () => {
+  for (const Client of [VisionClient, LLMClient]) {
+    assert.throws(
+      () => new Client({ model: 'configured', baseUrl: BASE_URL, fetchImpl: undefined }),
+      /Fetch API/,
+    );
+  }
   assert.throws(() => new VisionClient({ model: 'vision', maxTokens: 0, chatClient: {} }), /maxTokens/);
   assert.throws(() => new LLMClient({ model: 'persona', temperature: 3, chatClient: {} }), /temperature/);
   assert.throws(() => new VisionClient({ model: 'vision', chatClient: null }), /chatClient/);

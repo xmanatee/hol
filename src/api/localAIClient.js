@@ -45,15 +45,7 @@ const assertPayload = (payload) => {
 };
 
 const assertFetchResponse = (response) => {
-  if (
-    response === null ||
-    typeof response !== 'object' ||
-    typeof response.ok !== 'boolean' ||
-    !Number.isInteger(response.status) ||
-    response.status < 100 ||
-    response.status > 599 ||
-    typeof response.headers?.get !== 'function'
-  ) {
+  if (!(response instanceof Response) || response.status === 0) {
     throw new TypeError('Local AI transport must return a valid Fetch Response.');
   }
 };
@@ -145,26 +137,28 @@ export class LocalAIClient {
           body: JSON.stringify(payload),
           signal: requestSignal,
         });
-        requestSignal.throwIfAborted();
         assertFetchResponse(response);
 
         if (!response.ok) {
-          const data = responseHasJsonBody(response)
+          const hasJsonBody = responseHasJsonBody(response);
+          const data = hasJsonBody
             ? await readBoundedResponseJson(response, {
                 bodyName: 'Local AI error response',
                 maxBytes: MAX_ERROR_RESPONSE_BYTES,
                 signal: requestSignal,
               })
             : null;
+          const error = new Error(
+            data?.error?.message || `Local AI request failed with status ${response.status}`,
+          );
+          if (!hasJsonBody) {
+            await response.body?.cancel(requestSignal.aborted ? requestSignal.reason : error);
+          }
           requestSignal.throwIfAborted();
-          throw new Error(data?.error?.message || `Local AI request failed with status ${response.status}`);
+          throw error;
         }
 
-        const bodyPromise = readSuccessBody(response, requestSignal);
-        if (typeof bodyPromise?.then !== 'function') {
-          throw new TypeError('Local AI response body reader must return a Promise.');
-        }
-        const result = await bodyPromise;
+        const result = await readSuccessBody(response, requestSignal);
         requestSignal.throwIfAborted();
         return result;
       },
