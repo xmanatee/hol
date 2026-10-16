@@ -1,9 +1,10 @@
 import fs from 'node:fs';
+import path from 'node:path';
 
-const [
-  inputPath = '/tmp/hol-vision-benchmark-full.json',
-  outputPath = 'docs/vision-benchmark-full-report.html',
-] = process.argv.slice(2);
+const [inputPath, outputPath = 'artifacts/vision-benchmarks/report.html'] = process.argv.slice(2);
+if (!inputPath) {
+  throw new TypeError('Usage: generate-vision-benchmark-html.mjs <benchmark.json> [report.html]');
+}
 
 const benchmarkOutput = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
 const benchmark = benchmarkOutput.benchmark;
@@ -357,7 +358,7 @@ const html = `<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>HOL Full 3D Reconstruction Benchmark Report</title>
+  <title>HOL Vision Benchmark Report</title>
   <style>
     :root {
       color-scheme: light;
@@ -599,8 +600,8 @@ const html = `<!doctype html>
   <main>
     <header>
       <section>
-        <h1>HOL Full 3D Reconstruction Benchmark</h1>
-        <p class="lede">A full synthetic stress sweep across all reconstruction modes, target geometries, backgrounds, motion profiles, and occlusion profiles. Lower risk is better; strict pass/fail uses the shared vision quality thresholds.</p>
+        <h1>HOL Vision Benchmark</h1>
+        <p class="lede">Synthetic tracking and reconstruction results for the matrix and coverage shown below. Lower risk is better; strict pass/fail uses the shared vision quality thresholds.</p>
       </section>
       <aside class="meta" aria-label="Benchmark metadata">
         <div><span>Input JSON</span><strong>${escapeHtml(inputPath)}</strong></div>
@@ -649,7 +650,6 @@ ${coverageSection}
     </section>
 
     <h2>Mode Comparison</h2>
-    <p class="note">Depth fusion is the best current direction by average risk and severe-case avoidance, but it inherits anchor quality from the same tracker spine.</p>
     <div class="table-wrap">
       <table>
         <thead>
@@ -939,17 +939,6 @@ ${coverageSection}
       </table>
     </div>
 
-    <h2>Recommended Engineering Focus</h2>
-    <div class="panel">
-      <ol>
-        <li>Prioritize fast-motion and occlusion recovery in the tracking spine. Improve landmark reacquisition, local support preservation, and post-occlusion anchor correction before investing more in dense model complexity.</li>
-        <li>Keep depth fusion as the preferred advanced mode candidate. It has the lowest mean risk and no severe cases in the full synthetic sweep, but it still needs tracker stability to reach production quality.</li>
-        <li>Use handled mugs, laminated cards, cups, rigid boxes, and label bottles as the core regression set. These families expose the most geometry and texture failures.</li>
-        <li>Add real iPhone capture fixtures for window backlight, shelf clutter, and busy moving backgrounds. Synthetic results show background is secondary to geometry and motion, but mobile camera noise may change that ranking.</li>
-        <li>Use the recovery-specific metrics to separate complete reacquisition failures from slow-but-successful recovery. Add drift-slope and map-pose reacquisition delay next if recovery cases remain ambiguous.</li>
-      </ol>
-    </div>
-
     <h2>Method Notes</h2>
     <div class="panel">
       <ul>
@@ -964,5 +953,6 @@ ${coverageSection}
 </body>
 </html>`;
 
+fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 fs.writeFileSync(outputPath, html.replace(/[ \t]+$/gm, ''));
 console.log(outputPath);

@@ -4,7 +4,6 @@ Before broad work, read parent `AGENTS.md` files up to the mono root; nearest sc
 
 ## Code Style
 
-
 - JavaScript only (ES modules). No TypeScript.
 - Avoid defensive logic, try-catch blocks, and ambiguous inputs
 - **No Mocking Logic**: All critical logic must be fully implemented. Only cosmetic changes or follow-ups can be omitted with a `#todo` tag in comments
@@ -28,3 +27,7 @@ Before broad work, read parent `AGENTS.md` files up to the mono root; nearest sc
 ## Architecture
 
 Runtime architecture is summarized in README.md.
+
+## Work focus
+
+Keep updates brief. Docs and TODO.md are for current guidance and open work, not per-change logs; detailed run results belong in generated artifacts.

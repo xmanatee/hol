@@ -16,10 +16,6 @@ test-results/
 .env
 *.local
 
-# Generated vision benchmark reports
-docs/vision-benchmark-runs/
-docs/vision-benchmark-full-report.html
-
 # Local debug captures
 .playwright-mcp/
 console-*.txt

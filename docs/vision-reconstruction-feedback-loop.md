@@ -1,169 +1,27 @@
-# Vision Reconstruction Feedback Loop
+# Vision benchmark workflow
 
-This workflow turns reconstruction quality work into a measured loop:
+Use the smallest matrix that reproduces the issue:
 
-1. Run the benchmark matrix.
-2. Generate the HTML report and insights summary.
-3. Pick the weakest subsystem from evidence.
-4. Make one targeted improvement.
-5. Rerun progressively larger benchmarks.
-6. Keep the change only when the measured weak point improves without moving failures elsewhere.
+```bash
+npm run vision:feedback:quick
+npm run vision:feedback:hard
+npm run vision:feedback
+npm run vision:feedback:full
+```
 
-The point is not to make one report. The report is the steering signal for the next engineering pass.
+Quick checks production cadence; hard adds compound capture degradation, complete disappearance, a distractor, and distant re-entry. The default representative and full matrices broaden coverage. Results are JSON and HTML under `artifacts/vision-benchmarks/`; `--out-dir` and `--label` select a destination and run name.
 
-## Benchmark Passes
+Read coverage before scores: filters and motion/occlusion balance determine what was exercised. Separate strict product targets from regression floors; a passing regression contract does not mean the app is reliable on arbitrary objects.
 
-Use the smallest pass that can answer the current question.
+| Evidence                                                 | Likely owner                                       |
+| -------------------------------------------------------- | -------------------------------------------------- |
+| Anchor drift, false locks, slow re-entry                 | Landmark ownership, masks, tracking/relocalization |
+| Tracking stable but map readiness or normal quality poor | Reconstruction/depth                               |
+| Jumps when pose source changes                           | Pose arbitration and reference ownership           |
+| Geometry accepted but face misplaced or wrongly visible  | Attachment projection and render readiness         |
 
-- Quick: fast regression signal after a focused code change.
-- Hard: seven exact-ground-truth rendered scenes. Six combine fast motion or repeated occlusion with low-light sensor noise, exposure blur, and rolling-shutter readout; one removes the target completely, presents a decoy without support-mask or depth leakage, then returns the target at a distant location. Use it after tracking or recovery changes.
-- Representative: broader object, background, motion, and occlusion coverage before trusting the direction.
-- Full: final evidence across all current synthetic conditions.
+For each change, reproduce one failure, fix its owning layer, then expand validation. Retain it only if the target improves without moving failures into another query, object family, or mode. Tracking/recovery changes need hard and annotated replay as well as the curated quality matrix.
 
-Representative and full matrices keep motion balanced independently from occlusion. A weak-point row for `fast` should now mean fast motion, not "the subset that also happened to have early or repeated occlusion." Quick keeps the known high-signal stress fixtures while adding matching slow and standard cases so its motion counts stay balanced.
+For timing, separate active-update latency, display-amortized cost, queue/delivery age, and rare spikes. Rank exclusive stage cost; adding parent envelopes to child timings double-counts work. Missing samples are not zero-cost samples. Desktop replay can reject a change but cannot certify mobile latency, memory, or thermals.
 
-The feedback runner produces three artifacts from the same run:
-
-- Raw benchmark JSON with `coverageSummary`, quality, runtime, and risk summaries.
-- HTML report with matrix coverage, weak-point rankings, runtime budget tables, and worst replays.
-- Markdown insights and fix queue with the largest coverage imbalance called out.
-
-The default output location is `docs/vision-benchmark-runs/`.
-Full runs also refresh `docs/vision-benchmark-full-report.html` for easy review.
-
-## Reading The Report
-
-Read the report in this order:
-
-1. **Matrix coverage**: confirms which objects, backgrounds, motions, occlusions, and modes were actually exercised after filters.
-2. **Strict pass rate**: tells whether the overall pipeline got better or worse.
-3. **Risk bands**: high and severe cases matter more than small average movement.
-4. **Mode comparison**: shows whether the selected reconstruction approach is helping or hiding a deeper tracker issue.
-5. **Object and geometry weak points**: picks the fixtures for targeted debugging.
-6. **Condition weak points**: identifies whether motion, occlusion, background, or lighting is the real stressor.
-7. **Performance budget**: reads per-frame processing time first; replay wall time is secondary because frame counts vary by condition. In the stage table, use `Amortized` to find sustained frame cost and `Mean When Run`/`Max` to find rare recovery spikes. Budget stage overages exclude wrapper timings such as `totalMs` and `keypointUpdateMs`; those remain diagnostic envelopes, not individual OpenCV stage costs.
-8. **Worst individual replays**: start debugging from these, not from average cases.
-
-The most important field is usually `primaryWeakness`. If every group says `tracking.meanAnchorError`, the next fix belongs in tracking or object ownership, not in dense reconstruction.
-
-## Mapping Weak Points To Systems
-
-### Tracking Spine
-
-Signals:
-
-- `tracking.meanAnchorError` dominates.
-- `tracking.maxAnchorError` spikes under fast motion.
-- Failures concentrate in early or repeated occlusion.
-- Worst cases still report successful tracking.
-
-Work on:
-
-- Object-owned landmark promotion and retirement.
-- Mask-constrained keypoint refresh.
-- Descriptor/keyframe relocalization.
-- Post-occlusion recovery.
-- Step limits and smoothing only after the measurement source is correct.
-
-### Object Ownership And Segmentation
-
-Signals:
-
-- Failures cluster by background or lighting.
-- Background texture replaces object texture after refresh.
-- Clean scenes pass but cluttered scenes fail for the same object.
-- Object classes with weak masks fail across modes.
-
-Work on:
-
-- Tap component quality.
-- Mask refresh cadence.
-- Background landmark rejection.
-- Connected-component stability.
-- Detector/segmenter class coverage.
-
-### Dense Reconstruction And Depth Fusion
-
-Signals:
-
-- Tracking metrics are acceptable, but reconstruction ready ratio is low.
-- Normal error dominates risk.
-- Map confidence stays low after enough view change.
-- Depth-fusion improves tracking-equivalent cases but does not become ready.
-
-Work on:
-
-- Keyframe gating.
-- Depth quality thresholds.
-- Surfel merge and temporal residuals.
-- Surface normal estimation.
-- Pose refinement from confident surfel support.
-
-### Pose Arbitration
-
-Signals:
-
-- Mode risk changes sharply while tracking metrics are similar.
-- Failures happen on source transitions.
-- Reconstruction or planar pose replaces a stronger object-local source.
-- A mode has good average risk but severe outliers.
-
-Work on:
-
-- Candidate scoring.
-- Rejection reasons.
-- Pose-source continuity.
-- Residual thresholds.
-- Class-specific source ownership.
-
-### Head Attachment
-
-Signals:
-
-- `headAttachment` is a top failed stage.
-- World position or rotation errors spike while tracking and reconstruction look acceptable.
-- Source transitions correlate with head jumps.
-- Attachment remains visible when the surface is not trustworthy.
-
-Work on:
-
-- Render readiness gates.
-- Object-local attachment source checks.
-- Surface normal and tangent continuity.
-- Hide/fade policy for back-facing or unconstrained attachment.
-
-## Iteration Rules
-
-Use one primary hypothesis per pass. Do not change tracking, reconstruction, and head rendering in the same iteration unless the report clearly shows a shared root cause.
-
-For each iteration:
-
-1. Name the weak point from the report.
-2. Name the owning subsystem.
-3. Pick the smallest fixture group that reproduces it.
-4. Add or update a focused test when the behavior is narrow enough.
-5. Change the owning layer.
-6. Rerun quick feedback.
-7. Rerun representative feedback if quick improves.
-8. Rerun full feedback before calling the weak point closed.
-
-Keep a change only when:
-
-- The target weak point improves.
-- Severe cases do not increase.
-- High + severe cases do not move to another mode or object family.
-- Existing curated quality stays green.
-- Runtime-sensitive work still fits the mobile frame budget.
-- Missing runtime samples are reported as invalid instead of being counted as `0ms`.
-
-## Current Baseline Interpretation
-
-The full benchmark from June 17, 2026 showed:
-
-- Depth fusion is the best current advanced mode by mean risk and severe-case avoidance.
-- Tracking is the main bottleneck across all modes.
-- Fast motion plus early or repeated occlusion is the most damaging condition.
-- Handled mugs, laminated cards, label bottles, balls, cups, and rigid boxes are the most useful regression targets.
-- Background and lighting differences matter, but less than object geometry and motion.
-
-That means the next improvement pass should start with tracking and object ownership, then rerun the loop before tuning dense fusion internals.
+See [experiment protocols](vision-experimentation.md), [open work](../TODO.md), and [release verification](../README.md#verification). Raw measurements belong in artifacts; this document is not a run log.
