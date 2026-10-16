@@ -1,7 +1,17 @@
 import { expect, test } from '@playwright/test';
 
+const countGreenPixels = (canvas) => {
+  const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  let green = 0;
+  for (let index = 0; index < pixels.length; index += 4) {
+    if (pixels[index] < 150 && pixels[index + 1] > 200 && pixels[index + 2] < 180) green++;
+  }
+  return green;
+};
+
 for (const [scenario, failedUrl, title] of [
   [null, null, 'rendered object video reaches green readiness before tap and mounts a surface-attached face'],
+  ['stale', null, 'frozen discovery removes its green outline and resumes the same selectable object'],
   ['resize', null, 'intrinsic camera resize rebuilds object coordinates without replacing the video stream'],
   [
     'depth',
@@ -241,6 +251,33 @@ for (const [scenario, failedUrl, title] of [
     });
     await expect(page.locator('.overlay-scene')).toHaveCount(0);
     const selectionCanvas = page.getByRole('button', { name: 'Select the object at the camera center' });
+    if (scenario === 'stale') {
+      await page.evaluate(() => {
+        window.__holFreezeObjectVideo = true;
+        window.__holFrozenCandidateId = window.__holLatestAnchorState.candidate.id;
+      });
+      expect(await selectionCanvas.evaluate(countGreenPixels)).toBeGreaterThan(100);
+      await expect(discovery).toHaveAttribute('data-stage', 'stale');
+      await expect(discovery).toContainText('Waiting for fresh tracking');
+      expect(await selectionCanvas.evaluate(countGreenPixels)).toBe(0);
+      const workBeforeTap = await page.evaluate(() => [
+        window.__holAnchorFrameCommands,
+        window.__holCameraReadbacks,
+      ]);
+      await selectionCanvas.click();
+      await expect(discovery).toHaveAttribute('data-stage', 'stale');
+      await expect(page.locator('.overlay-scene')).toHaveCount(0);
+      expect(await page.evaluate(() => window.__holSelectionCommands)).toEqual([]);
+      expect(
+        await page.evaluate(() => [window.__holAnchorFrameCommands, window.__holCameraReadbacks]),
+      ).toEqual(workBeforeTap);
+      await page.screenshot({ path: testInfo.outputPath('stale-discovery.png') });
+      await page.evaluate(() => {
+        window.__holObserveFaceVisibility = true;
+        window.__holResumeObjectVideo();
+      });
+      await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
+    }
     await selectionCanvas.click();
     await expect(discovery).toHaveCount(0);
     if (scenario === 'overlay' || scenario === 'head') {
@@ -287,6 +324,16 @@ for (const [scenario, failedUrl, title] of [
       .poll(() => page.evaluate(() => window.__holLastDrawAt - window.__holFirstDrawAt))
       .toBeGreaterThan(500);
     await page.screenshot({ path: testInfo.outputPath('ready.png') });
+    if (scenario === 'stale') {
+      await expect
+        .poll(() => page.evaluate(() => window.__holLastVisibleFaceAt - window.__holFirstVisibleFaceAt))
+        .toBeGreaterThan(500);
+      expect(commit.shownId).toBe(await page.evaluate(() => window.__holFrozenCandidateId));
+      expect(await page.evaluate(() => window.__holLatestAnchorState.activeAnchor.id)).toBe(commit.shownId);
+      expect(errors).toEqual([]);
+      expect(optionalAIRequests).toEqual([]);
+      return;
+    }
     if (scenario === 'resize') {
       let initializations = await page.evaluate(() => window.__holInitializations.length);
       for (const dimensions of [

@@ -2,10 +2,15 @@ import { logger } from '../utils/logger.js';
 import { OBJECT_POSE_MODEL } from '../cv/anchor.reconstructionModes.js';
 import { prepareImageDataTransfer } from '../utils/imageDataTransfer.js';
 import { assertWorkerRequestTimeout, WorkerRequestRegistry } from '../utils/workerRequestRegistry.js';
+import { isObjectObservationFresh, MAX_OBJECT_OBSERVATION_AGE_MS } from '../utils/cvScheduling.js';
 
 const loadAnchorWorkerClass = () => import('../cv/anchor.worker.js?worker').then((module) => module.default);
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 45_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 8_000;
+const scheduleExpiry = (callback, delayMs) => {
+  const timeout = setTimeout(callback, delayMs);
+  return () => clearTimeout(timeout);
+};
 
 export class AnchorWorkerService {
   constructor({
@@ -13,7 +18,12 @@ export class AnchorWorkerService {
     initializationTimeoutMs = DEFAULT_INITIALIZATION_TIMEOUT_MS,
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     scheduleRequestTimeout,
+    now = () => performance.now(),
+    scheduleCandidateExpiry = scheduleExpiry,
   } = {}) {
+    this.now = now;
+    this.scheduleCandidateExpiry = scheduleCandidateExpiry;
+    this.cancelCandidateExpiry = null;
     this.runsInWorker = true;
     this.initialized = false;
     this.error = null;
@@ -86,6 +96,10 @@ export class AnchorWorkerService {
     if (!this.initialized || this.mode !== 'selection') {
       return Promise.reject(new Error('Can only select a candidate in initialized selection mode'));
     }
+    const candidate = this.getState().candidate;
+    if (candidate?.status === 'stale') {
+      return Promise.resolve({ success: false, reason: candidate.reason });
+    }
     return this._request('selectCandidate', {
       candidateId,
       tapPosition,
@@ -95,7 +109,7 @@ export class AnchorWorkerService {
   }
 
   canProcessFrame() {
-    return this.initialized && this.frameRequestId === null && performance.now() >= this.nextObservationAt;
+    return this.initialized && this.frameRequestId === null && this.now() >= this.nextObservationAt;
   }
 
   processFrame(imageData, { update, refreshSegmentation, depthContext, capturedAt }) {
@@ -160,7 +174,15 @@ export class AnchorWorkerService {
     return {
       mode: this.mode,
       activeAnchor: this.activeAnchor,
-      candidate: this.candidate,
+      candidate:
+        this.candidate && !isObjectObservationFresh(this.candidate.capturedAt, this.now())
+          ? {
+              ...this.candidate,
+              status: 'stale',
+              maskPreview: null,
+              reason: 'Waiting for fresh tracking. Keep the object in view.',
+            }
+          : this.candidate,
       nextObservationAt: this.nextObservationAt,
       anchorState: this.anchorState,
       segmentationRefresh: this.segmentationRefresh,
@@ -182,6 +204,8 @@ export class AnchorWorkerService {
   }
 
   _resetRuntime(reason) {
+    this.cancelCandidateExpiry?.();
+    this.cancelCandidateExpiry = null;
     this.workerGeneration++;
     this.workerCancellationReason = reason;
     this.workerPromise = null;
@@ -309,7 +333,24 @@ export class AnchorWorkerService {
     this.trackingMode = state.trackingMode;
     this.initialized = state.initialized;
     this.sampledAt = sampledAt;
+    this._scheduleCandidateExpiry();
     this._notifyUpdate();
+  }
+
+  _scheduleCandidateExpiry() {
+    this.cancelCandidateExpiry?.();
+    this.cancelCandidateExpiry = null;
+    const now = this.now();
+    if (!this.candidate || !isObjectObservationFresh(this.candidate.capturedAt, now)) return;
+
+    this.cancelCandidateExpiry = this.scheduleCandidateExpiry(
+      () => {
+        this.cancelCandidateExpiry = null;
+        this._scheduleCandidateExpiry();
+        this._notifyUpdate();
+      },
+      this.candidate.capturedAt + MAX_OBJECT_OBSERVATION_AGE_MS - now + 1,
+    );
   }
 
   _notifyUpdate() {

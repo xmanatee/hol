@@ -75,6 +75,187 @@ const waitForWorkerPost = () => setImmediate();
 
 const waitForRequestHandlers = () => setImmediate();
 
+const createDiscoveryClock = () => {
+  let now = 1000;
+  const deadlines = new Set();
+  return {
+    now: () => now,
+    scheduleCandidateExpiry: (callback, delay) => {
+      const deadline = { callback, at: now + delay };
+      deadlines.add(deadline);
+      return () => deadlines.delete(deadline);
+    },
+    advanceTo: (time, { runTimers = true } = {}) => {
+      now = time;
+      if (runTimers) {
+        for (const deadline of deadlines) {
+          if (deadline.at <= now) {
+            deadlines.delete(deadline);
+            deadline.callback();
+          }
+        }
+      }
+    },
+    pending: () => deadlines.size,
+  };
+};
+
+const createDiscoveryClient = async (t) => {
+  const clock = createDiscoveryClock();
+  const service = new TestAnchorWorkerService(FakeAnchorWorker, clock);
+  t.after(() => service.dispose());
+  const initialized = service.initialize(null, 320, 240);
+  await waitForWorkerPost();
+  const worker = FakeAnchorWorker.instances.at(-1);
+  worker.reply({ id: worker.messages.at(-1).id, result: true, state: createState({ initialized: true }) });
+  await initialized;
+  const observe = async (capturedAt, overrides = {}, { update = true } = {}) => {
+    const admitted = service.processFrame(
+      { width: 320, height: 240, data: new Uint8ClampedArray(320 * 240 * 4) },
+      { update, refreshSegmentation: !update, capturedAt },
+    );
+    assert.equal(admitted.success, true);
+    await waitForWorkerPost();
+    const candidate = {
+      id: 7,
+      capturedAt,
+      status: 'ready',
+      position: { x: 160, y: 120 },
+      maskPreview: {
+        points: [
+          { x: 100, y: 60 },
+          { x: 220, y: 60 },
+          { x: 220, y: 180 },
+          { x: 100, y: 180 },
+        ],
+      },
+      reason: 'Tap the highlighted object to bring it to life',
+      ...overrides,
+    };
+    worker.reply({
+      id: worker.messages.at(-1).id,
+      result: true,
+      state: createState({ initialized: true, candidate }),
+    });
+  };
+  return { service, worker, clock, observe };
+};
+
+test('discovery expires its outline and readiness without another camera frame', async (t) => {
+  const { service, worker, clock, observe } = await createDiscoveryClient(t);
+  const publications = [];
+  service.addListener((state) => publications.push(state.candidate));
+  await observe(1000);
+  assert.equal(service.getState().candidate.status, 'ready');
+  assert.equal(clock.pending(), 1);
+  const frameCommands = worker.messages.length;
+
+  clock.advanceTo(1300);
+  assert.equal(service.getState().candidate.status, 'ready');
+  clock.advanceTo(1301);
+  const stale = service.getState().candidate;
+  assert.equal(stale.id, 7);
+  assert.equal(stale.capturedAt, 1000);
+  assert.equal(stale.status, 'stale');
+  assert.equal(stale.maskPreview, null);
+  assert.match(stale.reason, /Waiting for fresh tracking/);
+  assert.deepEqual(
+    publications.map((candidate) => candidate.status),
+    ['ready', 'stale'],
+  );
+  assert.equal(worker.messages.length, frameCommands, 'expiry must not rerun vision');
+  assert.equal(clock.pending(), 0);
+
+  const result = await service.selectCandidate({
+    candidateId: 7,
+    capturedAt: 1301,
+    tapPosition: { x: 160, y: 120 },
+  });
+  assert.equal(result.success, false);
+  assert.equal(result.reason, stale.reason);
+  assert.equal(worker.messages.length, frameCommands, 'an expired selection must not queue a worker request');
+});
+
+test('late timers cannot leave an expired candidate selectable', async (t) => {
+  const { service, worker, clock, observe } = await createDiscoveryClient(t);
+  await observe(1000);
+  clock.advanceTo(1301, { runTimers: false });
+  assert.equal(service.getState().candidate.status, 'stale');
+  const messages = worker.messages.length;
+  const result = await service.selectCandidate({
+    candidateId: 7,
+    capturedAt: 1301,
+    tapPosition: { x: 160, y: 120 },
+  });
+  assert.equal(result.success, false);
+  assert.equal(worker.messages.length, messages);
+});
+
+test('an old observation arriving late or through mask refresh cannot renew readiness', async (t) => {
+  const { service, clock, observe } = await createDiscoveryClient(t);
+  clock.advanceTo(1301);
+  await observe(1000);
+  assert.equal(service.getState().candidate.status, 'stale');
+  assert.equal(clock.pending(), 0);
+
+  await observe(1301);
+  assert.equal(service.getState().candidate.status, 'ready');
+  clock.advanceTo(1400);
+  await observe(1400, { capturedAt: 1301 }, { update: false });
+  clock.advanceTo(1601);
+  assert.equal(service.getState().candidate.status, 'ready');
+  clock.advanceTo(1602);
+  assert.equal(service.getState().candidate.status, 'stale');
+});
+
+test('fresh tracking replaces the old expiry and restores the same discovered object', async (t) => {
+  const { service, clock, observe } = await createDiscoveryClient(t);
+  await observe(1000);
+  clock.advanceTo(1250);
+  await observe(1250);
+  assert.equal(clock.pending(), 1);
+  clock.advanceTo(1301);
+  assert.equal(service.getState().candidate.status, 'ready');
+  clock.advanceTo(1551);
+  assert.equal(service.getState().candidate.status, 'stale');
+  await observe(1551);
+  assert.equal(service.getState().candidate.status, 'ready');
+  assert.equal(service.getState().candidate.id, 7);
+});
+
+for (const operation of ['reset', 'dispose', 'worker failure', 'selection']) {
+  test(`discovery cancels expiry on ${operation}`, async (t) => {
+    t.mock.method(console, 'error', () => {});
+    const { service, worker, clock, observe } = await createDiscoveryClient(t);
+    await observe(1000);
+    let publications = 0;
+    service.addListener(() => publications++);
+    if (operation === 'selection') {
+      const selected = service.selectCandidate({
+        candidateId: 7,
+        capturedAt: 1000,
+        tapPosition: { x: 160, y: 120 },
+      });
+      await waitForWorkerPost();
+      worker.reply({
+        id: worker.messages.at(-1).id,
+        result: { success: true },
+        state: createState({ initialized: true, mode: 'anchor', activeAnchor: { id: 7 } }),
+      });
+      await selected;
+    } else if (operation === 'worker failure') {
+      worker.onerror(new Error('Worker stopped'));
+    } else {
+      service[operation]();
+    }
+    assert.equal(clock.pending(), 0);
+    assert.equal(service.getState().candidate, null);
+    const beforeExpiry = publications;
+    clock.advanceTo(1301);
+    assert.equal(publications, beforeExpiry, 'retired candidates must not publish later');
+  });
+}
+
 const createManualTimeoutScheduler = () => {
   let callback = null;
   return {

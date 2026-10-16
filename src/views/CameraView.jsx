@@ -121,6 +121,7 @@ const CameraView = () => {
   const lastAnchorUpdateAtRef = useRef(0);
   const lastSegmentationRefreshCheckAtRef = useRef(0);
   const lastCameraFrameCostRef = useRef(0);
+  const captureFpsRef = useRef(0);
 
   const [showStats, setShowStats] = useState(false);
   const [discoveredMeshes, setDiscoveredMeshes] = useState([]);
@@ -167,6 +168,7 @@ const CameraView = () => {
     if (cameraState !== 'active') {
       frameCountRef.current = 0;
       lastCameraFrameCostRef.current = 0;
+      captureFpsRef.current = 0;
       cameraMetricsStore.reset();
     }
   }, [cameraMetricsStore, cameraState]);
@@ -447,12 +449,51 @@ const CameraView = () => {
     showAnchorFeedback('3D map locked.', 'good');
   }, [anchorSystemState.activeAnchor, anchorSystemState.anchorState, showAnchorFeedback]);
 
-  // Camera processing follows presented video frames instead of display refreshes.
+  const paintCameraOverlay = useCallback(
+    (state) => {
+      const canvas = canvasRef.current;
+      const ctx = ctxRef.current;
+      if (!canvas || !ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!services.camera.isActive()) return;
+
+      if (state.mode === 'anchor' && state.activeAnchor) {
+        if (showStats) {
+          renderAnchorOverlay(ctx, {
+            anchor: state.activeAnchor,
+            anchorState: state.anchorState,
+            trackedPoints: services.anchor?.imageAnchorService?.keypointTracker?.trackedPoints || [],
+            showObjectSupport: true,
+          });
+        }
+      } else {
+        renderDiscoveryOverlay(ctx, state.candidate);
+      }
+      if (showStats) {
+        renderDebugStats(ctx, {
+          fps: captureFpsRef.current,
+          cameraFrameCost: lastCameraFrameCostRef.current,
+          processingTime: state.anchorState?.metrics?.processingTime ?? 0,
+          objectCount: state.activeAnchor ? 1 : 0,
+        });
+        if (state.anchorState?.anchored) renderKeypoints(ctx, services.anchor?.imageAnchorService);
+      }
+    },
+    [services.anchor, services.camera, showStats],
+  );
+
+  useEffect(() => {
+    paintCameraOverlay(getAnchorSystemState());
+    return subscribeAnchorSystemState(paintCameraOverlay);
+  }, [getAnchorSystemState, paintCameraOverlay, subscribeAnchorSystemState]);
+
+  // Camera processing follows presented video frames; the overlay follows CV state, including expiry.
   useVideoFrames(videoRef, cameraState === 'active', ({ now: videoFrameAt, captureFps }) => {
     if (services.camera.isActive() && videoRef.current && canvasRef.current) {
       const frameWorkStartedAt = performance.now();
       const video = videoRef.current;
       const canvas = canvasRef.current;
+      let repaint = showStats;
       if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
         // A presented frame can expose new dimensions before the video's resize event.
         if (!services.camera.synchronizeVideoDimensions()) return;
@@ -462,11 +503,11 @@ const CameraView = () => {
       }
       if (!ctxRef.current) {
         ctxRef.current = canvas.getContext('2d');
+        repaint = true;
       }
-      const ctx = ctxRef.current;
+      captureFpsRef.current = captureFps ?? 0;
       const frameIndex = ++frameCountRef.current;
       const liveAnchorSystemState = getAnchorSystemState();
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (liveAnchorSystemState.initialized) {
         const now = videoFrameAt;
@@ -518,30 +559,7 @@ const CameraView = () => {
         }
       }
 
-      if (liveAnchorSystemState.mode === 'anchor' && liveAnchorSystemState.activeAnchor) {
-        if (showStats) {
-          renderAnchorOverlay(ctx, {
-            anchor: liveAnchorSystemState.activeAnchor,
-            anchorState: liveAnchorSystemState.anchorState,
-            trackedPoints: services.anchor?.imageAnchorService?.keypointTracker?.trackedPoints || [],
-            showObjectSupport: true,
-          });
-        }
-      } else {
-        renderDiscoveryOverlay(ctx, liveAnchorSystemState.candidate);
-      }
-
-      if (showStats) {
-        renderDebugStats(ctx, {
-          fps: captureFps ?? 0,
-          cameraFrameCost: lastCameraFrameCostRef.current,
-          processingTime: liveAnchorSystemState.anchorState?.metrics?.processingTime ?? 0,
-          objectCount: liveAnchorSystemState.activeAnchor ? 1 : 0,
-        });
-      }
-      if (showStats && liveAnchorSystemState.anchorState?.anchored) {
-        renderKeypoints(ctx, services.anchor?.imageAnchorService);
-      }
+      if (repaint) paintCameraOverlay(liveAnchorSystemState);
 
       const cameraFrameCost = performance.now() - frameWorkStartedAt;
       lastCameraFrameCostRef.current = cameraFrameCost;

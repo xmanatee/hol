@@ -1,4 +1,4 @@
-import { MAX_OBJECT_OBSERVATION_AGE_MS } from '../utils/cvScheduling.js';
+import { isObjectObservationFresh } from '../utils/cvScheduling.js';
 
 const DISCOVERY_INTERVAL_MS = 750;
 const MIN_TRACKING_OBSERVATIONS = 3;
@@ -114,16 +114,13 @@ export class ObjectObservationSession {
       throw new TypeError('Selection requires a finite source point');
     }
     const candidate = this.getState().candidate;
-    const observationAge = candidate ? this.now() - (timeOrigin + candidate.capturedAt) : null;
     if (
       this.selected ||
       !candidate ||
       candidate.id !== candidateId ||
       candidate.status !== 'ready' ||
-      observationAge < 0 ||
-      observationAge > MAX_OBJECT_OBSERVATION_AGE_MS ||
-      capturedAt < candidate.capturedAt ||
-      capturedAt - candidate.capturedAt > MAX_OBJECT_OBSERVATION_AGE_MS
+      !isObjectObservationFresh(timeOrigin + candidate.capturedAt, this.now()) ||
+      !isObjectObservationFresh(candidate.capturedAt, capturedAt)
     ) {
       return { success: false, reason: 'Hold the object in view until its outline turns green' };
     }

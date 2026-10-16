@@ -1,7 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ANCHOR_TRACKING_INTERVAL_MS, shouldRunTimedStep } from './cvScheduling.js';
+import { ANCHOR_TRACKING_INTERVAL_MS, isObjectObservationFresh, shouldRunTimedStep } from './cvScheduling.js';
+
+test('object observations expire after 300 ms, never before their capture time', () => {
+  for (const [capturedAt, now, expected] of [
+    [0, 0, true],
+    [100, 100, true],
+    [100, 400, true],
+    [100, 401, false],
+    [100, 99, false],
+    [null, 100, false],
+    [undefined, 100, false],
+    [NaN, 100, false],
+    [Infinity, Infinity, false],
+  ]) {
+    assert.equal(isObjectObservationFresh(capturedAt, now), expected, `${capturedAt} at ${now}`);
+  }
+});
 
 test('timed CV scheduling runs immediately before first recorded execution', () => {
   assert.equal(
