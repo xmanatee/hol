@@ -20,6 +20,8 @@ Every request/response CV worker uses one bounded request registry. A missed dea
 
 A failed discovery dependency is a runtime error, not evidence that no object exists. It stops discovery until an explicit camera restart. Both selection and face visibility require an observation at most 300 ms old; the renderer schedules expiry even when the camera stops delivering frames. Selection names the displayed candidate and is checked again at worker commit, including queue delay; page and worker timestamps are translated using their `performance.timeOrigin`, never compared as unrelated relative clocks. Mask-only refreshes cannot renew tracking continuity, and a changed tracking mode requires fresh preparation evidence without changing the object's identity. Losing visibility hides the face without discarding its identity or remounting its renderer.
 
+The camera becomes active only with positive intrinsic video dimensions and no muted tracks, including after startup or autoplay resume. Unmute alone is not video readiness: a pending intrinsic resize can complete recovery on the same stream. An [intrinsic video resize](https://html.spec.whatwg.org/multipage/media.html#event-media-resize) resets vision coordinates and preparation; a CSS viewport resize changes presentation only. Presented frames synchronize dimensions before CV admission, so delayed resize events cannot send a new raster to an old worker. Browser coverage changes the actual captured raster in both directions, then rediscovers, selects, and verifies visible face pixels without replacing the camera stream.
+
 The frame path is deliberately classical and cheap:
 
 1. A user gesture starts the rear camera.

@@ -116,7 +116,6 @@ const CameraView = () => {
   const captureContextRef = useRef(null);
   const frameCountRef = useRef(0);
   const ctxRef = useRef(null);
-  const overlayContentRef = useRef(false);
   const autoVoiceRequestRef = useRef(0);
   const mapReadyAnchorRef = useRef(null);
   const lastAnchorUpdateAtRef = useRef(0);
@@ -450,16 +449,16 @@ const CameraView = () => {
 
   // Camera processing follows presented video frames instead of display refreshes.
   useVideoFrames(videoRef, cameraState === 'active', ({ now: videoFrameAt, captureFps }) => {
-    if (cameraState === 'active' && videoRef.current && canvasRef.current) {
+    if (services.camera.isActive() && videoRef.current && canvasRef.current) {
       const frameWorkStartedAt = performance.now();
       const video = videoRef.current;
       const canvas = canvasRef.current;
-      let resized = false;
       if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+        // A presented frame can expose new dimensions before the video's resize event.
+        if (!services.camera.synchronizeVideoDimensions()) return;
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         ctxRef.current = null;
-        resized = true;
       }
       if (!ctxRef.current) {
         ctxRef.current = canvas.getContext('2d');
@@ -467,11 +466,7 @@ const CameraView = () => {
       const ctx = ctxRef.current;
       const frameIndex = ++frameCountRef.current;
       const liveAnchorSystemState = getAnchorSystemState();
-      const hasOverlayContent = true;
-      if (resized || hasOverlayContent || overlayContentRef.current) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }
-      overlayContentRef.current = hasOverlayContent;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (liveAnchorSystemState.initialized) {
         const now = videoFrameAt;

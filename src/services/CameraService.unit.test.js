@@ -58,6 +58,13 @@ const createFakeVideo = () => {
 
 const createFakeTrack = (onStop = () => {}) => {
   const track = new EventTarget();
+  track.muted = false;
+  track.addEventListener('mute', () => {
+    track.muted = true;
+  });
+  track.addEventListener('unmute', () => {
+    track.muted = false;
+  });
   track.stopCalled = false;
   track.stop = () => {
     track.stopCalled = true;
@@ -280,7 +287,7 @@ test('camera stop cancels startup while video readiness is pending', async () =>
   }
 });
 
-test('camera publishes intrinsic video dimension changes while capture stays active', async () => {
+test('camera publishes intrinsic dimensions once when a video frame precedes resize', async () => {
   const track = createFakeTrack();
   const stream = { getTracks: () => [track] };
   const restoreWindow = installGlobal('window', {
@@ -310,7 +317,7 @@ test('camera publishes intrinsic video dimension changes while capture stays act
 
     video.videoWidth = 360;
     video.videoHeight = 640;
-    video.emit('resize');
+    assert.equal(service.synchronizeVideoDimensions(), true);
 
     assert.deepEqual(transitions.at(-1), {
       newState: 'active',
@@ -322,6 +329,9 @@ test('camera publishes intrinsic video dimension changes while capture stays act
       },
     });
     assert.deepEqual(service.getDimensions(), { width: 360, height: 640 });
+    const beforeResize = transitions.length;
+    video.emit('resize');
+    assert.equal(transitions.length, beforeResize);
   } finally {
     service.stop();
     restoreNavigator();
@@ -376,6 +386,137 @@ test('camera reports temporary track interruption and resumes on unmute', async 
     assert.equal(transitions.at(-1).data.reason, 'dimensions-changed');
   } finally {
     service.stop();
+    restoreNavigator();
+    restoreWindow();
+  }
+});
+
+test('camera waits for usable video dimensions after unmute and publishes one coherent resume', async () => {
+  const restoreWindow = installGlobal('window', {
+    location: { protocol: 'https:', hostname: 'example.com' },
+    isSecureContext: true,
+  });
+  let stream;
+  const restoreNavigator = installGlobal('navigator', {
+    mediaDevices: { getUserMedia: () => Promise.resolve(stream) },
+  });
+  try {
+    for (const [zeroWidth, zeroHeight] of [
+      [0, 0],
+      [0, 640],
+      [360, 0],
+    ]) {
+      for (const [width, height] of [
+        [640, 360],
+        [360, 640],
+      ]) {
+        const track = createFakeTrack();
+        stream = { getTracks: () => [track] };
+        const video = createFakeVideo();
+        const service = new CameraService();
+        const transitions = [];
+        service.addListener({
+          onStateChange: (newState, oldState, data) => transitions.push({ newState, oldState, data }),
+        });
+        try {
+          const start = service.start(video);
+          await waitForTask();
+          video.emit('canplay');
+          assert.equal(await start, true);
+          track.dispatchEvent(new Event('mute'));
+          video.videoWidth = width;
+          video.videoHeight = height;
+          video.emit('resize');
+          assert.equal(service.getState(), 'interrupted', 'resize must not resume a muted track');
+          video.videoWidth = zeroWidth;
+          video.videoHeight = zeroHeight;
+          track.dispatchEvent(new Event('unmute'));
+          assert.equal(service.getState(), 'interrupted', 'unmute does not prove usable video dimensions');
+          assert.equal(service.getDimensions(), null);
+          const beforeResume = transitions.length;
+          video.videoWidth = width;
+          video.videoHeight = height;
+          video.emit('resize');
+          assert.deepEqual(transitions.at(-1), {
+            newState: 'active',
+            oldState: 'interrupted',
+            data: {
+              width,
+              height,
+              reason: width === 640 ? 'track-unmuted' : 'dimensions-changed',
+            },
+          });
+          video.emit('resize');
+          track.dispatchEvent(new Event('unmute'));
+          assert.equal(transitions.length, beforeResume + 1);
+          assert.equal(video.srcObject, stream);
+          assert.equal(track.stopCalled, false);
+        } finally {
+          service.stop();
+        }
+      }
+    }
+  } finally {
+    restoreNavigator();
+    restoreWindow();
+  }
+});
+
+test('camera startup and playback resume recheck media readiness before reporting success', async () => {
+  const restoreWindow = installGlobal('window', {
+    location: { protocol: 'https:', hostname: 'example.com' },
+    isSecureContext: true,
+  });
+  let stream;
+  const restoreNavigator = installGlobal('navigator', {
+    mediaDevices: { getUserMedia: () => Promise.resolve(stream) },
+  });
+  try {
+    for (const blocked of [false, true]) {
+      for (const interruption of ['width', 'height', 'mute']) {
+        const track = createFakeTrack();
+        stream = { getTracks: () => [track] };
+        const video = createFakeVideo();
+        video.readyState = 2;
+        const playback = createDeferred();
+        let playCalls = 0;
+        video.play = () => {
+          if (blocked && playCalls++ === 0) return Promise.reject(new Error('User gesture required'));
+          return playback.promise;
+        };
+        const service = new CameraService();
+        try {
+          let pending = service.start(video);
+          await waitForTask();
+          if (blocked) {
+            assert.equal(await pending, false);
+            assert.equal(service.getState(), 'blocked');
+            pending = service.resume();
+          }
+          if (interruption === 'width') video.videoWidth = 0;
+          if (interruption === 'height') video.videoHeight = 0;
+          if (interruption === 'mute') track.dispatchEvent(new Event('mute'));
+          playback.resolve();
+          assert.equal(await pending, false);
+          assert.equal(service.getState(), 'interrupted');
+          assert.equal(service.getDimensions(), null);
+          video.videoWidth = 640;
+          video.videoHeight = 360;
+          video.emit('resize');
+          if (interruption === 'mute') {
+            assert.equal(service.getState(), 'interrupted');
+            track.dispatchEvent(new Event('unmute'));
+          }
+          assert.equal(service.getState(), 'active');
+          assert.deepEqual(service.getDimensions(), { width: 640, height: 360 });
+          assert.equal(track.stopCalled, false);
+          assert.equal(video.srcObject, stream);
+        } finally {
+          service.stop();
+        }
+      }
+    }
+  } finally {
     restoreNavigator();
     restoreWindow();
   }

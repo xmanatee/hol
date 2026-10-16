@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 
-for (const [failure, failedUrl, title] of [
+for (const [scenario, failedUrl, title] of [
   [null, null, 'rendered object video reaches green readiness before tap and mounts a surface-attached face'],
+  ['resize', null, 'intrinsic camera resize rebuilds object coordinates without replacing the video stream'],
   [
     'depth',
     '**/anchor.depthFusion-*.js',
@@ -45,6 +46,8 @@ for (const [failure, failedUrl, title] of [
       window.__holSelectionCommands = [];
       window.__holCameraReadbacks = 0;
       window.__holAnchorFrameCommands = 0;
+      window.__holInitializations = [];
+      window.__holWrongRasterFrames = 0;
       const getImageData = CanvasRenderingContext2D.prototype.getImageData;
       CanvasRenderingContext2D.prototype.getImageData = function (...args) {
         window.__holCameraReadbacks++;
@@ -54,9 +57,25 @@ for (const [failure, failedUrl, title] of [
         construct(target, args) {
           const worker = Reflect.construct(target, args);
           if (/\/anchor\.worker-[\w-]+\.js$/.test(String(args[0]))) {
+            let raster;
             const postMessage = worker.postMessage.bind(worker);
             worker.postMessage = (message, transfers) => {
-              if (message.command === 'processFrame') window.__holAnchorFrameCommands++;
+              if (message.command === 'initialize') {
+                raster = {
+                  width: message.payload.viewportWidth,
+                  height: message.payload.viewportHeight,
+                };
+                window.__holInitializations.push(raster);
+              }
+              if (message.command === 'processFrame') {
+                window.__holAnchorFrameCommands++;
+                if (
+                  message.payload.imageData.width !== raster.width ||
+                  message.payload.imageData.height !== raster.height
+                ) {
+                  window.__holWrongRasterFrames++;
+                }
+              }
               if (message.command === 'selectCandidate') {
                 window.__holSelectionCommands.push({
                   selection: message.payload,
@@ -97,10 +116,27 @@ for (const [failure, failedUrl, title] of [
         return clear.apply(this, args);
       };
       const drawElements = WebGL2RenderingContext.prototype.drawElements;
+      const facePixels = new Uint8Array(16 * 16 * 4);
       WebGL2RenderingContext.prototype.drawElements = function (...args) {
         window.__holFirstDrawAt ??= performance.now();
         window.__holLastDrawAt = performance.now();
-        return drawElements.apply(this, args);
+        const result = drawElements.apply(this, args);
+        if (window.__holObserveFaceVisibility && this.canvas.closest('.overlay-scene')) {
+          this.readPixels(
+            Math.floor(this.drawingBufferWidth / 2) - 8,
+            Math.floor(this.drawingBufferHeight / 2) - 8,
+            16,
+            16,
+            this.RGBA,
+            this.UNSIGNED_BYTE,
+            facePixels,
+          );
+          if (facePixels.some((value, index) => index % 4 === 3 && value > 0)) {
+            window.__holFirstVisibleFaceAt ??= performance.now();
+            window.__holLastVisibleFaceAt = performance.now();
+          }
+        }
+        return result;
       };
       const uniformNames = new WeakMap();
       window.__holMicrophoneAnalysisReads = 0;
@@ -157,20 +193,29 @@ for (const [failure, failedUrl, title] of [
         canvas.width = 320;
         canvas.height = 240;
         const ctx = canvas.getContext('2d');
-        const frame = ctx.createImageData(320, 240);
+        let frame = ctx.createImageData(canvas.width, canvas.height);
+        window.__holResizeObjectVideo = ({ width, height }) => {
+          canvas.width = width;
+          canvas.height = height;
+          frame = ctx.createImageData(width, height);
+        };
         const render = () => {
           if (window.__holFreezeObjectVideo) return;
           const shift = window.__holObjectShift || 0;
-          for (let y = 0; y < 240; y++) {
-            for (let x = 0; x < 320; x++) {
-              const localX = x - shift;
-              const inside = ((localX - 160) / 96) ** 2 + ((y - 120) / 72) ** 2 <= 1;
-              let noise = Math.imul(localX, 374761393) ^ Math.imul(y, 668265263);
+          for (let y = 0; y < canvas.height; y++) {
+            for (let x = 0; x < canvas.width; x++) {
+              const sourceX = Math.floor((x * 320) / canvas.width);
+              const localX = sourceX - shift;
+              const localY = Math.floor((y * 240) / canvas.height);
+              const inside = ((localX - 160) / 96) ** 2 + ((localY - 120) / 72) ** 2 <= 1;
+              let noise = Math.imul(localX, 374761393) ^ Math.imul(localY, 668265263);
               noise = (noise ^ (noise >>> 13)) & 127;
-              const offset = (y * 320 + x) * 4;
-              frame.data[offset] = inside ? 128 + noise : 30 + Math.round(x * 0.28);
-              frame.data[offset + 1] = inside ? 20 + (noise >> 2) : 70 + Math.round(y * 0.35);
-              frame.data[offset + 2] = inside ? 15 + (noise >> 3) : 108 + (((x >> 3) ^ (y >> 3)) & 1) * 14;
+              const offset = (y * canvas.width + x) * 4;
+              frame.data[offset] = inside ? 128 + noise : 30 + Math.round(sourceX * 0.28);
+              frame.data[offset + 1] = inside ? 20 + (noise >> 2) : 70 + Math.round(localY * 0.35);
+              frame.data[offset + 2] = inside
+                ? 15 + (noise >> 3)
+                : 108 + (((sourceX >> 3) ^ (localY >> 3)) & 1) * 14;
               frame.data[offset + 3] = 255;
             }
           }
@@ -198,7 +243,7 @@ for (const [failure, failedUrl, title] of [
     const selectionCanvas = page.getByRole('button', { name: 'Select the object at the camera center' });
     await selectionCanvas.click();
     await expect(discovery).toHaveCount(0);
-    if (failure === 'overlay' || failure === 'head') {
+    if (scenario === 'overlay' || scenario === 'head') {
       await expect(page.getByRole('alert')).toContainText('3D overlay unavailable');
       await page.screenshot({ path: testInfo.outputPath('overlay-error.png') });
       await expect(page.getByRole('button', { name: 'Clear anchor', exact: true })).toBeVisible();
@@ -219,7 +264,7 @@ for (const [failure, failedUrl, title] of [
       await expect(page.locator('.overlay-scene canvas')).toBeVisible();
       // R3F deliberately reports caught scene errors through the native reportError API.
       expect(errors).toEqual(
-        failure === 'head'
+        scenario === 'head'
           ? [
               expect.stringMatching(
                 /^Could not load https?:\/\/[^/]+\/assets\/head-[\w-]+\.glb: Failed to fetch$/,
@@ -242,6 +287,48 @@ for (const [failure, failedUrl, title] of [
       .poll(() => page.evaluate(() => window.__holLastDrawAt - window.__holFirstDrawAt))
       .toBeGreaterThan(500);
     await page.screenshot({ path: testInfo.outputPath('ready.png') });
+    if (scenario === 'resize') {
+      let initializations = await page.evaluate(() => window.__holInitializations.length);
+      for (const dimensions of [
+        { width: 240, height: 320 },
+        { width: 320, height: 240 },
+      ]) {
+        await page.evaluate((size) => window.__holResizeObjectVideo(size), dimensions);
+        await expect
+          .poll(() =>
+            page.locator('video').evaluate((video) => ({
+              width: video.videoWidth,
+              height: video.videoHeight,
+            })),
+          )
+          .toEqual(dimensions);
+        await expect(page.locator('.overlay-scene')).toHaveCount(0);
+        await page.evaluate(() => {
+          window.__holObserveFaceVisibility = true;
+          window.__holFirstVisibleFaceAt = null;
+          window.__holLastVisibleFaceAt = null;
+        });
+        await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
+        await selectionCanvas.click();
+        await expect(page.locator('.overlay-scene canvas')).toBeVisible();
+        await expect
+          .poll(() => page.evaluate(() => window.__holLastVisibleFaceAt - window.__holFirstVisibleFaceAt))
+          .toBeGreaterThan(500);
+        expect(await page.evaluate(() => window.__holInitializations)).toHaveLength(++initializations);
+        expect(await page.evaluate(() => window.__holInitializations.at(-1))).toEqual(dimensions);
+        expect(
+          await page.evaluate(() => {
+            const stream = document.querySelector('video').srcObject;
+            return stream === window.__holOriginalStream && stream.getVideoTracks()[0].readyState === 'live';
+          }),
+        ).toBe(true);
+        await page.screenshot({ path: testInfo.outputPath(`resized-${dimensions.width}.png`) });
+      }
+      expect(await page.evaluate(() => window.__holWrongRasterFrames)).toBe(0);
+      expect(navigations).toBe(1);
+      expect(errors).toEqual([]);
+      return;
+    }
     await page.evaluate(() => {
       window.__holObjectShift = 12;
     });
@@ -293,7 +380,7 @@ for (const [failure, failedUrl, title] of [
         .evaluate((canvas, original) => canvas === original, overlayCanvas),
     ).toBe(true);
     await page.getByRole('button', { name: 'Debug drawer' }).click();
-    if (failure === null) {
+    if (scenario === null) {
       await page.getByRole('tab', { name: 'voice', exact: true }).click();
       await expect(page.getByText('AI personality is not configured.', { exact: false })).toBeVisible();
       await expect(page.getByText('Microphone mode animates the face', { exact: false })).toBeVisible();
@@ -331,7 +418,7 @@ for (const [failure, failedUrl, title] of [
     }
     await page.getByRole('tab', { name: 'model', exact: true }).click();
     await page.getByRole('button', { name: 'Depth Fusion', exact: true }).click();
-    if (failure === 'depth') {
+    if (scenario === 'depth') {
       await expect(discovery).toHaveAttribute('data-stage', 'error');
       await expect(discovery).toHaveText(
         'Object discovery is unavailable. Stop and restart the camera to retry.',

@@ -119,8 +119,7 @@ export class CameraService {
         this._notifyStateChange('blocked', { error: playbackResult.error });
         return false;
       }
-      this._publishActiveDimensions();
-      return true;
+      return this.synchronizeVideoDimensions();
     } catch (err) {
       if (startController.signal.aborted) {
         return false;
@@ -315,10 +314,7 @@ export class CameraService {
       };
       const handleUnmute = () => {
         if (this.stream === stream && this.state === 'interrupted') {
-          const dimensionsChanged =
-            this.videoElement.videoWidth !== this.lastDimensions?.width ||
-            this.videoElement.videoHeight !== this.lastDimensions?.height;
-          this._publishActiveDimensions(dimensionsChanged ? 'dimensions-changed' : 'track-unmuted');
+          this.synchronizeVideoDimensions();
         }
       };
       track.addEventListener('ended', handleEnded);
@@ -341,21 +337,10 @@ export class CameraService {
 
   _observeVideoDimensions(videoElement) {
     const handleResize = () => {
-      if (this.videoElement !== videoElement || this.state !== 'active') {
+      if (this.videoElement !== videoElement || (this.state !== 'active' && this.state !== 'interrupted')) {
         return;
       }
-      const dimensions = {
-        width: videoElement.videoWidth,
-        height: videoElement.videoHeight,
-      };
-      if (
-        dimensions.width <= 0 ||
-        dimensions.height <= 0 ||
-        (dimensions.width === this.lastDimensions?.width && dimensions.height === this.lastDimensions?.height)
-      ) {
-        return;
-      }
-      this._publishActiveDimensions('dimensions-changed');
+      this.synchronizeVideoDimensions();
     };
 
     videoElement.addEventListener('resize', handleResize);
@@ -365,16 +350,34 @@ export class CameraService {
     };
   }
 
-  _publishActiveDimensions(reason = null) {
+  synchronizeVideoDimensions() {
     const dimensions = {
       width: this.videoElement.videoWidth,
       height: this.videoElement.videoHeight,
     };
+    if (
+      dimensions.width <= 0 ||
+      dimensions.height <= 0 ||
+      this.stream.getTracks().some((track) => track.muted)
+    ) {
+      if (this.state !== 'interrupted') {
+        this._notifyStateChange('interrupted', {
+          error: 'Waiting for camera video frames.',
+          reason: 'video-unavailable',
+        });
+      }
+      return false;
+    }
+    const dimensionsChanged =
+      dimensions.width !== this.lastDimensions?.width || dimensions.height !== this.lastDimensions?.height;
+    if (this.state === 'active' && !dimensionsChanged) return true;
+    const reason = this.lastDimensions ? (dimensionsChanged ? 'dimensions-changed' : 'track-unmuted') : null;
     this.lastDimensions = dimensions;
     this._notifyStateChange('active', {
       ...dimensions,
       ...(reason ? { reason } : {}),
     });
+    return true;
   }
 
   resume() {
@@ -394,8 +397,7 @@ export class CameraService {
             if (!this._ownsResumeRequest(resumeRequest)) {
               return false;
             }
-            this._publishActiveDimensions();
-            return true;
+            return this.synchronizeVideoDimensions();
           },
           (playError) => {
             if (!this._ownsResumeRequest(resumeRequest)) {
