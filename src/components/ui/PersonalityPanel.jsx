@@ -40,7 +40,7 @@ export const PersonalityPanel = ({
 
         {isConfigError && (
           <div className="text-xs text-gray-400 bg-gray-800 p-2 rounded">
-            Configure the local AI endpoint and model in your .env file to enable personality generation.
+            Configure the local AI endpoint and model in .env.local to enable personality generation.
           </div>
         )}
 

@@ -1,4 +1,4 @@
-@import 'tailwindcss';
+@import 'tailwindcss' source(none);
 /* These paths are relative to this file (src/index.css) */
 @source "../index.html";
 @source "./**/*.{js,jsx}";

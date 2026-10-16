@@ -161,7 +161,6 @@ const CameraView = () => {
     speakGreeting,
     setAnchorTrackingMode,
   } = useCameraSystem();
-  const cameraViewportStyle = useMemo(() => ({}), []);
   const anchorStatus = useMemo(
     () => describeAnchorStatus({ cameraState, anchorSystemState }),
     [cameraState, anchorSystemState],
@@ -596,7 +595,6 @@ const CameraView = () => {
         onSelect={handleCanvasSelect}
         onCanvasReady={handleCanvasReady}
         mirrored={CAMERA_PRESENTATION_MIRRORED}
-        style={cameraViewportStyle}
       />
       <AnchorFeedback feedback={anchorFeedback} />
       {cameraState === 'active' && anchorSystemState.mode === 'selection' && (
@@ -642,7 +640,6 @@ const CameraView = () => {
               ttsService={services.tts}
               facialExpression={personalityData.currentPersona?.facialExpression || 'neutral'}
               animationIntensity={personalityData.currentPersona?.animationIntensity ?? 0.65}
-              style={cameraViewportStyle}
               anchorSystemState={anchorSystemState}
               subscribeAnchorSystemState={subscribeAnchorSystemState}
               mirrored={CAMERA_PRESENTATION_MIRRORED}
