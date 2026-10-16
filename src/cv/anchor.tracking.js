@@ -5,6 +5,7 @@
 
 import { logger } from '../utils/logger.js';
 import { ObjectPoseEstimator } from './anchor.objectPose.js';
+import { SURFACE_MODEL_PLANE, SURFACE_MODEL_BOX } from './anchor.parametricGeometry.js';
 import {
   isConfirmedObjectOwnedLandmark,
   LANDMARK_OWNERSHIP_CONFIRMATION_FRAMES,
@@ -71,6 +72,8 @@ export class KeypointTracker {
     this.refreshPlanFrames = new WeakMap();
     this.consumedRefreshPlans = new WeakSet();
     this.objectPoseEstimator = new ObjectPoseEstimator();
+    this.previousObjectNormal = null;
+    this.objectNormalHasTilted = false;
 
     // Adaptive tracking parameters
     this.trackingAttempts = 0;
@@ -128,6 +131,7 @@ export class KeypointTracker {
       throw new Error('KeypointTracker not initialized');
     }
     this.referenceGeneration++;
+    this.breakObjectPoseContinuity();
 
     // Select strongest keypoints for tracking (limit to 80 for quality)
     const sortedKeypoints = [...keypoints].sort((a, b) => b.response - a.response).slice(0, 80);
@@ -202,7 +206,9 @@ export class KeypointTracker {
    * @returns {Object} - Tracking result
    */
   trackFrame(cv, currentGray) {
-    return this._track(cv, currentGray, POSE_TRACKING_MIN_POINTS);
+    const result = this._track(cv, currentGray, POSE_TRACKING_MIN_POINTS);
+    if (!result.success) this.breakObjectPoseContinuity();
+    return result;
   }
 
   /** Track a provisional selection without admitting it as pose geometry. */
@@ -1418,6 +1424,7 @@ export class KeypointTracker {
   }
 
   restoreFromRelocalizationMatches(currentGray, inlierMatches, relocalization = {}) {
+    this.breakObjectPoseContinuity();
     const matchesById = new Map(inlierMatches.map((match) => [match.id, match]));
     let restored = 0;
 
@@ -1952,11 +1959,31 @@ export class KeypointTracker {
       maxCount,
     });
 
-    return this.objectPoseEstimator.estimate({
+    const pose = this.objectPoseEstimator.estimate({
       correspondences,
       anchorReference,
-      previousPose: options.previousPose ?? null,
+      previousNormal: this.previousObjectNormal,
+      // A local plane is an initial shape prior only for planar/faceted surfaces.
+      // On curved/unknown shapes it can only re-seed an observed face-on return.
+      normalHint:
+        this.objectNormalHasTilted ||
+        options.surfaceModel === SURFACE_MODEL_PLANE ||
+        options.surfaceModel === SURFACE_MODEL_BOX
+          ? (options.normalHint ?? null)
+          : null,
     });
+    if (!pose.success) this.breakObjectPoseContinuity();
+    return pose;
+  }
+
+  commitObjectPoseNormal(normal) {
+    this.previousObjectNormal = normal;
+    this.objectNormalHasTilted ||= Math.hypot(normal.x, normal.y) > 0;
+  }
+
+  breakObjectPoseContinuity() {
+    this.previousObjectNormal = null;
+    this.objectNormalHasTilted = false;
   }
 
   planKeypointRefresh(cv, { recoveryReferenceTransform = null, attachmentEvidence = null } = {}) {
@@ -2216,6 +2243,7 @@ export class KeypointTracker {
     this.previousGray = null;
     this.grayFrameGeneration = 0;
     this.trackedPoints = [];
+    this.breakObjectPoseContinuity();
     this.keypointCentroid = null;
     this.tapOffset = null;
     this.nextPointId = 0;

@@ -55,6 +55,45 @@ test('a glossy classless cylinder hides its face when tracking loses the object'
   assert.ok(lost.every((frame) => frame.predicted.visible === false));
 });
 
+test('a classless cylinder can turn through face-on without displaying the mirrored affine branch', async (t) => {
+  const cv = await loadOpenCvForNode();
+  for (const { updateIntervalMs, minVisibleFrames } of [
+    { updateIntervalMs: ANCHOR_TRACKING_INTERVAL_MS, minVisibleFrames: 23 },
+    { updateIntervalMs: 1000 / 30, minVisibleFrames: 22 },
+  ]) {
+    await t.test(`${Math.round(1000 / updateIntervalMs)} Hz CV`, async () => {
+      const sequence = createCylindricalCanSequence({ occlusionFrames: [] });
+      const replay = await replayImageAnchorSequence({
+        cv,
+        sequence,
+        trackingMode: OBJECT_POSE_MODEL,
+        targetClassOverride: 'unknown',
+        useObjectSupportMask: true,
+        refreshObjectSupportMask: true,
+        updateIntervalMs,
+      });
+      const summary = summarizeReplay(replay);
+      const head = scoreHeadPoseReplay({ replay, sequence });
+      assert.equal(summary.failedFrames, 0);
+      assert.ok(summary.meanAnchorError <= 4, `Mean anchor error: ${summary.meanAnchorError}px`);
+      assert.ok(summary.maxAnchorError <= 10, `Maximum anchor error: ${summary.maxAnchorError}px`);
+      const visible = head.frames.filter((frame) => frame.predicted.visible);
+      assert.ok(visible.length >= minVisibleFrames, `Visible face frames: ${visible.length}/29`);
+      assert.ok(
+        Math.max(...replay.frames.map((frame) => frame.normalError)) <= (30 * Math.PI) / 180,
+        'Surface normal must remain within 30 degrees on every source frame',
+      );
+      assert.ok(
+        head.summary.maxRotationError <= (35 * Math.PI) / 180,
+        `Displayed head rotation error: ${(head.summary.maxRotationError * 180) / Math.PI} degrees`,
+      );
+      if (updateIntervalMs === ANCHOR_TRACKING_INTERVAL_MS) {
+        assert.equal(head.frames.at(-1).predicted.visible, true);
+      }
+    });
+  }
+});
+
 test('production-cadence replay scores every source frame while holding poses between admitted updates', async () => {
   const cv = await loadOpenCvForNode();
   const sequence = createPlanarBookSequence({ frameCount: 31 });

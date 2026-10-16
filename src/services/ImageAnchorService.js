@@ -1684,9 +1684,6 @@ export class ImageAnchorService {
     this.metrics.planarPnpBranchSelection = null;
     this.metrics.poseModel = isReconstructionMode(this.trackingMode) ? this.trackingMode : OBJECT_POSE_MODEL;
     const poseEstimationStart = this._startUpdateTiming(updateTimings);
-    stageStart = this._startUpdateTiming(updateTimings);
-    const objectPose = this._estimateObjectPoseFromTracker();
-    this._recordUpdateTiming(updateTimings, 'objectPoseMs', stageStart);
     const reconstructionPose = this._updateReconstructionPoseFromTracker(
       timestamp,
       grayImage,
@@ -1712,6 +1709,22 @@ export class ImageAnchorService {
       this._updatePlanarDominance(planarPose, correspondences);
     }
     this._recordUpdateTiming(updateTimings, 'planarPoseMs', stageStart);
+    stageStart = this._startUpdateTiming(updateTimings);
+    const objectPose = this.keypointTracker.getObjectPose({
+      surfaceModel: this.objectSurfaceModel.getState().surfacePrior,
+      normalHint:
+        poseResult?.method === 'homography' &&
+        this._normalCandidateRejectionReason({
+          role: 'local',
+          pose: poseResult,
+          reconstructionPose,
+          planarPose,
+          correspondences,
+        }) === null
+          ? poseResult.normal
+          : null,
+    });
+    this._recordUpdateTiming(updateTimings, 'objectPoseMs', stageStart);
     this._recordUpdateTiming(updateTimings, 'poseEstimationMs', poseEstimationStart);
     this.metrics.poseKeypointCount = correspondences.length;
     this.metrics.posePatchRadius = poseCorrespondenceOptions.maxReferenceDistance;
@@ -1758,6 +1771,9 @@ export class ImageAnchorService {
       reconstructionConsistentWithTracker,
       correspondences,
     });
+    if (poseArbitration.byRole.object?.normalAllowed === true) {
+      this.keypointTracker.commitObjectPoseNormal(objectPose.normal);
+    }
     if (
       this._hasRigidPlanarTargetClass() &&
       poseResult?.success &&
@@ -4078,12 +4094,6 @@ export class ImageAnchorService {
 
     return this.affinePoseEstimator.estimatePose(correspondences, {
       previousNormal: this.currentNormal,
-    });
-  }
-
-  _estimateObjectPoseFromTracker() {
-    return this.keypointTracker.getObjectPose({
-      previousPose: this.currentNormal ? { normal: this.currentNormal } : null,
     });
   }
 

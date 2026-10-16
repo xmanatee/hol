@@ -39,6 +39,77 @@ const createTrackedPoint = (id, original, transform) => ({
   isStable: false,
 });
 
+test('object orientation continuity ends at failed geometry, a new selection, or descriptor recovery', async () => {
+  const cv = await loadOpenCvForNode();
+  const tracker = new KeypointTracker();
+  tracker.initialize(cv);
+  const gray = tracker.acquireGrayFrame(cv);
+  gray.create(240, 320, cv.CV_8UC1);
+  const keypoints = Array.from({ length: 30 }, (_, index) => ({
+    pt: { x: 72 + (index % 6) * 28, y: 64 + Math.floor(index / 6) * 24 },
+    response: 1,
+  }));
+  const select = () => {
+    tracker.initializeTracking(cv, keypoints, gray, { tapPosition: { x: 140, y: 112 } });
+    for (const point of tracker.trackedPoints) {
+      point.current = { x: point.original.x * 0.6 + 24, y: point.original.y + 7 };
+    }
+  };
+  const pose = (direction) => {
+    const result = tracker.getObjectPose({ normalHint: { x: direction * 0.8, y: 0, z: 0.6 } });
+    if (result.success) tracker.commitObjectPoseNormal(result.normal);
+    return result;
+  };
+
+  try {
+    select();
+    assert.ok(pose(-1).normal.x > 0.75, 'An ambiguous initial planar hint cannot seed the branch');
+    assert.ok(pose(-1).normal.x > 0.75, 'An uninterrupted turn retains its geometric branch');
+    for (const point of tracker.trackedPoints) point.current = { ...point.original };
+    assert.equal(tracker.getObjectPose().normal.z, 1);
+    for (const point of tracker.trackedPoints) {
+      point.current = { x: point.original.x * 0.6 + 24, y: point.original.y + 7 };
+    }
+    assert.ok(pose(-1).normal.x > 0.75, 'An unaccepted candidate cannot change geometric continuity');
+    for (const point of tracker.trackedPoints) point.current = { ...point.original };
+    assert.equal(pose(-1).normal.z, 1);
+    for (const point of tracker.trackedPoints) {
+      point.current = { x: point.original.x * 0.6 + 24, y: point.original.y + 7 };
+    }
+    assert.ok(pose(-1).normal.x < -0.75, 'A measured face-on return allows either outgoing branch');
+    for (const point of tracker.trackedPoints) point.status = 'lost';
+    assert.equal(pose(1).success, false);
+    for (const point of tracker.trackedPoints) point.status = 'active';
+    assert.ok(pose(1).normal.x > 0.75, 'Failed geometry does not seed the recovered branch');
+
+    select();
+    assert.ok(pose(-1).normal.x > 0.75, 'A new selection starts without a resolved planar branch');
+    for (const point of tracker.trackedPoints) point.current = { ...point.original };
+    pose(-1);
+    for (const point of tracker.trackedPoints) {
+      point.current = { x: point.original.x * 0.6 + 24, y: point.original.y + 7 };
+    }
+    assert.ok(pose(-1).normal.x < -0.75);
+    tracker.restoreFromRelocalizationMatches(
+      gray,
+      tracker.trackedPoints.map((point) => ({
+        id: point.id,
+        reference: point.original,
+        point: point.current,
+      })),
+      { anchorPoint: { x: 108, y: 119 }, confidence: 0.95, averageResidual: 0 },
+    );
+    assert.ok(pose(1).normal.x > 0.75, 'Descriptor recovery re-establishes the branch from evidence');
+    for (const surfaceModel of ['plane', 'box']) {
+      select();
+      const result = tracker.getObjectPose({ surfaceModel, normalHint: { x: -0.8, y: 0, z: 0.6 } });
+      assert.ok(result.normal.x < -0.75, `${surfaceModel} can use a local plane as its initial prior`);
+    }
+  } finally {
+    tracker.dispose();
+  }
+});
+
 const createSyntheticLucasKanadeCv = (flowForIndex) => {
   let opticalFlowCallCount = 0;
 

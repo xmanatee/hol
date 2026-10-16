@@ -8000,7 +8000,7 @@ test('arbiter-selected planar pose owns position when reference similarity is we
     service.metrics.contourFitResidual = 0;
     service.metrics.silhouetteCoverage = 1;
   };
-  service._estimateObjectPoseFromTracker = () => ({
+  service.keypointTracker.getObjectPose = () => ({
     success: false,
     method: 'object-pose-affine',
     reason: 'unit object pose unavailable',

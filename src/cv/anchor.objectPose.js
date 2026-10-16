@@ -27,9 +27,10 @@ export class ObjectPoseEstimator {
     this.minInlierRatio = config.minInlierRatio ?? 0.5;
   }
 
-  estimate({ correspondences, anchorReference, previousPose = null }) {
+  estimate({ correspondences, anchorReference, previousNormal = null, normalHint = null }) {
     const affinePose = this.affinePoseEstimator.estimatePose(correspondences, {
-      previousNormal: previousPose?.normal,
+      previousNormal,
+      normalHint,
       maxResidual: this.maxResidual,
       minInlierRatio: this.minInlierRatio,
     });

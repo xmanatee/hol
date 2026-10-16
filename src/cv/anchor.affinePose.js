@@ -3,6 +3,8 @@ const DEFAULT_MIN_INLIER_RATIO = 0.7;
 const DEFAULT_MAX_RESIDUAL = 5;
 const DEFAULT_MIN_SPREAD = 18;
 const DEFAULT_MAX_HYPOTHESES = 96;
+const FACE_ON_FORESHORTENING = 0.965;
+const MIN_NORMAL_HINT_AXIS_ALIGNMENT = Math.cos(Math.PI / 6);
 const EPSILON = 1e-9;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -178,32 +180,38 @@ const smallestOutputAxis = (affine) => {
   return m00 <= m11 ? { x: 1, y: 0 } : { x: 0, y: 1 };
 };
 
-const chooseNormalSign = (axis, xyMagnitude, z, previousNormal) => {
-  const positive = normalize3({ x: axis.x * xyMagnitude, y: axis.y * xyMagnitude, z });
-  const negative = normalize3({ x: -axis.x * xyMagnitude, y: -axis.y * xyMagnitude, z });
-
-  if (previousNormal && Math.hypot(previousNormal.x, previousNormal.y) > 0.05) {
-    const positiveDot =
-      positive.x * previousNormal.x + positive.y * previousNormal.y + positive.z * previousNormal.z;
-    const negativeDot =
-      negative.x * previousNormal.x + negative.y * previousNormal.y + negative.z * previousNormal.z;
-    return positiveDot >= negativeDot ? positive : negative;
+const chooseNormalSign = (axis, previousNormal, normalHint) => {
+  // Affine foreshortening cannot distinguish the two tilt directions. Perspective evidence
+  // can seed a branch at face-on; an established geometric branch owns continuity afterwards.
+  // A different tilt axis is not evidence for either branch of this affine surface.
+  const hintTilt = normalHint ? Math.hypot(normalHint.x, normalHint.y) : 0;
+  const hintAlignment = normalHint ? axis.x * normalHint.x + axis.y * normalHint.y : 0;
+  const compatibleHint =
+    hintTilt > 0.05 && Math.abs(hintAlignment) / hintTilt >= MIN_NORMAL_HINT_AXIS_ALIGNMENT
+      ? normalHint
+      : null;
+  const signReference =
+    previousNormal && previousNormal.z < FACE_ON_FORESHORTENING
+      ? previousNormal
+      : compatibleHint || previousNormal;
+  if (signReference && Math.hypot(signReference.x, signReference.y) > 0.05) {
+    return axis.x * signReference.x + axis.y * signReference.y >= 0 ? 1 : -1;
   }
 
-  if (Math.abs(axis.x) >= Math.abs(axis.y)) {
-    return axis.x >= 0 ? positive : negative;
-  }
-
-  return axis.y >= 0 ? positive : negative;
+  const dominantAxis = Math.abs(axis.x) >= Math.abs(axis.y) ? axis.x : axis.y;
+  return dominantAxis >= 0 ? 1 : -1;
 };
 
-const decomposeAffinePose = (affine, previousNormal) => {
+const decomposeAffinePose = (affine, previousNormal, normalHint) => {
   const { large, small } = estimateSingularValues(affine);
   const ratio = clamp(small / large, 0.12, 1);
-  const xyMagnitude = ratio > 0.965 ? 0 : Math.sqrt(Math.max(0, 1 - ratio * ratio));
+  const xyMagnitude = ratio > FACE_ON_FORESHORTENING ? 0 : Math.sqrt(Math.max(0, 1 - ratio * ratio));
   const axis = smallestOutputAxis(affine);
+  const sign = xyMagnitude === 0 ? 1 : chooseNormalSign(axis, previousNormal, normalHint);
   const normal =
-    xyMagnitude === 0 ? { x: 0, y: 0, z: 1 } : chooseNormalSign(axis, xyMagnitude, ratio, previousNormal);
+    xyMagnitude === 0
+      ? { x: 0, y: 0, z: 1 }
+      : normalize3({ x: axis.x * xyMagnitude * sign, y: axis.y * xyMagnitude * sign, z: ratio });
   const determinant = affine.a * affine.d - affine.b * affine.c;
 
   return {
@@ -255,7 +263,7 @@ export class AffineParallaxPoseEstimator {
 
     const refined = collectInliers(correspondences, affine, maxResidual);
     const averageResidual = refined.averageResidual;
-    const pose = decomposeAffinePose(affine, options.previousNormal);
+    const pose = decomposeAffinePose(affine, options.previousNormal, options.normalHint);
     const residualScore = clamp(1 - averageResidual / (maxResidual * 1.5), 0, 1);
     const spreadScore = clamp(spread.minAxis / 48, 0, 1);
     const confidence = clamp(inlierRatio * 0.45 + residualScore * 0.35 + spreadScore * 0.2, 0, 1);
