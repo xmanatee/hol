@@ -8,7 +8,7 @@ import { useTransientFeedback } from '../hooks/useTransientFeedback.js';
 
 import CameraVideo from '../components/CameraVideo.jsx';
 import CameraCanvas from '../components/CameraCanvas.jsx';
-import OverlaySceneBoundary from '../components/OverlaySceneBoundary.jsx';
+import FeatureBoundary, { FeatureError } from '../components/FeatureBoundary.jsx';
 import FieldControls from '../components/ui/FieldControls.jsx';
 import {
   renderAnchorOverlay,
@@ -379,7 +379,7 @@ const CameraView = () => {
               method: result.method,
               position: result.position,
             });
-            showAnchorFeedback('Object selected. Face attached.', 'good');
+            showAnchorFeedback('Object selected.', 'good');
             if (
               shouldAutoStartObjectVoice({
                 trackingMode: result.trackingMode,
@@ -621,7 +621,14 @@ const CameraView = () => {
 
       {/* WebGL Overlay Scene */}
       {overlaySceneEnabled && (
-        <OverlaySceneBoundary>
+        <FeatureBoundary
+          name="OverlayScene"
+          renderError={(error) => (
+            <div className="fixed left-1/2 top-4 z-40 max-h-[70dvh] w-[min(90vw,26rem)] -translate-x-1/2 overflow-y-auto rounded border border-red-700 bg-red-950 p-3">
+              <FeatureError name="3D overlay" error={error} />
+            </div>
+          )}
+        >
           <Suspense fallback={null}>
             <OverlayScene
               width={videoDimensions?.width || 1280}
@@ -643,7 +650,7 @@ const CameraView = () => {
               mirrored={CAMERA_PRESENTATION_MIRRORED}
             />
           </Suspense>
-        </OverlaySceneBoundary>
+        </FeatureBoundary>
       )}
 
       {/* Start Screen - only when camera is not active */}

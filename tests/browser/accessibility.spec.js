@@ -97,7 +97,7 @@ test('field-control drawer code loads once and remains closeable during cold loa
   await expect(page.getByText('Loading controls…')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Close debug drawer' })).toBeFocused();
 
-  await page.getByRole('button', { name: 'Close debug drawer' }).click();
+  await page.keyboard.press('Escape');
   await expect(loadingDrawer).toBeHidden();
   await expect(drawerTrigger).toHaveAttribute('aria-expanded', 'false');
   await expect(drawerTrigger).toBeFocused();
@@ -109,6 +109,66 @@ test('field-control drawer code loads once and remains closeable during cold loa
   await expect(page.getByRole('tab', { name: 'Anchor' })).toBeVisible();
   expect(drawerRequests).toHaveLength(1);
 });
+
+for (const fault of ['network', 'evaluation']) {
+  test(`a controls ${fault} failure stays local and reloads only at the user request`, async ({
+    page,
+    browserName,
+  }, testInfo) => {
+    test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');
+    const errors = [];
+    let navigations = 0;
+    let requests = 0;
+    page.on('pageerror', (error) => errors.push(error.message));
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) navigations++;
+    });
+    const chunk = /\/FieldControlsDrawer-[^/]+\.js$/;
+    await page.route(chunk, (route) => {
+      requests++;
+      return fault === 'network'
+        ? route.abort()
+        : route.fulfill({ contentType: 'text/javascript', body: 'throw null;' });
+    });
+    await page.goto('/');
+    await startCamera(page);
+    await page.evaluate(() => {
+      window.__holOriginalStream = document.querySelector('video').srcObject;
+    });
+    const trigger = page.getByRole('button', { name: 'Debug drawer', exact: true });
+    await trigger.click();
+    const dialog = page.getByRole('dialog', { name: 'Field controls' });
+    const failure = dialog.getByRole('alert');
+    await expect(failure).toContainText('Field controls unavailable');
+    if (fault === 'evaluation') await expect(failure.getByText('null', { exact: true })).toBeVisible();
+    await expect(failure).toContainText('This stops the camera');
+    await expect(dialog).toHaveAttribute('aria-busy', 'false');
+    await expect(page.getByRole('button', { name: 'Close debug drawer' })).toBeFocused();
+    await expectNoAccessibilityViolations(page);
+    await page.screenshot({ path: testInfo.outputPath('controls-error.png') });
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    await expect(failure).toContainText('Field controls unavailable');
+    expect(requests).toBe(1);
+    expect(navigations).toBe(1);
+    expect(
+      await page.evaluate(() => {
+        const stream = document.querySelector('video').srcObject;
+        return stream === window.__holOriginalStream && stream.getVideoTracks()[0].readyState === 'live';
+      }),
+    ).toBe(true);
+    await page.unroute(chunk);
+    await page.getByRole('button', { name: 'Reload app', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Start Camera', exact: true })).toBeVisible();
+    expect(navigations).toBe(2);
+    await startCamera(page);
+    await trigger.click();
+    await expect(page.getByRole('tab', { name: 'anchor', exact: true })).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+}
 
 test('runtime readiness creates and releases its WebGL probe only when System controls open', async ({
   page,

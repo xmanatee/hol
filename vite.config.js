@@ -3,26 +3,6 @@ import tailwind from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 import { capabilityAssetMime } from './src/runtime/capabilityAssetMime.js';
 
-const manualChunks = (id) => {
-  if (id.includes('node_modules/react') || id.includes('node_modules/scheduler')) {
-    return 'vendor-react';
-  }
-
-  if (id.includes('node_modules/@react-three')) {
-    return 'vendor-r3f';
-  }
-
-  if (id.includes('node_modules/three/addons') || id.includes('node_modules/three/examples')) {
-    return 'vendor-three-addons';
-  }
-
-  if (id.includes('node_modules/three')) {
-    return 'vendor-three-core';
-  }
-
-  return undefined;
-};
-
 const rolldownCodeSplitting = {
   groups: [
     {
@@ -58,11 +38,6 @@ export default defineConfig({
     rolldownOptions: {
       output: {
         codeSplitting: rolldownCodeSplitting,
-      },
-    },
-    rollupOptions: {
-      output: {
-        manualChunks,
       },
     },
   },

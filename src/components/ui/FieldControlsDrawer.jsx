@@ -1,10 +1,10 @@
-import { useEffect, useRef } from 'react';
-import { Gauge, X } from 'lucide-react';
+import { useRef } from 'react';
 import { FieldControlsAnchor } from './FieldControlsAnchor.jsx';
 import { FieldControlsModel } from './FieldControlsModel.jsx';
 import { FieldControlsSystem } from './FieldControlsSystem.jsx';
 import { FieldControlsVoice } from './FieldControlsVoice.jsx';
 import { cx } from './uiClassNames.js';
+import FieldControlsDialog from './FieldControlsDialog.jsx';
 
 const TAB_IDS = ['anchor', 'voice', 'model', 'system'];
 
@@ -45,23 +45,7 @@ const FieldControlsDrawer = ({
   ttsData,
   voiceActivityThreshold,
 }) => {
-  const closeButtonRef = useRef(null);
   const tabRefs = useRef([]);
-
-  useEffect(() => {
-    closeButtonRef.current.focus();
-  }, []);
-
-  useEffect(() => {
-    const handleEscape = (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onOpenChange(false);
-      }
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [onOpenChange]);
 
   const handleTabKeyDown = (event, currentIndex) => {
     let nextIndex;
@@ -83,31 +67,7 @@ const FieldControlsDrawer = ({
   };
 
   return (
-    <div
-      id="field-controls-drawer"
-      role="dialog"
-      aria-modal="false"
-      aria-labelledby="field-controls-title"
-      className="fixed inset-x-0 bottom-0 z-50 flex max-h-[82dvh] flex-col overflow-hidden rounded-t-xl border border-white/10 bg-black/90 pb-[env(safe-area-inset-bottom)] text-white shadow-2xl backdrop-blur-xl overscroll-contain md:inset-y-3 md:left-auto md:right-3 md:max-h-none md:w-[24rem] md:rounded-xl md:pb-0"
-    >
-      <div className="flex shrink-0 items-center gap-2 border-b border-white/10 px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <Gauge size={17} aria-hidden="true" />
-          <h2 id="field-controls-title" className="text-sm font-semibold">
-            Field controls
-          </h2>
-        </div>
-        <button
-          ref={closeButtonRef}
-          type="button"
-          aria-label="Close debug drawer"
-          onClick={() => onOpenChange(false)}
-          className="ml-auto grid h-10 w-10 place-items-center rounded-md border border-white/10 bg-white/5 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-        >
-          <X size={17} aria-hidden="true" />
-        </button>
-      </div>
-
+    <FieldControlsDialog onOpenChange={onOpenChange}>
       <div
         role="tablist"
         aria-label="Field control sections"
@@ -219,7 +179,7 @@ const FieldControlsDrawer = ({
           Stop camera
         </button>
       </div>
-    </div>
+    </FieldControlsDialog>
   );
 };
 
