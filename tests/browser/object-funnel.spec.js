@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { expectReachableButton, expectWithinViewport } from './layoutAssertions.js';
 
 const countGreenPixels = (canvas) => {
   const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
@@ -508,6 +509,20 @@ for (const [scenario, failedUrl, title] of [
         .locator('.overlay-scene canvas')
         .evaluate((canvas, original) => canvas === original, overlayCanvas),
     ).toBe(true);
+    if (scenario === null) {
+      await page.setViewportSize({ width: 320, height: 720 });
+      await page.evaluate(() => {
+        document.documentElement.style.fontSize = '200%';
+      });
+      await expectWithinViewport(page.getByRole('button', { name: 'Stop camera', exact: true }));
+      for (const label of ['Enable microphone mode', 'Clear anchor', 'Debug drawer', 'Stop camera']) {
+        await expectReachableButton(page.getByRole('button', { name: label, exact: true }));
+      }
+      await page.evaluate(() => {
+        document.documentElement.style.fontSize = '';
+      });
+      await page.setViewportSize({ width: 390, height: 844 });
+    }
     await page.getByRole('button', { name: 'Debug drawer' }).click();
     if (scenario === null) {
       await page.getByRole('tab', { name: 'voice', exact: true }).click();

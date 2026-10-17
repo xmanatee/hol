@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
+import { expectReachableButton, expectWithinViewport } from './layoutAssertions.js';
 
 const ACCESSIBILITY_STANDARD_TAGS = [
   'wcag2a',
@@ -48,6 +49,48 @@ const startCamera = async (page) => {
     )
     .toBe(true);
 };
+
+for (const viewport of [
+  { width: 320, height: 720 },
+  { width: 640, height: 256 },
+]) {
+  test(`start screen reflows at 200% text in ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'High on Life' })).toBeVisible();
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = '200%';
+    });
+    const title = page.getByRole('heading', { name: 'High on Life' });
+    await title.scrollIntoViewIfNeeded();
+    await expectWithinViewport(title);
+    await expectReachableButton(page.getByRole('button', { name: 'Start Camera', exact: true }));
+    const guidance = page.getByRole('status');
+    await guidance.scrollIntoViewIfNeeded();
+    await expectWithinViewport(guidance);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBe(0);
+  });
+
+  test(`camera actions stay reachable at 200% text in ${viewport.width}x${viewport.height}`, async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');
+    await page.setViewportSize(viewport);
+    await page.goto('/');
+    await startCamera(page);
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = '200%';
+    });
+    const stop = page.getByRole('button', { name: 'Stop camera', exact: true });
+    await expectWithinViewport(stop);
+    for (const label of ['Enable microphone mode', 'Debug drawer', 'Stop camera']) {
+      await expectReachableButton(page.getByRole('button', { name: label, exact: true }));
+    }
+    await stop.click();
+    await expect(page.getByRole('button', { name: 'Start Camera', exact: true })).toBeVisible();
+  });
+}
 
 test('start screen meets the supported WCAG A and AA rules', async ({ page }) => {
   await page.goto('/');

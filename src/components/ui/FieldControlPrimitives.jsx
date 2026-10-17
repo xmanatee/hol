@@ -23,7 +23,7 @@ export const IconButton = ({
         'shrink-0 rounded-md border text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70',
         showLabel
           ? 'flex min-h-11 w-full items-center justify-center gap-2 px-3'
-          : 'grid h-11 w-11 place-items-center',
+          : 'grid h-[44px] w-[44px] place-items-center',
         active
           ? 'border-white bg-white text-black'
           : 'border-white/15 bg-black/55 text-white hover:bg-white/10',

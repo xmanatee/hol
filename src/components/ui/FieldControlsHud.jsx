@@ -27,7 +27,7 @@ export const FieldControlsHud = ({
   const voiceActive = microphoneMode ? microphoneActive : ttsData.isPlaying;
 
   return (
-    <div className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 z-40 w-[min(94vw,42rem)] -translate-x-1/2 text-white">
+    <div className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-[max(0.5rem,env(safe-area-inset-left))] right-[max(0.5rem,env(safe-area-inset-right))] z-40 mx-auto max-h-[calc(100dvh_-_max(1rem,env(safe-area-inset-bottom))_-_max(1rem,env(safe-area-inset-top)))] max-w-[42rem] overflow-y-auto overscroll-contain text-white">
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-black/70 p-2 shadow-2xl backdrop-blur-md">
         <MetricPill label="Anchor" value={anchorLabel} tone={anchorTone} />
         <MetricPill
@@ -35,7 +35,7 @@ export const FieldControlsHud = ({
           value={ttsData.isSynthesizing ? 'preparing' : voiceActive ? 'live' : 'idle'}
           tone={ttsData.isSynthesizing ? 'warn' : voiceActive ? 'good' : 'neutral'}
         />
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1">
           <SpeechStopButton ttsData={ttsData} onStopSpeech={onStopSpeech} />
           <IconButton
             label={microphoneMode ? 'Disable microphone mode' : 'Enable microphone mode'}

@@ -47,9 +47,9 @@ const StartScreen = ({ cameraState, cameraError, onStartCamera }) => {
   return (
     <section
       aria-labelledby="start-screen-title"
-      className="absolute inset-0 flex items-center justify-center bg-black z-40 pointer-events-auto"
+      className="absolute inset-0 z-40 flex max-h-dvh overflow-y-auto overscroll-contain bg-black px-[max(1rem,env(safe-area-inset-left),env(safe-area-inset-right))] pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pointer-events-auto"
     >
-      <div className="text-center text-white max-w-sm mx-auto px-4">
+      <div className="m-auto min-w-0 w-full max-w-sm shrink-0 text-center text-white [overflow-wrap:anywhere]">
         <h1 id="start-screen-title" className="text-4xl font-bold mb-4 text-white">
           High on Life
         </h1>
@@ -59,7 +59,7 @@ const StartScreen = ({ cameraState, cameraError, onStartCamera }) => {
           onClick={onStartCamera}
           disabled={isRequesting}
           aria-busy={isRequesting}
-          className="px-6 py-3 text-lg bg-blue-600 text-white border-0 rounded-lg cursor-pointer hover:bg-blue-700 transition-colors duration-200 font-medium disabled:cursor-wait disabled:bg-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          className="min-h-11 max-w-full px-6 py-3 text-lg bg-blue-600 text-white border-0 rounded-lg cursor-pointer hover:bg-blue-700 transition-colors duration-200 font-medium disabled:cursor-wait disabled:bg-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
         >
           {getStartButtonLabel(cameraState)}
         </button>
