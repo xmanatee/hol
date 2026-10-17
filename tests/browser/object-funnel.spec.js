@@ -469,11 +469,13 @@ for (const [scenario, failedUrl, title] of [
       await expect(discovery).toHaveAttribute('data-stage', 'error');
       await expect(selectionCanvas).toBeDisabled();
       await expect(page.locator('.overlay-scene')).toHaveCount(0);
+      await expect(page.getByText('Object selected.', { exact: false })).toHaveCount(0);
       await discovery.getByText('Technical details', { exact: true }).click();
       await expect(discovery).toContainText('Segmentation refresh transport failed');
       await page.screenshot({ path: testInfo.outputPath('refresh-error.png') });
       await discovery.getByRole('button', { name: 'Retry vision', exact: true }).click();
       await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
+      await expect(page.getByText('Object selected.', { exact: false })).toHaveCount(0);
       await page.evaluate(() => {
         window.__holObserveFaceVisibility = true;
         window.__holFirstVisibleFaceAt = null;
@@ -765,6 +767,7 @@ for (const [scenario, failedUrl, title] of [
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Choose another object' }).click();
     await expect(discovery).toBeVisible();
+    await expect(page.getByText('Object selected.', { exact: false })).toHaveCount(0);
     if (scenario === null) {
       await page.getByRole('button', { name: 'Controls', exact: true }).click();
       await expect(page.getByText('Select a highlighted object to enable face controls.')).toBeVisible();

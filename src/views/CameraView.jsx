@@ -598,11 +598,12 @@ const CameraView = () => {
       />
       <AnchorFeedback
         feedback={
-          anchorSystemState.activeAnchor &&
-          anchorStatus.severity !== 'good' &&
-          anchorFeedback?.severity === 'good'
-            ? null
-            : anchorFeedback
+          cameraState === 'active' &&
+          !visionError &&
+          (anchorFeedback?.severity !== 'good' ||
+            (anchorSystemState.activeAnchor && anchorStatus.severity === 'good'))
+            ? anchorFeedback
+            : null
         }
       />
       {cameraState === 'active' && (
