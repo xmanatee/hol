@@ -5,6 +5,7 @@
 
 import { logger } from '../utils/logger.js';
 import { ObjectPoseEstimator } from './anchor.objectPose.js';
+import { fitRobustAffine2D } from './anchor.reconstructionRobust.js';
 import { SURFACE_MODEL_PLANE, SURFACE_MODEL_BOX } from './anchor.parametricGeometry.js';
 import {
   isConfirmedObjectOwnedLandmark,
@@ -218,18 +219,18 @@ export class KeypointTracker {
    * @param {cv.Mat} currentGray - Current grayscale frame
    * @returns {Object} - Tracking result
    */
-  trackFrame(cv, currentGray) {
-    const result = this._track(cv, currentGray, POSE_TRACKING_MIN_POINTS);
+  trackFrame(cv, currentGray, { surfaceModel = null } = {}) {
+    const result = this._track(cv, currentGray, POSE_TRACKING_MIN_POINTS, surfaceModel);
     if (!result.success) this.breakObjectPoseContinuity();
     return result;
   }
 
   /** Track a provisional selection without admitting it as pose geometry. */
-  trackCandidate(cv, currentGray) {
-    return this._track(cv, currentGray, CANDIDATE_TRACKING_MIN_POINTS);
+  trackCandidate(cv, currentGray, { surfaceModel = null } = {}) {
+    return this._track(cv, currentGray, CANDIDATE_TRACKING_MIN_POINTS, surfaceModel);
   }
 
-  _track(cv, currentGray, minimumActivePoints) {
+  _track(cv, currentGray, minimumActivePoints, surfaceModel) {
     const debugTracking = logger.isTagEnabled('KeypointTracker');
     if (debugTracking) {
       logger.debugEvery(
@@ -322,55 +323,41 @@ export class KeypointTracker {
     // Update tracked points with results
     let successCount = 0;
     let totalError = 0;
-    const flowCandidates = isInitialTracking
-      ? activePoints.map((point, i) => {
-          const trackingStatus = status.data[i];
-          const trackingError = flowError.data32F[i];
-          const nextX = nextPoints.data32F[i * 2];
-          const nextY = nextPoints.data32F[i * 2 + 1];
-          const effectiveThreshold = point.isStable ? keepThreshold : loseThreshold;
-          const hasValidCoordinates = Number.isFinite(nextX) && Number.isFinite(nextY);
-          return {
-            point,
-            trackingStatus,
-            trackingError,
-            nextX,
-            nextY,
-            effectiveThreshold,
-            acceptedByLK:
-              trackingStatus === 1 &&
-              Number.isFinite(trackingError) &&
-              trackingError < effectiveThreshold &&
-              hasValidCoordinates,
-          };
-        })
-      : null;
-    const motionConsensusRejections = isInitialTracking
-      ? this._motionConsensusRejectedPointIds(flowCandidates)
-      : null;
-
+    const candidates = activePoints.map((point, index) => {
+      const error = flowError.data32F[index];
+      const current = { x: nextPoints.data32F[index * 2], y: nextPoints.data32F[index * 2 + 1] };
+      const effectiveThreshold = point.isStable ? keepThreshold : loseThreshold;
+      return {
+        id: point.id,
+        reference: { x: prevPoints.data32F[index * 2], y: prevPoints.data32F[index * 2 + 1] },
+        current,
+        quality: point.response,
+        confirmed: isConfirmedObjectOwnedLandmark(point),
+        error,
+        effectiveThreshold,
+        acceptedByLK:
+          status.data[index] === 1 &&
+          Number.isFinite(error) &&
+          error < effectiveThreshold &&
+          Number.isFinite(current.x) &&
+          Number.isFinite(current.y),
+      };
+    });
+    const inlierIds = this._selectFlowInlierIds(
+      cv,
+      candidates.filter((candidate) => candidate.acceptedByLK),
+      surfaceModel,
+    );
     for (let i = 0; i < activePoints.length; i++) {
       const point = activePoints[i];
-      const candidate = flowCandidates?.[i];
-      const trackingStatus = candidate?.trackingStatus ?? status.data[i];
-      const trackingError = candidate?.trackingError ?? flowError.data32F[i];
-      const nextX = candidate?.nextX ?? nextPoints.data32F[i * 2];
-      const nextY = candidate?.nextY ?? nextPoints.data32F[i * 2 + 1];
-      const effectiveThreshold =
-        candidate?.effectiveThreshold ?? (point.isStable ? keepThreshold : loseThreshold);
-      const acceptedByLK =
-        candidate?.acceptedByLK ??
-        (trackingStatus === 1 &&
-          Number.isFinite(trackingError) &&
-          trackingError < effectiveThreshold &&
-          Number.isFinite(nextX) &&
-          Number.isFinite(nextY));
-      const rejectedByMotionConsensus = motionConsensusRejections?.has(point.id) === true;
+      const candidate = candidates[i];
+      const trackingError = candidate.error;
+      const effectiveThreshold = candidate.effectiveThreshold;
 
-      if (acceptedByLK && !rejectedByMotionConsensus) {
+      if (inlierIds.has(point.id)) {
         // Successful tracking with valid coordinates
-        point.current.x = nextX;
-        point.current.y = nextY;
+        point.current.x = candidate.current.x;
+        point.current.y = candidate.current.y;
         point.lastFlowResidual = trackingError;
         point.errorHistory.push(trackingError);
         point.age++;
@@ -398,7 +385,7 @@ export class KeypointTracker {
         totalError += trackingError;
       } else {
         // Tracking failed or invalid coordinates
-        point.status = 'lost';
+        point.status = candidate.acceptedByLK ? 'outlier' : 'lost';
         point.errorHistory.push(999); // High error for failed tracking
         point.recentDropout = true;
 
@@ -415,29 +402,22 @@ export class KeypointTracker {
       }
     }
 
-    // Log detailed results (sample of first 5 points to avoid spam)
     if (debugTracking) {
-      logger.debugEvery('KeypointTracker', 'lucas-kanade-results', 1000, 'Lucas-Kanade tracking results:', {
-        attempt: this.trackingAttempts,
-        isInitialTracking,
-        loseThreshold,
-        keepThreshold,
-        successCount,
-        totalPoints: activePoints.length,
-        successRate: `${((successCount / activePoints.length) * 100).toFixed(1)}%`,
-        avgError: successCount > 0 ? (totalError / successCount).toFixed(2) : 'N/A',
-      });
-    }
-
-    // Filter outliers using RANSAC-style consensus (skip during initial tracking)
-    if (!isInitialTracking) {
-      this._filterOutliers(cv);
-    } else if (debugTracking) {
       logger.debugEvery(
         'KeypointTracker',
-        'outlier-filter-initial-skip',
+        'lucas-kanade-results',
         1000,
-        'Skipping outlier filtering during initial tracking phase',
+        'Tracking results after consensus:',
+        {
+          attempt: this.trackingAttempts,
+          isInitialTracking,
+          loseThreshold,
+          keepThreshold,
+          successCount,
+          totalPoints: activePoints.length,
+          successRate: `${((successCount / activePoints.length) * 100).toFixed(1)}%`,
+          avgError: successCount > 0 ? (totalError / successCount).toFixed(2) : 'N/A',
+        },
       );
     }
 
@@ -449,11 +429,13 @@ export class KeypointTracker {
 
     this._cleanupInactiveKeypoints();
 
-    const success = successRate >= 0.5;
+    const success = successCount >= minimumActivePoints && successRate >= 0.5;
     const partialFlow = success ? null : this._partialFlowConsensus(activePoints, prevPoints, nextPoints);
     return {
       success,
-      reason: success ? null : `Lucas-Kanade retained ${successCount}/${activePoints.length} points`,
+      reason: success
+        ? null
+        : `Tracking retained ${successCount}/${activePoints.length} points after motion consensus`,
       successRate,
       activePointCount: this.trackedPoints.filter((pt) => pt.status === 'active').length,
       averageError: avgError,
@@ -464,102 +446,59 @@ export class KeypointTracker {
   /**
    * Filter outlier keypoints using motion consensus
    */
-  _filterOutliers() {
-    const activePoints = this.trackedPoints.filter((pt) => pt.status === 'active');
-    const debugTracking = logger.isTagEnabled('KeypointTracker');
-
-    if (activePoints.length < 15) {
-      return;
-    }
-
-    const confirmedPoints = activePoints.filter(isConfirmedObjectOwnedLandmark);
-    const useConfirmedReference = confirmedPoints.length >= 3;
-    const referencePoints = useConfirmedReference ? confirmedPoints : activePoints;
-    const transformation = this._estimateReferenceTransformation(referencePoints);
-    if (!transformation) {
-      return;
-    }
-
-    const residuals = new Array(activePoints.length);
-    const sortedResiduals = [];
-    for (let index = 0; index < activePoints.length; index++) {
-      const point = activePoints[index];
-      const residual = this._transformationResidual(point, transformation);
-      residuals[index] = residual;
-      if (!useConfirmedReference || isConfirmedObjectOwnedLandmark(point)) {
-        sortedResiduals.push(residual);
-      }
-    }
-    sortedResiduals.sort((a, b) => a - b);
-    const medianResidual = sortedResiduals[Math.floor(sortedResiduals.length / 2)];
-
-    // Filter outliers with stability consideration
-    const baseThreshold = 5.0; // Base MAD threshold multiplier
-    let outlierCount = 0;
-    let protectedCount = 0;
-
-    if (debugTracking) {
-      logger.debugEvery(
-        'KeypointTracker',
-        'outlier-filter-motion-analysis',
-        1000,
-        'Outlier filtering - motion analysis:',
-        {
-          rotation: `${((transformation.rotation * 180) / Math.PI).toFixed(1)}deg`,
-          scale: transformation.scale.toFixed(3),
-          medianResidual: medianResidual.toFixed(2),
-          baseThreshold,
-        },
-      );
-    }
-
-    for (let index = 0; index < activePoints.length; index++) {
-      const point = activePoints[index];
-      // Adaptive threshold based on stability
-      let effectiveThreshold = Math.max(8, medianResidual * baseThreshold);
-      if (point.isStable) {
-        // Protect stable points with higher threshold (more lenient)
-        effectiveThreshold *= 2.0;
-        protectedCount++;
-      } else if (point.stabilityScore > 0.5) {
-        // Moderately stable points get some protection
-        effectiveThreshold *= 1.5;
-      }
-
-      if (residuals[index] > effectiveThreshold) {
-        // Only mark as outlier if not highly stable
-        if (!point.isStable || point.stabilityScore < 0.8) {
-          point.status = 'outlier';
-          outlierCount++;
-        } else if (debugTracking) {
-          // Highly stable points keep active status despite motion deviation
-          logger.debugEvery(
-            'KeypointTracker',
-            'outlier-filter-protected-stable',
-            1000,
-            `Protected stable keypoint ${point.id} from outlier filtering`,
-          );
-        }
-      }
-    }
-
-    const remainingActive = activePoints.length - outlierCount;
-
-    if (debugTracking) {
-      logger.debugEvery('KeypointTracker', 'outlier-filter-results', 1000, 'Outlier filtering results:', {
-        originalActive: activePoints.length,
-        outliers: outlierCount,
-        remainingActive,
-        protectedStable: protectedCount,
-        outlierRate: `${((outlierCount / activePoints.length) * 100).toFixed(1)}%`,
+  _selectFlowInlierIds(cv, observations, surfaceModel) {
+    const planar = surfaceModel === SURFACE_MODEL_PLANE;
+    const minimumSupport = planar ? 5 : 4;
+    const confirmed = observations.filter((observation) => observation.confirmed);
+    const references = confirmed.length >= minimumSupport ? confirmed : observations;
+    const minInliers = Math.max(minimumSupport, Math.ceil(references.length * 0.5));
+    const threshold = 8;
+    let inlierIds = new Set();
+    if (planar) {
+      const points = references.map((observation) => ({
+        original: observation.reference,
+        current: observation.current,
+      }));
+      const transform = this._estimateReferenceHomography(cv, points, { minInliers, threshold });
+      if (transform)
+        inlierIds = new Set(
+          observations
+            .filter((observation) => {
+              const projected = this._transformHomographyPoint(observation.reference, transform.matrix);
+              return (
+                Math.hypot(projected.x - observation.current.x, projected.y - observation.current.y) <=
+                threshold
+              );
+            })
+            .map((observation) => observation.id),
+        );
+    } else {
+      const fit = fitRobustAffine2D(references, {
+        minInliers,
+        threshold,
+        maxSample: 10,
+        sampleCoverage: 'spatial',
       });
+      if (fit.success)
+        inlierIds = new Set(
+          observations
+            .filter((observation) => {
+              const x =
+                fit.transform.rowX[0] * observation.reference.x +
+                fit.transform.rowX[1] * observation.reference.y +
+                fit.transform.rowX[2];
+              const y =
+                fit.transform.rowY[0] * observation.reference.x +
+                fit.transform.rowY[1] * observation.reference.y +
+                fit.transform.rowY[2];
+              return Math.hypot(x - observation.current.x, y - observation.current.y) <= threshold;
+            })
+            .map((observation) => observation.id),
+        );
     }
+    return inlierIds;
   }
 
-  /**
-   * Evaluate anchor evidence for the current tracked-point snapshot.
-   * The result can be resolved once with OpenCV unless the tracker mutates its points.
-   */
   createAnchorPositionEvaluation() {
     const trackedActivePoints = this.trackedPoints.filter((pt) => pt.status === 'active');
     if (trackedActivePoints.length === 0) {
@@ -1060,8 +999,8 @@ export class KeypointTracker {
     ];
   }
 
-  _estimateReferenceHomography(cv, activePoints) {
-    if (!cv || activePoints.length < 8 || typeof cv.findHomography !== 'function') {
+  _estimateReferenceHomography(cv, activePoints, { minInliers = 8, threshold = 3 } = {}) {
+    if (!cv || activePoints.length < minInliers || typeof cv.findHomography !== 'function') {
       return null;
     }
 
@@ -1084,7 +1023,7 @@ export class KeypointTracker {
         this.referenceHomographyWorkspace.sourcePoints,
         this.referenceHomographyWorkspace.destinationPoints,
         cv.RANSAC,
-        3,
+        threshold,
         this.referenceHomographyWorkspace.inlierMask,
         1000,
         0.99,
@@ -1100,7 +1039,7 @@ export class KeypointTracker {
       const matrix = homography.empty() ? null : Array.from(homography.data64F);
       const inverseMatrix = matrix ? this._invertHomographyMatrix(matrix) : null;
 
-      if (!matrix || !inverseMatrix || inlierCount < 8 || inlierCount / activePoints.length < 0.5) {
+      if (!matrix || !inverseMatrix || inlierCount < minInliers || inlierCount / activePoints.length < 0.5) {
         return null;
       }
 
@@ -1585,52 +1524,6 @@ export class KeypointTracker {
     return Math.hypot(projected.x - point.current.x, projected.y - point.current.y);
   }
 
-  _motionConsensusRejectedPointIds(flowCandidates) {
-    const acceptedCandidates = flowCandidates.filter((candidate) => candidate.acceptedByLK);
-    if (acceptedCandidates.length < 12) {
-      return new Set();
-    }
-
-    const candidatePoints = acceptedCandidates.map((candidate) => ({
-      original: candidate.point.original,
-      current: { x: candidate.nextX, y: candidate.nextY },
-    }));
-    const minInliers = Math.max(8, Math.ceil(acceptedCandidates.length * 0.7));
-    const transformation = this._selectFlowConsensusTransformation(candidatePoints, minInliers);
-    if (!transformation) {
-      return new Set();
-    }
-
-    const residuals = acceptedCandidates.map((candidate) => {
-      const projected = this._applyReferenceTransformation(candidate.point.original, transformation);
-      return {
-        id: candidate.point.id,
-        residual: Math.hypot(projected.x - candidate.nextX, projected.y - candidate.nextY),
-      };
-    });
-    const residualValues = residuals.map((item) => item.residual);
-    const medianResidual = medianValue(residualValues);
-    const residualMad = medianValue(residualValues.map((residual) => Math.abs(residual - medianResidual)));
-    const threshold = Math.max(
-      16,
-      medianResidual + Math.max(8, residualMad * 4),
-      (transformation.averageResidual || 0) * 3,
-    );
-    const rejected = new Set();
-
-    residuals.forEach((item) => {
-      if (item.residual > threshold && item.residual > 48) {
-        rejected.add(item.id);
-      }
-    });
-
-    if (rejected.size > acceptedCandidates.length * 0.35) {
-      return new Set();
-    }
-
-    return rejected;
-  }
-
   _partialFlowConsensus(activePoints, previousPoints, nextPoints) {
     const candidates = [];
     for (let index = 0; index < activePoints.length; index++) {
@@ -1684,89 +1577,6 @@ export class KeypointTracker {
     }
 
     return transform;
-  }
-
-  _selectFlowConsensusTransformation(candidatePoints, minInliers) {
-    const directTransform = this._estimateReferenceTransformation(candidatePoints);
-    if (
-      directTransform &&
-      directTransform.confidence >= 0.55 &&
-      directTransform.inlierCount >= minInliers &&
-      directTransform.averageResidual <= 10
-    ) {
-      return directTransform;
-    }
-
-    return this._estimatePairwiseFlowConsensusTransformation(candidatePoints, minInliers);
-  }
-
-  _estimatePairwiseFlowConsensusTransformation(candidatePoints, minInliers) {
-    let best = null;
-    for (let left = 0; left < candidatePoints.length - 1; left++) {
-      for (let right = left + 1; right < candidatePoints.length; right++) {
-        const seedTransform = this._fitSimilarityTransformFromPair(
-          candidatePoints[left],
-          candidatePoints[right],
-        );
-        if (!seedTransform) {
-          continue;
-        }
-
-        const inliers = candidatePoints.filter(
-          (point) => this._transformationResidual(point, seedTransform) <= 8,
-        );
-        if (inliers.length < minInliers) {
-          continue;
-        }
-
-        const refinedTransform = this._fitSimilarityTransform(inliers);
-        const refinedResiduals = inliers.map((point) =>
-          this._transformationResidual(point, refinedTransform),
-        );
-        const averageResidual =
-          refinedResiduals.reduce((sum, residual) => sum + residual, 0) / refinedResiduals.length;
-        const confidence = (inliers.length / candidatePoints.length) * Math.max(0, 1 - averageResidual / 12);
-        const candidate = {
-          ...refinedTransform,
-          confidence,
-          inlierCount: inliers.length,
-          averageResidual,
-        };
-        const score = candidate.inlierCount * 4 + candidate.confidence * 3 - candidate.averageResidual;
-        if (!best || score > best.score) {
-          best = { ...candidate, score };
-        }
-      }
-    }
-
-    if (!best || best.confidence < 0.55 || best.averageResidual > 8) {
-      return null;
-    }
-
-    const transform = { ...best };
-    delete transform.score;
-    return transform;
-  }
-
-  _fitSimilarityTransformFromPair(first, second) {
-    const sourceDx = second.original.x - first.original.x;
-    const sourceDy = second.original.y - first.original.y;
-    const targetDx = second.current.x - first.current.x;
-    const targetDy = second.current.y - first.current.y;
-    const sourceDistance = Math.hypot(sourceDx, sourceDy);
-    const targetDistance = Math.hypot(targetDx, targetDy);
-    if (sourceDistance < 12 || targetDistance < 1) {
-      return null;
-    }
-
-    const scale = targetDistance / sourceDistance;
-    const rotation = Math.atan2(targetDy, targetDx) - Math.atan2(sourceDy, sourceDx);
-    const cos = Math.cos(rotation);
-    const sin = Math.sin(rotation);
-    const tx = first.current.x - scale * (cos * first.original.x - sin * first.original.y);
-    const ty = first.current.y - scale * (sin * first.original.x + cos * first.original.y);
-
-    return { tx, ty, scale, rotation };
   }
 
   getLandmarkQuality(point) {

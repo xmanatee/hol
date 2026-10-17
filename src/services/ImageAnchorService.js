@@ -1491,7 +1491,9 @@ export class ImageAnchorService {
       }
       trackingResult = relocalizationResult.trackingResult;
     } else {
-      trackingResult = this.keypointTracker.trackFrame(this.cv, grayImage);
+      trackingResult = this.keypointTracker.trackFrame(this.cv, grayImage, {
+        surfaceModel: this._targetSurfaceModel(),
+      });
       this._recordUpdateTiming(updateTimings, 'keypointTrackMs', stageStart);
       if (this._canAdmitPartialFlow(trackingResult)) {
         trackingResult.success = true;
@@ -2149,7 +2151,9 @@ export class ImageAnchorService {
     let trackingResult = null;
     const hasTrackableBootstrap = this._activeTrackedPointCount() >= CANDIDATE_TRACKING_MIN_POINTS;
     if (hasTrackableBootstrap) {
-      trackingResult = this.keypointTracker.trackCandidate(this.cv, grayImage);
+      trackingResult = this.keypointTracker.trackCandidate(this.cv, grayImage, {
+        surfaceModel: this._targetSurfaceModel(),
+      });
       if (trackingResult.success) {
         this._rejectTrackedPointsOutsideObjectSupport();
         const anchorPosition = this.keypointTracker.getAnchorPosition(this.cv);

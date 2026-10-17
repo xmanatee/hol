@@ -14,8 +14,6 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
   [OpenCV optical flow](https://docs.opencv.org/4.x/d4/dee/tutorial_optical_flow.html)
 - **P1 · Patch ownership:** Account for the whole LK/descriptor patch, not just its center's mask membership; prevent paper edges, handles, and thin objects from tracking background texture.
   [LK windows](https://docs.opencv.org/4.x/dc/d6b/group__video__track.html)
-- **P1 · Consensus integrity:** In `_filterOutliers`, use surface-appropriate motion and remove history-based immunity from current outlier rejection; verify small point sets too, and report post-consensus retention.
-  [Robust estimation](https://docs.opencv.org/4.x/de/d3e/tutorial_usac.html)
 - **P1 · Reflections:** Reject moving glare on printed cans using persistent appearance and geometric agreement; test clipping separately from exposure changes.
   [Specular motion](https://www.cs.cmu.edu/~ILIM/projects/IM/aagrawal/cvpr10/Specular/SpecularSurfaceReconstruction.pdf)
 - **P1 · Transparency:** Distinguish glass-surface evidence from refracted/background features; mask membership alone must not establish landmark ownership.

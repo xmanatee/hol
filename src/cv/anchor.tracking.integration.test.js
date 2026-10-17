@@ -819,7 +819,7 @@ test('attachment positioning accepts sparse local tap support over broad object 
   assert.ok(Math.hypot(predicted.x - expected.x, predicted.y - expected.y) < 2);
 });
 
-test('outlier filtering keeps coherent rotational motion instead of assuming pure translation', () => {
+test('frame consensus keeps coherent rotational motion instead of assuming pure translation', () => {
   const tracker = new KeypointTracker();
   const transform = {
     tx: 12,
@@ -837,12 +837,19 @@ test('outlier filtering keeps coherent rotational motion instead of assuming pur
     return createTrackedPoint(index, original, transform);
   });
 
-  tracker._filterOutliers();
+  const cv = createSyntheticLucasKanadeCv((index, current) => {
+    const next = transformPoint(current, transform);
+    return { dx: next.x - current.x, dy: next.y - current.y, error: 1 };
+  });
+  tracker.initialize(cv);
+  tracker.previousGray = tracker.acquireGrayFrame(cv);
+  const result = tracker.trackFrame(cv, tracker.acquireGrayFrame(cv));
 
+  assert.equal(result.successRate, 1);
   assert.equal(tracker.trackedPoints.filter((point) => point.status === 'active').length, 24);
 });
 
-test('initial LK tracking rejects low-error points that violate reference motion consensus', async () => {
+test('initial LK tracking rejects low-error points that violate current motion consensus', async () => {
   const tracker = new KeypointTracker();
   const cv = createSyntheticLucasKanadeCv((index) =>
     index < 9 ? { dx: 5, dy: 3, error: 1 } : { dx: 84 + index * 3, dy: -58, error: 1 },
@@ -871,10 +878,74 @@ test('initial LK tracking rejects low-error points that violate reference motion
   assert.equal(result.successRate, 0.75);
   assert.equal(tracker.trackedPoints.filter((point) => point.status === 'active').length, 9);
   assert.deepEqual(
-    tracker.trackedPoints.filter((point) => point.status === 'lost').map((point) => point.id),
+    tracker.trackedPoints.filter((point) => point.status === 'outlier').map((point) => point.id),
     [9, 10, 11],
   );
   assert.ok(tracker.trackedPoints.slice(0, 9).every((point) => point.current.x === point.original.x + 5));
+});
+
+test('current consensus rejects historically stable outliers and reports only retained measurements', async () => {
+  const nativeCv = await loadOpenCvForNode();
+  for (const surfaceModel of ['plane', 'cylinder']) {
+    for (const count of [8, 12]) {
+      for (const attempt of [0, 10]) {
+        const outlierCount = count === 8 ? 1 : 3;
+        const cv = Object.create(nativeCv);
+        cv.calcOpticalFlowPyrLK = (previous, current, source, destination, status, error) => {
+          for (let index = 0; index < source.rows; index++) {
+            const point = { x: source.data32F[index * 2], y: source.data32F[index * 2 + 1] };
+            const next =
+              surfaceModel === 'plane'
+                ? projectHomographyPoint(point, [1, 0.35, 4, -0.1, 0.85, 3, 0.001, -0.0015, 1])
+                : { x: point.x * 1.08 + point.y * 0.15 + 4, y: point.y * 0.92 - point.x * 0.08 - 2 };
+            const outlier = index >= count - outlierCount;
+            destination.data32F[index * 2] = next.x + (outlier ? 100 + index * 9 : 0);
+            destination.data32F[index * 2 + 1] = next.y + (outlier ? -90 - index * 7 : 0);
+            status.data[index] = 1;
+            error.data32F[index] = outlier ? 0.1 : 2;
+          }
+        };
+        const tracker = new KeypointTracker();
+        tracker.initialize(cv);
+        try {
+          tracker.previousGray = tracker.acquireGrayFrame(cv);
+          tracker.trackingAttempts = attempt;
+          tracker.trackedPoints = Array.from({ length: count }, (_, index) => {
+            const point = createTrackedPoint(
+              index,
+              { x: 50 + (index % 4) * 30, y: 50 + Math.floor(index / 4) * 30 },
+              { tx: 0, ty: 0, scale: 1, rotation: 0 },
+            );
+            point.current = projectHomographyPoint(
+              point.original,
+              [0.75, 0.3, 10, -0.1, 0.65, 12, 0.002, 0.001, 1],
+            );
+            point.isStable = true;
+            point.stabilityScore = 1;
+            point.totalSuccessfulFrames = 100;
+            point.successfulTrackingStreak = 100;
+            return point;
+          });
+          const result = tracker.trackFrame(cv, tracker.acquireGrayFrame(cv), { surfaceModel });
+          assert.equal(
+            result.activePointCount,
+            count - outlierCount,
+            `${surfaceModel}, ${count}, ${attempt}`,
+          );
+          assert.equal(result.successRate, (count - outlierCount) / count);
+          assert.equal(result.averageError, 2);
+          assert.equal(result.success, count - outlierCount >= 8);
+          for (const point of tracker.trackedPoints.filter((tracked) => tracked.id >= count - outlierCount)) {
+            assert.equal(point.status, 'outlier');
+            assert.equal(point.isStable, false);
+            assert.equal(point.totalSuccessfulFrames, 100, 'rejected measurements cannot mature the map');
+          }
+        } finally {
+          tracker.dispose();
+        }
+      }
+    }
+  }
 });
 
 test('Lucas-Kanade failure reports the retained landmark quorum', async () => {
@@ -893,7 +964,32 @@ test('Lucas-Kanade failure reports the retained landmark quorum', async () => {
   const result = tracker.trackFrame(cv, tracker.acquireGrayFrame(cv));
 
   assert.equal(result.success, false);
-  assert.equal(result.reason, 'Lucas-Kanade retained 0/8 points');
+  assert.equal(result.reason, 'Tracking retained 0/8 points after motion consensus');
+});
+
+test('provisional features cannot outvote confirmed object support in frame consensus', () => {
+  const cv = createSyntheticLucasKanadeCv((index) =>
+    index < 8 ? { dx: 3, dy: 2, error: 1 } : { dx: 90, dy: -80, error: 1 },
+  );
+  const tracker = new KeypointTracker();
+  tracker.initialize(cv);
+  tracker.previousGray = tracker.acquireGrayFrame(cv);
+  tracker.trackedPoints = Array.from({ length: 24 }, (_, index) => ({
+    ...createTrackedPoint(
+      index,
+      { x: 40 + (index % 4) * 24, y: 40 + Math.floor(index / 4) * 24 },
+      { tx: 0, ty: 0, scale: 1, rotation: 0 },
+    ),
+    objectOwnedStreak: index < 8 ? 2 : 0,
+  }));
+  const result = tracker.trackFrame(cv, tracker.acquireGrayFrame(cv));
+  assert.equal(result.activePointCount, 8);
+  assert.equal(result.successRate, 1 / 3);
+  assert.equal(tracker.getCorrespondences().length, 8);
+  assert.ok(
+    tracker.trackedPoints.filter((point) => point.status === 'active').every((point) => point.id < 8),
+  );
+  tracker.dispose();
 });
 
 test('Lucas-Kanade exposes spatially coherent partial-occlusion flow without weakening failure', async () => {
