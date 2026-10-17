@@ -23,10 +23,15 @@ import { isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
 import { shouldAutoStartObjectVoice } from '../audio/objectVoicePolicy.js';
 import { ownsObjectVoiceRequest } from '../audio/objectVoiceOwnership.js';
 import { shouldMountOverlayScene } from '../utils/overlayVisibility.js';
-import { captureCameraFrame, shouldCaptureCameraFrame } from '../utils/cameraFrameCapture.js';
+import {
+  captureCameraFrame,
+  getCurrentObjectCaptureRegion,
+  shouldCaptureCameraFrame,
+} from '../utils/cameraFrameCapture.js';
 import {
   ANCHOR_TRACKING_INTERVAL_MS,
   SEGMENTATION_REFRESH_CHECK_INTERVAL_MS,
+  isSelectedObjectObservationFresh,
   shouldRunTimedStep,
 } from '../utils/cvScheduling.js';
 
@@ -91,24 +96,6 @@ const AnchorFeedback = ({ feedback }) => {
       {feedback.message}
     </div>
   );
-};
-
-const getPersonalityRoi = (position, selectionRegion) => {
-  if (selectionRegion) {
-    return {
-      x: selectionRegion.x1,
-      y: selectionRegion.y1,
-      width: selectionRegion.x2 - selectionRegion.x1,
-      height: selectionRegion.y2 - selectionRegion.y1,
-    };
-  }
-
-  return {
-    x: position.x - 50,
-    y: position.y - 50,
-    width: 100,
-    height: 100,
-  };
 };
 
 const CameraView = () => {
@@ -273,13 +260,9 @@ const CameraView = () => {
       return;
     }
 
-    const imageData = captureCurrentCameraFrame();
-
-    const position = liveAnchorSystemState.activeAnchor.position;
-    const selectionRegion = liveAnchorSystemState.activeAnchor.selectionRegion;
-    const roi = getPersonalityRoi(position, selectionRegion);
-
     try {
+      const roi = getCurrentObjectCaptureRegion(liveAnchorSystemState, performance.now());
+      const imageData = captureCurrentCameraFrame();
       await generatePersonality(imageData, roi);
     } catch (error) {
       if (getAnchorSystemState().activeAnchor?.createdAt !== liveAnchorSystemState.activeAnchor.createdAt)
@@ -309,9 +292,8 @@ const CameraView = () => {
           return;
         }
         showAnchorFeedback('Generating object voice...', 'warn');
-        const anchor = getAnchorSystemState().activeAnchor;
+        const roi = getCurrentObjectCaptureRegion(getAnchorSystemState(), performance.now());
         const imageData = captureCurrentCameraFrame();
-        const roi = getPersonalityRoi(anchor.position, anchor.selectionRegion);
         const persona = await generatePersonality(imageData, roi);
 
         if (!persona || !ownsRequest()) {
@@ -465,9 +447,10 @@ const CameraView = () => {
       if (!canvas || !ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (!services.camera.isActive()) return;
+      const observationFresh = isSelectedObjectObservationFresh(state, performance.now());
 
       if (state.mode === 'anchor' && state.activeAnchor) {
-        if (showStats) {
+        if (showStats && observationFresh) {
           renderAnchorOverlay(ctx, {
             anchor: state.activeAnchor,
             anchorState: state.anchorState,
@@ -485,7 +468,9 @@ const CameraView = () => {
           processingTime: state.anchorState?.metrics?.processingTime ?? 0,
           objectCount: state.activeAnchor ? 1 : 0,
         });
-        if (state.anchorState?.anchored) renderKeypoints(ctx, services.anchor?.imageAnchorService);
+        if (state.anchorState?.anchored && observationFresh) {
+          renderKeypoints(ctx, services.anchor?.imageAnchorService);
+        }
       }
     },
     [services.anchor, services.camera, showStats],

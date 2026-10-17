@@ -1,4 +1,4 @@
-import { isObjectObservationFresh } from './cvScheduling.js';
+import { isSelectedObjectObservationFresh } from './cvScheduling.js';
 
 const TRACKED_STATES = new Set(['tracking', 'stable']);
 
@@ -26,11 +26,11 @@ export const isFaceObservationReady = (anchorState) => {
   );
 };
 
-export const shouldRenderAnchorOverlay = ({ activeAnchor, anchorState }) =>
-  activeAnchor != null && isFaceObservationReady(anchorState);
+export const shouldRenderAnchorOverlay = ({ activeAnchor, anchorState, observationExpired }) =>
+  observationExpired !== true && activeAnchor != null && isFaceObservationReady(anchorState);
 
 export const getRenderableAnchorOverlay = (state, now) =>
-  isObjectObservationFresh(state.sampledAt, now) && shouldRenderAnchorOverlay(state)
+  isSelectedObjectObservationFresh(state, now) && shouldRenderAnchorOverlay(state)
     ? state.activeAnchor
     : null;
 

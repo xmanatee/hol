@@ -158,6 +158,22 @@ test('a runtime error publishes immediately even without an anchor or another st
   assert.equal(scheduler.tasks.length, 0);
 });
 
+test('expiry publishes immediately while a timestamp-only observation is not discarded as a duplicate', () => {
+  const scheduler = createManualScheduler();
+  const initial = { ...createState(), sampledAt: 100, observationExpired: false };
+  const store = createAnchorStateStore(initial, scheduler.schedule);
+  const refreshed = { ...initial, sampledAt: 150 };
+  store.update(refreshed);
+  assert.equal(store.getLatest(), refreshed);
+  const expired = { ...refreshed, observationExpired: true };
+  store.update(expired);
+  assert.equal(store.getSnapshot(), expired);
+  assert.equal(scheduler.tasks[0].cancelled, true);
+  const recovered = { ...expired, sampledAt: 500, observationExpired: false };
+  store.update(recovered);
+  assert.equal(store.getSnapshot(), recovered);
+});
+
 test('anchor state store coalesces duplicate snapshots without dropping changed refresh diagnostics', () => {
   const scheduler = createManualScheduler();
   const initialState = createState({ mode: 'selection' });

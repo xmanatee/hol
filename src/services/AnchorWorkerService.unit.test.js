@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import { setImmediate } from 'node:timers/promises';
 
 import { AnchorWorkerService } from './AnchorWorkerService.js';
+import { createAnchorStateStore } from '../utils/anchorStateStore.js';
+import { describeAnchorStatus } from '../utils/anchorStatus.js';
+import { getRenderableAnchorOverlay } from '../utils/overlayVisibility.js';
+import { getCurrentObjectCaptureRegion } from '../utils/cameraFrameCapture.js';
 
 class FakeAnchorWorker {
   static instances = [];
@@ -68,6 +72,7 @@ const createState = (overrides = {}) => ({
   initialized: false,
   error: null,
   sampledAt: null,
+  observationExpired: false,
   ...overrides,
 });
 
@@ -80,7 +85,7 @@ const createDiscoveryClock = () => {
   const deadlines = new Set();
   return {
     now: () => now,
-    scheduleCandidateExpiry: (callback, delay) => {
+    scheduleObservationExpiry: (callback, delay) => {
       const deadline = { callback, at: now + delay };
       deadlines.add(deadline);
       return () => deadlines.delete(deadline);
@@ -223,27 +228,14 @@ test('fresh tracking replaces the old expiry and restores the same discovered ob
   assert.equal(service.getState().candidate.id, 7);
 });
 
-for (const operation of ['reset', 'dispose', 'worker failure', 'selection']) {
+for (const operation of ['reset', 'dispose', 'worker failure']) {
   test(`discovery cancels expiry on ${operation}`, async (t) => {
     t.mock.method(console, 'error', () => {});
     const { service, worker, clock, observe } = await createDiscoveryClient(t);
     await observe(1000);
     let publications = 0;
     service.addListener(() => publications++);
-    if (operation === 'selection') {
-      const selected = service.selectCandidate({
-        candidateId: 7,
-        capturedAt: 1000,
-        tapPosition: { x: 160, y: 120 },
-      });
-      await waitForWorkerPost();
-      worker.reply({
-        id: worker.messages.at(-1).id,
-        result: { success: true },
-        state: createState({ initialized: true, mode: 'anchor', activeAnchor: { id: 7 } }),
-      });
-      await selected;
-    } else if (operation === 'worker failure') {
+    if (operation === 'worker failure') {
       worker.onerror(new Error('Worker stopped'));
     } else {
       service[operation]();
@@ -255,6 +247,109 @@ for (const operation of ['reset', 'dispose', 'worker failure', 'selection']) {
     assert.equal(publications, beforeExpiry, 'retired candidates must not publish later');
   });
 }
+
+const createSelectedClient = async (t) => {
+  const client = await createDiscoveryClient(t);
+  const { service, worker, observe } = client;
+  await observe(1000);
+  const selected = service.selectCandidate({
+    candidateId: 7,
+    capturedAt: 1000,
+    tapPosition: { x: 160, y: 120 },
+  });
+  await waitForWorkerPost();
+  const state = createState({
+    initialized: true,
+    mode: 'anchor',
+    activeAnchor: { id: 7, createdAt: 1000, overlaySceneReady: true },
+    anchorState: {
+      anchored: true,
+      state: 'tracking',
+      position: { x: 160, y: 120 },
+      normal: { x: 0, y: 0, z: 1 },
+      metrics: {
+        targetPresent: true,
+        poseSource: 'planar-homography',
+        readiness: { poseReady: true, attachmentReady: true, faceReady: true },
+        currentObjectSupportMaskBounds: { x: 100, y: 60, width: 120, height: 120 },
+      },
+    },
+  });
+  worker.reply({ id: worker.messages.at(-1).id, result: { success: true }, state });
+  await selected;
+  const track = async (capturedAt, { update = true } = {}) => {
+    service.processFrame(createImageData(), { capturedAt, update, refreshSegmentation: !update });
+    await waitForWorkerPost();
+    worker.reply({ id: worker.messages.at(-1).id, result: true, state });
+  };
+  return { ...client, track };
+};
+
+test('selected observation expiry reaches rendering, HUD, diagnostics and capture without another frame', async (t) => {
+  const { service, worker, clock } = await createSelectedClient(t);
+  const store = createAnchorStateStore(service.getState(), () => () => {});
+  t.after(() => store.dispose());
+  service.addListener(store.update);
+  const original = service.getState();
+  const commandCount = worker.messages.length;
+  assert.equal(getRenderableAnchorOverlay(store.getLatest(), 1300), original.activeAnchor);
+  clock.advanceTo(1300);
+  assert.equal(service.getState().observationExpired, false);
+  clock.advanceTo(1301);
+
+  const expired = store.getSnapshot();
+  assert.equal(expired, store.getLatest(), 'expiry bypasses UI coalescing');
+  assert.equal(expired.observationExpired, true);
+  assert.equal(expired.sampledAt, 1000, 'expiry does not manufacture an observation');
+  assert.equal(expired.anchorState, original.anchorState, 'last geometry remains historical evidence');
+  assert.equal(expired.activeAnchor, original.activeAnchor, 'expiry preserves object identity');
+  assert.equal(getRenderableAnchorOverlay(expired, 1301), null);
+  const status = describeAnchorStatus({ cameraState: 'active', anchorSystemState: expired });
+  assert.equal(status.status, 'stale');
+  assert.equal(status.severity, 'warn');
+  assert.throws(() => getCurrentObjectCaptureRegion(expired, 1301), /fresh tracking/);
+  assert.equal(worker.messages.length, commandCount, 'expiry must not rerun tracking');
+  assert.equal(clock.pending(), 0);
+});
+
+test('selected mask refresh cannot renew evidence; only a fresh tracked frame restores authorization', async (t) => {
+  const { service, clock, track } = await createSelectedClient(t);
+  clock.advanceTo(1250);
+  await track(1250, { update: false });
+  assert.equal(service.getState().sampledAt, 1000);
+  clock.advanceTo(1301, { runTimers: false });
+  assert.equal(service.getState().observationExpired, true, 'late timers cannot renew evidence');
+  assert.equal(getRenderableAnchorOverlay(service.getState(), 1301), null);
+
+  await track(1301);
+  const restored = service.getState();
+  assert.equal(restored.observationExpired, false);
+  assert.equal(restored.sampledAt, 1301);
+  assert.equal(restored.activeAnchor.id, 7);
+  assert.equal(getRenderableAnchorOverlay(restored, 1301), restored.activeAnchor);
+  assert.deepEqual(getCurrentObjectCaptureRegion(restored, 1301), {
+    x: 100,
+    y: 60,
+    width: 120,
+    height: 120,
+  });
+  clock.advanceTo(1602);
+  assert.equal(service.getState().observationExpired, true);
+});
+
+test('late selected observations stay expired and reset cancels their remaining deadline', async (t) => {
+  const { service, clock, track } = await createSelectedClient(t);
+  clock.advanceTo(1400);
+  await track(1050);
+  assert.equal(service.getState().observationExpired, true);
+  assert.equal(clock.pending(), 0);
+  await track(1400);
+  assert.equal(clock.pending(), 1);
+  service.reset();
+  assert.equal(clock.pending(), 0);
+  assert.equal(service.getState().observationExpired, false);
+  assert.equal(service.getState().activeAnchor, null);
+});
 
 const createManualTimeoutScheduler = () => {
   let callback = null;

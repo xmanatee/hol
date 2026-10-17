@@ -1,3 +1,5 @@
+import { isSelectedObjectObservationFresh } from './cvScheduling.js';
+
 export const shouldCaptureCameraFrame = ({
   mode,
   shouldUpdateAnchor,
@@ -35,4 +37,21 @@ export const captureCameraFrame = ({ video, canvas, context }) => {
     context: captureContext,
     imageData: captureContext.getImageData(0, 0, width, height),
   };
+};
+export const getCurrentObjectCaptureRegion = (state, now) => {
+  if (!isSelectedObjectObservationFresh(state, now) || state.anchorState?.metrics?.targetPresent !== true) {
+    throw new Error('Waiting for fresh tracking. Keep the selected object visible.');
+  }
+  const bounds = state.anchorState.metrics.currentObjectSupportMaskBounds;
+  if (
+    !bounds ||
+    ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite) ||
+    bounds.x < 0 ||
+    bounds.y < 0 ||
+    bounds.width <= 0 ||
+    bounds.height <= 0
+  ) {
+    throw new Error('The current object outline is unavailable. Keep the selected object visible.');
+  }
+  return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
 };

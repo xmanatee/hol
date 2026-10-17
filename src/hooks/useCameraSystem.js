@@ -21,6 +21,7 @@ const createIdleDepthState = () => ({
 });
 
 const createIdleAnchorState = () => ({
+  observationExpired: false,
   mode: 'selection',
   activeAnchor: null,
   candidate: null,

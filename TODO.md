@@ -2,7 +2,7 @@
 
 P1: demo correctness, safety, and accessibility. P2: consolidation and measured optimization. Research items require evidence before adoption.
 Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep the visual demo local and backend-free.
-Resolve observation validity before geometry, uncertainty, and device acceptance. Research is an experiment, not a commitment to another framework, model, or backend.
+Prioritize trustworthy tracking evidence, correct surface geometry, and consistent observation expiry. Research is an experiment, not a commitment to another framework, model, or backend.
 
 ## Tracking and surface attachment
 
@@ -130,11 +130,6 @@ Resolve observation validity before geometry, uncertainty, and device acceptance
 
 - **P2 · Snapshot semantics:** Unify worker/UI diagnostic fields, reference IDs, timestamps, units, and unavailable values; remove duplicated projections and fabricated zero/success defaults.
   [State normalization](https://react.dev/learn/choosing-the-state-structure)
-- **P1 · Observation expiry:** Share selected-observation expiry across 3D, HUD, diagnostics, and optional image capture; the renderer expires after 300ms but selected status currently has no equivalent expiry notification.
-  [Frame timing](https://developer.mozilla.org/en-US/docs/Web/API/HTMLVideoElement/requestVideoFrameCallback), [Consistent state](https://react.dev/learn/choosing-the-state-structure)
-- **P1 · Live image ROI:** Replace `CameraView`'s original selection-region/persona crop with a fresh current-object ROI; reject lost/stale observations before capturing pixels or sending an optional vision request.
-  [Canvas source cropping](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/drawImage)
-
 - **P2 · Error contracts:** Distinguish rejected observations, ordinary target loss, unsupported capability, and runtime faults at worker boundaries; avoid exception-to-low-confidence conversions.
   [Worker ownership and transport](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers)
 

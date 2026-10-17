@@ -13,6 +13,8 @@ const getAnchorIdentity = (state) => {
 };
 
 const hasSameStatePayload = (previous, next) =>
+  previous.sampledAt === next.sampledAt &&
+  previous.observationExpired === next.observationExpired &&
   previous.mode === next.mode &&
   previous.activeAnchor === next.activeAnchor &&
   previous.candidate === next.candidate &&
@@ -25,6 +27,7 @@ const hasSameStatePayload = (previous, next) =>
 const hasStructuralChange = (previous, next) => {
   if (
     previous.mode !== next.mode ||
+    previous.observationExpired !== next.observationExpired ||
     previous.initialized !== next.initialized ||
     previous.error !== next.error ||
     previous.trackingMode !== next.trackingMode ||

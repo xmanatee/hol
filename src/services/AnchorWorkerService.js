@@ -19,11 +19,11 @@ export class AnchorWorkerService {
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     scheduleRequestTimeout,
     now = () => performance.now(),
-    scheduleCandidateExpiry = scheduleExpiry,
+    scheduleObservationExpiry = scheduleExpiry,
   } = {}) {
     this.now = now;
-    this.scheduleCandidateExpiry = scheduleCandidateExpiry;
-    this.cancelCandidateExpiry = null;
+    this.scheduleObservationExpiry = scheduleObservationExpiry;
+    this.cancelObservationExpiry = null;
     this.runsInWorker = true;
     this.initialized = false;
     this.error = null;
@@ -177,7 +177,7 @@ export class AnchorWorkerService {
     this.minimumStateRequestId = this.nextRequestId;
     this.candidate = null;
     this.sampledAt = null;
-    this._scheduleCandidateExpiry();
+    this._scheduleObservationExpiry();
     if (this.initialized && !this.initializationPromise) {
       this._send('setTrackingMode', { mode });
     }
@@ -204,6 +204,7 @@ export class AnchorWorkerService {
       initialized: this.initialized,
       error: this.error,
       sampledAt: this.sampledAt,
+      observationExpired: this.mode === 'anchor' && !isObjectObservationFresh(this.sampledAt, this.now()),
     };
   }
 
@@ -218,8 +219,8 @@ export class AnchorWorkerService {
   }
 
   _resetRuntime(reason) {
-    this.cancelCandidateExpiry?.();
-    this.cancelCandidateExpiry = null;
+    this.cancelObservationExpiry?.();
+    this.cancelObservationExpiry = null;
     this.workerGeneration++;
     this.workerCancellationReason = reason;
     this.workerPromise = null;
@@ -349,23 +350,24 @@ export class AnchorWorkerService {
     this.segmentationRefresh = state.segmentationRefresh;
     this.initialized = state.initialized;
     this.sampledAt = sampledAt;
-    this._scheduleCandidateExpiry();
+    this._scheduleObservationExpiry();
     this._notifyUpdate();
   }
 
-  _scheduleCandidateExpiry() {
-    this.cancelCandidateExpiry?.();
-    this.cancelCandidateExpiry = null;
+  _scheduleObservationExpiry() {
+    this.cancelObservationExpiry?.();
+    this.cancelObservationExpiry = null;
     const now = this.now();
-    if (!this.candidate || !isObjectObservationFresh(this.candidate.capturedAt, now)) return;
+    const capturedAt = this.mode === 'anchor' ? this.sampledAt : this.candidate?.capturedAt;
+    if (!isObjectObservationFresh(capturedAt, now)) return;
 
-    this.cancelCandidateExpiry = this.scheduleCandidateExpiry(
+    this.cancelObservationExpiry = this.scheduleObservationExpiry(
       () => {
-        this.cancelCandidateExpiry = null;
-        this._scheduleCandidateExpiry();
+        this.cancelObservationExpiry = null;
+        this._scheduleObservationExpiry();
         this._notifyUpdate();
       },
-      this.candidate.capturedAt + MAX_OBJECT_OBSERVATION_AGE_MS - now + 1,
+      capturedAt + MAX_OBJECT_OBSERVATION_AGE_MS - now + 1,
     );
   }
 

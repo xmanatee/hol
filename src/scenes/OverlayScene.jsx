@@ -9,7 +9,6 @@ import { getRenderableAnchorOverlay } from '../utils/overlayVisibility.js';
 import { DemandRenderScheduler } from '../utils/overlayRenderScheduler.js';
 import { observeWebGLContext } from '../utils/webglContextLifecycle.js';
 import { AnchorMotionPredictor } from '../utils/anchorMotionPredictor.js';
-import { MAX_OBJECT_OBSERVATION_AGE_MS } from '../utils/cvScheduling.js';
 
 const MAX_DEVICE_PIXEL_RATIO = 1.5;
 const WEBGL_OPTIONS = {
@@ -130,19 +129,11 @@ const LiveAnchorGroup = ({
   const liveStateRef = useRef(anchorSystemState);
   const sampledAtRef = useRef(null);
   const anchorIdentityRef = useRef(null);
-  const expiryTimerRef = useRef(null);
   const [motionPredictor] = useState(() => new AnchorMotionPredictor());
 
   const updateObservation = useCallback(
     (state) => {
       liveStateRef.current = state;
-      window.clearTimeout(expiryTimerRef.current);
-      if (Number.isFinite(state.sampledAt)) {
-        expiryTimerRef.current = window.setTimeout(
-          invalidate,
-          Math.max(0, state.sampledAt + MAX_OBJECT_OBSERVATION_AGE_MS - performance.now()) + 1,
-        );
-      }
       invalidate();
     },
     [invalidate],
@@ -153,11 +144,7 @@ const LiveAnchorGroup = ({
   }, [anchorSystemState, updateObservation]);
 
   useEffect(() => {
-    const unsubscribe = subscribeAnchorSystemState(updateObservation);
-    return () => {
-      unsubscribe();
-      window.clearTimeout(expiryTimerRef.current);
-    };
+    return subscribeAnchorSystemState(updateObservation);
   }, [subscribeAnchorSystemState, updateObservation]);
 
   useFrame(() => {

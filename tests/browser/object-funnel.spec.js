@@ -500,6 +500,11 @@ for (const [scenario, failedUrl, title] of [
         ),
       )
       .toBe(true);
+    await expect(page.getByText('stale', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Debug drawer', exact: true }).click();
+    await expect(page.getByText('Waiting for fresh tracking', { exact: true })).toBeVisible();
+    await expect(page.getByText('Last tracking diagnostics (expired)', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Close debug drawer', exact: true }).click();
     await page.evaluate(() => window.__holResumeObjectVideo());
     await expect
       .poll(() => page.evaluate(() => performance.now() - window.__holLastDrawAt))

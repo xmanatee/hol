@@ -158,7 +158,9 @@ export const FieldControlsAnchor = ({
         {anchorSystemState.anchorState && (
           <details className="mt-3">
             <summary className="min-h-11 cursor-pointer py-3 text-sm text-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">
-              Tracking diagnostics
+              {anchorSystemState.observationExpired
+                ? 'Last tracking diagnostics (expired)'
+                : 'Tracking diagnostics'}
             </summary>
             <AnchorDiagnostics details={details} />
           </details>

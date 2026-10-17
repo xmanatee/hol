@@ -48,6 +48,15 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
   const metrics = serviceState?.metrics || {};
   const reconstructionMode = isReconstructionMode(metrics.poseModel);
 
+  if (anchorSystemState.observationExpired) {
+    return {
+      status: 'stale',
+      severity: 'warn',
+      message: 'Waiting for fresh tracking',
+      recommendation: 'The face is hidden until tracking catches up. Keep the selected object visible.',
+    };
+  }
+
   if (shouldRenderAnchorOverlay(anchorSystemState)) {
     return {
       status: metrics.surfaceAttachment ? 'attached' : 'tracking',
