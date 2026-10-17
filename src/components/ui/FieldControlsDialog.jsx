@@ -1,13 +1,33 @@
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 
 const FieldControlsDialog = ({ busy = false, children, onOpenChange }) => {
   const closeButtonRef = useRef(null);
+  const dialogRef = useRef(null);
 
-  useEffect(() => {
-    closeButtonRef.current.focus();
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    const desktop = window.matchMedia('(min-width: 48rem)');
+    const showDialog = () => {
+      const focusedControl = dialog.contains(document.activeElement) ? document.activeElement : null;
+      if (dialog.open) {
+        dialog.close();
+      }
+      if (desktop.matches) {
+        dialog.show();
+      } else {
+        dialog.showModal();
+      }
+      (focusedControl ?? closeButtonRef.current).focus();
+    };
+    showDialog();
+    desktop.addEventListener('change', showDialog);
+    return () => {
+      desktop.removeEventListener('change', showDialog);
+      dialog.close();
+    };
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const handleEscape = (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -19,13 +39,16 @@ const FieldControlsDialog = ({ busy = false, children, onOpenChange }) => {
   }, [onOpenChange]);
 
   return (
-    <div
+    <dialog
+      ref={dialogRef}
       id="field-controls-drawer"
-      role="dialog"
-      aria-modal="false"
       aria-labelledby="field-controls-title"
       aria-busy={busy}
-      className="fixed inset-x-0 bottom-0 z-50 flex min-h-32 max-h-[82dvh] flex-col overflow-hidden rounded-t-xl border border-white/10 bg-black/90 pb-[env(safe-area-inset-bottom)] text-white shadow-2xl backdrop-blur-xl overscroll-contain md:inset-y-3 md:left-auto md:right-3 md:max-h-none md:w-[24rem] md:rounded-xl md:pb-0"
+      onCancel={(event) => {
+        event.preventDefault();
+        onOpenChange(false);
+      }}
+      className="fixed inset-x-0 top-auto bottom-0 z-50 m-0 hidden h-auto min-h-32 max-h-[82dvh] w-full max-w-none flex-col overflow-hidden rounded-t-xl border border-white/10 bg-black/90 p-0 pb-[env(safe-area-inset-bottom)] text-white shadow-2xl backdrop-blur-xl overscroll-contain open:flex backdrop:bg-black/40 md:inset-y-3 md:left-auto md:right-3 md:max-h-none md:w-[24rem] md:rounded-xl md:pb-0"
     >
       <div className="flex shrink-0 items-center gap-3 border-b border-white/10 px-4 py-2">
         <h2 id="field-controls-title" className="min-w-0 text-sm font-semibold">
@@ -42,7 +65,7 @@ const FieldControlsDialog = ({ busy = false, children, onOpenChange }) => {
         </button>
       </div>
       {children}
-    </div>
+    </dialog>
   );
 };
 

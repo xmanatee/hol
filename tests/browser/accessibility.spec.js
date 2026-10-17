@@ -96,6 +96,8 @@ test('field-control drawer code loads once and remains closeable during cold loa
   await expect(loadingDrawer).toHaveAttribute('aria-busy', 'true');
   await expect(page.getByText('Loading controls…')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Close debug drawer' })).toBeFocused();
+  await drawerTrigger.focus();
+  await expect(page.getByRole('button', { name: 'Close debug drawer' })).toBeFocused();
 
   await page.keyboard.press('Escape');
   await expect(loadingDrawer).toBeHidden();
@@ -366,6 +368,54 @@ test('camera controls and field drawer support keyboard navigation', async ({ pa
   await expect(page.getByRole('dialog', { name: 'Field controls' })).toBeHidden();
   await expect(drawerTrigger).toHaveAttribute('aria-expanded', 'false');
   await expect(drawerTrigger).toBeFocused();
+});
+
+test('field controls contain mobile focus and retain desktop scene interaction across resizing', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');
+  await page.goto('/');
+  await startCamera(page);
+  const trigger = page.getByRole('button', { name: 'Debug drawer', exact: true });
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: 'Field controls' });
+  const close = dialog.getByRole('button', { name: 'Close debug drawer' });
+  await expect(dialog.getByRole('tab', { name: 'anchor', exact: true })).toBeVisible();
+  await expect(close).toBeFocused();
+  await trigger.focus();
+  await expect(close).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(trigger).not.toBeFocused();
+  await expect(
+    page.getByRole('button', { name: 'Select the object at the camera center' }),
+  ).not.toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(close).toBeFocused();
+
+  const voice = dialog.getByRole('tab', { name: 'voice', exact: true });
+  await voice.click();
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expect.poll(() => dialog.evaluate((element) => element.matches(':modal'))).toBe(false);
+  await expect(voice).toBeFocused();
+  await trigger.focus();
+  await expect(trigger).toBeFocused();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => dialog.evaluate((element) => element.matches(':modal'))).toBe(true);
+  await expect(close).toBeFocused();
+  await expect(voice).toHaveAttribute('aria-selected', 'true');
+  await trigger.focus();
+  await expect(close).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await dialog.getByRole('button', { name: 'Stop camera', exact: true }).click();
+  const start = page.getByRole('button', { name: 'Start Camera', exact: true });
+  await expect(start).toBeVisible();
+  await start.focus();
+  await expect(start).toBeFocused();
 });
 
 test('field controls preserve one controlled state across close, reopen, and camera restart', async ({

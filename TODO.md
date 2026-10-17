@@ -93,8 +93,6 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
 
 - **P1 · Text reflow:** Fix clipped start-screen content and offscreen HUD Stop Camera at 200% text/320px and short landscape; assert viewport bounds and hit-testing, not just scroll width.
   [WCAG reflow](https://www.w3.org/WAI/WCAG22/Understanding/reflow.html)
-- **P1 · Sheet focus:** Prevent mobile drawer focus from reaching covered HUD controls; use coherent modal/inert behavior while preserving useful desktop nonmodal interaction.
-  [Unobscured focus](https://www.w3.org/WAI/WCAG22/Understanding/focus-not-obscured-minimum.html), [Modal dialogs](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/)
 - **P2 · Live-scene legibility:** Test candidate outlines and attachment markers on bright, dark, and same-hue footage; provide contrasting boundaries and redundant readiness cues where existing overlays disappear.
   [Non-text contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html), [Use of color](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html)
 - **P2 · Task grouping:** Separate Tracking from Face controls; collapse experimental modes, rig tools, and microphone diagnostics, with plain-language capability/cost labels.
