@@ -8,25 +8,29 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
 
 ### Detection and geometry
 
-- **P1 · Scenario recognition:** Replace the explicit user prior with verified can/body, bottle/label, and paper hypotheses; preserve unknown and reject merged objects. Point-prompt confidence is neither instance identity nor shape evidence.
+- **P1 · Scenario recognition:** Verify can/body, bottle/label, and paper hypotheses before routing; preserve unknown when the chosen scenario disagrees with observations. Keep general-object discovery secondary and explicit, never a silent replacement for failed scenario tracking.
   [MediaPipe scope](https://ai.google.dev/edge/mediapipe/solutions/vision/interactive_segmenter), [Temporal segmentation](https://github.com/facebookresearch/sam2)
+- **P1 · Part/whole ownership:** Separate object identity, label mask, and rigid attachment patch; reject initial foreground/background merges as well as refresh expansion. Test multicolored printing and touching, differently colored objects: a color boundary is a cue, not an instance boundary.
+  [Prompt ambiguity](https://arxiv.org/abs/2304.02643), [Point-mask scope](https://ai.google.dev/edge/mediapipe/solutions/vision/interactive_segmenter)
 - **P1 · Can body:** Fit the central cylinder separately from rims/taper; estimate its axis and visible tangent under camera tilt, and track printed material rather than highlight motion. Do not infer azimuth from an axisymmetric outline.
   [Cylinder target constraints](https://developer.vuforia.com/library/vuforia-engine/images-and-objects/cylinder-targets/cylinder-targets/)
 - **P1 · Bottle labels:** Separate whole-bottle identity, body radius/axis, and label support; cover partial rectangular labels and full wraps without using label width as bottle diameter. Exclude neck, shoulder, transparent glass, and refracted background from attachment evidence.
   [Cylinder geometry](https://developer.vuforia.com/library/vuforia-engine/images-and-objects/cylinder-targets/cylinder-targets/)
-- **P1 · Paper reference:** Detect and persist four boundary corners, rectify the initial oblique view under an explicit rectangle prior and intrinsics, and support blank sheets. A projected quadrilateral alone cannot prove a rectangle rather than a rhombus.
+- **P1 · Paper reference:** Track four boundary corners, including blank sheets, and rectify into Euclidean surface coordinates before PnP using a rectangle prior and intrinsics. Arbitrary flat contours or rhombi must retain unknown initial orientation rather than inherit a rectangle assumption.
   [Homography and calibration](https://docs.opencv.org/4.x/d9/dab/tutorial_homography.html)
 
 ### Acceptance and alternatives
 
-- **P1 · Recovery consistency:** Resolve the five-inlier local recovery/eight-landmark pose deadlock; do not starve stronger matching behind weak ORB success. Validate XFeat against material-point identity before extending it to curved targets; broad routing produced a false bottle attachment in the analytic camera/glare test.
+- **P1 · Recovery consistency:** Resolve the five-inlier local recovery/eight-landmark pose deadlock; do not starve stronger matching behind weak ORB success. Require verified material-point identity before extending XFeat recovery to curved targets, not merely more descriptor inliers.
   [XFeat](https://github.com/verlab/accelerated_features), [Geometric evidence](https://docs.opencv.org/4.x/d9/dab/tutorial_homography.html)
 - **P1 · Negative evidence:** Reconcile repeated mask/pose disagreement without merging neighboring objects, retaining a wrong reference, or presenting an indefinitely green attachment; cover recovery after glare rather than accepting a mask merely because it contains the anchor.
   [Temporal segmentation](https://github.com/facebookresearch/sam2)
-- **P1 · Scoped acceptance:** Make all four fresh-frame analytic camera/glare browser cases pass, then add held-out real cans and both label wraps; measure continuous tremor, initial-normal error, leakage, turns, occlusion, and false green. Rendered inputs must not supply oracle masks to discovery.
+- **P1 · Scoped acceptance:** Pass all four fresh-frame camera/glare browser cases, then held-out printed cans, partial wine/champagne labels, full drink wraps, and blank/printed paper. Require continuous tremor, correct initial normals, visible attached-face motion, turns, occlusion/recovery, and no false green; never supply oracle masks to discovery.
   [Tracking evaluation](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md), [Physical rendering](https://github.com/DLR-RM/BlenderProc)
-- **Research · Geometry cues:** Compare calibrated primitive fitting, temporal segmentation, relative depth, and multiview reconstruction on the same scoped clips; require actual benefit, latency, and licensing evidence. Depth or a point cloud alone does not establish instance identity or metric pose.
+- **Research · Geometry cues:** Ablate calibrated primitive fitting, temporal masks, and relative depth on identical scoped clips; measure geometry/identity benefit, latency, and licensing before adoption. Relative depth is a shape cue, not independent proof of instance identity or metric pose.
   [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2), [EdgeTAM](https://github.com/facebookresearch/EdgeTAM)
+- **Research · Iterative refinement:** Evaluate persistent tracks → triangulation → object-local map → mask/primitive refinement, accepting only independently observed improvement. Require parallax and rigid support; pure camera rotation, glare, or a self-projected shape prior must not increase observed geometry confidence.
+  [Incremental reconstruction and degeneracies](https://colmap.github.io/tutorial.html), [View geometry](https://docs.opencv.org/4.x/d9/dab/tutorial_homography.html)
 
 ## Tracking and surface attachment
 
@@ -47,7 +51,7 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
 
 ### Geometry and observability
 
-- **P1 · Reconstruction evidence:** Separate primitive-imposed depth from observed geometry; require informative view change and conditioning, and bound the orthographic factorization's perspective error before claiming reconstructed shape.
+- **P1 · Reconstruction evidence:** Separate user/primitive-imposed shape from measured depth, axis, and tangent; retain unknown initial orientation until supported. Require informative view change and conditioning, and bound orthographic factorization's perspective error before claiming reconstructed shape.
   [Shape/motion factorization](https://publications.ri.cmu.edu/shape-and-motion-from-image-streams-under-orthography-a-factorization-method)
 - **P1 · Camera model:** Quantify the fixed 63° FOV/zero-distortion error on target cameras; support measured intrinsics or explicitly bounded approximate attachment.
   [Camera calibration](https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html)
@@ -79,7 +83,7 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
 
 - **P1 · Full funnel:** Add licensed real can, glass, paper, and laptop clips with independent masks, points, visibility, and negative scenes; exercise discovery through face placement without oracle masks.
   [TAP-Vid](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md), [Pose/mask datasets](https://bop.felk.cvut.cz/datasets/)
-- **P1 · Physical rendering:** Generate sequences with independent camera/object/light motion, material-point ground truth, reflections, refraction, and calibrated projection; keep render tooling outside the app runtime.
+- **P1 · Physical rendering:** Replace aliased procedural-texture limits with antialiased, calibrated sequences: continuous subpixel tremor, independent camera/object/light motion, material-point normals, wrap seams, reflections, and transparent/refraction cases. Current opaque analytic bottles and settled pose steps do not certify these cases; keep tooling outside runtime.
   [BlenderProc](https://github.com/DLR-RM/BlenderProc)
 - **P1 · Product targets:** Define acceptance limits for false green, attachment drift/jitter, wrong identity, outages, and recovery latency; preserve regression floors without treating them as product readiness.
   [Tracking metrics](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md)
