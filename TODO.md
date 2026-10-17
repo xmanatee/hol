@@ -101,8 +101,6 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
   [Progressive disclosure](https://www.nngroup.com/articles/progressive-disclosure/)
 - **P2 · Shared controls:** Reuse existing button/color/focus primitives for persona and speech actions; align touch sizing and disabled/error states without adding another UI kit.
   [Touch targets](https://www.w3.org/WAI/WCAG22/Understanding/target-size-enhanced.html)
-- **P2 · Speech control:** Expose cancel synthesis and stop playback without clearing the object or camera; keep ownership, feedback, and keyboard access consistent.
-  [User control](https://www.nngroup.com/articles/ten-usability-heuristics/)
 
 ## Architecture and contracts
 

@@ -6,6 +6,7 @@ import { FieldControlsVoice } from './FieldControlsVoice.jsx';
 import { cx } from './uiClassNames.js';
 import FieldControlsDialog from './FieldControlsDialog.jsx';
 import { AnchorStatusMessage } from './AnchorStatusMessage.jsx';
+import { SpeechStopButton } from './FieldControlPrimitives.jsx';
 
 const TAB_IDS = ['anchor', 'voice', 'model', 'system'];
 
@@ -40,6 +41,7 @@ const FieldControlsDrawer = ({
   onShowStatsChange,
   onSpeakGreeting,
   onStopCamera,
+  onStopSpeech,
   onVoiceActivityThresholdChange,
   personalityData,
   rotation,
@@ -175,6 +177,7 @@ const FieldControlsDrawer = ({
           hasActiveAnchor ? 'grid-cols-2' : 'grid-cols-1',
         )}
       >
+        <SpeechStopButton ttsData={ttsData} onStopSpeech={onStopSpeech} showLabel />
         {hasActiveAnchor && (
           <button
             type="button"

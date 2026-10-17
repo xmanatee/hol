@@ -353,14 +353,29 @@ const CameraView = () => {
   const handleSpeakGreeting = useCallback(async () => {
     const anchor = getAnchorSystemState().activeAnchor;
     if (!anchor) return;
+    const requestId = ++autoVoiceRequestRef.current;
     try {
       await speakGreeting();
     } catch (error) {
-      if (getAnchorSystemState().activeAnchor?.createdAt !== anchor.createdAt) return;
+      if (
+        !ownsObjectVoiceRequest({
+          requestId,
+          currentRequestId: autoVoiceRequestRef.current,
+          anchorCreatedAt: anchor.createdAt,
+          activeAnchor: getAnchorSystemState().activeAnchor,
+        })
+      )
+        return;
       logger.error('CameraView', 'Greeting playback failed:', error);
       showAnchorFeedback(`Voice not started: ${error.message}`, 'bad');
     }
   }, [getAnchorSystemState, showAnchorFeedback, speakGreeting]);
+
+  const handleStopSpeech = useCallback(() => {
+    autoVoiceRequestRef.current++;
+    stopTTS();
+    showAnchorFeedback('Speech stopped.', 'good');
+  }, [showAnchorFeedback, stopTTS]);
 
   const candidateId = anchorSystemState.candidate?.id ?? null;
   const handleCanvasSelect = useCallback(
@@ -661,6 +676,7 @@ const CameraView = () => {
           ttsData={ttsData}
           onGeneratePersonality={handleGeneratePersonality}
           onSpeakGreeting={handleSpeakGreeting}
+          onStopSpeech={handleStopSpeech}
           discoveredMeshes={discoveredMeshes}
           hiddenMeshes={hiddenMeshes}
           rotation={manualRotation}

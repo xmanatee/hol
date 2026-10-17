@@ -29,6 +29,7 @@ const FieldControls = (props) => {
     onMicrophoneModeChange,
     onOpenChange,
     onStopCamera,
+    onStopSpeech,
     open,
     ttsData,
   } = props;
@@ -58,6 +59,7 @@ const FieldControls = (props) => {
         ttsData={ttsData}
         onClearAnchor={onClearAnchor}
         onStopCamera={onStopCamera}
+        onStopSpeech={onStopSpeech}
         onMicrophoneModeChange={onMicrophoneModeChange}
         onOpen={() => onOpenChange(true)}
         triggerRef={triggerRef}

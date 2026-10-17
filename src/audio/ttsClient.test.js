@@ -169,6 +169,81 @@ test('stopping local playback is idempotent and completes the active request onc
 
   assert.equal(client.audioContext.source.stopped, true);
   assert.deepEqual(events, ['complete']);
+  assert.equal(client.getMetrics().successfulRequests, 0);
+});
+
+test('stopping speech during audio startup prevents late synthesis and allows a new request', async () => {
+  const ready = createDeferred();
+  let resuming = false;
+  let requests = 0;
+  class SuspendedAudioContext extends FakeAudioContext {
+    constructor() {
+      super();
+      this.state = 'suspended';
+    }
+    async resume() {
+      resuming = true;
+      await ready.promise;
+      this.state = 'running';
+    }
+  }
+  const client = createClient({
+    AudioContextClass: SuspendedAudioContext,
+    fetchImpl: async () => {
+      requests++;
+      return audioResponse();
+    },
+  });
+  const speech = synthesizeTestSpeech(client, 'cancel startup');
+  await waitFor(() => resuming, 'audio startup did not begin');
+  client.stopCurrentAudio();
+  ready.resolve();
+  assert.equal(await speech, false);
+  assert.equal(requests, 0);
+  assert.equal(client.isPlaying, false);
+  assert.equal(await synthesizeTestSpeech(client, 'new speech'), true);
+  await client.dispose();
+});
+
+test('stopping speech discards late download and decode completion without reporting errors', async () => {
+  for (const stage of ['download', 'decode']) {
+    const pending = createDeferred();
+    const reachedStage = createDeferred();
+    let signal = null;
+    const errors = [];
+    class DecodingAudioContext extends FakeAudioContext {
+      async decodeAudioData(buffer) {
+        if (stage === 'decode') {
+          reachedStage.resolve();
+          return await pending.promise;
+        }
+        return super.decodeAudioData(buffer);
+      }
+    }
+    const client = createClient({
+      AudioContextClass: DecodingAudioContext,
+      fetchImpl: async (_url, options) => {
+        signal = options.signal;
+        if (stage === 'download') {
+          reachedStage.resolve();
+          return await pending.promise;
+        }
+        return audioResponse();
+      },
+    });
+    client.addListener({ onError: ({ error }) => errors.push(error) });
+    const speech = synthesizeTestSpeech(client, 'cancel pending speech');
+    await reachedStage.promise;
+    client.stopCurrentAudio();
+    if (stage === 'download') assert.equal(signal.aborted, true);
+    pending.resolve(stage === 'download' ? audioResponse() : { byteLength: 4 });
+    assert.equal(await speech, false);
+    assert.equal(client.isPlaying, false);
+    assert.equal(client.audioContext.source.started, undefined);
+    assert.equal(client.getMetrics().successfulRequests, 0);
+    assert.deepEqual(errors, []);
+    await client.dispose();
+  }
 });
 
 test('local speech configuration and provider failures are explicit', async () => {

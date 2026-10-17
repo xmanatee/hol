@@ -78,6 +78,7 @@ export const useCameraSystem = (config = {}) => {
   const [session, setSession] = useState(() => createCameraSessionServices(sessionConfig));
   const sessionRef = useRef(session);
   const mountedRef = useRef(false);
+  const speechRequestRef = useRef(0);
   const depthServiceRef = useRef(null);
   const depthServicePromiseRef = useRef(null);
   const depthGenerationRef = useRef(0);
@@ -312,19 +313,6 @@ export const useCameraSystem = (config = {}) => {
 
     const ttsClient = session.tts;
     const removeTTSListener = ttsClient.addListener({
-      onSynthesisStart: ({ text, voiceStyle, emotionalDelivery, requestId }) => {
-        logger.info('CameraSystem', 'TTS synthesis started:', {
-          text,
-          voiceStyle,
-          emotionalDelivery,
-          requestId,
-        });
-        setTTSData((prev) => ({
-          ...prev,
-          isSynthesizing: true,
-          error: null,
-        }));
-      },
       onAudioStart: ({ latencyToFirstAudio }) => {
         logger.info('CameraSystem', 'TTS audio started, latency:', latencyToFirstAudio, 'ms');
         setTTSData((prev) => ({
@@ -335,7 +323,7 @@ export const useCameraSystem = (config = {}) => {
         }));
       },
       onPlaybackComplete: () => {
-        logger.info('CameraSystem', 'TTS playback completed');
+        logger.info('CameraSystem', 'Speech activity ended');
         setTTSData((prev) => ({
           ...prev,
           isPlaying: false,
@@ -348,15 +336,6 @@ export const useCameraSystem = (config = {}) => {
           emotionalDelivery,
           latency,
         });
-      },
-      onError: ({ error }) => {
-        logger.error('CameraSystem', 'TTS error:', error);
-        setTTSData((prev) => ({
-          ...prev,
-          isSynthesizing: false,
-          isPlaying: false,
-          error,
-        }));
       },
     });
 
@@ -513,14 +492,35 @@ export const useCameraSystem = (config = {}) => {
   );
 
   const synthesizeSpeech = useCallback(
-    (text, voiceStyle, emotionalDelivery) => {
-      return session.tts.synthesizeSpeech(text, voiceStyle, emotionalDelivery);
+    async (text, voiceStyle, emotionalDelivery) => {
+      const requestId = ++speechRequestRef.current;
+      const ownsRequest = () =>
+        mountedRef.current && sessionRef.current === session && requestId === speechRequestRef.current;
+      setTTSData((current) => ({ ...current, isSynthesizing: true, isPlaying: false, error: null }));
+      try {
+        const started = await session.tts.synthesizeSpeech(text, voiceStyle, emotionalDelivery);
+        if (!started && ownsRequest()) {
+          setTTSData((current) => ({ ...current, isSynthesizing: false, isPlaying: false }));
+        }
+        return started;
+      } catch (error) {
+        if (!ownsRequest()) return false;
+        setTTSData((current) => ({
+          ...current,
+          isSynthesizing: false,
+          isPlaying: false,
+          error: error.message,
+        }));
+        throw error;
+      }
     },
     [session],
   );
 
   const stopTTS = useCallback(() => {
+    speechRequestRef.current++;
     session.tts.stopCurrentAudio();
+    setTTSData((current) => ({ ...current, isSynthesizing: false, isPlaying: false, error: null }));
   }, [session]);
 
   const speakGreeting = useCallback(() => {

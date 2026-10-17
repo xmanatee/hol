@@ -127,18 +127,16 @@ export class TTSClient {
     if (this.disposed) {
       return false;
     }
+    this.stopCurrentAudio();
     const runtimeGeneration = this.runtimeGeneration;
     if (!(await this._ensureAudioContextReady(runtimeGeneration))) {
       return false;
     }
-    this.stopCurrentAudio();
-
     const startedAt = performance.now();
     const requestId = ++this.metrics.totalRequests;
     const abortController = new AbortController();
     this.currentAbortController = abortController;
     this.currentRequest = { requestId, text: input, ...speechPerformance, startedAt };
-    this.emit('onSynthesisStart', { requestId, text: input, ...speechPerformance });
 
     try {
       const encodedAudio = await this.aiClient.createSpeech(
@@ -188,9 +186,9 @@ export class TTSClient {
     this.frequencyData = new Uint8Array(analyserNode.frequencyBinCount);
     this.isPlaying = true;
 
+    sourceNode.start();
     const latencyToFirstAudio = performance.now() - startedAt;
     this.emit('onAudioStart', { latencyToFirstAudio });
-    sourceNode.start();
   }
 
   readFrame() {
@@ -201,7 +199,7 @@ export class TTSClient {
     return writeAudioAnalysisFromFrequencyData(this.frequencyData, 1, this.latestFrame);
   }
 
-  _completePlayback() {
+  _completePlayback({ cancelled = false } = {}) {
     if (!this.isPlaying && !this.currentRequest) {
       return;
     }
@@ -217,7 +215,7 @@ export class TTSClient {
     this.currentRequest = null;
     this.emit('onPlaybackComplete');
 
-    if (request) {
+    if (request && !cancelled) {
       const latency = performance.now() - request.startedAt;
       this.metrics.successfulRequests++;
       this.metrics.lastLatency = latency;
@@ -236,6 +234,7 @@ export class TTSClient {
   }
 
   stopCurrentAudio() {
+    this.runtimeGeneration++;
     this.currentAbortController?.abort();
     this.currentAbortController = null;
     if (this.sourceNode && this.isPlaying) {
@@ -243,11 +242,8 @@ export class TTSClient {
       this.sourceNode = null;
       sourceNode.onended = null;
       sourceNode.stop();
-      this._completePlayback();
-    } else if (this.currentRequest) {
-      this.currentRequest = null;
-      this.emit('onPlaybackComplete');
     }
+    this._completePlayback({ cancelled: true });
   }
 
   getMetrics() {
@@ -265,7 +261,6 @@ export class TTSClient {
       return;
     }
     this.disposed = true;
-    this.runtimeGeneration++;
     this.stopCurrentAudio();
     this.listeners.clear();
     const audioContext = this.audioContext;

@@ -1,4 +1,5 @@
 import { cx } from './uiClassNames.js';
+import { Square } from 'lucide-react';
 
 export const IconButton = ({
   label,
@@ -7,6 +8,7 @@ export const IconButton = ({
   active = false,
   tone = 'neutral',
   className = '',
+  showLabel = false,
   ...props
 }) => {
   const IconComponent = icon;
@@ -18,7 +20,10 @@ export const IconButton = ({
       aria-label={label}
       title={label}
       className={cx(
-        'grid h-11 w-11 place-items-center rounded-md border text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70',
+        'shrink-0 rounded-md border text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70',
+        showLabel
+          ? 'flex min-h-11 w-full items-center justify-center gap-2 px-3'
+          : 'grid h-11 w-11 place-items-center',
         active
           ? 'border-white bg-white text-black'
           : 'border-white/15 bg-black/55 text-white hover:bg-white/10',
@@ -29,9 +34,22 @@ export const IconButton = ({
       {...props}
     >
       <IconComponent size={18} strokeWidth={2} aria-hidden="true" />
+      {showLabel && <span>{label}</span>}
     </button>
   );
 };
+
+export const SpeechStopButton = ({ ttsData, onStopSpeech, showLabel = false }) =>
+  ttsData.isSynthesizing || ttsData.isPlaying ? (
+    <IconButton
+      label={ttsData.isSynthesizing ? 'Cancel speech' : 'Stop speech'}
+      icon={Square}
+      tone="danger"
+      onClick={onStopSpeech}
+      showLabel={showLabel}
+      className={showLabel ? 'col-span-full' : ''}
+    />
+  ) : null;
 
 export const DynamicText = ({ children, className = '' }) => (
   <span dir="auto" className={cx('min-w-0 [overflow-wrap:anywhere]', className)}>
