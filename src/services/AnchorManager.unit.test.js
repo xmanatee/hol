@@ -519,7 +519,20 @@ test('anchor manager records overlay readiness once and never regresses it durin
     anchored: true,
     state: 'tracking',
     position: { x: 20, y: 30, z: 0 },
-    metrics: { readiness: { faceReady: true } },
+    metrics: { targetPresent: true, readiness: { faceReady: true } },
+  });
+  assert.equal(manager.getState().activeAnchor.overlaySceneReady, false);
+
+  manager._onAnchorUpdate({
+    anchored: true,
+    state: 'tracking',
+    position: { x: 20, y: 30, z: 0 },
+    normal: { x: 0, y: 0, z: 1 },
+    metrics: {
+      targetPresent: true,
+      poseSource: 'planar-homography',
+      readiness: { poseReady: true, attachmentReady: true, faceReady: true },
+    },
   });
   assert.equal(manager.activeAnchor.overlaySceneReady, true);
 
@@ -527,9 +540,10 @@ test('anchor manager records overlay readiness once and never regresses it durin
     anchored: true,
     state: 'lost',
     position: { x: 20, y: 30, z: 0 },
-    metrics: { readiness: { faceReady: false } },
+    metrics: {},
   });
   assert.equal(manager.activeAnchor.overlaySceneReady, true);
+  assert.equal(manager.getState().activeAnchor.readiness, null);
 });
 
 test('anchor manager refreshes segmentation when object-owned landmark ratio drops', async () => {

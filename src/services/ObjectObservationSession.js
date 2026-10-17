@@ -1,4 +1,5 @@
 import { isObjectObservationFresh } from '../utils/cvScheduling.js';
+import { isFaceObservationReady } from '../utils/overlayVisibility.js';
 
 const DISCOVERY_INTERVAL_MS = 750;
 const MIN_TRACKING_OBSERVATIONS = 3;
@@ -170,7 +171,7 @@ export class ObjectObservationSession {
       this.subject.trackingObservations >= MIN_TRACKING_OBSERVATIONS &&
       this.subject.capturedAt - this.subject.trackingSince >= MIN_TRACKING_DURATION_MS;
     const present = metrics.targetPresent === true;
-    const ready = present && tracked && metrics.readiness?.faceReady === true;
+    const ready = tracked && isFaceObservationReady(state.anchorState);
     const candidate = {
       id: this.subject.id,
       status: !present ? 'lost' : ready ? 'ready' : tracked ? 'tracking' : 'segmented',

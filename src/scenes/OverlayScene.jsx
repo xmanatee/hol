@@ -166,7 +166,7 @@ const LiveAnchorGroup = ({
     const liveState = liveStateRef.current;
     const activeAnchor = getRenderableAnchorOverlay(liveState, now);
     const anchorIdentity = activeAnchor ? (activeAnchor.createdAt ?? activeAnchor.id) : null;
-    if (!activeAnchor || !liveState.anchorState?.position || !Number.isFinite(liveState.sampledAt)) {
+    if (!activeAnchor) {
       motionPredictor.reset();
       sampledAtRef.current = null;
       if (!liveState.activeAnchor) anchorIdentityRef.current = null;

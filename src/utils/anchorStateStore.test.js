@@ -12,9 +12,12 @@ const createState = ({ mode = 'anchor', createdAt = 1, x = 0, poseSource = 'plan
           anchored: true,
           state: 'tracking',
           position: { x, y: 20 },
+          normal: { x: 0, y: 0, z: 1 },
           metrics: {
+            targetPresent: true,
             poseModel: 'sparse-reconstruction',
             poseSource,
+            readiness: { poseReady: true, attachmentReady: true, faceReady: true },
           },
         }
       : null,
@@ -130,6 +133,19 @@ test('anchor state store disposal cancels pending UI publication', () => {
   scheduler.runNext();
 
   assert.equal(publicationCount, 0);
+});
+
+test('missing current authorization bypasses UI throttling even when the anchor identity is unchanged', () => {
+  for (const field of ['targetPresent', 'poseSource', 'readiness']) {
+    const scheduler = createManualScheduler();
+    const store = createAnchorStateStore(createState(), scheduler.schedule);
+    store.update(createState({ x: 1 }));
+    const unproven = createState({ x: 2 });
+    delete unproven.anchorState.metrics[field];
+    store.update(unproven);
+    assert.equal(store.getSnapshot(), unproven);
+    assert.equal(scheduler.tasks[0].cancelled, true);
+  }
 });
 
 test('a runtime error publishes immediately even without an anchor or another state transition', () => {

@@ -9,6 +9,7 @@ import {
 } from '../cv/curvedObjectRecovery.js';
 import { hasPosePositionDropout } from '../cv/poseDropoutRecovery.js';
 import { logger } from '../utils/logger.js';
+import { isFaceObservationReady } from '../utils/overlayVisibility.js';
 
 const TAP_SEGMENTATION_TIMEOUT_MS = 6000;
 const RECOVERY_SEGMENTATION_TIMEOUT_MS = 1400;
@@ -191,7 +192,7 @@ export class AnchorManager {
         method: creationResult.method,
         state: creationResult.state,
         readiness: creationResult.readiness,
-        overlaySceneReady: creationResult.readiness?.faceReady === true,
+        overlaySceneReady: isFaceObservationReady(this.anchorState),
         evidence: creationResult.evidence,
         objectSupportMaskSource: creationResult.objectSupportMaskSource,
         objectSupportSelection,
@@ -587,8 +588,8 @@ export class AnchorManager {
       this.activeAnchor.state = anchorServiceState.state;
       this.activeAnchor.keypoints = metrics.keypointCount ?? this.activeAnchor.keypoints;
       this.activeAnchor.quality = metrics.templateQuality ?? this.activeAnchor.quality;
-      this.activeAnchor.readiness = metrics.readiness ?? this.activeAnchor.readiness ?? null;
-      if (this.activeAnchor.readiness?.faceReady === true) {
+      this.activeAnchor.readiness = metrics.readiness ?? null;
+      if (isFaceObservationReady(anchorServiceState)) {
         this.activeAnchor.overlaySceneReady = true;
       }
       this.activeAnchor.diagnostics = createActiveAnchorDiagnostics(metrics, this.activeAnchor.readiness);

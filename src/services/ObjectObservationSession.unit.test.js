@@ -26,6 +26,7 @@ const fixture = () => {
   let pendingRefresh = Promise.resolve();
   let now = 1310;
   let trackingMode = 'sparse-reconstruction';
+  let observation = {};
   const manager = {
     prepareObjectAtPoint: async () => {
       creations++;
@@ -51,7 +52,18 @@ const fixture = () => {
       mode: activeAnchor ? 'anchor' : 'selection',
       activeAnchor,
       anchorState: activeAnchor
-        ? { metrics: { targetPresent: present, readiness: { faceReady: true } } }
+        ? {
+            anchored: true,
+            state: 'tracking',
+            position: activeAnchor.position,
+            normal: { x: 0, y: 0, z: 1 },
+            metrics: {
+              targetPresent: present,
+              poseSource: 'planar-homography',
+              readiness: { poseReady: true, attachmentReady: true, faceReady: true },
+            },
+            ...observation,
+          }
         : null,
     }),
     clearAnchor: () => {
@@ -68,6 +80,9 @@ const fixture = () => {
     },
     setPresent: (value) => {
       present = value;
+    },
+    setObservation: (value) => {
+      observation = value;
     },
     setFocused: (value) => {
       focused = value;
@@ -116,6 +131,24 @@ test('provisional support cannot become an object candidate and retries are boun
   assert.equal(creations(), 1);
   await session.processFrame(frame(1800));
   assert.equal(creations(), 2);
+});
+
+test('selection cannot commit incomplete pose or readiness even after continuous tracking', async () => {
+  for (const observation of [
+    { anchored: false },
+    { state: 'lost' },
+    { position: null },
+    { normal: null },
+    { metrics: { targetPresent: true, poseSource: 'planar-homography' } },
+    { metrics: { targetPresent: true, readiness: { faceReady: true } } },
+  ]) {
+    const f = fixture();
+    await prepare(f.session);
+    assert.equal(f.session.getState().candidate.status, 'ready');
+    f.setObservation(observation);
+    assert.notEqual(f.session.getState().candidate.status, 'ready');
+    assert.equal(f.session.selectCandidate(selectionAt(1, 1310)).success, false);
+  }
 });
 
 test('selection rejects stale observations and a tap on a neighboring object', async () => {

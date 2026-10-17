@@ -1,48 +1,33 @@
-import { isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
 import { isObjectObservationFresh } from './cvScheduling.js';
 
-const PROGRESSIVE_ANCHOR_STATES = new Set(['candidate', 'mapping']);
+const TRACKED_STATES = new Set(['tracking', 'stable']);
 
-export const shouldRenderAnchorOverlay = ({ activeAnchor, anchorState }) => {
-  if (!activeAnchor) {
-    return false;
-  }
+export const isFaceObservationReady = (anchorState) => {
+  const metrics = anchorState?.metrics;
+  const readiness = metrics?.readiness;
+  const position = anchorState?.position;
+  const normal = anchorState?.normal;
 
-  const metrics = anchorState?.metrics || activeAnchor.diagnostics || {};
-  const readiness =
-    metrics.readiness || activeAnchor.readiness || activeAnchor.diagnostics?.readiness || null;
-  const state = anchorState?.state || activeAnchor.state || null;
-
-  if (metrics.targetPresent === false) {
-    return false;
-  }
-
-  if (readiness?.attachmentReady === false) {
-    return false;
-  }
-
-  if (readiness?.faceReady === false) {
-    return false;
-  }
-
-  if (PROGRESSIVE_ANCHOR_STATES.has(state)) {
-    return readiness?.faceReady === true;
-  }
-
-  const poseModel = metrics.poseModel || activeAnchor.trackingMode || null;
-  if (!poseModel) {
-    return false;
-  }
-
-  if (!isReconstructionMode(poseModel)) {
-    return true;
-  }
-
-  const selectedReconstructionPose = metrics.reconstructionReady && metrics.poseSource === poseModel;
   return (
-    readiness?.faceReady === true || selectedReconstructionPose || metrics.poseSource === 'planar-homography'
+    anchorState?.anchored === true &&
+    TRACKED_STATES.has(anchorState.state) &&
+    Number.isFinite(position?.x) &&
+    Number.isFinite(position?.y) &&
+    Number.isFinite(normal?.x) &&
+    Number.isFinite(normal?.y) &&
+    Number.isFinite(normal?.z) &&
+    Math.hypot(normal.x, normal.y, normal.z) > 0 &&
+    metrics?.targetPresent === true &&
+    typeof metrics.poseSource === 'string' &&
+    metrics.poseSource.length > 0 &&
+    readiness?.poseReady === true &&
+    readiness?.attachmentReady === true &&
+    readiness?.faceReady === true
   );
 };
+
+export const shouldRenderAnchorOverlay = ({ activeAnchor, anchorState }) =>
+  activeAnchor != null && isFaceObservationReady(anchorState);
 
 export const getRenderableAnchorOverlay = (state, now) =>
   isObjectObservationFresh(state.sampledAt, now) && shouldRenderAnchorOverlay(state)

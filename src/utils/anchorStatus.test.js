@@ -19,7 +19,13 @@ const describeTrackedState = ({ state, metrics = {}, initialized = true }) =>
       mode: 'anchor',
       initialized,
       activeAnchor: { createdAt: 1 },
-      anchorState: { state, metrics },
+      anchorState: {
+        anchored: true,
+        state,
+        position: { x: 120, y: 80, z: 0 },
+        normal: { x: 0, y: 0, z: 1 },
+        metrics,
+      },
     },
   });
 
@@ -65,19 +71,15 @@ test('vision failures take precedence over initialization and previous tracking 
   }
 });
 
-test('describes stable and tracking states without allocating rich diagnostics', () => {
-  assert.deepEqual(describeTrackedState({ state: 'stable' }), {
-    status: 'stable',
-    severity: 'good',
-    message: 'Anchor is stable',
-    recommendation: 'The face should stay attached while the object remains visible.',
-  });
-  assert.deepEqual(describeTrackedState({ state: 'tracking' }), {
-    status: 'tracking',
-    severity: 'good',
-    message: 'Anchor is tracking',
-    recommendation: 'Hold the object steady if the face drifts.',
-  });
+test('tracking labels alone cannot report a ready face', () => {
+  for (const state of ['stable', 'tracking']) {
+    assert.deepEqual(describeTrackedState({ state }), {
+      status: 'recovering',
+      severity: 'warn',
+      message: 'Preparing surface attachment',
+      recommendation: 'Keep the selected surface visible while pose support is rebuilt.',
+    });
+  }
 });
 
 test('accepted face readiness owns the HUD even while optional reconstruction is still mapping', () => {
@@ -87,13 +89,26 @@ test('accepted face readiness owns the HUD even while optional reconstruction is
       metrics: {
         targetPresent: true,
         poseModel: 'sparse-reconstruction',
+        poseSource: 'planar-homography',
         reconstructionReady: false,
-        readiness: { faceReady: true },
+        readiness: { poseReady: true, attachmentReady: true, faceReady: true },
         surfaceAttachment,
       },
     });
     assert.equal(status.status, surfaceAttachment ? 'attached' : 'tracking');
     assert.equal(status.severity, 'good');
+  }
+});
+
+test('the HUD never reports success for contradictory attachment permissions', () => {
+  for (const field of ['poseReady', 'attachmentReady', 'faceReady']) {
+    const readiness = { poseReady: true, attachmentReady: true, faceReady: true, [field]: false };
+    const status = describeTrackedState({
+      state: 'stable',
+      metrics: { targetPresent: true, poseSource: 'planar-homography', readiness },
+    });
+    assert.equal(status.severity, 'warn');
+    assert.equal(status.status, 'recovering');
   }
 });
 
@@ -119,8 +134,7 @@ test('keeps reconstruction mapping and pose-recovery states exact', () => {
       status: 'mapping',
       severity: 'warn',
       message: 'Building 3D object map',
-      recommendation:
-        'Move the object through a small left/right and up/down turn before expecting the face.',
+      recommendation: 'Slowly turn and tilt the object while keeping the clicked area visible.',
     },
   );
   assert.deepEqual(

@@ -43,6 +43,43 @@ const createContext = () => {
   };
 };
 
+test('face diagnostics use current attachment authorization, not map readiness or historical anchor data', () => {
+  const anchorState = {
+    anchored: true,
+    state: 'stable',
+    position: { x: 170, y: 155, z: 0 },
+    normal: { x: 0, y: 0, z: 1 },
+    metrics: {
+      targetPresent: true,
+      poseSource: 'planar-homography',
+      reconstructionReady: true,
+      readiness: { poseReady: true, attachmentReady: true, faceReady: true },
+    },
+  };
+  const anchor = {
+    position: anchorState.position,
+    readiness: anchorState.metrics.readiness,
+    diagnostics: anchorState.metrics,
+  };
+  for (const readiness of [null, { faceReady: true }, anchorState.metrics.readiness]) {
+    const ctx = createContext();
+    renderAnchorOverlay(ctx, {
+      anchor,
+      anchorState: { ...anchorState, metrics: { ...anchorState.metrics, readiness } },
+    });
+    const ready = readiness === anchorState.metrics.readiness;
+    assert.ok(
+      ctx.calls.some(
+        (call) => call.method === 'fillText' && call.args[0] === `Face: ${ready ? 'ready' : 'building'}`,
+      ),
+    );
+    assert.equal(
+      ctx.calls.some((call) => call.method === 'strokeStyle' && call.args[0] === '#22c55e'),
+      ready,
+    );
+  }
+});
+
 test('anchor overlay draws object bounds live reconstruction and landmarks', () => {
   const ctx = createContext();
   const anchor = {

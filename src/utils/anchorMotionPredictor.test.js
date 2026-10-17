@@ -106,7 +106,18 @@ test('demand presentation expires from capture time even while correcting a late
   const state = {
     sampledAt: 100,
     activeAnchor: { id: 'subject' },
-    anchorState: { metrics: { poseModel: 'object-pose', targetPresent: true } },
+    anchorState: {
+      anchored: true,
+      state: 'tracking',
+      position: { x: 120, y: 0, z: 0 },
+      normal: { x: 0, y: 0, z: 1 },
+      metrics: {
+        poseModel: 'object-pose',
+        poseSource: 'object-pose-affine',
+        targetPresent: true,
+        readiness: { poseReady: true, attachmentReady: true, faceReady: true },
+      },
+    },
   };
   let position;
   for (let now = 350; now <= 400; now += 10) {

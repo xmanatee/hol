@@ -1,4 +1,5 @@
 import { calculateTemplateRegion } from './templateRegion.js';
+import { shouldRenderAnchorOverlay } from './overlayVisibility.js';
 
 const STATE_STYLES = {
   candidate: { fill: '#ff8800', stroke: '#fff7ed', label: 'candidate' },
@@ -86,7 +87,8 @@ function renderAnchorMode(ctx, { anchor, anchorState, trackedPoints = [], showOb
   ctx.lineWidth = style.strokeWidth;
   ctx.stroke();
 
-  drawReadinessRing(ctx, centerX, centerY, metrics, radius + 5);
+  const faceReady = shouldRenderAnchorOverlay({ activeAnchor: anchor, anchorState });
+  drawReadinessRing(ctx, centerX, centerY, metrics, radius + 5, faceReady);
 
   ctx.beginPath();
   ctx.moveTo(centerX - radius - 5, centerY);
@@ -97,7 +99,7 @@ function renderAnchorMode(ctx, { anchor, anchorState, trackedPoints = [], showOb
   ctx.lineWidth = state === 'lost' ? style.strokeWidth : 2;
   ctx.stroke();
 
-  drawAnchorInfo(ctx, anchor, anchorState, centerX, centerY);
+  drawAnchorInfo(ctx, anchorState, centerX, centerY, faceReady);
 }
 
 function getAnchorStyle(state) {
@@ -328,9 +330,8 @@ const readinessProgress = (metrics) => {
   return clamp(Math.max(objectOwned, activeLandmarks) / 32, 0, 1);
 };
 
-function drawReadinessRing(ctx, centerX, centerY, metrics, radius) {
+function drawReadinessRing(ctx, centerX, centerY, metrics, radius, ready) {
   const progress = readinessProgress(metrics);
-  const ready = metrics.readiness?.faceReady || metrics.reconstructionReady;
 
   ctx.save();
   ctx.beginPath();
@@ -341,11 +342,10 @@ function drawReadinessRing(ctx, centerX, centerY, metrics, radius) {
   ctx.restore();
 }
 
-function drawAnchorInfo(ctx, anchor, anchorState, centerX, centerY) {
+function drawAnchorInfo(ctx, anchorState, centerX, centerY, faceReady) {
   const { state, metrics } = anchorState;
-  const readiness = metrics?.readiness;
   const mapConfidence = metrics?.reconstructionMapConfidence;
-  const faceStatus = readiness?.faceReady || metrics?.reconstructionReady ? 'ready' : 'building';
+  const faceStatus = faceReady ? 'ready' : 'building';
   const info = [
     `State: ${state}`,
     `Landmarks: ${metrics?.activeLandmarkCount || metrics?.keypointCount || 0}/${metrics?.landmarkCount || metrics?.keypointCount || 0}`,

@@ -1,4 +1,5 @@
 import { isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
+import { shouldRenderAnchorOverlay } from './overlayVisibility.js';
 
 const POSE_RECOVERY_REASON = 'Recovering object pose before showing the face';
 
@@ -47,7 +48,7 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
   const metrics = serviceState?.metrics || {};
   const reconstructionMode = isReconstructionMode(metrics.poseModel);
 
-  if (metrics.targetPresent === true && metrics.readiness?.faceReady === true) {
+  if (shouldRenderAnchorOverlay(anchorSystemState)) {
     return {
       status: metrics.surfaceAttachment ? 'attached' : 'tracking',
       severity: 'good',
@@ -70,7 +71,7 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
     };
   }
 
-  if (serviceState?.state === 'stable') {
+  if (serviceState?.state === 'stable' || serviceState?.state === 'tracking') {
     if (reconstructionMode && !metrics.reconstructionReady) {
       return {
         status: 'mapping',
@@ -81,10 +82,11 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
     }
 
     return {
-      status: 'stable',
-      severity: 'good',
-      message: 'Anchor is stable',
-      recommendation: 'The face should stay attached while the object remains visible.',
+      status: 'recovering',
+      severity: 'warn',
+      message: 'Preparing surface attachment',
+      recommendation:
+        metrics.readiness?.reason || 'Keep the selected surface visible while pose support is rebuilt.',
     };
   }
 
@@ -105,25 +107,6 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
       message: 'Building 3D object map',
       recommendation:
         metrics.readiness?.reason || 'Slowly turn and tilt the object while keeping it visible.',
-    };
-  }
-
-  if (serviceState?.state === 'tracking') {
-    if (reconstructionMode && !metrics.reconstructionReady) {
-      return {
-        status: 'mapping',
-        severity: 'warn',
-        message: 'Building 3D object map',
-        recommendation:
-          'Move the object through a small left/right and up/down turn before expecting the face.',
-      };
-    }
-
-    return {
-      status: 'tracking',
-      severity: 'good',
-      message: 'Anchor is tracking',
-      recommendation: 'Hold the object steady if the face drifts.',
     };
   }
 

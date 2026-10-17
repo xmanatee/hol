@@ -106,8 +106,6 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
   [State ownership](https://react.dev/learn/choosing-the-state-structure)
 - **P2 · Mode objectives:** Describe patch-scored geometry separately from direct photometric pose optimization; ablate reconstruction modes against shared acceptance criteria and remove those without independent benefit.
   [Direct photometric estimation](https://cvg.cit.tum.de/research/vslam/dso)
-- **P1 · Explicit eligibility:** Consolidate selection/render readiness into a positive contract; missing presence, pose, or readiness must never authorize an overlay.
-  [Avoid contradictory state](https://react.dev/learn/choosing-the-state-structure)
 - **P2 · Snapshot semantics:** Unify worker/UI diagnostic fields, reference IDs, timestamps, units, and unavailable values; remove duplicated projections and fabricated zero/success defaults.
   [State normalization](https://react.dev/learn/choosing-the-state-structure)
 - **P2 · Error contracts:** Distinguish rejected observations, ordinary target loss, unsupported capability, and runtime faults at worker boundaries; avoid exception-to-low-confidence conversions.
