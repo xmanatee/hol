@@ -24,8 +24,6 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
 
 ### Geometry and observability
 
-- **P1 · Pose completion:** Treat affine-projected missing landmarks as predictions, not independent observations; exclude their synthetic agreement from pose inlier counts, residual confidence, and readiness.
-  [Prediction versus measurement](https://homepages.inf.ed.ac.uk/rbf/CVonline/LOCAL_COPIES/WELCH/kalman.1.html)
 - **P1 · Reconstruction evidence:** Separate primitive-imposed depth from observed geometry; require informative view change and numerical conditioning, not repeated coherent frames, before claiming reconstructed shape.
   [Shape/motion factorization](https://publications.ri.cmu.edu/shape-and-motion-from-image-streams-under-orthography-a-factorization-method)
 - **P1 · Plane coordinates:** Separate reference-image pixels from Euclidean plane coordinates; rectify oblique references before claiming physical PnP orientation or scale.

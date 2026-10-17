@@ -476,6 +476,7 @@ test('sparse object reconstructor projects the clicked local surface normal, not
   const trackedPoints = [...landmarks.values()].map((landmark) => ({
     id: landmark.id,
     status: 'active',
+    original: landmark.reference,
     current: {
       x: 240 + landmark.point.x,
       y: 180 + landmark.point.y,
@@ -690,7 +691,7 @@ test('sparse object reconstructor grows from statistically supported partial lan
   assert.ok(result.confidence > 0.55);
 });
 
-test('sparse object reconstructor completes hidden mapped landmarks from coherent live object tracks', () => {
+test('sparse pose rejects insufficient mapped observations despite coherent unmapped tracks', () => {
   const { shape, reconstructor } = buildReconstructor();
   const targetPose = {
     yaw: -0.42,
@@ -700,11 +701,6 @@ test('sparse object reconstructor completes hidden mapped landmarks from coheren
     tx: 196,
     ty: 154,
   };
-  const mappedVisible = trackedPointsForPose(
-    shape,
-    targetPose,
-    shape.slice(0, 7).map((point) => point.id),
-  );
   const unmappedLiveTracks = shape.slice(7, 34).map((point) => {
     const reference = projectPoint(point, referencePose);
     const current = projectPoint(point, targetPose);
@@ -719,15 +715,49 @@ test('sparse object reconstructor completes hidden mapped landmarks from coheren
       stabilityScore: 0.9,
     };
   });
-  const expectedAnchor = projectPoint({ x: 0, y: 0, z: 24 }, targetPose);
+  for (const visibleCount of [0, 7, 9]) {
+    const mappedVisible = trackedPointsForPose(
+      shape,
+      targetPose,
+      shape.slice(0, visibleCount).map((point) => point.id),
+    );
+    const result = reconstructor.estimatePoseFromTrackedPoints([...mappedVisible, ...unmappedLiveTracks]);
 
-  const result = reconstructor.estimatePoseFromTrackedPoints([...mappedVisible, ...unmappedLiveTracks]);
+    assert.equal(result.success, false, `${visibleCount} visible mapped landmarks`);
+    assert.equal(result.reason, 'Insufficient reconstructed landmarks in view');
+    assert.equal(reconstructor.getState().ready, true);
+  }
 
-  assert.equal(result.success, true);
-  assert.ok(result.completedLandmarkCount >= 12);
-  assert.ok(result.inlierCount >= 16);
-  assert.ok(Math.abs(result.position.x - expectedAnchor.x) < 8);
-  assert.ok(Math.abs(result.position.y - expectedAnchor.y) < 8);
+  const restored = reconstructor.estimatePoseFromTrackedPoints(trackedPointsForPose(shape, targetPose));
+  assert.equal(restored.success, true);
+});
+
+test('sparse pose support and confidence use only visible mapped landmarks', () => {
+  const { shape, reconstructor } = buildReconstructor();
+  const targetPose = { yaw: 0.3, pitch: 0.1, roll: 0.08, scale: 1.2, tx: 225, ty: 165 };
+  const tracks = trackedPointsForPose(shape, targetPose);
+  const visibleIds = new Set(Array.from({ length: 10 }, (_, index) => (index * 7) % shape.length));
+  const visible = tracks.filter((point) => visibleIds.has(point.id));
+  const invisible = tracks
+    .filter((point) => !visibleIds.has(point.id))
+    .map((point, index) => ({ ...point, status: index % 2 ? 'outlier' : 'lost' }));
+  const unmapped = tracks.map((point) => ({ ...point, id: point.id + 1000 }));
+  const measured = reconstructor.estimatePoseFromTrackedPoints(visible, { includePreview: false });
+
+  assert.equal(measured.success, true);
+  assert.equal(measured.inlierCount, visible.length);
+
+  for (const includePreview of [false, true]) {
+    const result = reconstructor.estimatePoseFromTrackedPoints([...visible, ...invisible, ...unmapped], {
+      includePreview,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.inlierCount, measured.inlierCount);
+    assert.equal(result.inlierRatio, measured.inlierRatio);
+    assert.equal(result.averageResidual, measured.averageResidual);
+    assert.equal(result.confidence, measured.confidence);
+  }
 });
 
 test('sparse object reconstructor preview exposes a surface model instead of only points', () => {

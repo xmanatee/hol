@@ -387,12 +387,7 @@ export class SparseObjectReconstructor {
     }
 
     const activeReferenceObservations = this._takeFrameReferenceObservations(trackedPoints);
-    const observations = this._poseObservationsFromTrackedPoints(trackedPoints, activeReferenceObservations);
-    const trackedFit = fitRobustSimilarity(activeReferenceObservations, {
-      minInliers: Math.max(8, this.minPoseLandmarks),
-      threshold: 10,
-    });
-
+    const observations = this._poseObservations(activeReferenceObservations);
     if (observations.length < this.minPoseLandmarks) {
       return {
         success: false,
@@ -406,6 +401,10 @@ export class SparseObjectReconstructor {
       return { ...pose, method: RECONSTRUCTION_POSE_MODEL };
     }
 
+    const trackedFit = fitRobustSimilarity(activeReferenceObservations, {
+      minInliers: Math.max(8, this.minPoseLandmarks),
+      threshold: 10,
+    });
     const rawNormal = normalizeVector(cross(pose.rowX.slice(0, 3), pose.rowY.slice(0, 3)));
     const viewNormal = rawNormal[2] >= 0 ? rawNormal : rawNormal.map((value) => -value);
     const surface =
@@ -478,7 +477,6 @@ export class SparseObjectReconstructor {
       poseObs: pose.poseObs,
       depthQuality: this.map.depthQuality,
       landmarkCount: this.map.landmarks.size,
-      completedLandmarkCount: observations.filter((observation) => observation.completed).length,
     };
 
     if (!includePreview) {
@@ -559,7 +557,7 @@ export class SparseObjectReconstructor {
     return highPrecisionSurfaceFit || staleReferenceTransform || weakTrackedSurfaceCorrection;
   }
 
-  _poseObservationsFromTrackedPoints(trackedPoints, activeReferenceObservations) {
+  _poseObservations(activeReferenceObservations) {
     if (this._usesTargetSurfacePrior() && this.map.referenceBounds) {
       const priorCoherent = selectCoherentObservations(activeReferenceObservations, {
         minInliers: Math.max(8, this.minPoseLandmarks),
@@ -580,52 +578,17 @@ export class SparseObjectReconstructor {
               this.map.targetSurfaceModel,
             ),
           current: observation.current,
-          completed: false,
         }));
       }
     }
 
-    const active = trackedPoints
-      .filter((point) => point.status === 'active')
-      .filter((point) => Number.isFinite(point.current.x) && Number.isFinite(point.current.y));
-    const observations = active
-      .filter((point) => this.map.landmarks.has(point.id))
-      .map((point) => ({
-        id: point.id,
-        point: this.map.landmarks.get(point.id).point,
-        current: { x: point.current.x, y: point.current.y },
-        completed: false,
+    return activeReferenceObservations
+      .filter((observation) => this.map.landmarks.has(observation.id))
+      .map((observation) => ({
+        id: observation.id,
+        point: this.map.landmarks.get(observation.id).point,
+        current: observation.current,
       }));
-
-    if (observations.length >= this.minPoseLandmarks) {
-      return observations;
-    }
-
-    const coherent = selectCoherentObservations(activeReferenceObservations, {
-      minInliers: Math.max(8, this.minPoseLandmarks),
-      threshold: 10,
-      minInlierRatio: 0.5,
-      model: 'affine',
-      maxSample: MOBILE_AFFINE_SAMPLE_WINDOW,
-    });
-
-    if (!coherent.success) {
-      return observations;
-    }
-
-    const activeIds = new Set(observations.map((observation) => observation.id));
-    const completed = [...this.map.landmarks.values()]
-      .filter((landmark) => !activeIds.has(landmark.id))
-      .sort((left, right) => right.reliability - left.reliability)
-      .slice(0, Math.max(0, this.minPoseLandmarks * 3 - observations.length))
-      .map((landmark) => ({
-        id: landmark.id,
-        point: landmark.point,
-        current: this._projectReferenceWithTransform(landmark.reference, coherent.fit.transform),
-        completed: true,
-      }));
-
-    return [...observations, ...completed];
   }
 
   _rebuildMap() {
