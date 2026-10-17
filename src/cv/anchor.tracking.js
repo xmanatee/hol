@@ -20,6 +20,7 @@ import {
 } from './anchor.homographyWorkspace.js';
 import { isIndependentObjectSupportObservation, isPatchInsideObjectSupport } from './objectSupportMask.js';
 import { seedHomographyRansac } from './opencvRng.js';
+import { verifyFlowCandidates } from './anchor.flowVerification.js';
 import {
   LK_WINDOW_SIZE,
   LK_PATCH_RADIUS,
@@ -346,7 +347,14 @@ export class KeypointTracker {
     });
     const inlierIds = this._selectFlowInlierIds(
       cv,
-      candidates.filter((candidate) => candidate.acceptedByLK),
+      verifyFlowCandidates(
+        cv,
+        this.previousGray,
+        currentGray,
+        candidates.filter((candidate) => candidate.acceptedByLK),
+        this.lkWorkspace,
+        this.lkParams,
+      ),
       surfaceModel,
     );
     for (let i = 0; i < activePoints.length; i++) {
@@ -436,7 +444,7 @@ export class KeypointTracker {
       success,
       reason: success
         ? null
-        : `Tracking retained ${successCount}/${activePoints.length} points after motion consensus`,
+        : `Tracking retained ${successCount}/${activePoints.length} points after verification and motion consensus`,
       successRate,
       activePointCount: this.trackedPoints.filter((pt) => pt.status === 'active').length,
       averageError: avgError,

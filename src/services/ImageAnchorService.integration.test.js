@@ -4910,7 +4910,7 @@ test('weak degraded anchors return to progressive bootstrap after local flow col
   service._updateWithKeypoints = async () => ({
     success: false,
     targetPresent: false,
-    reason: 'Tracking retained 5/15 points after motion consensus',
+    reason: 'Tracking retained 5/15 points after verification and motion consensus',
     state: 'degraded',
   });
 

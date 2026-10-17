@@ -1,5 +1,6 @@
 import { createRegionOpenCvMask, isPatchInsideObjectSupport } from './objectSupportMask.js';
 import { LK_WINDOW_SIZE, LK_PATCH_RADIUS } from './anchor.lkWorkspace.js';
+import { grayImageView } from './grayImageView.js';
 
 const GFTT_GRADIENT_RADIUS = 1;
 const GFTT_NON_MAXIMUM_SUPPRESSION_RADIUS = 1;
@@ -80,12 +81,7 @@ class GfttExtractionSession {
     let rejectedByMask = 0;
     const offsetX = this.region?.x || 0;
     const offsetY = this.region?.y || 0;
-    const data = this.image.data;
-    const pixels = new Uint8Array(
-      data.buffer,
-      data.byteOffset,
-      (this.image.rows - 1) * this.image.step[0] + this.image.cols,
-    );
+    const pixels = grayImageView(this.image).data;
     for (let index = 0; index < this.corners.rows; index++) {
       const keypoint = {
         pt: {

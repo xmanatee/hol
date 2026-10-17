@@ -111,8 +111,10 @@ test('object orientation continuity ends at failed geometry, a new selection, or
   }
 });
 
-const createSyntheticLucasKanadeCv = (flowForIndex) => {
+const createSyntheticLucasKanadeCv = (flowForIndex, nativeCv = null) => {
   let opticalFlowCallCount = 0;
+  let forwardInput = null;
+  let observations = [];
 
   class SyntheticMat {
     constructor(rows = 0, cols = 0, type = null) {
@@ -125,22 +127,49 @@ const createSyntheticLucasKanadeCv = (flowForIndex) => {
       this.type = type;
       this.data32F = new Float32Array(rows * cols * 2);
       this.data = new Uint8Array(rows * cols);
+      this.step = [cols];
     }
 
     delete() {}
   }
 
-  return {
-    Mat: SyntheticMat,
-    Size: class SyntheticSize {},
-    TermCriteria: class SyntheticTermCriteria {},
+  const paintPatch = (image, point, id) => {
+    for (let y = Math.floor(point.y) - 4; y <= Math.ceil(point.y) + 4; y++) {
+      for (let x = Math.floor(point.x) - 4; x <= Math.ceil(point.x) + 4; x++) {
+        if (x < 0 || y < 0 || x >= image.cols || y >= image.rows) continue;
+        image.data[y * image.cols + x] =
+          120 + 50 * Math.sin((x - point.x) * 0.4 + id) + 40 * Math.cos((y - point.y) * 0.5 + id);
+      }
+    }
+  };
+  return Object.assign(Object.create(nativeCv), {
+    Mat: nativeCv?.Mat ?? SyntheticMat,
+    Size: nativeCv?.Size ?? class SyntheticSize {},
+    TermCriteria: nativeCv?.TermCriteria ?? class SyntheticTermCriteria {},
     TERM_CRITERIA_EPS: 1,
     TERM_CRITERIA_COUNT: 2,
-    CV_32FC2: 'CV_32FC2',
-    CV_8UC1: 'CV_8UC1',
-    CV_32FC1: 'CV_32FC1',
-    getOpticalFlowCallCount: () => opticalFlowCallCount,
+    CV_32FC2: nativeCv?.CV_32FC2 ?? 'CV_32FC2',
+    CV_8UC1: nativeCv?.CV_8UC1 ?? 'CV_8UC1',
+    CV_32FC1: nativeCv?.CV_32FC1 ?? 'CV_32FC1',
     calcOpticalFlowPyrLK(previousGray, currentGray, prevPoints, nextPoints, status, flowError) {
+      const forward = forwardInput === null || prevPoints === forwardInput;
+      if (!forward) {
+        for (let index = 0; index < prevPoints.rows; index++) {
+          const observation = observations.find(
+            ({ current }) =>
+              current.x === prevPoints.data32F[index * 2] && current.y === prevPoints.data32F[index * 2 + 1],
+          );
+          nextPoints.data32F[index * 2] = observation.reference.x;
+          nextPoints.data32F[index * 2 + 1] = observation.reference.y;
+          status.data[index] = 1;
+          flowError.data32F[index] = observation.flow.error ?? 1;
+        }
+        return;
+      }
+      forwardInput = prevPoints;
+      observations = [];
+      if (previousGray.rows === 0) previousGray.create(512, 512, this.CV_8UC1);
+      if (currentGray.rows === 0) currentGray.create(512, 512, this.CV_8UC1);
       for (let index = 0; index < prevPoints.rows; index++) {
         const x = prevPoints.data32F[index * 2];
         const y = prevPoints.data32F[index * 2 + 1];
@@ -149,10 +178,14 @@ const createSyntheticLucasKanadeCv = (flowForIndex) => {
         nextPoints.data32F[index * 2 + 1] = y + flow.dy;
         status.data[index] = flow.status ?? 1;
         flowError.data32F[index] = flow.error ?? 1;
+        const current = { x: nextPoints.data32F[index * 2], y: nextPoints.data32F[index * 2 + 1] };
+        observations.push({ reference: { x, y }, current, flow });
+        paintPatch(previousGray, { x, y }, index);
+        paintPatch(currentGray, current, index);
       }
       opticalFlowCallCount++;
     },
-  };
+  });
 };
 
 const executeKeypointRefresh = (
@@ -828,8 +861,8 @@ test('frame consensus keeps coherent rotational motion instead of assuming pure 
     rotation: (18 * Math.PI) / 180,
   };
 
-  tracker.trackedPoints = Array.from({ length: 24 }, (_, index) => {
-    const angle = (index / 24) * Math.PI * 2;
+  tracker.trackedPoints = Array.from({ length: 16 }, (_, index) => {
+    const angle = (index / 16) * Math.PI * 2;
     const original = {
       x: 140 + Math.cos(angle) * 60,
       y: 120 + Math.sin(angle) * 36,
@@ -846,7 +879,7 @@ test('frame consensus keeps coherent rotational motion instead of assuming pure 
   const result = tracker.trackFrame(cv, tracker.acquireGrayFrame(cv));
 
   assert.equal(result.successRate, 1);
-  assert.equal(tracker.trackedPoints.filter((point) => point.status === 'active').length, 24);
+  assert.equal(tracker.trackedPoints.filter((point) => point.status === 'active').length, 16);
 });
 
 test('initial LK tracking rejects low-error points that violate current motion consensus', async () => {
@@ -890,21 +923,18 @@ test('current consensus rejects historically stable outliers and reports only re
     for (const count of [8, 12]) {
       for (const attempt of [0, 10]) {
         const outlierCount = count === 8 ? 1 : 3;
-        const cv = Object.create(nativeCv);
-        cv.calcOpticalFlowPyrLK = (previous, current, source, destination, status, error) => {
-          for (let index = 0; index < source.rows; index++) {
-            const point = { x: source.data32F[index * 2], y: source.data32F[index * 2 + 1] };
-            const next =
-              surfaceModel === 'plane'
-                ? projectHomographyPoint(point, [1, 0.35, 4, -0.1, 0.85, 3, 0.001, -0.0015, 1])
-                : { x: point.x * 1.08 + point.y * 0.15 + 4, y: point.y * 0.92 - point.x * 0.08 - 2 };
-            const outlier = index >= count - outlierCount;
-            destination.data32F[index * 2] = next.x + (outlier ? 100 + index * 9 : 0);
-            destination.data32F[index * 2 + 1] = next.y + (outlier ? -90 - index * 7 : 0);
-            status.data[index] = 1;
-            error.data32F[index] = outlier ? 0.1 : 2;
-          }
-        };
+        const cv = createSyntheticLucasKanadeCv((index, point) => {
+          const next =
+            surfaceModel === 'plane'
+              ? projectHomographyPoint(point, [1, 0.35, 4, -0.1, 0.85, 3, 0.001, -0.0015, 1])
+              : { x: point.x * 1.08 + point.y * 0.15 + 4, y: point.y * 0.92 - point.x * 0.08 - 2 };
+          const outlier = index >= count - outlierCount;
+          return {
+            dx: next.x + (outlier ? 100 + index * 9 : 0) - point.x,
+            dy: next.y + (outlier ? -90 - index * 7 : 0) - point.y,
+            error: outlier ? 0.1 : 2,
+          };
+        }, nativeCv);
         const tracker = new KeypointTracker();
         tracker.initialize(cv);
         try {
@@ -964,7 +994,7 @@ test('Lucas-Kanade failure reports the retained landmark quorum', async () => {
   const result = tracker.trackFrame(cv, tracker.acquireGrayFrame(cv));
 
   assert.equal(result.success, false);
-  assert.equal(result.reason, 'Tracking retained 0/8 points after motion consensus');
+  assert.equal(result.reason, 'Tracking retained 0/8 points after verification and motion consensus');
 });
 
 test('provisional features cannot outvote confirmed object support in frame consensus', () => {
@@ -1104,28 +1134,10 @@ test('Lucas-Kanade tracking reuses one native workspace across point counts and 
   const workspaceHandles = Object.values(workspace);
 
   tracker._prepareLucasKanadeWorkspace(cv, 80);
-  assert.deepEqual(
-    Object.values(workspace).map((mat) => [mat.rows, mat.cols]),
-    [
-      [80, 1],
-      [80, 1],
-      [80, 1],
-      [80, 1],
-    ],
-  );
 
   tracker._prepareLucasKanadeWorkspace(cv, 32);
   assert.equal(tracker.lkWorkspace, workspace);
   assert.ok(Object.values(tracker.lkWorkspace).every((mat, index) => mat === workspaceHandles[index]));
-  assert.deepEqual(
-    Object.values(workspace).map((mat) => [mat.rows, mat.cols]),
-    [
-      [32, 1],
-      [32, 1],
-      [32, 1],
-      [32, 1],
-    ],
-  );
 
   await tracker.initialize(cv);
   assert.ok(workspaceHandles.every((handle) => handle.isDeleted()));

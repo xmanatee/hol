@@ -10,8 +10,6 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
 
 - **P1 · Objectness:** Reject background-only discovery using independently labelled negative videos; a confident point-prompt mask is not proof of a distinct object.
   [MediaPipe segmentation](https://ai.google.dev/edge/mediapipe/solutions/vision/interactive_segmenter/web_js)
-- **P1 · Flow verification:** Add bounded forward–backward and appearance checks to `anchor.tracking.js`; test long edges, repetitive letters, blur, exposure changes, and large inter-frame motion.
-  [OpenCV optical flow](https://docs.opencv.org/4.x/d4/dee/tutorial_optical_flow.html)
 - **P1 · Pyramid support:** Bound background influence on coarse LK initialization; fine-level measurement and stored ORB descriptor patches are mask-contained, but coarse windows can still cross object boundaries.
   [LK windows](https://docs.opencv.org/4.x/dc/d6b/group__video__track.html)
 - **P1 · Reflections:** Reject moving glare on printed cans using persistent appearance and geometric agreement; test clipping separately from exposure changes.

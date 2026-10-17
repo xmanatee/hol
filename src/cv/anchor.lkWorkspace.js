@@ -7,6 +7,10 @@ export const createLucasKanadeWorkspace = (cv) => ({
   nextPoints: new cv.Mat(),
   status: new cv.Mat(),
   flowError: new cv.Mat(),
+  verificationPoints: new cv.Mat(),
+  backwardPoints: new cv.Mat(),
+  backwardStatus: new cv.Mat(),
+  backwardError: new cv.Mat(),
 });
 
 export const disposeLucasKanadeWorkspace = (workspace) => {
