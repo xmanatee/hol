@@ -58,6 +58,15 @@ const AnchorDiagnostics = ({ details }) => {
         tone={(details.maskCoverage ?? 0) > 0.03 ? 'good' : 'warn'}
       />
       <DiagnosticRow label="Mask source" value={details.objectSupportMaskSource || 'N/A'} />
+      <DiagnosticRow
+        label="Mask observation"
+        value={
+          details.objectSupportObservationSource
+            ? `${details.objectSupportObservationSource} · frame ${details.objectSupportObservationFrame}`
+            : 'None (spatial prior)'
+        }
+      />
+      <DiagnosticRow label="Mask projection frame" value={details.objectSupportProjectionFrame ?? 'N/A'} />
       <DiagnosticRow label="Surface" value={details.surfacePrior || details.surfaceModel || 'N/A'} />
       <DiagnosticRow
         label="Surface coverage"

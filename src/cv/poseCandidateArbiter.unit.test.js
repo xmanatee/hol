@@ -23,6 +23,14 @@ const pose = (overrides) => ({
   ...overrides,
 });
 
+test('missing silhouette measurements contribute no invented positive evidence', () => {
+  const scoreFor = (measurements) =>
+    arbitratePoseCandidates({ candidates: [pose(measurements)] }).selectedAttachment.score;
+  const unknown = scoreFor({ contourFitResidual: null, silhouetteCoverage: null });
+  const measured = scoreFor({ contourFitResidual: 0, silhouetteCoverage: 1 });
+  assert.ok(Math.abs(measured - unknown - 0.19) < 1e-10);
+});
+
 test('pose arbiter prefers object-owned surface candidates over higher-confidence background drift', () => {
   const result = arbitratePoseCandidates({
     candidates: [

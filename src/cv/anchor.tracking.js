@@ -17,7 +17,7 @@ import {
   disposeHomographyWorkspace,
   prepareHomographyWorkspace,
 } from './anchor.homographyWorkspace.js';
-import { isPointInsideObjectSupport } from './objectSupportMask.js';
+import { isIndependentObjectSupportObservation, isPointInsideObjectSupport } from './objectSupportMask.js';
 import { seedHomographyRansac } from './opencvRng.js';
 import {
   createLucasKanadeWorkspace,
@@ -1237,10 +1237,13 @@ export class KeypointTracker {
         kp.response,
         kp.bootstrapOnly === true,
       );
-      if (admission === 'recovery-probation') {
+      if (
+        admission === 'recovery-probation' ||
+        (objectSupportMask && !isIndependentObjectSupportObservation(objectSupportMask))
+      ) {
         this._startObjectOwnershipProbation(trackedPoint, {
           ownership: objectSupportMask ? 'supported' : 'unsupported',
-          recovery: true,
+          recovery: admission === 'recovery-probation',
         });
       } else if (objectSupportMask) {
         trackedPoint.objectOwned = true;
@@ -1451,6 +1454,7 @@ export class KeypointTracker {
       recentDropout: false,
       landmarkQuality: 0,
       objectOwnedStreak: LANDMARK_OWNERSHIP_CONFIRMATION_FRAMES,
+      lastOwnershipObservationFrame: null,
       recoveryOwnershipProbation: false,
     };
   }
@@ -1474,7 +1478,10 @@ export class KeypointTracker {
     point.recoveryOwnershipProbation = false;
   }
 
-  updateObjectOwnership(objectSupportMask) {
+  updateObjectOwnership(objectSupportMask, frameIndex) {
+    const independentObservation =
+      isIndependentObjectSupportObservation(objectSupportMask) &&
+      objectSupportMask.createdAtFrame === frameIndex;
     let rejected = 0;
     let promoted = 0;
     let probationary = 0;
@@ -1488,10 +1495,13 @@ export class KeypointTracker {
         point.outsideObjectFrames = 0;
         point.objectOwned = true;
         const requiredFrames = ownershipEvidenceFramesFor(point);
-        point.objectOwnedStreak =
-          point.recoveryOwnershipProbation === true
-            ? Math.min(requiredFrames, previousStreak + 1)
-            : LANDMARK_OWNERSHIP_CONFIRMATION_FRAMES;
+        if (
+          independentObservation &&
+          objectSupportMask.createdAtFrame > (point.lastOwnershipObservationFrame ?? -1)
+        ) {
+          point.objectOwnedStreak = Math.min(requiredFrames, previousStreak + 1);
+          point.lastOwnershipObservationFrame = objectSupportMask.createdAtFrame;
+        }
         if (
           previousStreak < LANDMARK_OWNERSHIP_CONFIRMATION_FRAMES &&
           point.objectOwnedStreak === LANDMARK_OWNERSHIP_CONFIRMATION_FRAMES

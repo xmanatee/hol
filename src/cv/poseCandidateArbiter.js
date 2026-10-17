@@ -109,10 +109,10 @@ const candidateScore = (candidate) => {
   const mapScore = clamp01(candidate.mapMaturity ?? 0);
   const contourScore = Number.isFinite(candidate.contourFitResidual)
     ? clamp01(1 - candidate.contourFitResidual / 7)
-    : 0.5;
+    : 0;
   const silhouetteScore = Number.isFinite(candidate.silhouetteCoverage)
     ? clamp01(candidate.silhouetteCoverage)
-    : 0.5;
+    : 0;
   const attachmentScore = candidate.attachmentEligible === false ? -0.12 : 0.03;
 
   return (

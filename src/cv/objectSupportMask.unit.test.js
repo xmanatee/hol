@@ -9,9 +9,48 @@ import {
   createTapLocalObjectSupportMask,
   getObjectSupportBounds,
   isPointInsideObjectSupport,
+  isIndependentObjectSupportObservation,
   keepConnectedComponentContainingPoint,
   warpObjectSupportMask,
 } from './objectSupportMask.js';
+
+test('mask projection and cropping preserve the original segmentation source and observation frame', () => {
+  const observed = createObjectSupportMask({
+    width: 40,
+    height: 30,
+    data: new Uint8Array(1200).fill(255),
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 20, y: 15 },
+    createdAtFrame: 3,
+  });
+  assert.equal(isIndependentObjectSupportObservation(observed), true);
+  const projected = warpObjectSupportMask(observed, {
+    position: { x: 22, y: 15 },
+    scale: 1,
+    rotation: 0,
+    updatedAtFrame: 9,
+  });
+  const cropped = constrainObjectSupportMaskToTapLocalCircle({
+    objectSupportMask: projected,
+    referencePoint: projected.referencePoint,
+    radius: 8,
+  });
+  for (const derived of [projected, cropped]) {
+    assert.equal(derived.observationSource, 'interactive-segmenter');
+    assert.equal(derived.createdAtFrame, 3);
+    assert.equal(derived.updatedAtFrame, 9);
+    assert.equal(isIndependentObjectSupportObservation(derived), false);
+  }
+  const prior = createTapLocalObjectSupportMask({
+    width: 40,
+    height: 30,
+    referencePoint: { x: 20, y: 15 },
+    createdAtFrame: 10,
+  });
+  assert.equal(prior.observationSource, null);
+  assert.equal(isIndependentObjectSupportObservation(prior), false);
+});
 
 const referenceWarpObjectSupportMask = (objectSupportMask, { position, scale, rotation, updatedAtFrame }) => {
   const data = new Uint8Array(objectSupportMask.width * objectSupportMask.height);

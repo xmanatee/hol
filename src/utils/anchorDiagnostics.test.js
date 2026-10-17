@@ -8,6 +8,23 @@ const collectDetails = (anchorSystemState) =>
     segmentationRefresh: anchorSystemState.segmentationRefresh,
   });
 
+test('segmentation observation provenance remains separate from mask projection time', () => {
+  const details = collectDetails({
+    anchorState: {
+      metrics: {
+        currentObjectSupportMaskSource: 'warped-mask',
+        objectSupportObservationSource: 'interactive-segmenter',
+        objectSupportObservationFrame: 4,
+        objectSupportProjectionFrame: 27,
+      },
+    },
+  });
+  assert.equal(details.objectSupportMaskSource, 'warped-mask');
+  assert.equal(details.objectSupportObservationSource, 'interactive-segmenter');
+  assert.equal(details.objectSupportObservationFrame, 4);
+  assert.equal(details.objectSupportProjectionFrame, 27);
+});
+
 test('includes lost-anchor recovery context from service metrics', () => {
   const details = collectDetails({
     anchorState: {

@@ -91,7 +91,8 @@ const assembleObjectSupportMask = ({
   confidence,
   referencePoint,
   createdAtFrame,
-  updatedAtFrame,
+  updatedAtFrame = createdAtFrame,
+  observationSource = source === OBJECT_SUPPORT_MASK_SOURCES.INTERACTIVE_SEGMENTER ? source : null,
   bbox,
   pixelCount,
 }) => ({
@@ -103,9 +104,17 @@ const assembleObjectSupportMask = ({
   referencePoint: { ...referencePoint },
   createdAtFrame,
   updatedAtFrame,
+  observationSource,
   bbox,
   pixelCount,
 });
+
+export const isIndependentObjectSupportObservation = (mask) =>
+  mask?.source === OBJECT_SUPPORT_MASK_SOURCES.INTERACTIVE_SEGMENTER &&
+  mask.observationSource === OBJECT_SUPPORT_MASK_SOURCES.INTERACTIVE_SEGMENTER &&
+  Number.isSafeInteger(mask.createdAtFrame) &&
+  mask.createdAtFrame >= 0 &&
+  mask.updatedAtFrame === mask.createdAtFrame;
 
 export const createObjectSupportMask = (options) => {
   const data = new Uint8Array(options.data);
@@ -230,6 +239,7 @@ export const constrainObjectSupportMaskToTapLocalCircle = ({
     referencePoint: { x: centerX, y: centerY },
     createdAtFrame: objectSupportMask.createdAtFrame,
     updatedAtFrame,
+    observationSource: objectSupportMask.observationSource,
   });
 };
 
@@ -345,6 +355,7 @@ export const warpObjectSupportMask = (objectSupportMask, { position, scale, rota
     referencePoint: { x: position.x, y: position.y },
     createdAtFrame: objectSupportMask.createdAtFrame,
     updatedAtFrame,
+    observationSource: objectSupportMask.observationSource,
     bbox: warpedBounds,
     pixelCount,
   });

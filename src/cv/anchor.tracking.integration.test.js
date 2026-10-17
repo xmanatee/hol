@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { KeypointTracker } from './anchor.tracking.js';
 import { KeypointDetector } from './anchor.keypoints.js';
 import { isReconstructionEligibleLandmark } from './landmarkOwnership.js';
+import { createObjectSupportMask, warpObjectSupportMask } from './objectSupportMask.js';
 import { loadOpenCvForNode } from './synthetic/opencvNodeLoader.js';
 
 const transformPoint = (point, transform) => ({
@@ -2244,11 +2245,29 @@ test('keypoint refresh rejects textured background candidates outside the object
   assert.ok(refreshedPoints.every((point) => point.objectOwnedStreak === 0));
   assert.ok(tracker.getCorrespondences().every((point) => point.id < originals.length));
 
-  const firstObservation = tracker.updateObjectOwnership(objectSupportMask);
+  const firstObservation = tracker.updateObjectOwnership(
+    {
+      ...objectSupportMask,
+      source: 'interactive-segmenter',
+      observationSource: 'interactive-segmenter',
+      createdAtFrame: 1,
+      updatedAtFrame: 1,
+    },
+    1,
+  );
   assert.equal(firstObservation.promoted, 0);
   assert.ok(tracker.getCorrespondences().every((point) => point.id < originals.length));
 
-  const secondObservation = tracker.updateObjectOwnership(objectSupportMask);
+  const secondObservation = tracker.updateObjectOwnership(
+    {
+      ...objectSupportMask,
+      source: 'interactive-segmenter',
+      observationSource: 'interactive-segmenter',
+      createdAtFrame: 2,
+      updatedAtFrame: 2,
+    },
+    2,
+  );
   assert.equal(secondObservation.promoted, refreshedPoints.length);
   assert.ok(tracker.getCorrespondences().some((point) => point.id >= originals.length));
 });
@@ -2259,6 +2278,10 @@ test('recovery landmarks join tracking after two support observations and mappin
     width: 80,
     height: 60,
     data: new Uint8Array(80 * 60).fill(255),
+    source: 'interactive-segmenter',
+    observationSource: 'interactive-segmenter',
+    createdAtFrame: 1,
+    updatedAtFrame: 1,
   };
   tracker.trackedPoints = [
     {
@@ -2278,18 +2301,70 @@ test('recovery landmarks join tracking after two support observations and mappin
     },
   ];
 
-  const firstObservation = tracker.updateObjectOwnership(mask);
+  const firstObservation = tracker.updateObjectOwnership(mask, 1);
   assert.equal(firstObservation.promoted, 0);
   assert.equal(isReconstructionEligibleLandmark(tracker.trackedPoints[0]), false);
-  const secondObservation = tracker.updateObjectOwnership(mask);
+  const secondObservation = tracker.updateObjectOwnership(
+    { ...mask, createdAtFrame: 2, updatedAtFrame: 2 },
+    2,
+  );
   assert.equal(secondObservation.promoted, 1);
   assert.equal(isReconstructionEligibleLandmark(tracker.trackedPoints[0]), false);
-  const thirdObservation = tracker.updateObjectOwnership(mask);
+  const thirdObservation = tracker.updateObjectOwnership(
+    { ...mask, createdAtFrame: 3, updatedAtFrame: 3 },
+    3,
+  );
   assert.equal(thirdObservation.promoted, 0);
   assert.equal(isReconstructionEligibleLandmark(tracker.trackedPoints[0]), false);
-  const fourthObservation = tracker.updateObjectOwnership(mask);
+  const fourthObservation = tracker.updateObjectOwnership(
+    { ...mask, createdAtFrame: 4, updatedAtFrame: 4 },
+    4,
+  );
   assert.equal(fourthObservation.promoted, 0);
   assert.equal(isReconstructionEligibleLandmark(tracker.trackedPoints[0]), true);
+});
+
+test('projected masks and repeated segmentation observations cannot mature a recovery landmark', () => {
+  const tracker = new KeypointTracker();
+  tracker.trackedPoints = [
+    {
+      ...createTrackedPoint(1, { x: 30, y: 24 }, { tx: 0, ty: 0, scale: 1, rotation: 0 }),
+      objectOwned: true,
+      objectOwnedStreak: 0,
+      recoveryOwnershipProbation: true,
+    },
+  ];
+  const mask = createObjectSupportMask({
+    width: 80,
+    height: 60,
+    data: new Uint8Array(80 * 60).fill(255),
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 40, y: 30 },
+    createdAtFrame: 1,
+  });
+  for (let frame = 2; frame < 8; frame++) {
+    const projected = warpObjectSupportMask(mask, {
+      position: mask.referencePoint,
+      scale: 1,
+      rotation: 0,
+      updatedAtFrame: frame,
+    });
+    tracker.updateObjectOwnership(projected, frame);
+  }
+  tracker.updateObjectOwnership(mask, 8);
+  assert.equal(tracker.getCorrespondences().length, 0);
+  assert.equal(isReconstructionEligibleLandmark(tracker.trackedPoints[0]), false);
+  const observed = createObjectSupportMask({ ...mask, createdAtFrame: 8, updatedAtFrame: 8 });
+  for (let read = 0; read < 6; read++) tracker.updateObjectOwnership(observed, 8);
+  assert.equal(tracker.getCorrespondences().length, 0, 're-reading one observation is not new evidence');
+  for (let frame = 9; frame <= 11; frame++) {
+    tracker.updateObjectOwnership(
+      createObjectSupportMask({ ...mask, createdAtFrame: frame, updatedAtFrame: frame }),
+      frame,
+    );
+    assert.equal(isReconstructionEligibleLandmark(tracker.trackedPoints[0]), frame === 11);
+  }
 });
 
 test('keypoint refresh execution requires a frame-local reference plan', () => {

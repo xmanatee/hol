@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { ObjectSurfaceModel } from './objectSurfaceModel.js';
-import { createObjectSupportMask } from './objectSupportMask.js';
+import { createObjectSupportMask, warpObjectSupportMask } from './objectSupportMask.js';
 
 const createMask = ({ width = 160, height = 120, bbox = { x: 20, y: 20, width: 100, height: 80 } } = {}) => {
   const data = new Uint8Array(width * height);
@@ -39,16 +39,48 @@ const point = ({
   current: { x: x + 2, y: y + 1 },
   status,
   objectOwned,
+  objectOwnedStreak: 2,
   landmarkQuality: quality,
   totalSuccessfulFrames: age,
   age,
   errorHistory: [residual],
 });
 
+test('propagated and aged masks constrain support but cannot confirm silhouette fit or authorize growth', () => {
+  const model = new ObjectSurfaceModel();
+  const mask = createMask();
+  const landmarks = [
+    point({ id: 1, x: 30, y: 30 }),
+    point({ id: 2, x: 70, y: 30 }),
+    point({ id: 3, x: 80, y: 80 }),
+  ];
+  const observed = model.update({ objectSupportMask: mask, frameIndex: 0, landmarks });
+  assert.ok(observed.silhouetteCoverage > 0);
+  assert.equal(observed.allowGrowth, true);
+  const projected = warpObjectSupportMask(mask, {
+    position: mask.referencePoint,
+    scale: 1,
+    rotation: 0,
+    updatedAtFrame: 1,
+  });
+  for (const objectSupportMask of [mask, projected]) {
+    const state = model.update({ objectSupportMask, frameIndex: 1, landmarks });
+    assert.equal(state.lockedLandmarks, 3);
+    assert.equal(state.silhouetteCoverage, null);
+    assert.equal(state.contourFitResidual, null);
+    assert.equal(state.allowGrowth, false);
+  }
+  const freshMask = createObjectSupportMask({ ...mask, createdAtFrame: 2, updatedAtFrame: 2 });
+  const fresh = model.update({ objectSupportMask: freshMask, frameIndex: 2, landmarks });
+  assert.ok(fresh.silhouetteCoverage > 0);
+  assert.equal(fresh.allowGrowth, true);
+});
+
 test('object surface model tracks mask-cell coverage and locked landmarks', () => {
   const model = new ObjectSurfaceModel({ cellSize: 32 });
 
   const state = model.update({
+    frameIndex: 0,
     objectSupportMask: createMask(),
     targetClass: 'cup',
     landmarks: [
@@ -71,6 +103,7 @@ test('object surface model tracks mask-cell coverage and locked landmarks', () =
 test('object surface model freezes growth during partial occlusion and exposes recovery state', () => {
   const model = new ObjectSurfaceModel({ cellSize: 32 });
   model.update({
+    frameIndex: 0,
     objectSupportMask: createMask(),
     targetClass: 'cup',
     landmarks: [
@@ -83,6 +116,7 @@ test('object surface model freezes growth during partial occlusion and exposes r
   });
 
   const occluded = model.update({
+    frameIndex: 0,
     objectSupportMask: createMask(),
     targetClass: 'cup',
     landmarks: [
@@ -99,6 +133,7 @@ test('object surface model freezes growth during partial occlusion and exposes r
   assert.ok(occluded.lastOcclusionReason.includes('object ownership'));
 
   const recovered = model.update({
+    frameIndex: 0,
     objectSupportMask: createMask(),
     targetClass: 'cup',
     landmarks: [
@@ -117,6 +152,7 @@ test('object surface model freezes growth during partial occlusion and exposes r
 test('object surface model only counts landmarks that are inside the current support mask', () => {
   const model = new ObjectSurfaceModel({ cellSize: 24 });
   const state = model.update({
+    frameIndex: 0,
     objectSupportMask: createMask({ bbox: { x: 20, y: 20, width: 72, height: 72 } }),
     targetClass: 'book',
     landmarks: [
@@ -162,6 +198,7 @@ test('object surface model derives silhouette segments from the mask shape inste
   });
 
   const state = model.update({
+    frameIndex: 0,
     objectSupportMask,
     targetClass: 'object',
     landmarks: [

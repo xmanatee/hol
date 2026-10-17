@@ -1,9 +1,13 @@
 import { modelFromRegion } from './anchor.parametricGeometry.js';
-import { isPointInsideObjectSupport } from './objectSupportMask.js';
+import { isIndependentObjectSupportObservation, isPointInsideObjectSupport } from './objectSupportMask.js';
 import { extractObjectSilhouette, scoreSilhouetteLandmarks } from './objectSilhouette.js';
 import { LANDMARK_COVERAGE_CELL_SIZE, summarizeLandmarkMaskCoverage } from './landmarkSpatialCoverage.js';
+import { isConfirmedObjectOwnedLandmark } from './landmarkOwnership.js';
 
 const emptyState = {
+  observationSource: null,
+  observationFrame: null,
+  projectionFrame: null,
   surfacePrior: 'unknown',
   bounds: null,
   cellCount: 0,
@@ -82,7 +86,7 @@ export class ObjectSurfaceModel {
     return this.state;
   }
 
-  update({ objectSupportMask, landmarks = [], targetClass = null, poseResidual = null } = {}) {
+  update({ objectSupportMask, frameIndex, landmarks = [], targetClass = null, poseResidual = null } = {}) {
     if (!objectSupportMask?.bbox) {
       return this.reset();
     }
@@ -108,7 +112,10 @@ export class ObjectSurfaceModel {
     });
     const locked = activeObjectLandmarks.filter(
       (point) =>
-        point.objectOwned === true && pointQuality(point) >= this.lockQuality && pointResidual(point) <= 8,
+        point.objectOwned === true &&
+        isConfirmedObjectOwnedLandmark(point) &&
+        pointQuality(point) >= this.lockQuality &&
+        pointResidual(point) <= 8,
     );
     const occlusion = occlusionStateFromLandmarks({
       activeLandmarks,
@@ -116,7 +123,13 @@ export class ObjectSurfaceModel {
       poseResidual,
       previousState: this.state.occlusionState,
     });
+    const independentObservation =
+      isIndependentObjectSupportObservation(objectSupportMask) &&
+      objectSupportMask.createdAtFrame === frameIndex;
     this.state = {
+      observationSource: objectSupportMask.observationSource,
+      observationFrame: objectSupportMask.observationSource ? objectSupportMask.createdAtFrame : null,
+      projectionFrame: objectSupportMask.updatedAtFrame,
       surfacePrior: modelFromRegion(bbox, targetClass),
       bounds: {
         min: { x: bbox.x, y: bbox.y },
@@ -131,6 +144,9 @@ export class ObjectSurfaceModel {
       silhouette,
       ...silhouetteFit,
       ...occlusion,
+      silhouetteCoverage: independentObservation ? silhouetteFit.silhouetteCoverage : null,
+      contourFitResidual: independentObservation ? silhouetteFit.contourFitResidual : null,
+      allowGrowth: independentObservation && occlusion.allowGrowth,
     };
 
     return this.state;

@@ -840,6 +840,9 @@ export class ImageAnchorService {
     this.metrics.currentObjectSupportMaskSource = anchoredSupportMask.source;
     this.metrics.currentObjectSupportMaskBounds = { ...anchoredSupportMask.bbox };
     this.metrics.currentObjectSupportMaskPreview = this.metrics.objectSupportMaskPreview;
+    const ownership = this.keypointTracker.updateObjectOwnership(anchoredSupportMask, this.frameIndex);
+    this.metrics.landmarkOwnershipPromoted = ownership.promoted;
+    this._updateObjectSurfaceMetrics({ objectSupportMask: anchoredSupportMask });
     const trackingRegionBase =
       this._shouldBoundRigidPlanarTrackingRegion() && this.templateRegion
         ? {
@@ -2188,7 +2191,7 @@ export class ImageAnchorService {
     if (activeBeforeRefresh < 3 && keypointResult.keypoints.length > 0) {
       this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, grayImage, {
         tapPosition: this.currentPosition,
-        admission: 'trusted-selection',
+        admission: 'recovery-probation',
       });
     } else if (keypointResult.keypoints.length > 0) {
       const refreshPlan = this.keypointTracker.planKeypointRefresh(this.cv);
@@ -3007,6 +3010,9 @@ export class ImageAnchorService {
 
   _surfaceMetricFields(surfaceState) {
     return {
+      objectSupportObservationSource: surfaceState.observationSource,
+      objectSupportObservationFrame: surfaceState.observationFrame,
+      objectSupportProjectionFrame: surfaceState.projectionFrame,
       surfacePrior: surfaceState.surfacePrior,
       surfaceCoverage: surfaceState.coverage,
       surfaceLockedLandmarks: surfaceState.lockedLandmarks,
@@ -3026,6 +3032,7 @@ export class ImageAnchorService {
   _updateObjectSurfaceMetrics({ objectSupportMask, poseResidual = null }) {
     const surfaceState = this.objectSurfaceModel.update({
       objectSupportMask,
+      frameIndex: this.frameIndex,
       landmarks: this.keypointTracker?.trackedPoints || [],
       targetClass: this.anchorTargetClass,
       poseResidual,
@@ -3415,7 +3422,7 @@ export class ImageAnchorService {
       return 0;
     }
 
-    const ownership = this.keypointTracker.updateObjectOwnership(objectSupportMask);
+    const ownership = this.keypointTracker.updateObjectOwnership(objectSupportMask, this.frameIndex);
     this.metrics.landmarkOwnershipPromoted = ownership.promoted;
     return ownership.rejected;
   }
@@ -3506,7 +3513,7 @@ export class ImageAnchorService {
     this.positionFilterY.filter(this.currentPosition.y, timestamp);
     this.keypointTracker.initializeTracking(this.cv, keypointResult.keypoints, grayImage, {
       tapPosition: this.currentPosition,
-      admission: 'trusted-selection',
+      admission: 'recovery-probation',
     });
     this.anchorState = 'tracking';
     this._recordLandmarkMetrics();
@@ -4322,8 +4329,8 @@ export class ImageAnchorService {
       this.metrics.activeLandmarkCount || this.metrics.keypointCount || correspondences.length;
     const objectOwnedLandmarks = this.metrics.objectOwnedLandmarks ?? activeLandmarks;
     const objectOwnedRatio = objectOwnedLandmarks / Math.max(1, activeLandmarks);
-    const silhouetteCoverage = this.metrics.silhouetteCoverage ?? 1;
-    const contourFitResidual = this.metrics.contourFitResidual ?? 0;
+    const silhouetteCoverage = this.metrics.silhouetteCoverage;
+    const contourFitResidual = this.metrics.contourFitResidual;
     const spread = planarPose.referenceSpread || this._measureReferenceSpread(correspondences);
     const inlierRatio =
       planarPose.inlierRatio ?? planarPose.inlierCount / Math.max(1, correspondences.length);
@@ -4336,8 +4343,8 @@ export class ImageAnchorService {
       averageResidual <= 9.5 &&
       spread.minAxis >= 18 &&
       objectOwnedRatio >= 0.72 &&
-      silhouetteCoverage >= 0.5 &&
-      contourFitResidual <= 5
+      (silhouetteCoverage == null || silhouetteCoverage >= 0.5) &&
+      (contourFitResidual == null || contourFitResidual <= 5)
     );
   }
 

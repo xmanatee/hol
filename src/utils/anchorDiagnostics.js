@@ -16,6 +16,9 @@ export const collectAnchorDetails = ({ anchorState, segmentationRefresh }) => {
     objectSupportMaskPreview:
       metrics.currentObjectSupportMaskPreview || metrics.objectSupportMaskPreview || null,
     objectSupportMaskConfidence: metrics.objectSupportMaskConfidence ?? null,
+    objectSupportObservationSource: metrics.objectSupportObservationSource ?? null,
+    objectSupportObservationFrame: metrics.objectSupportObservationFrame ?? null,
+    objectSupportProjectionFrame: metrics.objectSupportProjectionFrame ?? null,
     keypointDensity: metrics.keypointDensity ?? null,
     backgroundRejected: metrics.backgroundRejected ?? 0,
     readiness: metrics.readiness || null,
