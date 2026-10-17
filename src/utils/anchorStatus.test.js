@@ -187,7 +187,7 @@ test('keeps candidate, mapping, degraded, lost, and unknown guidance exact', () 
     status: 'recovering',
     severity: 'bad',
     message: 'Anchor lost; recovery attempt 3',
-    recommendation: 'Bring the original object back into view or tap to reset.',
+    recommendation: 'Bring the original object back into view or use Clear anchor to select another.',
   });
   assert.deepEqual(describeTrackedState({ state: 'unavailable' }), {
     status: 'unknown',

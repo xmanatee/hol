@@ -86,8 +86,6 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
 
 ### Camera interaction
 
-- **P1 · Accidental reset:** Keep selected objects locked through incidental canvas taps/drags; clear through the explicit control and distinguish deliberate taps from cancelled gestures.
-  [Pointer cancellation](https://www.w3.org/WAI/WCAG22/Understanding/pointer-cancellation.html)
 - **P1 · Recovery guidance:** Show and announce concise selected-object loss/recovery instructions outside diagnostics; avoid repeated announcements during steady tracking.
   [Status messages](https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html)
 - **P2 · Placement intent:** Clarify that tapping selects the object rather than the exact tapped surface pixel; evaluate explicit placement without rebuilding its tracking identity.

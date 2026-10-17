@@ -152,7 +152,7 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
       status: 'recovering',
       severity: 'bad',
       message: `Anchor lost; recovery attempt ${metrics.recoveryAttempts ?? 0}`,
-      recommendation: 'Bring the original object back into view or tap to reset.',
+      recommendation: 'Bring the original object back into view or use Clear anchor to select another.',
     };
   }
 

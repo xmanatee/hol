@@ -362,64 +362,56 @@ const CameraView = () => {
     }
   }, [getAnchorSystemState, showAnchorFeedback, speakGreeting]);
 
-  // Handle canvas selection for anchor creation or clearing
   const candidateId = anchorSystemState.candidate?.id ?? null;
   const handleCanvasSelect = useCallback(
     async (position) => {
-      if (cameraState !== 'active') {
+      if (cameraState !== 'active' || getAnchorSystemState().mode !== 'selection') {
         return;
       }
 
-      const liveAnchorSystemState = getAnchorSystemState();
-      if (liveAnchorSystemState.mode === 'selection') {
-        try {
-          const canvas = canvasRef.current;
-          if (!canvas || !videoRef.current || frameCountRef.current === 0) {
-            showAnchorFeedback('Preparing camera frame...', 'warn');
-            return;
-          }
-          const result = await selectAnchorFromTap({
-            candidateId,
-            tapPosition: position,
-          });
-
-          if (result.reason === ANCHOR_SELECTION_IN_PROGRESS_REASON) {
-            return;
-          }
-
-          if (result.success) {
-            lastAnchorUpdateAtRef.current = 0;
-            lastSegmentationRefreshCheckAtRef.current = 0;
-            logger.info('CameraView', 'Anchor created successfully:', {
-              keypoints: result.keypoints,
-              quality: result.quality?.toFixed(3),
-              method: result.method,
-              position: result.position,
-            });
-            showAnchorFeedback('Object selected.', 'good');
-            if (
-              shouldAutoStartObjectVoice({
-                trackingMode: result.trackingMode,
-                reconstructionReady:
-                  getAnchorSystemState().activeAnchor?.diagnostics?.reconstructionReady === true,
-                hasUserGesture: true,
-              })
-            ) {
-              const createdAnchor = getAnchorSystemState().activeAnchor;
-              generateAndSpeakForAnchor(createdAnchor.createdAt);
-            }
-          } else {
-            logger.warn('CameraView', 'Anchor creation failed:', result);
-            showAnchorFeedback(result.reason, 'warn');
-          }
-        } catch (error) {
-          logger.warn('CameraView', `Anchor not created: ${error.message}`);
-          showAnchorFeedback(`Anchor not created: ${error.message}`, 'bad');
+      try {
+        const canvas = canvasRef.current;
+        if (!canvas || !videoRef.current || frameCountRef.current === 0) {
+          showAnchorFeedback('Preparing camera frame...', 'warn');
+          return;
         }
-      } else if (liveAnchorSystemState.mode === 'anchor') {
-        // In anchor mode: clear anchor on tap
-        logger.info('CameraView', 'Clearing anchor to return to selection mode');
-        handleClearAnchor();
+        const result = await selectAnchorFromTap({
+          candidateId,
+          tapPosition: position,
+        });
+
+        if (result.reason === ANCHOR_SELECTION_IN_PROGRESS_REASON) {
+          return;
+        }
+
+        if (result.success) {
+          lastAnchorUpdateAtRef.current = 0;
+          lastSegmentationRefreshCheckAtRef.current = 0;
+          logger.info('CameraView', 'Anchor created successfully:', {
+            keypoints: result.keypoints,
+            quality: result.quality?.toFixed(3),
+            method: result.method,
+            position: result.position,
+          });
+          showAnchorFeedback('Object selected.', 'good');
+          if (
+            shouldAutoStartObjectVoice({
+              trackingMode: result.trackingMode,
+              reconstructionReady:
+                getAnchorSystemState().activeAnchor?.diagnostics?.reconstructionReady === true,
+              hasUserGesture: true,
+            })
+          ) {
+            const createdAnchor = getAnchorSystemState().activeAnchor;
+            generateAndSpeakForAnchor(createdAnchor.createdAt);
+          }
+        } else {
+          logger.warn('CameraView', 'Anchor creation failed:', result);
+          showAnchorFeedback(result.reason, 'warn');
+        }
+      } catch (error) {
+        logger.warn('CameraView', `Anchor not created: ${error.message}`);
+        showAnchorFeedback(`Anchor not created: ${error.message}`, 'bad');
       }
     },
     [
@@ -429,7 +421,6 @@ const CameraView = () => {
       showAnchorFeedback,
       generateAndSpeakForAnchor,
       getAnchorSystemState,
-      handleClearAnchor,
     ],
   );
 

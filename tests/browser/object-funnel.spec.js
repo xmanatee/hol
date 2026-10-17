@@ -272,6 +272,42 @@ for (const [scenario, failedUrl, title] of [
     });
     await expect(page.locator('.overlay-scene')).toHaveCount(0);
     const selectionCanvas = page.getByRole('button', { name: 'Select the object at the camera center' });
+    if (scenario === null) {
+      await selectionCanvas.evaluate((canvas) => {
+        const rect = canvas.getBoundingClientRect();
+        const point = {
+          bubbles: true,
+          button: 0,
+          isPrimary: true,
+          pointerId: 1,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+        };
+        const send = (type, overrides = {}) =>
+          canvas.dispatchEvent(new PointerEvent(type, { ...point, ...overrides }));
+        send('pointerup');
+        for (const cancellation of ['pointercancel', 'pointerout', 'lostpointercapture']) {
+          send('pointerdown');
+          send(cancellation);
+          send('pointerup');
+        }
+        send('pointerdown');
+        send('pointermove', { clientX: point.clientX + 50 });
+        send('pointermove');
+        send('pointerup');
+        send('pointerdown');
+        send('pointerup', { pointerId: 2 });
+        send('pointerdown');
+        send('pointerdown', { pointerId: 2, isPrimary: false });
+        send('pointerup');
+        send('pointerdown', { button: 2 });
+        send('pointerup', { button: 2 });
+        send('pointerdown', { clientX: rect.left + 3 });
+        send('pointerup', { clientX: rect.left - 3 });
+      });
+      expect(await page.evaluate(() => window.__holSelectionCommands)).toEqual([]);
+      await expect(discovery).toBeVisible();
+    }
     if (scenario === 'stale') {
       await page.evaluate(() => {
         window.__holFreezeObjectVideo = true;
@@ -299,7 +335,8 @@ for (const [scenario, failedUrl, title] of [
       });
       await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
     }
-    await selectionCanvas.click();
+    if (scenario === null) await selectionCanvas.tap();
+    else await selectionCanvas.click();
     await expect(discovery).toHaveCount(0);
     if (scenario === 'slow-head') {
       const loading = page.getByRole('status').filter({ hasText: 'Loading face…' });
@@ -348,6 +385,18 @@ for (const [scenario, failedUrl, title] of [
       tapPosition: expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
     });
     await expect(page.getByRole('button', { name: 'Clear anchor' })).toBeVisible();
+    if (scenario === null) {
+      const selectedId = await page.evaluate(() => window.__holLatestAnchorState.activeAnchor.id);
+      await expect(selectionCanvas).toBeDisabled();
+      await expect(selectionCanvas).toHaveAttribute('tabindex', '-1');
+      await page.touchscreen.tap(120, 240);
+      await page.touchscreen.tap(120, 240);
+      await selectionCanvas.dispatchEvent('keydown', { key: 'Enter' });
+      await selectionCanvas.dispatchEvent('click', { detail: 0 });
+      expect(await page.evaluate(() => window.__holLatestAnchorState.activeAnchor.id)).toBe(selectedId);
+      expect(await page.evaluate(() => window.__holSelectionCommands)).toHaveLength(1);
+      await expect(discovery).toHaveCount(0);
+    }
     await expect
       .poll(() => page.evaluate(() => window.__holLastDrawAt - window.__holFirstDrawAt))
       .toBeGreaterThan(500);
@@ -552,6 +601,15 @@ for (const [scenario, failedUrl, title] of [
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Clear anchor' }).click();
     await expect(discovery).toBeVisible();
+    if (scenario === null) {
+      await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
+      await expect(selectionCanvas).toBeEnabled();
+      await selectionCanvas.focus();
+      await page.keyboard.press('Enter');
+      await expect(discovery).toHaveCount(0);
+      await expect(page.locator('.overlay-scene canvas')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Clear anchor' })).toBeVisible();
+    }
     expect(errors).toEqual([]);
   });
 }
