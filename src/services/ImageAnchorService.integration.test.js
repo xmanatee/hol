@@ -3839,7 +3839,6 @@ test('keypoint failure recovers through descriptor keyframe relocalization befor
         matchCount: 22,
         inlierCount: 16,
         inlierRatio: 16 / 22,
-        inlierIds: trackedPoints.map((point) => point.id),
         inlierMatches: trackedPoints.map((point) => ({
           id: point.id,
           reference: point.original,

@@ -1,7 +1,10 @@
-import { fitRobustAffine2D, fitRobustSimilarity } from './anchor.reconstructionRobust.js';
+import {
+  recoverMatchedKeyframe,
+  selectRelocalizationResult,
+  RELOCALIZATION_DEFAULTS,
+} from './relocalizationConsensus.js';
 import { isReconstructionEligibleLandmark } from './landmarkOwnership.js';
 import { isPatchInsideObjectSupport } from './objectSupportMask.js';
-import { assessRelocalizationGeometry, RELOCALIZATION_GEOMETRY_DEFAULTS } from './relocalizationGeometry.js';
 
 const ORB_DESCRIPTOR_WORDS = 8;
 const ORB_EDGE_THRESHOLD = 23;
@@ -22,16 +25,11 @@ const DEFAULT_CONFIG = Object.freeze({
   maxEntriesPerKeyframe: 96,
   maxStorageFeatures: 1000,
   maxQueryFeatures: 1000,
-  minMatches: 5,
-  minInliers: 5,
   minKeyframeEntries: 8,
-  minAffineInliers: 6,
-  minInlierRatio: 0.5,
   ratioThreshold: 0.92,
   maxDescriptorDistance: 72,
-  inlierThreshold: 10,
   associationRadius: 16,
-  ...RELOCALIZATION_GEOMETRY_DEFAULTS,
+  ...RELOCALIZATION_DEFAULTS,
   minObservations: 5,
   minTrackingStreak: 3,
   minLandmarkQuality: 0.48,
@@ -498,137 +496,16 @@ const median = (values) => {
   return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 };
 
-const similarityToAffine = (transform) => {
-  const cos = Math.cos(transform.rotation);
-  const sin = Math.sin(transform.rotation);
-  return {
-    rowX: [transform.scale * cos, -transform.scale * sin, transform.tx],
-    rowY: [transform.scale * sin, transform.scale * cos, transform.ty],
-  };
-};
-
-const applyAffine = (point, transform) => ({
-  x: transform.rowX[0] * point.x + transform.rowX[1] * point.y + transform.rowX[2],
-  y: transform.rowY[0] * point.x + transform.rowY[1] * point.y + transform.rowY[2],
-});
-
 const relocalizeAgainstKeyframe = (keyframe, queryFeatureSet, config) => {
   const matches = matchOrbFeatureSet(keyframe.entries, queryFeatureSet, config);
-  if (matches.length < config.minMatches) {
-    return {
-      success: false,
-      reason: `Keyframe ${keyframe.id} produced only ${matches.length} reciprocal ORB matches`,
-      matchCount: matches.length,
-      keyframeId: keyframe.id,
-    };
-  }
-
   const observations = matches.map((match) => ({
     ...match,
     current: match.point,
     quality: clamp01(1 - match.descriptorDistance / 128) * 0.8 + clamp01(match.response) * 0.2,
   }));
-  const affineFit = fitRobustAffine2D(observations, {
-    minInliers: config.minInliers,
-    threshold: config.inlierThreshold,
-    maxSample: 20,
-    sampleCoverage: 'spatial',
-  });
-  const similarityFit = fitRobustSimilarity(observations, {
-    minInliers: config.minInliers,
-    threshold: config.inlierThreshold,
-    maxSample: 24,
-  });
-  const unvalidatedAffineCandidate =
-    affineFit.success &&
-    affineFit.inlierCount >= config.minAffineInliers &&
-    affineFit.inlierRatio >= config.minInlierRatio
-      ? { ...affineFit, model: 'affine' }
-      : null;
-  const unvalidatedSimilarityCandidate =
-    similarityFit.success && similarityFit.inlierRatio >= config.minInlierRatio
-      ? {
-          ...similarityFit,
-          transform: similarityToAffine(similarityFit.transform),
-          model: 'similarity',
-        }
-      : null;
-  const affineAssessment = unvalidatedAffineCandidate
-    ? assessRelocalizationGeometry(unvalidatedAffineCandidate, config)
-    : null;
-  const similarityAssessment = unvalidatedSimilarityCandidate
-    ? assessRelocalizationGeometry(unvalidatedSimilarityCandidate, config)
-    : null;
-  const affineCandidate = affineAssessment?.valid
-    ? { ...unvalidatedAffineCandidate, geometry: affineAssessment }
-    : null;
-  const similarityCandidate = similarityAssessment?.valid
-    ? { ...unvalidatedSimilarityCandidate, geometry: similarityAssessment }
-    : null;
-  const fit =
-    affineCandidate && similarityCandidate
-      ? affineCandidate.inlierCount >= similarityCandidate.inlierCount + 2 &&
-        affineCandidate.averageResidual <= similarityCandidate.averageResidual
-        ? affineCandidate
-        : similarityCandidate
-      : affineCandidate || similarityCandidate;
-
-  if (!fit) {
-    return {
-      success: false,
-      reason:
-        affineAssessment?.reason ||
-        similarityAssessment?.reason ||
-        affineFit.reason ||
-        similarityFit.reason ||
-        'No robust ORB geometric consensus',
-      matchCount: matches.length,
-      inlierCount: Math.max(affineFit.inlierCount || 0, similarityFit.inlierCount || 0),
-      keyframeId: keyframe.id,
-    };
-  }
-
-  const inlierMatches = fit.inliers.map((inlier) => ({
-    id: inlier.id,
-    reference: { ...inlier.landmarkReference },
-    point: {
-      x:
-        inlier.point.x +
-        fit.transform.rowX[0] * inlier.referenceOffset.x +
-        fit.transform.rowX[1] * inlier.referenceOffset.y,
-      y:
-        inlier.point.y +
-        fit.transform.rowY[0] * inlier.referenceOffset.x +
-        fit.transform.rowY[1] * inlier.referenceOffset.y,
-    },
-    descriptorDistance: inlier.descriptorDistance,
-    response: inlier.response,
-  }));
-
   return {
-    success: true,
+    ...recoverMatchedKeyframe(keyframe, observations, { ...config, methodLabel: 'ORB' }),
     method: 'orb-keyframe-relocalization',
-    transform: {
-      type: 'affine',
-      rowX: [...fit.transform.rowX],
-      rowY: [...fit.transform.rowY],
-      confidence: fit.confidence,
-      averageResidual: fit.averageResidual,
-      model: fit.model,
-      determinant: fit.geometry.determinant,
-      anisotropy: fit.geometry.anisotropy,
-      referenceSpread: fit.geometry.referenceSpread,
-      querySpread: fit.geometry.querySpread,
-    },
-    anchorPoint: applyAffine(keyframe.anchorPoint, fit.transform),
-    inlierMatches,
-    inlierIds: inlierMatches.map((match) => match.id),
-    matchCount: matches.length,
-    inlierCount: fit.inlierCount,
-    inlierRatio: fit.inlierRatio,
-    averageResidual: fit.averageResidual,
-    confidence: fit.confidence,
-    keyframeId: keyframe.id,
   };
 };
 
@@ -679,8 +556,10 @@ export class OrbKeyframeRelocalizer {
     includeFreshLandmarks = false,
     frameFeatures = null,
     translationInvariantRedundancy = false,
-    objectSupportMask = null,
+    objectSupportMask,
   }) {
+    if (objectSupportMask === undefined)
+      throw new TypeError('ORB keyframe storage requires an explicit object support mask or null');
     const landmarks = selectRelocalizationLandmarks(trackedPoints || [], {
       minObservations: this.config.minObservations,
       minTrackingStreak: this.config.minTrackingStreak,
@@ -816,37 +695,14 @@ export class OrbKeyframeRelocalizer {
     );
     timings.keyframeSearchMs = performance.now() - keyframeSearchStartedAt;
     const queryFeatureCount = featureSet.count;
-    const successful = results
-      .filter((result) => result.success)
-      .sort(
-        (left, right) =>
-          right.inlierCount - left.inlierCount ||
-          right.inlierRatio - left.inlierRatio ||
-          left.averageResidual - right.averageResidual,
-      );
     const frameFeatures = canReuseFrameFeatures ? createFrameFeatures(featureSet) : null;
-
-    if (successful.length === 0) {
-      const bestFailure = results.sort(
-        (left, right) =>
-          (right.inlierCount || 0) - (left.inlierCount || 0) ||
-          (right.matchCount || 0) - (left.matchCount || 0),
-      )[0];
-      this.lastResult = {
-        success: false,
-        reason: bestFailure?.reason || 'No ORB keyframe produced a geometric consensus',
-        keyframeCount: this.keyframes.length,
-        queryFeatureCount,
-        matchCount: bestFailure?.matchCount || 0,
-        inlierCount: bestFailure?.inlierCount || 0,
-        searchRegion: normalizedSearchRegion,
-        timings,
-      };
-      return attachFrameFeatures(this.lastResult, frameFeatures);
-    }
-
     this.lastResult = {
-      ...successful[0],
+      ...(selectRelocalizationResult(results) ?? {
+        success: false,
+        reason: 'No ORB reference available',
+        matchCount: 0,
+        inlierCount: 0,
+      }),
       keyframeCount: this.keyframes.length,
       queryFeatureCount,
       searchRegion: normalizedSearchRegion,

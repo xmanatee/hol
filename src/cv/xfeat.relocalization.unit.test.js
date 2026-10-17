@@ -189,6 +189,7 @@ test('XFeat descriptor consensus cannot recover a sheared collapse or a line of 
     const result = await relocalizer.relocalize({ width: 240, height: 180 });
     assert.equal(result.success, false, scenario);
     assert.equal(result.matchCount, 8, 'descriptor identities match; geometry must reject the recovery');
+    assert.match(result.reason, /XFeat:.*(scale|two-dimensional support)/);
     assert.equal(result.anchorPoint, undefined);
     relocalizer.dispose();
   }
@@ -355,6 +356,45 @@ test('XFeat relocalizer releases a runtime that finishes initializing after disp
 
   await assert.rejects(storage, /disposed during runtime initialization/);
   assert.equal(disposalCount, 1);
+});
+
+test('clearing or disposing a reference during extraction cannot publish recovery for another identity', async () => {
+  for (const action of ['clear', 'dispose']) {
+    const features = Array.from({ length: 8 }, (_, index) => ({
+      point: { x: 24 + (index % 4) * 28, y: 32 + Math.floor(index / 4) * 36 },
+      descriptor: descriptor(index),
+      response: 0.9,
+    }));
+    const pending = Promise.withResolvers();
+    let extractionCount = 0;
+    const relocalizer = new XFeatKeyframeRelocalizer({
+      extractFeatures: () => (++extractionCount === 1 ? features : pending.promise),
+    });
+    const stored = await relocalizer.storeReference({
+      imageData: { width: 160, height: 120 },
+      anchorPoint: { x: 66, y: 50 },
+      trackedPoints: features.map((feature, id) => ({
+        id,
+        original: feature.point,
+        current: feature.point,
+        status: 'active',
+        objectOwned: true,
+        objectOwnedStreak: 5,
+        recentDropout: false,
+        totalSuccessfulFrames: 8,
+        successfulTrackingStreak: 8,
+        landmarkQuality: 0.9,
+        response: 0.8,
+      })),
+    });
+    assert.equal(stored.success, true);
+    const recovering = relocalizer.relocalize({ width: 160, height: 120 });
+    relocalizer[action]();
+    pending.resolve(features);
+    assert.deepEqual(await recovering, { success: false, reason: 'XFeat recovery superseded' });
+    assert.equal(relocalizer.hasReference(), false);
+    relocalizer.dispose();
+  }
 });
 
 test('XFeat relocalizer retries runtime initialization after a transient failure', async () => {

@@ -1,9 +1,12 @@
-import { fitRobustAffine2D, fitRobustSimilarity } from './anchor.reconstructionRobust.js';
+import {
+  recoverMatchedKeyframe,
+  selectRelocalizationResult,
+  RELOCALIZATION_DEFAULTS,
+} from './relocalizationConsensus.js';
 import {
   associateLandmarkCoordinateIndexes,
   selectRelocalizationLandmarks,
 } from './anchor.relocalization.js';
-import { assessRelocalizationGeometry } from './relocalizationGeometry.js';
 import {
   ORT_WASM_ASSET_URL,
   ORT_WASM_LOADER_ASSET_URL,
@@ -21,10 +24,7 @@ const MAX_QUERY_FEATURES = 500;
 const MAX_REFERENCE_ENTRIES = 96;
 const MAX_REFERENCE_KEYFRAMES = 2;
 const ASSOCIATION_RADIUS = 16;
-const MIN_MATCHES = 5;
-const MIN_AFFINE_INLIERS = 6;
-const MIN_INLIER_RATIO = 0.5;
-const INLIER_THRESHOLD = 10;
+const MIN_MATCHES = RELOCALIZATION_DEFAULTS.minMatches;
 const MIN_COSINE_SIMILARITY = 0.82;
 
 const clamp01 = (value) => Math.max(0, Math.min(1, value));
@@ -206,68 +206,6 @@ export const matchXFeatDescriptors = (
       ];
     })
     .sort((left, right) => right.descriptorSimilarity - left.descriptorSimilarity);
-};
-
-const similarityToAffine = (transform) => {
-  const cos = Math.cos(transform.rotation);
-  const sin = Math.sin(transform.rotation);
-  return {
-    rowX: [transform.scale * cos, -transform.scale * sin, transform.tx],
-    rowY: [transform.scale * sin, transform.scale * cos, transform.ty],
-  };
-};
-
-const applyAffine = (point, transform) => ({
-  x: transform.rowX[0] * point.x + transform.rowX[1] * point.y + transform.rowX[2],
-  y: transform.rowY[0] * point.x + transform.rowY[1] * point.y + transform.rowY[2],
-});
-
-const fitXFeatMatches = (matches) => {
-  const observations = matches.map((match) => ({
-    ...match,
-    current: match.point,
-    quality: clamp01(match.descriptorSimilarity),
-  }));
-  const affineFit = fitRobustAffine2D(observations, {
-    minInliers: MIN_MATCHES,
-    threshold: INLIER_THRESHOLD,
-    maxSample: 20,
-    sampleCoverage: 'spatial',
-  });
-  const similarityFit = fitRobustSimilarity(observations, {
-    minInliers: MIN_MATCHES,
-    threshold: INLIER_THRESHOLD,
-    maxSample: 24,
-  });
-  const affine =
-    affineFit.success &&
-    affineFit.inlierCount >= MIN_AFFINE_INLIERS &&
-    affineFit.inlierRatio >= MIN_INLIER_RATIO
-      ? { ...affineFit, model: 'affine' }
-      : null;
-  const similarity =
-    similarityFit.success && similarityFit.inlierRatio >= MIN_INLIER_RATIO
-      ? {
-          ...similarityFit,
-          transform: similarityToAffine(similarityFit.transform),
-          model: 'similarity',
-        }
-      : null;
-  const validAffine = affine
-    ? { ...affine, geometry: assessRelocalizationGeometry(affine, { methodLabel: 'XFeat' }) }
-    : null;
-  const validSimilarity = similarity
-    ? { ...similarity, geometry: assessRelocalizationGeometry(similarity, { methodLabel: 'XFeat' }) }
-    : null;
-  const candidates = [validAffine, validSimilarity].filter((candidate) => candidate?.geometry.valid);
-  return (
-    candidates.sort(
-      (left, right) =>
-        right.inlierCount - left.inlierCount ||
-        right.inlierRatio - left.inlierRatio ||
-        left.averageResidual - right.averageResidual,
-    )[0] || null
-  );
 };
 
 export const createXFeatFeatureExtractor = async ({
@@ -465,94 +403,31 @@ export class XFeatKeyframeRelocalizer {
     if (!this.hasReference()) {
       return { success: false, reason: 'No XFeat reference available' };
     }
+    const epoch = this.referenceEpoch;
     const startedAt = performance.now();
     const features = await this._extract(imageData, MAX_QUERY_FEATURES);
+    if (epoch !== this.referenceEpoch) {
+      return { success: false, reason: 'XFeat recovery superseded' };
+    }
     const featureExtractionMs = performance.now() - startedAt;
     const matchingStartedAt = performance.now();
     const candidates = this.references.map((storedReference) => {
       const referenceMatches = matchXFeatDescriptors(storedReference.entries, features);
-      return {
-        reference: storedReference,
-        matches: referenceMatches,
-        fit: referenceMatches.length >= MIN_MATCHES ? fitXFeatMatches(referenceMatches) : null,
-      };
+      return recoverMatchedKeyframe(
+        storedReference,
+        referenceMatches.map((match) => ({
+          ...match,
+          current: match.point,
+          quality: clamp01(match.descriptorSimilarity),
+        })),
+        { methodLabel: 'XFeat' },
+      );
     });
-    const bestMatchCount = Math.max(...candidates.map((candidate) => candidate.matches.length));
-    if (bestMatchCount < MIN_MATCHES) {
-      return {
-        success: false,
-        reason: `XFeat produced only ${bestMatchCount} mutual descriptor matches`,
-        matchCount: bestMatchCount,
-        queryFeatureCount: features.length,
-        timings: {
-          featureExtractionMs,
-          keyframeSearchMs: performance.now() - matchingStartedAt,
-        },
-      };
-    }
-    const winner = candidates
-      .filter((candidate) => candidate.fit)
-      .sort(
-        (left, right) =>
-          right.fit.inlierCount - left.fit.inlierCount ||
-          right.fit.inlierRatio - left.fit.inlierRatio ||
-          left.fit.averageResidual - right.fit.averageResidual,
-      )[0];
-    if (!winner) {
-      return {
-        success: false,
-        reason: 'No robust XFeat geometric consensus',
-        matchCount: bestMatchCount,
-        queryFeatureCount: features.length,
-        timings: {
-          featureExtractionMs,
-          keyframeSearchMs: performance.now() - matchingStartedAt,
-        },
-      };
-    }
-    const { reference, matches, fit } = winner;
-    const inlierMatches = fit.inliers.map((inlier) => ({
-      id: inlier.id,
-      reference: { ...inlier.landmarkReference },
-      point: {
-        x:
-          inlier.point.x +
-          fit.transform.rowX[0] * inlier.referenceOffset.x +
-          fit.transform.rowX[1] * inlier.referenceOffset.y,
-        y:
-          inlier.point.y +
-          fit.transform.rowY[0] * inlier.referenceOffset.x +
-          fit.transform.rowY[1] * inlier.referenceOffset.y,
-      },
-      descriptorSimilarity: inlier.descriptorSimilarity,
-      response: inlier.response,
-    }));
     return {
-      success: true,
+      ...selectRelocalizationResult(candidates),
       method: 'xfeat-keyframe-relocalization',
-      transform: {
-        type: 'affine',
-        rowX: [...fit.transform.rowX],
-        rowY: [...fit.transform.rowY],
-        confidence: fit.confidence,
-        averageResidual: fit.averageResidual,
-        model: fit.model,
-        determinant: fit.geometry.determinant,
-        anisotropy: fit.geometry.anisotropy,
-        referenceSpread: fit.geometry.referenceSpread,
-        querySpread: fit.geometry.querySpread,
-      },
-      anchorPoint: applyAffine(reference.anchorPoint, fit.transform),
-      inlierMatches,
-      inlierIds: inlierMatches.map((match) => match.id),
-      matchCount: matches.length,
-      inlierCount: fit.inlierCount,
-      inlierRatio: fit.inlierRatio,
-      averageResidual: fit.averageResidual,
-      confidence: fit.confidence,
       queryFeatureCount: features.length,
       keyframeCount: this.references.length,
-      keyframeId: reference.id,
       timings: {
         featureExtractionMs,
         keyframeSearchMs: performance.now() - matchingStartedAt,

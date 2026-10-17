@@ -189,6 +189,7 @@ test('ORB recovery stores only object-contained descriptors, including cached fr
   );
   const input = { cv, grayImage: image, trackedPoints, anchorPoint: { x: 120, y: 120 }, timestamp: 1000 };
   try {
+    assert.throws(() => relocalizers[0].storeKeyframe(input), /explicit object support mask or null/);
     const stored = relocalizers[0].storeKeyframe({ ...input, objectSupportMask: fullMask });
     assert.equal(stored.success, true);
     assert.ok(stored.descriptorCount >= 8);
@@ -452,6 +453,7 @@ test('ORB keyframes relocalize a low-contrast 90-degree rotation with partial oc
   });
 
   const stored = relocalizer.storeKeyframe({
+    objectSupportMask: null,
     cv,
     grayImage: reference,
     trackedPoints,
@@ -462,6 +464,7 @@ test('ORB keyframes relocalize a low-contrast 90-degree rotation with partial oc
   assert.ok(stored.descriptorCount >= 20);
   assert.equal(relocalizer.keyframes[0].entries[0].descriptor.buffer.byteLength, stored.descriptorCount * 32);
   const redundant = relocalizer.storeKeyframe({
+    objectSupportMask: null,
     cv,
     grayImage: reference,
     trackedPoints,
@@ -580,6 +583,7 @@ test('keyframe redundancy separates rich absolute motion from planar residual de
   assert.equal(relocalizer._isRedundantLandmarkView(rotatedPoints, true), false);
 
   const result = relocalizer.storeKeyframe({
+    objectSupportMask: null,
     cv: null,
     grayImage: null,
     trackedPoints,
@@ -634,6 +638,7 @@ test('successful full-frame relocalization reuses its exact ORB extraction for s
   });
 
   const initial = relocalizer.storeKeyframe({
+    objectSupportMask: null,
     cv: instrumentedCv,
     grayImage: image,
     trackedPoints,
@@ -650,6 +655,7 @@ test('successful full-frame relocalization reuses its exact ORB extraction for s
     successfulTrackingStreak: 100,
   }));
   const stored = relocalizer.storeKeyframe({
+    objectSupportMask: null,
     cv: instrumentedCv,
     grayImage: image,
     trackedPoints: [...newLandmarks, ...trackedPoints],
@@ -722,6 +728,7 @@ test('failed full-frame relocalization still reuses its exact ORB extraction for
   });
 
   const initial = relocalizer.storeKeyframe({
+    objectSupportMask: null,
     cv: instrumentedCv,
     grayImage: image,
     trackedPoints,
@@ -738,6 +745,7 @@ test('failed full-frame relocalization still reuses its exact ORB extraction for
     successfulTrackingStreak: 100,
   }));
   const stored = relocalizer.storeKeyframe({
+    objectSupportMask: null,
     cv: instrumentedCv,
     grayImage: image,
     trackedPoints: [...newLandmarks, ...trackedPoints],
@@ -792,6 +800,7 @@ test('keyframe storage rejects an impossible descriptor quorum before ORB extrac
   });
 
   const stored = relocalizer.storeKeyframe({
+    objectSupportMask: null,
     cv: instrumentedCv,
     grayImage: image,
     trackedPoints,

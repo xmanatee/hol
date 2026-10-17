@@ -92,6 +92,7 @@ const main = async () => {
     extractFeatures: extractor.extract,
   });
   const orbStorage = orbRelocalizer.storeKeyframe({
+    objectSupportMask: null,
     cv,
     grayImage: referenceGray,
     trackedPoints: landmarks,

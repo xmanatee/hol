@@ -180,7 +180,7 @@ test('reported XFeat inference faults retire the runtime and reject every pendin
   const first = relocalizer.relocalize(imageData());
   const second = relocalizer.relocalize(imageData());
   const rejected = Promise.all(
-    [first, second].map((request) => assert.rejects(request, /XFeat.*inference failed/)),
+    [first, second].map((request) => assert.rejects(request, { name: 'Error', message: 'inference failed' })),
   );
   workers[0].onmessage({ data: { id: workers[0].requests[1].message.id, error: 'inference failed' } });
   await rejected;
