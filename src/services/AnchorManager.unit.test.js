@@ -850,7 +850,7 @@ test('pose dropout records accepted and service-rejected overlapping support ref
   });
 });
 
-test('failed recovery segmentation clears the in-flight latch for later attempts', async () => {
+test('failed recovery segmentation rejects the frame transaction instead of masquerading as a rejected mask', async () => {
   const manager = new AnchorManager({
     imageAnchorService: {
       trackingMode: 'sparse-reconstruction',
@@ -889,13 +889,13 @@ test('failed recovery segmentation clears the in-flight latch for later attempts
     },
   };
 
-  assert.equal(
-    manager.refreshSegmentationIfNeeded({
+  const transaction = manager.processFrame(
+    {
       width: 180,
       height: 140,
       data: new Uint8ClampedArray(180 * 140 * 4),
-    }),
-    true,
+    },
+    { update: false, refreshSegmentation: true, depthContext: {} },
   );
   assert.equal(manager.segmentationRefreshInFlight, true);
   assert.deepEqual(manager.getState().segmentationRefresh, {
@@ -906,11 +906,11 @@ test('failed recovery segmentation clears the in-flight latch for later attempts
     errorMessage: null,
   });
 
-  await waitForTask();
+  await assert.rejects(transaction, /Interactive segmenter request timed out after 1400ms/);
 
   assert.equal(manager.segmentationRefreshInFlight, false);
   assert.deepEqual(manager.getState().segmentationRefresh, {
-    status: 'rejected',
+    status: 'error',
     trigger: 'pose-dropout-recovery',
     outcomeReason: 'refresh-error',
     maskSource: null,

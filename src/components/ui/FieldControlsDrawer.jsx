@@ -163,6 +163,7 @@ const FieldControlsDrawer = ({
 
         {activeTab === 'face' && (
           <FieldControlsFace
+            hasActiveAnchor={hasActiveAnchor}
             discoveredMeshes={discoveredMeshes}
             hiddenMeshes={hiddenMeshes}
             rotation={rotation}

@@ -190,10 +190,10 @@ test('anchor state store coalesces duplicate snapshots without dropping changed 
 
   const refresh = {
     ...anchorState,
-    segmentationRefresh: { status: 'rejected', errorMessage: 'Model unavailable' },
+    segmentationRefresh: { status: 'rejected', outcomeReason: 'mask-empty' },
   };
   store.update(refresh);
   scheduler.runNext();
   assert.equal(publicationCount, 2);
-  assert.equal(store.getSnapshot().segmentationRefresh.errorMessage, 'Model unavailable');
+  assert.equal(store.getSnapshot().segmentationRefresh.outcomeReason, 'mask-empty');
 });

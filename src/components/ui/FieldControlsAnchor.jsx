@@ -31,7 +31,7 @@ const AnchorDiagnostics = ({ details }) => {
   const supportTone =
     details.segmentationRefreshStatus === 'accepted'
       ? 'good'
-      : details.segmentationRefreshStatus === 'rejected'
+      : ['rejected', 'error'].includes(details.segmentationRefreshStatus)
         ? 'bad'
         : 'neutral';
   const normalRejectionValue =

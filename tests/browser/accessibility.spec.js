@@ -306,7 +306,8 @@ test('every field-control section meets the supported WCAG A and AA rules', asyn
   );
   await page.getByRole('tab', { name: 'Face' }).click();
   await expect(page.getByRole('button', { name: 'Object pose', exact: true })).toHaveCount(0);
-  await expect(page.getByText('Rig adjustments', { exact: true })).toBeVisible();
+  await expect(page.getByText('Select a highlighted object to enable face controls.')).toBeVisible();
+  await expect(page.getByRole('tabpanel').getByRole('slider')).toHaveCount(0);
 });
 
 test('field controls reflow long bidirectional runtime text at 320 CSS pixels', async ({
@@ -477,7 +478,7 @@ test('field controls preserve one controlled state across close, reopen, and cam
 
   const microphoneMode = page.getByRole('button', { name: 'Enable microphone mode' });
   await microphoneMode.click();
-  await expect(page.getByText('Anchor an object before enabling microphone mode.')).toBeVisible();
+  await expect(page.getByText('Select a highlighted object before enabling microphone mode.')).toBeVisible();
   await expect(microphoneMode).toHaveAttribute('aria-pressed', 'false');
 
   const drawerTrigger = page.getByRole('button', { name: 'Controls', exact: true });
@@ -493,10 +494,8 @@ test('field controls preserve one controlled state across close, reopen, and cam
   );
 
   await page.getByRole('tab', { name: 'Face' }).click();
-  await page.getByText('Rig adjustments', { exact: true }).click();
-  const xRotation = page.locator('#field-controls-panel input[type="range"]').first();
-  await xRotation.fill('69');
-  await expect(xRotation).toHaveValue('69');
+  await expect(page.getByText('Select a highlighted object to enable face controls.')).toBeVisible();
+  await expect(page.getByRole('tabpanel').getByRole('slider')).toHaveCount(0);
 
   await page.getByRole('tab', { name: 'Voice' }).click();
   const voiceThreshold = page.getByLabel('Voice threshold');
@@ -530,7 +529,8 @@ test('field controls preserve one controlled state across close, reopen, and cam
   await page.getByRole('tab', { name: 'System' }).click();
   await expectCameraMeasurements();
   await page.getByRole('tab', { name: 'Face' }).click();
-  await expect(page.locator('#field-controls-panel input[type="range"]').first()).toHaveValue('69');
+  await expect(page.getByText('Select a highlighted object to enable face controls.')).toBeVisible();
+  await expect(page.getByRole('tabpanel').getByRole('slider')).toHaveCount(0);
 });
 
 test('reduced-motion preference removes nonessential UI motion', async ({ page }) => {

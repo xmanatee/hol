@@ -44,7 +44,7 @@ test('describes camera and initialization boundaries before anchor state', () =>
     status: 'camera',
     severity: 'idle',
     message: 'Camera is not active',
-    recommendation: 'Start the camera before checking anchors.',
+    recommendation: 'Start the camera to find an object.',
   });
   assert.deepEqual(describeTrackedState({ state: null, initialized: false }), {
     status: 'initializing',
@@ -265,8 +265,8 @@ test('keeps candidate, mapping, degraded, lost, and unknown guidance exact', () 
   assert.deepEqual(describeTrackedState({ state: 'unavailable' }), {
     status: 'unknown',
     severity: 'warn',
-    message: 'Anchor state is unavailable',
-    recommendation: 'Return to selection mode and create a new anchor.',
+    message: 'Object tracking is unavailable',
+    recommendation: 'Choose another object to restart selection.',
   });
 });
 

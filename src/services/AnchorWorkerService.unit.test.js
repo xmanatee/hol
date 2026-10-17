@@ -1172,7 +1172,7 @@ test('anchor replies publish refresh diagnostics once and release only their own
   const reply = {
     id: worker.messages.at(-1).id,
     result: { success: true },
-    state: { ...ready, segmentationRefresh: { status: 'rejected', errorMessage: 'Model unavailable' } },
+    state: { ...ready, segmentationRefresh: { status: 'rejected', outcomeReason: 'mask-empty' } },
   };
   worker.reply(reply);
   assert.equal(service.canProcessFrame(), true);

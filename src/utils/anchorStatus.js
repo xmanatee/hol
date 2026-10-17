@@ -14,7 +14,7 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
       status: 'camera',
       severity: 'idle',
       message: 'Camera is not active',
-      recommendation: 'Start the camera before checking anchors.',
+      recommendation: 'Start the camera to find an object.',
     };
   }
 
@@ -122,7 +122,7 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
   return {
     status: 'unknown',
     severity: 'warn',
-    message: 'Anchor state is unavailable',
-    recommendation: 'Return to selection mode and create a new anchor.',
+    message: 'Object tracking is unavailable',
+    recommendation: 'Choose another object to restart selection.',
   };
 };

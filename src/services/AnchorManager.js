@@ -326,14 +326,14 @@ export class AnchorManager {
           return;
         }
 
-        logger.warn('AnchorManager', `Segmentation refresh unavailable: ${error.message}`);
         this._setSegmentationRefresh({
-          status: 'rejected',
+          status: 'error',
           trigger,
           outcomeReason: 'refresh-error',
           maskSource: null,
           errorMessage: error.message,
         });
+        throw error;
       })
       .finally(() => {
         if (requestId === this.segmentationRefreshRequestId) {

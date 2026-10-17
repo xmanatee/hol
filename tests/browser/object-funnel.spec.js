@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { expectReachableButton, expectWithinViewport } from './layoutAssertions.js';
+import { productionAssetUrl } from './productionAsset.js';
 
 const countGreenPixels = (canvas) => {
   const pixels = window.__holInspectCanvasPixels(canvas);
@@ -16,6 +17,7 @@ for (const [scenario, failedUrl, title] of [
   ['static', null, 'camera-to-face flow works under static hosting CSP without isolation headers'],
   ['slow-head', null, 'face loading stays visible until the actual head asset is ready'],
   ['resize', null, 'intrinsic camera resize rebuilds object coordinates without replacing the video stream'],
+  ['refresh-fault', null, 'segmentation refresh failure stops tracking until explicit vision recovery'],
   [
     'worker',
     '**/anchor.worker-*.js',
@@ -57,6 +59,43 @@ for (const [scenario, failedUrl, title] of [
         await route.continue();
       });
     }
+    if (scenario === 'refresh-fault') {
+      const runtime = productionAssetUrl({
+        label: 'anchor runtime',
+        pattern: /^anchor\.worker-[\w-]+\.js$/,
+        minBytes: 1000,
+      });
+      await browserContext.route(`**${runtime}`, async (route) => {
+        const response = await route.fetch();
+        await route.fulfill({
+          response,
+          body: `
+            let failNextSegment = false;
+            self.addEventListener('message', (event) => {
+              if (event.data.type === 'fail-next-segment') {
+                failNextSegment = true;
+                event.stopImmediatePropagation();
+              }
+            });
+            self.Worker = new Proxy(self.Worker, {
+              construct(target, args) {
+                const worker = Reflect.construct(target, args);
+                const postMessage = worker.postMessage.bind(worker);
+                worker.postMessage = (message, transfers) => {
+                  if (failNextSegment && message.type === 'segment') {
+                    failNextSegment = false;
+                    throw new Error('Segmentation refresh transport failed');
+                  }
+                  return postMessage(message, transfers);
+                };
+                return worker;
+              }
+            });
+            ${await response.text()}
+          `,
+        });
+      });
+    }
     if (scenario === 'static') {
       await browserContext.route('**/', async (route) => {
         const response = await route.fetch();
@@ -88,6 +127,7 @@ for (const [scenario, failedUrl, title] of [
         construct(target, args) {
           const worker = Reflect.construct(target, args);
           if (/\/anchor\.worker-[\w-]+\.js$/.test(String(args[0]))) {
+            window.__holAnchorWorker = worker;
             let raster;
             const postMessage = worker.postMessage.bind(worker);
             worker.postMessage = (message, transfers) => {
@@ -422,6 +462,37 @@ for (const [scenario, failedUrl, title] of [
       .poll(() => page.evaluate(() => window.__holLastDrawAt - window.__holFirstDrawAt))
       .toBeGreaterThan(500);
     await page.screenshot({ path: testInfo.outputPath('ready.png') });
+    if (scenario === 'refresh-fault') {
+      await page.evaluate(() => {
+        window.__holAnchorWorker.postMessage({ type: 'fail-next-segment' });
+      });
+      await expect(discovery).toHaveAttribute('data-stage', 'error');
+      await expect(selectionCanvas).toBeDisabled();
+      await expect(page.locator('.overlay-scene')).toHaveCount(0);
+      await discovery.getByText('Technical details', { exact: true }).click();
+      await expect(discovery).toContainText('Segmentation refresh transport failed');
+      await page.screenshot({ path: testInfo.outputPath('refresh-error.png') });
+      await discovery.getByRole('button', { name: 'Retry vision', exact: true }).click();
+      await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
+      await page.evaluate(() => {
+        window.__holObserveFaceVisibility = true;
+        window.__holFirstVisibleFaceAt = null;
+        window.__holLastVisibleFaceAt = null;
+      });
+      await selectionCanvas.click();
+      await expect
+        .poll(() => page.evaluate(() => window.__holLastVisibleFaceAt - window.__holFirstVisibleFaceAt))
+        .toBeGreaterThan(500);
+      expect(
+        await page.evaluate(() => {
+          const stream = document.querySelector('video').srcObject;
+          return stream === window.__holOriginalStream && stream.getVideoTracks()[0].readyState === 'live';
+        }),
+      ).toBe(true);
+      expect(navigations).toBe(1);
+      expect(errors).toEqual([]);
+      return;
+    }
     if (scenario === 'slow-head') {
       expect(errors).toEqual([]);
       expect(optionalAIRequests).toEqual([]);
@@ -680,17 +751,46 @@ for (const [scenario, failedUrl, title] of [
       await expect(page.getByRole('button', { name: label, exact: true })).toHaveCount(0);
     }
     expect(await page.evaluate(() => window.__holLatestAnchorState.trackingMode)).toBe('object-pose');
+    if (scenario === null) {
+      await page.getByText('Rig adjustments', { exact: true }).click();
+      await page.getByLabel(/X rotation:/).fill('69');
+      const meshes = page.getByRole('tabpanel').getByRole('checkbox');
+      expect(await meshes.count()).toBeGreaterThan(0);
+      for (const mesh of await meshes.all()) await mesh.uncheck();
+      await page.keyboard.press('Escape');
+      await page.getByRole('button', { name: 'Controls', exact: true }).click();
+      await expect(page.getByLabel(/X rotation:/)).toHaveValue('69');
+      for (const mesh of await meshes.all()) await expect(mesh).not.toBeChecked();
+    }
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Choose another object' }).click();
     await expect(discovery).toBeVisible();
     if (scenario === null) {
+      await page.getByRole('button', { name: 'Controls', exact: true }).click();
+      await expect(page.getByText('Select a highlighted object to enable face controls.')).toBeVisible();
+      await expect(page.getByRole('tabpanel').getByRole('slider')).toHaveCount(0);
+      await page.keyboard.press('Escape');
       await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
       await expect(selectionCanvas).toBeEnabled();
+      await page.evaluate(() => {
+        window.__holObserveFaceVisibility = true;
+        window.__holFirstVisibleFaceAt = null;
+        window.__holLastVisibleFaceAt = null;
+      });
       await selectionCanvas.focus();
       await page.keyboard.press('Enter');
       await expect(discovery).toHaveCount(0);
       await expect(page.locator('.overlay-scene canvas')).toBeVisible();
       await expect(page.getByRole('button', { name: 'Choose another object' })).toBeVisible();
+      await expect
+        .poll(() => page.evaluate(() => window.__holLastVisibleFaceAt - window.__holFirstVisibleFaceAt))
+        .toBeGreaterThan(500);
+      await page.getByRole('button', { name: 'Controls', exact: true }).click();
+      await page.getByText('Rig adjustments', { exact: true }).click();
+      await expect(page.getByLabel(/X rotation:/)).toHaveValue('0');
+      const meshes = page.getByRole('tabpanel').getByRole('checkbox');
+      expect(await meshes.count()).toBeGreaterThan(0);
+      for (const mesh of await meshes.all()) await expect(mesh).toBeChecked();
     }
     expect(errors).toEqual([]);
   });

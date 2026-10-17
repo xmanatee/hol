@@ -28,8 +28,13 @@ test('a stale app shell identifies its build and offers an explicit reload witho
   expect(navigations).toBe(1);
   await page.screenshot({ path: testInfo.outputPath('update-available.png') });
   newerRelease = false;
+  const currentReleaseCheck = page.waitForResponse(
+    (response) => !response.request().isNavigationRequest() && new URL(response.url()).pathname === '/',
+  );
   await page.getByRole('button', { name: 'Reload app', exact: true }).click();
+  await (await currentReleaseCheck).finished();
   await expect(page.getByRole('button', { name: 'Start Camera', exact: true })).toBeVisible();
   await expect(page.getByText('A newer version is available.', { exact: false })).toHaveCount(0);
   expect(navigations).toBe(2);
+  await page.unrouteAll({ behavior: 'wait' });
 });

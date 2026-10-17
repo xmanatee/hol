@@ -123,6 +123,12 @@ const CameraView = () => {
 
   const cameraMetricsStore = useCameraMetrics();
 
+  const resetFaceControls = useCallback(() => {
+    setDiscoveredMeshes([]);
+    setHiddenMeshes(new Set());
+    setManualRotation({ x: 0, y: 0, z: 0 });
+  }, []);
+
   // Use the camera system hook with image-based anchors
   const {
     cameraState,
@@ -181,7 +187,7 @@ const CameraView = () => {
   }, []);
 
   const handleMicrophoneUnavailable = useCallback(() => {
-    showAnchorFeedback('Anchor an object before enabling microphone mode.', 'warn');
+    showAnchorFeedback('Select a highlighted object before enabling microphone mode.', 'warn');
   }, [showAnchorFeedback]);
   const {
     mode: microphoneMode,
@@ -216,14 +222,16 @@ const CameraView = () => {
     if (cameraState === 'blocked') {
       await resumeCamera();
     } else {
+      resetFaceControls();
       await startCamera(videoRef.current);
     }
-  }, [cameraState, startCamera, resumeCamera]);
+  }, [cameraState, startCamera, resumeCamera, resetFaceControls]);
 
   const handleStopClick = useCallback(() => {
     setFieldControlsOpen(false);
+    resetFaceControls();
     stopCamera();
-  }, [stopCamera]);
+  }, [resetFaceControls, stopCamera]);
 
   // Handle mesh discovery from HeadAnchor
   const handleMeshNamesDiscovered = useCallback((meshNames) => {
@@ -329,9 +337,10 @@ const CameraView = () => {
     mapReadyAnchorRef.current = null;
     lastAnchorUpdateAtRef.current = 0;
     lastSegmentationRefreshCheckAtRef.current = 0;
+    resetFaceControls();
     clearAnchor();
     showAnchorFeedback('Point at another object and wait for its green outline.', 'good');
-  }, [clearAnchor, showAnchorFeedback]);
+  }, [clearAnchor, resetFaceControls, showAnchorFeedback]);
 
   const handleSpeakGreeting = useCallback(async () => {
     const anchor = getAnchorSystemState().activeAnchor;
@@ -373,6 +382,7 @@ const CameraView = () => {
           showAnchorFeedback('Preparing camera frame...', 'warn');
           return;
         }
+        resetFaceControls();
         const result = await selectAnchorFromTap({
           candidateId,
           tapPosition: position,
@@ -408,14 +418,15 @@ const CameraView = () => {
           showAnchorFeedback(result.reason, 'warn');
         }
       } catch (error) {
-        logger.warn('CameraView', `Anchor not created: ${error.message}`);
-        showAnchorFeedback(`Anchor not created: ${error.message}`, 'bad');
+        logger.warn('CameraView', `Object not selected: ${error.message}`);
+        showAnchorFeedback(`Object not selected: ${error.message}`, 'bad');
       }
     },
     [
       candidateId,
       cameraState,
       selectAnchorFromTap,
+      resetFaceControls,
       showAnchorFeedback,
       generateAndSpeakForAnchor,
       getAnchorSystemState,

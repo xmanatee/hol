@@ -247,7 +247,8 @@ test('slow first model download remains loading without capturing stale camera f
   await expect(discovery).not.toHaveAttribute('data-stage', /initializing|error/, { timeout: 30_000 });
   await expect.poll(() => page.evaluate(() => window.__holCameraCaptures.length)).toBeGreaterThan(0);
   await drawer.getByRole('tab', { name: 'Face', exact: true }).click();
-  await expect(drawer.getByText('The face follows the selected surface automatically.')).toBeVisible();
+  await expect(drawer.getByText('Select a highlighted object to enable face controls.')).toBeVisible();
+  await expect(drawer.getByRole('tabpanel').getByRole('slider')).toHaveCount(0);
 });
 
 test('stopping during model loading retires startup and a new camera session loads cleanly', async ({

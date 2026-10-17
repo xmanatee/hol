@@ -1,12 +1,20 @@
 import { DrawerSection, DynamicText } from './FieldControlPrimitives.jsx';
 
 export const FieldControlsFace = ({
+  hasActiveAnchor,
   discoveredMeshes,
   hiddenMeshes,
   rotation,
   onMeshVisibilityChange,
   onRotationChange,
 }) => {
+  if (!hasActiveAnchor) {
+    return (
+      <DrawerSection title="Face">
+        <p className="text-xs text-gray-300">Select a highlighted object to enable face controls.</p>
+      </DrawerSection>
+    );
+  }
   const updateRotation = (axis, degrees) => {
     onRotationChange({ ...rotation, [axis]: (degrees * Math.PI) / 180 });
   };
