@@ -86,28 +86,30 @@ Persona generation and speech share one object-performance contract for voice-st
 ## Verification
 
 ```bash
-npm test
-npm run test:vision
-npm run vision:quality
-npm run vision:benchmark:quick
-npm run vision:benchmark:hard
-npm run verify:vision
-npm run test:vision:annotated
-npm run vision:experiments
-npm run vision:probes
-npm run validate
-npm run verify:release
+npm run check       # Fast static, unit and asset checks used by CI
+npm run build       # Production output, asset integrity, budgets and licenses
 npx playwright install chromium webkit
-npm run test:browser
+npm run check:all   # Complete local suite: CV replays, vision matrices and browsers
 ```
+
+`npm test` runs self-contained unit tests. `test:integration` runs real OpenCV
+replays; `test:all` runs both portfolios. CI runs `check`, `build` and the
+high-severity dependency audit before publishing the scanned image. Heavy
+validation runs locally, with no scheduled browser or vision jobs.
 
 `vision:experiments` compares real CPU/WASM and WebGL point-segmentation delegates on identical hash-pinned probes, with raw latency/quality observations and explicit backend failures. `vision:probes` exports the same RGBA/label bytes for native experiments. Neither command certifies temporal tracking or physical-iPhone performance. See [the experiment protocol, model/license comparison, and open validation gaps](docs/vision-experimentation.md).
 
-`verify:vision` is the cross-protocol release gate: it requires the complete 84-scenario per-update quality matrix, the exact quick cadence contract, the hard full-loss/distractor/re-entry safety contract, and the repository-owned annotated TAP-Vid replay. `verify:release` owns that gate in addition to lint, unit/CV regressions, asset hashes, real ONNX inference, GLB morph targets, production asset integrity, per-owner raw bundle budgets, aggregate startup JavaScript across the entry and every module preload, deferred-asset preload exclusions, anchor-flow architecture, CycloneDX SBOM licenses, and npm high-severity advisories. `test:browser` first creates a fresh production build, then verifies the mobile shell, camera lifecycle, field-control drawer and local-AI transport network deferral, temporary WebGL readiness-context release, service-worker registration, WCAG 2 A/AA and keyboard interaction paths, 320 CSS pixel reflow with 200% text and a long bidirectional runtime token, OpenCV LK calibration, the complete tap-to-segmentation-to-tracking worker graph, transformed XFeat recovery, and real depth inference through the emitted services, workers, runtimes, and model assets in Chromium and WebKit.
+`check:vision` combines the complete per-update quality matrix, quick cadence
+contract, hard loss/distractor/re-entry safety contract and annotated TAP-Vid
+replay. `check:all` adds every source test and a fresh production build, then
+runs those vision checks and `test:e2e`. The browser suite exercises camera and
+worker lifecycles, local-AI transport deferral, accessibility, tracking, recovery
+and depth inference in Chromium and WebKit. `test:e2e` alone uses the existing
+production build.
 
 The XFeat asset verifier owns recovery quality, not only successful ONNX execution. Its pinned transformed fixture must produce all 500 requested features, at least 15 geometrically consistent recovery inliers, and no more than 7.5 px anchor error. Model, preprocessing, matching, or postprocessing changes therefore fail at the learned-recovery boundary before the more expensive temporal replay has to expose the same loss.
 
-Release vision commands keep stdout bounded to decision-critical aggregates, failing-stage evidence, recovery, cadence, bottlenecks, and contract mismatches. Append `-- --output=/absolute/path/report.json` to `vision:quality`, a synthetic benchmark command, or `test:vision:annotated` when a complete JSON artifact is required; detailed payloads are serialized only for that explicit artifact.
+Local vision commands keep stdout bounded to decision-critical aggregates, failing-stage evidence, recovery, cadence, bottlenecks, and contract mismatches. Append `-- --output=/absolute/path/report.json` to `vision:quality`, a synthetic benchmark command, or `test:vision:annotated` when a complete JSON artifact is required; detailed payloads are serialized only for that explicit artifact.
 
 The vision commands deliberately use two protocols. `vision:quality` runs every generated update and owns deterministic algorithm regression thresholds. `vision:benchmark`, `vision:report`, and `vision:debug` reproduce the production 15 Hz tracking admission policy on a 30 Hz source timeline while evaluating the bounded constant-velocity presentation used by the 60 Hz overlay. Presentation velocity uses consecutive capture timestamps, with one tracking interval of extrapolation and bounded speed and displacement. Its demand loop continues until the bounded target is reached, even when delivery occurs after the prediction horizon; rendering never renews the 300 ms source-observation deadline, and target loss resets motion. The hard matrix includes a fully absent target, a feature-rich but independently printed distractor, and a distant blurred re-entry; confirmed false locks are evaluated on admitted CV updates. Performance output separates admitted-update latency, presentation-prediction cost, 60 Hz display-amortized cost, pose age, exclusive stage ownership, timing coverage, and unattributed time; parent envelopes are not added to their children. The canonical quick benchmark also enforces exact refresh and reinitialization GFTT call, processed-pixel, and native-preparation counts, candidate-stage ownership, and ORB and learned-relocalization cadence, so an optimization cannot silently shift recovery work or recreate per-pass buffers. This makes the benchmark representative without silently changing the established per-update regression corpus or presenting a partially attributed profile as a complete bottleneck ranking.
 
@@ -115,7 +117,7 @@ The vision commands deliberately use two protocols. `vision:quality` runs every 
 
 The runner rejects unknown fields, vacuous spatial floors, invalid temporal bounds, duplicate query ownership, unapproved component licenses, path collisions, and ambiguous frame derivations; caps fixture/query-set/query/file/decompressed sizes before allocation; validates source-to-evaluation raster semantics and visible coordinates; replays every query through the default sparse tracker at the production 15 Hz admission rate; and computes the official 1/2/4/8/16 px threshold, Jaccard, and occlusion metrics on a 256 px evaluation raster. Re-detection contracts are discriminated by evidence: `not-applicable` requires no post-query reappearance, `segment-only` requires a measurable post-reappearance segment but no 100 ms stable window, and `eligible` gates Re-Detection Average Jaccard plus stable recall and latency. Every variant also gates p95 visible error, uninterrupted false visibility, uninterrupted missed visibility, and fragmentation at its actual owner. Durations are normalized from each pinned frame rate. Reports preserve the validated source raster and derivation alongside visibility confusion, stable events, missed-visible streaks, tracker/readiness ownership, recovery attempts, inliers, matches, and keyframe coverage.
 
-The 42,665,119-byte fixture pack lives under `tests/fixtures/annotated-vision`, outside both `src/` and `public/`, and therefore cannot enter the Vite production graph. Manifest v9 has one strict source shape with independent archive pins and one lossless `rgb24-xor-delta-gzip` frame encoding. The first frame is exact RGB24 and later frames are exact XOR deltas against the preceding decoded frame; bounded in-place reconstruction avoids a video decoder and reduces the complete three-domain pack by 24,247,539 bytes versus independently gzipped raw RGB. Its source, transformation, license, and regeneration constraints are documented beside the fixture. There is no downloader, environment override, cache fallback, compatibility parser, old frame decoder, or missing-data skip: deletion, corruption, provenance drift, metric regression, or a non-approved component license fails `verify:vision` and therefore `verify:release` and CI.
+The 42,665,119-byte fixture pack lives under `tests/fixtures/annotated-vision`, outside both `src/` and `public/`, and therefore cannot enter the Vite production graph. Manifest v9 has one strict source shape with independent archive pins and one lossless `rgb24-xor-delta-gzip` frame encoding. The first frame is exact RGB24 and later frames are exact XOR deltas against the preceding decoded frame; bounded in-place reconstruction avoids a video decoder and reduces the complete three-domain pack by 24,247,539 bytes versus independently gzipped raw RGB. Its source, transformation, license, and regeneration constraints are documented beside the fixture. There is no downloader, environment override, cache fallback, compatibility parser, old frame decoder, or missing-data skip: deletion, corruption, provenance drift, metric regression, or a non-approved component license fails local `check:vision` and `check:all`.
 
 ```bash
 npm run test:vision:annotated
@@ -146,4 +148,4 @@ Synthetic Node timing can identify ownership and reject an over-budget candidate
 
 ## Distribution
 
-HOL is licensed under Apache-2.0. Binary asset provenance is documented in THIRD_PARTY_NOTICES.md and machine-verified through the capability manifest. Generated SBOM and browser artifacts are CI outputs rather than committed files.
+HOL is licensed under Apache-2.0. Binary asset provenance is documented in THIRD_PARTY_NOTICES.md and machine-verified through the capability manifest. The generated SBOM is a CI output; browser evidence stays local. Neither is committed.

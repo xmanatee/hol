@@ -1,11 +1,28 @@
 import { spawn } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const TEST_SUITE_GLOBS = Object.freeze({
-  all: 'src/**/*.test.js',
-  vision: 'src/cv/**/*.test.js',
-});
+const projectRoot = fileURLToPath(new URL('..', import.meta.url));
+const suites = new Set(['unit', 'integration', 'vision', 'all']);
+
+export const discoverTestFiles = () =>
+  readdirSync(resolve(projectRoot, 'src'), { recursive: true })
+    .filter((name) => name.endsWith('.test.js'))
+    .map((name) => `src/${name.replaceAll('\\', '/')}`)
+    .sort();
+
+export const selectTestFiles = (files, suite) => {
+  if (!suites.has(suite)) throw new RangeError(`Unsupported test suite: ${suite}`);
+  return [...new Set(files)]
+    .filter((name) => {
+      if (suite === 'all') return true;
+      if (suite === 'vision') return name.startsWith('src/cv/');
+      const integration = name.endsWith('.integration.test.js');
+      return suite === 'integration' ? integration : !integration;
+    })
+    .sort();
+};
 
 const BOOLEAN_RUNNER_OPTIONS = new Set([
   '--experimental-test-coverage',
@@ -33,11 +50,11 @@ const VALUE_RUNNER_OPTIONS = new Set([
 const readSuite = (arguments_) => {
   const suiteArguments = arguments_.filter((argument) => argument.startsWith('--suite='));
   if (suiteArguments.length !== 1) {
-    throw new TypeError('Test runner requires exactly one --suite=<all|vision> argument');
+    throw new TypeError('Test runner requires exactly one --suite=<unit|integration|vision|all> argument');
   }
 
   const suite = suiteArguments[0].slice('--suite='.length);
-  if (!Object.hasOwn(TEST_SUITE_GLOBS, suite)) {
+  if (!suites.has(suite)) {
     throw new RangeError(`Unsupported test suite: ${suite}`);
   }
   return { suite, suiteArgument: suiteArguments[0] };
@@ -71,7 +88,7 @@ const appendRunnerOption = (runnerArguments, argument, followingArgument) => {
   return 1;
 };
 
-export const createTestArguments = (arguments_) => {
+export const createTestArguments = (arguments_, files = discoverTestFiles()) => {
   if (!Array.isArray(arguments_)) {
     throw new TypeError('Test runner arguments must be an array');
   }
@@ -89,12 +106,15 @@ export const createTestArguments = (arguments_) => {
     index += appendRunnerOption(runnerArguments, argument, arguments_[index + 1]);
   }
 
-  return ['--test', ...runnerArguments, TEST_SUITE_GLOBS[suite]];
+  const selected = selectTestFiles(files, suite);
+  if (selected.length === 0) throw new Error(`No tests found for suite: ${suite}`);
+  return ['--test', ...runnerArguments, ...selected];
 };
 
 const runTestSuite = (arguments_) => {
   const child = spawn(process.execPath, createTestArguments(arguments_), {
     stdio: 'inherit',
+    cwd: projectRoot,
   });
   return new Promise((resolveExit, rejectExit) => {
     child.once('error', rejectExit);

@@ -2873,7 +2873,7 @@
 **Scope**: TAP-Vid fixture provenance, manifest hardening, release ownership, output reporting, browser concurrency
 
 - [x] Examples run through the mandatory 250-frame, three-query TAP-Vid replay and explicit full-artifact path
-- [x] The checklist matches the repository's single `verify:vision` and `verify:release` ownership model
+- [x] The checklist matches the repository's single `check:vision` and `check:all` ownership model
 - [x] Official TAP-Vid format/license, live upstream archive SHA-256, and GitHub file-limit references are valid
 - [x] No cache path, downloader, environment override, missing-data skip, asset URL, migration, or compatibility route remains
 - [x] Release verification passes 960 source tests plus every production asset/budget, architecture, SBOM/license, and vulnerability gate; the final corpus passes 961 after adding the browser-worker ownership contract

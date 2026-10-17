@@ -1,75 +1,65 @@
 name: CI
-
-on:
+'on':
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
-  workflow_dispatch:
-  schedule:
-    - cron: '17 6 * * 3'
-
+    branches:
+      - main
+  workflow_dispatch: null
 permissions:
   contents: read
-
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  release-gates:
-    runs-on: macos-15
-    timeout-minutes: 30
+  secrets:
+    uses: xmanatee/workflows/.github/workflows/scan-secrets.yml@49737a4c133a0122abb7f33a9ce8d7937835c7f8
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-
-      - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          node-version-file: '.nvmrc'
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .nvmrc
           cache: npm
-
       - name: Install exact dependencies
         run: npm ci
-
-      - name: Verify release and deterministic vision contracts
-        run: npm run verify:release
-
-      - name: Install mobile browser runtimes
-        run: npx playwright install --with-deps chromium webkit
-
-      - name: Test production mobile runtime
-        run: npm run test:browser
-
-      - name: Upload production artifact
+      - name: Check
+        run: npm run check
+      - name: Build
+        run: npm run build
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+      - name: Upload verified build
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: hol-dist
-          path: |
+          path: |-
             dist/
             nginx.conf
             LICENSE
             NOTICE
             THIRD_PARTY_NOTICES.md
             artifacts/sbom.cdx.json
-          retention-days: 30
-
-      - name: Upload browser diagnostics
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: hol-browser-diagnostics
-          path: |
-            playwright-report/
-            test-results/
-          if-no-files-found: ignore
-          retention-days: 14
-
+          if-no-files-found: error
+          retention-days: 1
   publish:
-    needs: release-gates
+    needs:
+      - secrets
+      - verify
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     permissions:
       contents: write
       packages: write
-    uses: xmanatee/workflows/.github/workflows/publish-static.yml@main
+    uses: xmanatee/workflows/.github/workflows/publish-static.yml@49737a4c133a0122abb7f33a9ce8d7937835c7f8
     with:
       artifact: hol-dist
       dist: dist
       image: hol
+env:
+  DOCKER_BUILD_SUMMARY: 'false'
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
