@@ -28,12 +28,17 @@ export const writeAudioAnalysisFromFrequencyData = (frequencyData, volume, targe
 
 export class VisemePicker {
   constructor() {
-    this.currentViseme = 'M';
-    this.smoothingBuffer = new Array(3).fill('M');
-    this.smoothingIndex = 0;
+    this.smoothingBuffer = new Array(3);
     this.energyThreshold = 0.02;
-    this.lastTransitionTime = 0;
     this.hysteresisDelay = 45;
+    this.reset();
+  }
+
+  reset() {
+    this.currentViseme = 'M';
+    this.smoothingBuffer.fill('M');
+    this.smoothingIndex = 0;
+    this.lastTransitionTime = -Infinity;
   }
 
   spectrumToViseme(centroid, energy) {

@@ -15,7 +15,6 @@ const configureHeadLoader = (loader) => loader.setMeshoptDecoder(MeshoptDecoder)
 
 const HeadAnchor = ({
   visible = true,
-  isAgentSpeaking = false,
   hiddenMeshes = new Set(),
   manualRotation = { x: 0, y: 0, z: 0 },
   onMeshNamesDiscovered,
@@ -35,7 +34,7 @@ const HeadAnchor = ({
   const cameraWorldPositionRef = useRef(new THREE.Vector3());
   const cameraLocalPositionRef = useRef(new THREE.Vector3());
 
-  const { initialize, setAgentSpeaking, setExpression, setPerformanceIntensity } = useLipSync(
+  const { initialize, setExpression, setPerformanceIntensity } = useLipSync(
     microphoneService,
     ttsService,
     onMicrophoneTelemetry,
@@ -61,12 +60,6 @@ const HeadAnchor = ({
     scene.rotation.set(localRotation.x, localRotation.y, localRotation.z);
     invalidate();
   }, [invalidate, manualRotation, scene]);
-
-  // Update lip-sync when agent speaking status changes
-  useEffect(() => {
-    setAgentSpeaking(isAgentSpeaking);
-    invalidate();
-  }, [invalidate, isAgentSpeaking, setAgentSpeaking]);
 
   // Local pose and lip-sync update - runs every frame
   useFrame(() => {

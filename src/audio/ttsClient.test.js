@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TTSClient } from './ttsClient.js';
+import { LazyTTSClient } from './lazyTTSClient.js';
+import { SpeechDriver } from './SpeechDriver.js';
 import { SPEECH_INPUT_MAX_CHARACTERS } from '../contracts/objectContent.js';
 
 class FakeAnalyser {
@@ -103,6 +105,122 @@ const createClient = (overrides = {}) =>
 
 const synthesizeTestSpeech = (client, text) =>
   client.synthesizeSpeech(text, 'cheerful', 'bright and playful');
+
+for (const completion of ['ended', 'cancelled']) {
+  test(`speech owns animation over the microphone until playback is ${completion}`, async () => {
+    const response = createDeferred();
+    const client = new LazyTTSClient({
+      loadClient: async () => ({ TTSClient }),
+      baseUrl: 'http://127.0.0.1:8080/v1',
+      model: 'kokoro-local',
+      voice: 'af_heart',
+      AudioContextClass: FakeAudioContext,
+      fetchImpl: () => response.promise,
+    });
+    const driver = new SpeechDriver();
+    const microphoneAudio = { energy: 0.8, centroid: 0.1, voiceActive: true };
+    let microphoneReads = 0;
+    const microphone = {
+      isActive: true,
+      readFrame() {
+        microphoneReads++;
+        return microphoneAudio;
+      },
+    };
+    assert.equal(client.isPlaying, false);
+    const pending = synthesizeTestSpeech(client, 'Hello');
+    driver.readFrame(microphone, client, 100);
+    assert.deepEqual(driver.readFrame(microphone, client, 160), {
+      currentViseme: 'U',
+      audioEnergy: 0.8,
+      isVoiceActive: true,
+    });
+
+    response.resolve(audioResponse());
+    assert.equal(await pending, true);
+    assert.equal(client.isPlaying, true);
+    driver.readFrame(microphone, client, 200);
+    const speechFrame = driver.readFrame(microphone, client, 260);
+    assert.equal(speechFrame.currentViseme, 'E');
+    assert.equal(speechFrame.isVoiceActive, true);
+    assert.equal(microphoneReads, 4);
+    assert.equal(client.runtime.audioContext.analyser.frequencyReads, 2);
+    assert.deepEqual(driver.microphoneFrame, {
+      currentViseme: 'U',
+      audioEnergy: 0.8,
+      isVoiceActive: true,
+    });
+
+    if (completion === 'ended') {
+      client.runtime.audioContext.source.onended();
+    } else {
+      client.stopCurrentAudio();
+    }
+    assert.equal(client.isPlaying, false);
+    assert.deepEqual(driver.readFrame(microphone, client, 276), driver.microphoneFrame);
+    assert.equal(driver.microphoneFrame.currentViseme, 'U');
+    assert.equal(client.runtime.audioContext.analyser.frequencyReads, 2);
+
+    microphone.isActive = false;
+    assert.deepEqual(driver.readFrame(microphone, client, 292), {
+      currentViseme: 'M',
+      audioEnergy: 0,
+      isVoiceActive: false,
+    });
+    await client.dispose();
+    assert.equal(client.isPlaying, false);
+  });
+}
+
+test('speech driver respects microphone VAD and resets history when the input changes', () => {
+  const driver = new SpeechDriver();
+  const microphone = {
+    isActive: true,
+    readFrame: () => ({ energy: 0.8, centroid: 0.1, voiceActive: true }),
+  };
+  driver.readFrame(microphone, null, 100);
+  assert.equal(driver.readFrame(microphone, null, 160).currentViseme, 'U');
+  const replacement = {
+    isActive: true,
+    readFrame: () => ({ energy: 0.7, centroid: 0.9, voiceActive: false }),
+  };
+  driver.readFrame(replacement, null, 176);
+  assert.deepEqual(driver.readFrame(replacement, null, 192), {
+    currentViseme: 'I',
+    audioEnergy: 0.7,
+    isVoiceActive: false,
+  });
+  replacement.isActive = false;
+  driver.readFrame(replacement, null, 208);
+  replacement.isActive = true;
+  assert.equal(driver.readFrame(replacement, null, 224).currentViseme, 'M');
+});
+
+test('silent TTS keeps ownership and a later playback starts with fresh viseme history', () => {
+  const driver = new SpeechDriver();
+  const microphone = {
+    isActive: true,
+    readFrame: () => ({ energy: 0.8, centroid: 0.1, voiceActive: true }),
+  };
+  const audio = { energy: 0, centroid: 0 };
+  const tts = { isPlaying: true, readFrame: () => audio };
+  driver.readFrame(microphone, tts, 100);
+  assert.deepEqual(driver.readFrame(microphone, tts, 160), {
+    currentViseme: 'M',
+    audioEnergy: 0,
+    isVoiceActive: false,
+  });
+  audio.energy = 0.7;
+  audio.centroid = 0.9;
+  driver.readFrame(microphone, tts, 200);
+  assert.equal(driver.readFrame(microphone, tts, 260).currentViseme, 'I');
+  tts.isPlaying = false;
+  assert.equal(driver.readFrame(microphone, tts, 276).currentViseme, 'U');
+  tts.isPlaying = true;
+  audio.centroid = 0.4;
+  driver.readFrame(microphone, tts, 292);
+  assert.equal(driver.readFrame(microphone, tts, 308).currentViseme, 'A');
+});
 
 test('local speech client posts the standard speech contract and starts analysed playback', async () => {
   let request = null;

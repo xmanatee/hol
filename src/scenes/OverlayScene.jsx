@@ -326,7 +326,6 @@ const OverlayScene = ({
         >
           <HeadAnchor
             visible
-            isAgentSpeaking={isAgentSpeaking}
             hiddenMeshes={hiddenMeshes}
             manualRotation={manualRotation}
             onMeshNamesDiscovered={onMeshNamesDiscovered}

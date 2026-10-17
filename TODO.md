@@ -207,8 +207,6 @@ Resolve observation validity before geometry, uncertainty, and device acceptance
   [Audio states](https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/state), [Track termination](https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamTrack/ended_event)
 - **P1 · Playback liveness:** Observe TTS context suspension/interruption after playback starts; expose paused/unavailable output with a gesture-based recovery instead of leaving `isPlaying` and mouth animation active for inaudible speech.
   [Audio context states](https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/state)
-- **P1 · Speech driver ownership:** In `useLipSync`, prioritize the agent's audible TTS over simultaneous microphone mode; restore microphone-driven animation on completion/cancellation and test both sources together.
-  [Web Audio analysis](https://developer.mozilla.org/en-US/docs/Web/API/AnalyserNode)
 
 ### Animation evidence
 

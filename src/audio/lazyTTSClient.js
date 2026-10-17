@@ -74,6 +74,10 @@ export class LazyTTSClient extends LazyRuntime {
     return this.runtime ? this.runtime.readFrame() : SILENT_AUDIO_ANALYSIS;
   }
 
+  get isPlaying() {
+    return this.runtime?.isPlaying === true;
+  }
+
   getMetrics() {
     return this.runtime ? this.runtime.getMetrics() : { ...EMPTY_METRICS };
   }
