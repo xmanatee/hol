@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { pageVisibility } from '../utils/pageVisibility.js';
 
 const assertVideoFrameCallbackSupport = (videoElement) => {
   if (
@@ -9,19 +10,20 @@ const assertVideoFrameCallbackSupport = (videoElement) => {
   }
 };
 
-export const subscribeToVideoFrames = ({ videoElement, onFrame }) => {
+export const subscribeToVideoFrames = ({ videoElement, onFrame, visibility = pageVisibility }) => {
   assertVideoFrameCallbackSupport(videoElement);
 
   let active = true;
   let callbackId = null;
   let previousMediaTime = null;
+  let generation = 0;
 
-  const handleVideoFrame = (now, metadata) => {
-    if (!active) {
+  const handleVideoFrame = (now, metadata, scheduledGeneration) => {
+    if (!active || scheduledGeneration !== generation || !visibility.getSnapshot()) {
       return;
     }
 
-    callbackId = videoElement.requestVideoFrameCallback(handleVideoFrame);
+    scheduleFrame();
     const mediaDelta = previousMediaTime === null ? null : metadata.mediaTime - previousMediaTime;
     previousMediaTime = metadata.mediaTime;
 
@@ -32,11 +34,27 @@ export const subscribeToVideoFrames = ({ videoElement, onFrame }) => {
     });
   };
 
-  callbackId = videoElement.requestVideoFrameCallback(handleVideoFrame);
+  function scheduleFrame() {
+    const scheduledGeneration = generation;
+    callbackId = videoElement.requestVideoFrameCallback((now, metadata) =>
+      handleVideoFrame(now, metadata, scheduledGeneration),
+    );
+  }
+
+  const updateVisibility = () => {
+    generation++;
+    if (callbackId !== null) videoElement.cancelVideoFrameCallback(callbackId);
+    callbackId = null;
+    previousMediaTime = null;
+    if (visibility.getSnapshot()) scheduleFrame();
+  };
+  const unsubscribeVisibility = visibility.subscribe(updateVisibility);
+  updateVisibility();
 
   return () => {
     active = false;
-    videoElement.cancelVideoFrameCallback(callbackId);
+    unsubscribeVisibility();
+    if (callbackId !== null) videoElement.cancelVideoFrameCallback(callbackId);
     callbackId = null;
   };
 };

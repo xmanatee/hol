@@ -1,6 +1,15 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { DoubleSide } from 'three';
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import HeadAnchor from '../components/organisms/HeadAnchor.jsx';
 import { logger } from '../utils/logger.js';
 import { computeAnchorOverlayTransform } from '../utils/anchorProjection.js';
@@ -9,6 +18,7 @@ import { getRenderableAnchorOverlay } from '../utils/overlayVisibility.js';
 import { DemandRenderScheduler } from '../utils/overlayRenderScheduler.js';
 import { observeWebGLContext } from '../utils/webglContextLifecycle.js';
 import { AnchorMotionPredictor } from '../utils/anchorMotionPredictor.js';
+import { pageVisibility } from '../utils/pageVisibility.js';
 
 const MAX_DEVICE_PIXEL_RATIO = 1.5;
 const WEBGL_OPTIONS = {
@@ -80,11 +90,12 @@ const WebGLContextMonitor = ({ setStatus }) => {
   return null;
 };
 
-const DemandRenderController = ({ active }) => {
+const DemandRenderController = ({ enabled, active }) => {
   const invalidate = useThree((state) => state.invalidate);
   const schedulerRef = useRef(null);
 
   useEffect(() => {
+    if (!enabled) return undefined;
     const scheduler = new DemandRenderScheduler({
       invalidate,
       requestFrame: (callback) => window.requestAnimationFrame(callback),
@@ -97,11 +108,11 @@ const DemandRenderController = ({ active }) => {
       scheduler.dispose();
       schedulerRef.current = null;
     };
-  }, [invalidate]);
+  }, [enabled, invalidate]);
 
   useEffect(() => {
     schedulerRef.current?.setActive(active);
-  }, [active]);
+  }, [active, enabled]);
 
   return null;
 };
@@ -255,6 +266,8 @@ const OverlayScene = ({
   style = {},
 }) => {
   const [webglStatus, setWebglStatus] = useState('active');
+  const pageVisible = useSyncExternalStore(pageVisibility.subscribe, pageVisibility.getSnapshot);
+  const rendering = pageVisible && webglStatus === 'active';
   const containerRef = useRef(null);
   const fov = 63;
   const cameraDistance = 3;
@@ -281,7 +294,7 @@ const OverlayScene = ({
       <Canvas
         dpr={dpr}
         gl={WEBGL_OPTIONS}
-        frameloop={webglStatus === 'active' ? 'demand' : 'never'}
+        frameloop={rendering ? 'demand' : 'never'}
         style={{
           width: '100%',
           height: '100%',
@@ -295,7 +308,7 @@ const OverlayScene = ({
         }}
       >
         <WebGLContextMonitor setStatus={setWebglStatus} />
-        <DemandRenderController active={webglStatus === 'active' && (isAgentSpeaking || microphoneMode)} />
+        <DemandRenderController enabled={rendering} active={isAgentSpeaking || microphoneMode} />
         <ambientLight intensity={0.8} />
         <directionalLight position={[2, 2, 2]} intensity={0.6} />
         <directionalLight position={[-1, -1, -1]} intensity={0.3} />

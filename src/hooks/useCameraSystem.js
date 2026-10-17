@@ -10,6 +10,7 @@ import { copyImageData } from '../utils/imageDataTransfer.js';
 import { LatestValueMailbox } from '../utils/latestValueMailbox.js';
 import { logger } from '../utils/logger.js';
 import { createDepthStateStore } from '../utils/depthStateStore.js';
+import { pageVisibility } from '../utils/pageVisibility.js';
 
 const DEPTH_FUSION_MODE = 'depth-fusion';
 const createIdleDepthState = () => ({
@@ -293,6 +294,12 @@ export const useCameraSystem = (config = {}) => {
     });
 
     const removeAnchorListener = anchorManager.addListener(anchorStateStore.update);
+    const updateVisibility = () => {
+      depthFrameMailbox.reset();
+      anchorManager.setObservationsActive(pageVisibility.getSnapshot());
+    };
+    const removeVisibilityListener = pageVisibility.subscribe(updateVisibility);
+    updateVisibility();
 
     const personalityService = session.personality;
     const removePersonalityListener = personalityService.addListener({
@@ -344,6 +351,7 @@ export const useCameraSystem = (config = {}) => {
       mountedRef.current = false;
       removeCameraListener();
       removeAnchorListener();
+      removeVisibilityListener();
       disposeDepthRuntime();
       removePersonalityListener();
       removeTTSListener();
@@ -363,7 +371,7 @@ export const useCameraSystem = (config = {}) => {
   const initializeDepthForActiveMode = useCallback(() => {
     getDepthService()
       .then((depthService) => {
-        if (!depthService) {
+        if (!depthService || !session.anchor.observationsActive) {
           return null;
         }
         if (depthService.getState().state !== 'idle') {
@@ -375,7 +383,7 @@ export const useCameraSystem = (config = {}) => {
       .catch((error) => {
         logger.warn('CameraSystem', `Depth model initialization failed: ${error.message}`);
       });
-  }, [getDepthService]);
+  }, [getDepthService, session]);
 
   const startCamera = useCallback(
     async (videoElement) => {

@@ -2,12 +2,27 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { subscribeToVideoFrames } from './useVideoFrames.js';
 
-const createVideoFrameDriver = () => {
+const createVideoFrameDriver = (initiallyVisible = true) => {
   const callbacks = new Map();
   const cancelled = [];
   let nextId = 1;
+  let visible = initiallyVisible;
+  const visibilityListeners = new Set();
 
   return {
+    visibility: {
+      getSnapshot: () => visible,
+      subscribe: (listener) => {
+        visibilityListeners.add(listener);
+        return () => visibilityListeners.delete(listener);
+      },
+    },
+    setVisible(value) {
+      visible = value;
+      visibilityListeners.forEach((listener) => {
+        listener();
+      });
+    },
     videoElement: {
       requestVideoFrameCallback(callback) {
         const id = nextId++;
@@ -34,6 +49,7 @@ test('video frame subscription runs only for presented video frames and reports 
   const frames = [];
   const unsubscribe = subscribeToVideoFrames({
     videoElement: driver.videoElement,
+    visibility: driver.visibility,
     onFrame: (frame) => {
       frames.push(frame);
       assert.equal(driver.callbacks.size, 1, 'the next frame is armed before consumer work starts');
@@ -57,6 +73,7 @@ test('video frame subscription cancels the latest callback and ignores a late de
   const frames = [];
   const unsubscribe = subscribeToVideoFrames({
     videoElement: driver.videoElement,
+    visibility: driver.visibility,
     onFrame: (frame) => frames.push(frame),
   });
 
@@ -75,4 +92,47 @@ test('video frame subscription rejects browsers without the standard callback pa
     () => subscribeToVideoFrames({ videoElement: {}, onFrame: () => {} }),
     /Video frame callbacks are not supported/,
   );
+});
+
+test('hidden video subscriptions cancel queued work and resume only new callbacks with fresh cadence', () => {
+  const driver = createVideoFrameDriver();
+  const frames = [];
+  const unsubscribe = subscribeToVideoFrames({
+    videoElement: driver.videoElement,
+    visibility: driver.visibility,
+    onFrame: (frame) => frames.push(frame),
+  });
+  driver.fire(1, 100, { mediaTime: 1 });
+  const retiredCallback = driver.callbacks.get(2);
+  driver.setVisible(false);
+  assert.equal(driver.callbacks.size, 0);
+  retiredCallback(120, { mediaTime: 1.02 });
+  assert.equal(frames.length, 1);
+  driver.setVisible(true);
+  retiredCallback(140, { mediaTime: 1.04 });
+  assert.equal(frames.length, 1, 'a pre-hide callback cannot run after resume');
+  assert.equal(driver.callbacks.size, 1);
+  driver.fire(3, 2000, { mediaTime: 3 });
+  assert.equal(frames.at(-1).captureFps, null, 'hidden time is not a camera cadence sample');
+  driver.fire(4, 2033, { mediaTime: 3 + 1 / 30 });
+  assert.ok(Math.abs(frames.at(-1).captureFps - 30) < 0.001);
+  unsubscribe();
+  driver.setVisible(false);
+  driver.setVisible(true);
+  assert.equal(driver.callbacks.size, 0, 'cleanup also removes the visibility subscription');
+});
+
+test('a subscription created while hidden waits for visibility before requesting its first frame', () => {
+  const driver = createVideoFrameDriver(false);
+  const unsubscribe = subscribeToVideoFrames({
+    videoElement: driver.videoElement,
+    visibility: driver.visibility,
+    onFrame: () => {},
+  });
+  assert.equal(driver.callbacks.size, 0);
+  driver.setVisible(true);
+  assert.equal(driver.callbacks.size, 1);
+  driver.setVisible(false);
+  unsubscribe();
+  assert.equal(driver.callbacks.size, 0);
 });

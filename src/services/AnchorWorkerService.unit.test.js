@@ -285,6 +285,77 @@ const createSelectedClient = async (t) => {
   return { ...client, track };
 };
 
+test('hiding invalidates selected evidence immediately and an in-flight result cannot revive it after resume', async (t) => {
+  const { service, worker, clock, track } = await createSelectedClient(t);
+  const original = service.getState();
+  clock.advanceTo(1010);
+  service.processFrame(createImageData(), { capturedAt: 1010, update: true });
+  await waitForWorkerPost();
+  const pendingFrame = worker.messages.at(-1);
+  service.setObservationsActive(false);
+  assert.equal(service.getState().observationExpired, true);
+  assert.equal(getRenderableAnchorOverlay(service.getState(), 1010), null);
+  assert.equal(clock.pending(), 0, 'hiding does not rely on a background expiry timer');
+  assert.equal(service.canProcessFrame(), false);
+  assert.equal(service.processFrame(createImageData(), { capturedAt: 1010, update: true }).success, false);
+  assert.equal((await service.selectCandidate({ candidateId: 7, capturedAt: 1010 })).success, false);
+
+  // Even a brief hide at the same clock tick is a new evidence boundary.
+  service.setObservationsActive(true);
+  worker.reply({ id: pendingFrame.id, result: true, state: original });
+  assert.equal(service.getState().observationExpired, true);
+  assert.equal(service.getState().sampledAt, null);
+  assert.equal(service.canProcessFrame(), true, 'the retired frame still releases its work slot');
+  assert.equal(service.getState().activeAnchor.id, original.activeAnchor.id);
+  assert.equal(worker.terminated, false, 'pause retains the runtime and object identity');
+  clock.advanceTo(1020);
+  await track(1020, { update: false });
+  assert.equal(service.getState().observationExpired, true, 'a mask refresh is not new tracked geometry');
+  await track(1020);
+  assert.equal(service.getState().observationExpired, false);
+  assert.equal(getRenderableAnchorOverlay(service.getState(), 1020).id, original.activeAnchor.id);
+});
+
+test('discovery cannot restore cached readiness across visibility transitions', async (t) => {
+  const { service, worker, clock, observe } = await createDiscoveryClient(t);
+  await observe(1000);
+  const oldState = service.getState();
+  clock.advanceTo(1010);
+  service.setObservationsActive(false);
+  assert.equal(service.getState().candidate, null);
+  service.setObservationsActive(true);
+  assert.equal(
+    (await service.selectCandidate({ candidateId: oldState.candidate.id, capturedAt: 1010 })).success,
+    false,
+  );
+  service.setTrackingMode('parametric-surface');
+  await waitForWorkerPost();
+  worker.reply({ id: worker.messages.at(-1).id, result: true, state: oldState });
+  assert.equal(
+    service.getState().candidate,
+    null,
+    'new command replies cannot reauthorize old image evidence',
+  );
+  await observe(1010);
+  assert.equal(service.getState().candidate.status, 'ready');
+  assert.equal(service.getState().candidate.id, oldState.candidate.id);
+});
+
+test('initialization can finish while hidden without reopening the frame scheduler', async (t) => {
+  const service = new TestAnchorWorkerService();
+  t.after(() => service.dispose());
+  const initialized = service.initialize(null, 320, 240);
+  await waitForWorkerPost();
+  const worker = FakeAnchorWorker.instances.at(-1);
+  service.setObservationsActive(false);
+  worker.reply({ id: worker.messages.at(-1).id, result: true, state: createState({ initialized: true }) });
+  await initialized;
+  assert.equal(service.initialized, true);
+  assert.equal(service.canProcessFrame(), false);
+  service.reset();
+  assert.equal(service.observationsActive, false, 'runtime resets do not undo page visibility');
+});
+
 test('selected observation expiry reaches rendering, HUD, diagnostics and capture without another frame', async (t) => {
   const { service, worker, clock } = await createSelectedClient(t);
   const store = createAnchorStateStore(service.getState(), () => () => {});
@@ -708,6 +779,7 @@ test('selection commits a candidate without copying or transferring another came
   FakeAnchorWorker.instances = [];
   const service = new TestAnchorWorkerService();
   service.initialized = true;
+  service.candidate = { id: 7, status: 'ready', capturedAt: performance.now() };
   let publicationCount = 0;
   service.addListener(() => {
     publicationCount++;

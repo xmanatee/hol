@@ -146,8 +146,6 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
 
 - **P2 · Resource endurance:** Stress repeated camera/mode/retry/context-loss cycles; verify WASM Mats, workers, GPU assets, bitmaps, streams, and audio contexts return to a bounded baseline.
   [WebGL resource lifecycle](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices)
-- **P2 · Background scheduling:** Stop optional inference and animation while hidden, discard aged results on return, and resume only after fresh visual evidence; verify this separately from media-track interruption handling.
-  [Page visibility](https://developer.mozilla.org/en-US/docs/Web/API/Page_Visibility_API)
 - **P2 · Local diagnostics:** Validate persisted logger settings and expose bounded fault/stage summaries independently of debug tags; never retain camera/audio payloads or enable remote telemetry.
   [Runtime error reporting](https://developer.mozilla.org/en-US/docs/Web/API/Worker/error_event)
 

@@ -515,6 +515,50 @@ for (const [scenario, failedUrl, title] of [
       }),
     ).toEqual([]);
     const overlayCanvas = await page.locator('.overlay-scene canvas').elementHandle();
+    if (scenario === 'static') {
+      const paused = await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+        return window.__holAnchorFrameCommands;
+      });
+      await expect(recoveryGuidance).toContainText('Waiting for fresh tracking');
+      // The input still delivers video, but both CV submissions and GPU clears must stop.
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              new Promise((resolve) => {
+                const video = document.querySelector('video');
+                video.requestVideoFrameCallback(() => {
+                  const lastClearAt = window.__holLastClearAt;
+                  video.requestVideoFrameCallback(() => {
+                    resolve({
+                      frames: window.__holAnchorFrameCommands,
+                      renderingStopped: lastClearAt === window.__holLastClearAt,
+                    });
+                  });
+                });
+              }),
+          ),
+        )
+        .toEqual({ frames: paused, renderingStopped: true });
+      await page.evaluate(() => {
+        window.__holFreezeObjectVideo = true;
+        delete document.visibilityState;
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await expect(recoveryGuidance).toContainText('Waiting for fresh tracking');
+      await expect
+        .poll(() => page.evaluate(() => window.__holLastClearAt > window.__holLastDrawAt))
+        .toBe(true);
+      await page.evaluate(() => window.__holResumeObjectVideo());
+      await expect(trackingStatus).toContainText('Face is tracking the object');
+      expect(
+        await page
+          .locator('.overlay-scene canvas')
+          .evaluate((canvas, original) => canvas === original, overlayCanvas),
+      ).toBe(true);
+    }
     const frozenAt = await page.evaluate(() => {
       window.__holFreezeObjectVideo = true;
       return performance.now();

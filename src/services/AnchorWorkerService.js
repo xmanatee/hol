@@ -7,6 +7,7 @@ import { isObjectObservationFresh, MAX_OBJECT_OBSERVATION_AGE_MS } from '../util
 const loadAnchorWorkerClass = () => import('../cv/anchor.worker.js?worker').then((module) => module.default);
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 45_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 8_000;
+const OBSERVATIONS_PAUSED_REASON = 'Camera observations are paused while the page is hidden';
 const scheduleExpiry = (callback, delayMs) => {
   const timeout = setTimeout(callback, delayMs);
   return () => clearTimeout(timeout);
@@ -34,6 +35,9 @@ export class AnchorWorkerService {
     this.anchorState = null;
     this.segmentationRefresh = null;
     this.sampledAt = null;
+    this.observationsActive = true;
+    this.minimumObservationAt = 0;
+    this.minimumObservationRequestId = 0;
     this.trackingMode = OBJECT_POSE_MODEL;
     this.worker = null;
     this.workerPromise = null;
@@ -103,12 +107,18 @@ export class AnchorWorkerService {
   }
 
   selectCandidate({ candidateId, tapPosition, capturedAt }) {
+    if (!this.observationsActive) {
+      return Promise.resolve({ success: false, reason: OBSERVATIONS_PAUSED_REASON });
+    }
     if (!this.initialized || this.mode !== 'selection') {
       return Promise.reject(new Error('Can only select a candidate in initialized selection mode'));
     }
     const candidate = this.getState().candidate;
     if (candidate?.status === 'stale') {
       return Promise.resolve({ success: false, reason: candidate.reason });
+    }
+    if (candidate?.id !== candidateId || candidate.status !== 'ready') {
+      return Promise.resolve({ success: false, reason: 'Wait for fresh object tracking before selecting' });
     }
     return this._request('selectCandidate', {
       candidateId,
@@ -119,15 +129,35 @@ export class AnchorWorkerService {
   }
 
   canProcessFrame() {
-    return this.initialized && this.frameRequestId === null && this.now() >= this.nextObservationAt;
+    return (
+      this.observationsActive &&
+      this.initialized &&
+      this.frameRequestId === null &&
+      this.now() >= this.nextObservationAt
+    );
+  }
+
+  setObservationsActive(active) {
+    if (this.observationsActive === active) return;
+    this.observationsActive = active;
+    this.minimumObservationAt = this.now();
+    this.minimumObservationRequestId = this.nextRequestId;
+    this.sampledAt = null;
+    this.candidate = null;
+    this.nextObservationAt = 0;
+    this._scheduleObservationExpiry();
+    this._notifyUpdate();
   }
 
   processFrame(imageData, { update, refreshSegmentation, depthContext, capturedAt }) {
     if (!this.canProcessFrame()) {
       return {
         success: false,
-        reason:
-          this.frameRequestId !== null ? 'Observation frame in progress' : 'Observation is not scheduled',
+        reason: !this.observationsActive
+          ? OBSERVATIONS_PAUSED_REASON
+          : this.frameRequestId !== null
+            ? 'Observation frame in progress'
+            : 'Observation is not scheduled',
       };
     }
     if (!Number.isFinite(capturedAt) || capturedAt < 0) {
@@ -336,20 +366,23 @@ export class AnchorWorkerService {
       this.frameUpdatesAnchor = false;
     }
     if (message.state && message.id >= this.minimumStateRequestId) {
-      this._applyState(message.state, sampledAt);
+      this._applyState(message.state, sampledAt, message.id >= this.minimumObservationRequestId);
     }
   }
 
-  _applyState(state, sampledAt = this.sampledAt) {
+  _applyState(state, sampledAt = this.sampledAt, observationAllowed = true) {
+    const admitObservation = this.observationsActive && observationAllowed;
     this.error = null;
     this.mode = state.mode;
     this.activeAnchor = state.activeAnchor;
-    this.candidate = state.candidate;
+    this.candidate =
+      admitObservation && state.candidate?.capturedAt >= this.minimumObservationAt ? state.candidate : null;
     this.nextObservationAt = state.nextObservationAt;
     this.anchorState = state.anchorState;
     this.segmentationRefresh = state.segmentationRefresh;
     this.initialized = state.initialized;
-    this.sampledAt = sampledAt;
+    this.sampledAt =
+      admitObservation && sampledAt !== null && sampledAt >= this.minimumObservationAt ? sampledAt : null;
     this._scheduleObservationExpiry();
     this._notifyUpdate();
   }
