@@ -10,8 +10,6 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
 
 - **P1 · Objectness:** Reject background-only discovery using independently labelled negative videos; a confident point-prompt mask is not proof of a distinct object.
   [MediaPipe segmentation](https://ai.google.dev/edge/mediapipe/solutions/vision/interactive_segmenter/web_js)
-- **P1 · Feature conditioning:** In `anchor.keypointExtraction.js`, distinguish detected corners from grid seeds; require measured patch conditioning before either can establish attachment evidence.
-  [LK conditioning](https://docs.opencv.org/4.x/d4/dee/tutorial_optical_flow.html)
 - **P1 · Flow verification:** Add bounded forward–backward and appearance checks to `anchor.tracking.js`; test long edges, repetitive letters, blur, exposure changes, and large inter-frame motion.
   [OpenCV optical flow](https://docs.opencv.org/4.x/d4/dee/tutorial_optical_flow.html)
 - **P1 · Patch ownership:** Account for the whole LK/descriptor patch, not just its center's mask membership; prevent paper edges, handles, and thin objects from tracking background texture.

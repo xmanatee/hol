@@ -3747,12 +3747,9 @@ export class ImageAnchorService {
           };
     const minDistance = 7;
     const candidates = [
-      ...templateKeypoints.map(normalizeKeypoint).map((keypoint) => ({
-        ...keypoint,
-        response: (keypoint.response || 1) + 0.25,
-      })),
+      ...templateKeypoints.map(normalizeKeypoint),
       ...objectKeypoints.map(normalizeKeypoint),
-    ].sort((left, right) => (right.response || 0) - (left.response || 0));
+    ].sort((left, right) => right.response - left.response);
     const merged = [];
 
     for (const keypoint of candidates) {

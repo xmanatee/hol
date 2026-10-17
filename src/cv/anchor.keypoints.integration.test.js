@@ -25,6 +25,74 @@ const makeGridKeypoints = (offsetX = 0, offsetY = 0) => {
   return keypoints;
 };
 
+test('adaptive extraction never fills blank, weak-noise or edge-only masks with invented support', async () => {
+  const cv = await loadOpenCvForNode();
+  const detector = new KeypointDetector();
+  detector.initialize(cv);
+  const width = 96;
+  const height = 80;
+  const mask = createObjectSupportMask({
+    width,
+    height,
+    data: new Uint8Array(width * height).fill(255),
+    source: 'interactive-segmenter',
+    confidence: 0.9,
+    referencePoint: { x: 48, y: 40 },
+    createdAtFrame: 0,
+  });
+  for (const pattern of ['blank', 'weak-noise', 'edge', 'weak-corner', 'corner']) {
+    const image = cv.Mat.zeros(height, width, cv.CV_8UC1);
+    try {
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const index = y * width + x;
+          if (pattern === 'weak-noise') image.data[index] = 127 + ((x * 17 + y * 29 + x * y) % 3);
+          if (pattern === 'edge') image.data[index] = x >= 48 ? 255 : 0;
+          if (pattern.endsWith('corner'))
+            image.data[index] = x >= 32 && x < 64 && y >= 24 && y < 56 ? (pattern === 'corner' ? 255 : 8) : 0;
+        }
+      }
+      const result = detector.extractAdaptiveKeypoints(cv, image, { x: 0, y: 0, width, height }, mask, {
+        minKeypoints: 16,
+      });
+      if (pattern === 'corner') {
+        assert.equal(result.count, 4);
+        assert.ok(result.keypoints.every((keypoint) => keypoint.response > 0));
+      } else {
+        assert.equal(result.count, 0, pattern);
+      }
+    } finally {
+      image.delete();
+    }
+  }
+});
+
+test('patch conditioning preserves contrast ordering and strided-image coordinates', async () => {
+  const cv = await loadOpenCvForNode();
+  const detector = new KeypointDetector();
+  detector.initialize(cv);
+  const image = cv.Mat.zeros(120, 160, cv.CV_8UC1);
+  const roi = image.roi(new cv.Rect(24, 16, 96, 80));
+  let contiguous = null;
+  try {
+    cv.rectangle(image, new cv.Point(56, 40), new cv.Point(88, 72), new cv.Scalar(255), -1);
+    contiguous = roi.clone();
+    const strided = detector.extractKeypoints(cv, roi).keypoints;
+    const compact = detector.extractKeypoints(cv, contiguous).keypoints;
+    assert.equal(strided.length, 4);
+    assert.deepEqual(strided, compact);
+    const strongResponse = compact[0].response;
+    cv.rectangle(contiguous, new cv.Point(32, 24), new cv.Point(64, 56), new cv.Scalar(32), -1);
+    const lowerContrast = detector.extractKeypoints(cv, contiguous).keypoints;
+    assert.equal(lowerContrast.length, 4);
+    assert.ok(lowerContrast.every((keypoint) => keypoint.response > 0 && keypoint.response < strongResponse));
+  } finally {
+    contiguous?.delete();
+    roi.delete();
+    image.delete();
+  }
+});
+
 test('template quality scoring is stable for absolute ROI keypoint coordinates', () => {
   const detector = new KeypointDetector();
   const localKeypoints = makeGridKeypoints();
@@ -178,97 +246,6 @@ test('adaptive keypoint extraction reports every real GFTT attempt', async () =>
   assert.equal(result.gfttPixelCount, 3 * width * height);
   assert.equal(result.gfttPreparationCount, 1);
   assert.equal(calls, 3);
-});
-
-test('fallback filters each pass before selection and releases its scoped native Mats', async () => {
-  const mats = [];
-  class FakeMat {
-    constructor(rows = 0, cols = 0) {
-      this.rows = rows;
-      this.cols = cols;
-      this.data = new Uint8Array(rows * cols);
-      this.data32F = new Float32Array();
-      this.deleteCount = 0;
-      mats.push(this);
-    }
-
-    static zeros(rows, cols) {
-      return new FakeMat(rows, cols);
-    }
-
-    roi(rect) {
-      return new FakeMat(rect.height, rect.width);
-    }
-
-    delete() {
-      this.deleteCount++;
-    }
-  }
-  class FakeRect {
-    constructor(x, y, width, height) {
-      Object.assign(this, { x, y, width, height });
-    }
-  }
-  const inside = Array.from({ length: 12 }, (_, index) => ({
-    x: 2 + index,
-    y: 4,
-  }));
-  const outside = Array.from({ length: 20 }, (_, index) => ({
-    x: 20 + (index % 3),
-    y: 8 + (index % 5),
-  }));
-  const outputs = [[...inside.slice(0, 5), ...outside], inside];
-  let calls = 0;
-  const cv = {
-    Mat: FakeMat,
-    Rect: FakeRect,
-    CV_8UC1: 0,
-    goodFeaturesToTrack: (roi, corners) => {
-      const points = outputs[calls++];
-      corners.rows = points.length;
-      corners.data32F = Float32Array.from(points.flatMap((point) => [point.x, point.y]));
-    },
-  };
-  const detector = new KeypointDetector();
-  await detector.initialize(cv);
-  const image = new FakeMat(30, 40);
-  const data = new Uint8Array(30 * 40);
-  for (let y = 0; y < 30; y++) {
-    data.fill(255, y * 40, y * 40 + 20);
-  }
-  const objectSupportMask = createObjectSupportMask({
-    width: 40,
-    height: 30,
-    data,
-    source: 'test-mask',
-    confidence: 1,
-    referencePoint: { x: 10, y: 15 },
-    createdAtFrame: 0,
-    updatedAtFrame: 0,
-  });
-
-  const result = detector.extractKeypointsWithAdaptiveFallback(
-    cv,
-    image,
-    { x: 0, y: 0, width: 40, height: 30 },
-    objectSupportMask,
-    { minKeypoints: 10 },
-  );
-
-  assert.equal(result.method, 'GFTT_ADAPTIVE');
-  assert.deepEqual(
-    result.keypoints.map((keypoint) => keypoint.pt),
-    inside,
-  );
-  assert.equal(result.count, 12);
-  assert.equal(result.gfttCallCount, 2);
-  assert.equal(result.gfttPreparationCount, 1);
-  assert.equal(calls, 2);
-  assert.equal(image.deleteCount, 0);
-  assert.equal(
-    mats.filter((mat) => mat !== image).every((mat) => mat.deleteCount === 1),
-    true,
-  );
 });
 
 test('partial GFTT preparation releases the ROI before propagating a mask failure', async () => {

@@ -1,3 +1,5 @@
+export const LK_WINDOW_SIZE = 15;
+
 export const createLucasKanadeWorkspace = (cv) => ({
   previousPoints: new cv.Mat(),
   nextPoints: new cv.Mat(),

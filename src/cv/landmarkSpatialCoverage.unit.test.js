@@ -14,10 +14,9 @@ const createMask = () => ({
   bbox: { x: 0, y: 0, width: 180, height: 120 },
 });
 
-const keypoint = (x, y, response = 1, bootstrapOnly = false) => ({
+const keypoint = (x, y, response = 1) => ({
   pt: { x, y },
   response,
-  bootstrapOnly,
 });
 
 test('landmark growth visits under-covered mask cells before adding to a dense cell', () => {
@@ -64,10 +63,10 @@ test('landmark growth balances repeated candidates across equally covered cells'
   );
 });
 
-test('real corners remain ahead of bootstrap points while retaining coverage balance', () => {
+test('coverage balance precedes response strength in a previously empty cell', () => {
   const objectSupportMask = createMask();
   const ordered = orderKeypointsByMaskCoverage({
-    keypoints: [keypoint(132, 20, 0.04, true), keypoint(18, 20, 1), keypoint(72, 18, 1)],
+    keypoints: [keypoint(132, 20, 0.04), keypoint(18, 20, 1), keypoint(72, 18, 1)],
     existingPoints: [{ x: 18, y: 18 }],
     objectSupportMask,
     cellSize: 60,
@@ -77,8 +76,8 @@ test('real corners remain ahead of bootstrap points while retaining coverage bal
     ordered.map((point) => point.pt),
     [
       { x: 72, y: 18 },
-      { x: 18, y: 20 },
       { x: 132, y: 20 },
+      { x: 18, y: 20 },
     ],
   );
 });

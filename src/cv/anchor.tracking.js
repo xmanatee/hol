@@ -20,6 +20,7 @@ import {
 import { isIndependentObjectSupportObservation, isPointInsideObjectSupport } from './objectSupportMask.js';
 import { seedHomographyRansac } from './opencvRng.js';
 import {
+  LK_WINDOW_SIZE,
   createLucasKanadeWorkspace,
   disposeLucasKanadeWorkspace,
   prepareLucasKanadeWorkspace,
@@ -100,7 +101,7 @@ export class KeypointTracker {
 
     // Lucas-Kanade parameters
     this.lkParams = {
-      winSize: new cv.Size(15, 15),
+      winSize: new cv.Size(LK_WINDOW_SIZE, LK_WINDOW_SIZE),
       maxLevel: 3,
       criteria: new cv.TermCriteria(cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 30, 0.01),
     };
@@ -142,7 +143,6 @@ export class KeypointTracker {
         { x: kp.pt.x, y: kp.pt.y },
         { x: kp.pt.x, y: kp.pt.y },
         kp.response,
-        kp.bootstrapOnly === true,
       );
       if (admission === 'recovery-probation') {
         this._startObjectOwnershipProbation(point, {
@@ -1230,13 +1230,7 @@ export class KeypointTracker {
       }
 
       const id = this.nextPointId ?? Math.max(-1, ...this.trackedPoints.map((point) => point.id)) + 1;
-      const trackedPoint = this._createTrackedPoint(
-        id,
-        original,
-        current,
-        kp.response,
-        kp.bootstrapOnly === true,
-      );
+      const trackedPoint = this._createTrackedPoint(id, original, current, kp.response);
       if (
         admission === 'recovery-probation' ||
         (objectSupportMask && !isIndependentObjectSupportObservation(objectSupportMask))
@@ -1431,13 +1425,12 @@ export class KeypointTracker {
     };
   }
 
-  _createTrackedPoint(id, original, current, response, bootstrapOnly = false) {
+  _createTrackedPoint(id, original, current, response) {
     return {
       id,
       original,
       current,
       response,
-      bootstrapOnly,
       status: 'active',
       errorHistory: [],
       age: 0,
@@ -1855,10 +1848,7 @@ export class KeypointTracker {
    */
   getCorrespondences(options = {}) {
     const activePoints = this.trackedPoints.filter(
-      (pt) =>
-        pt.status === 'active' &&
-        isConfirmedObjectOwnedLandmark(pt) &&
-        (!pt.bootstrapOnly || pt.age >= 3 || pt.totalSuccessfulFrames >= 3),
+      (pt) => pt.status === 'active' && isConfirmedObjectOwnedLandmark(pt),
     );
     const { maxReferenceDistance = Infinity, minCount = 8, maxCount = Infinity } = options;
 

@@ -126,12 +126,8 @@ export const orderKeypointsByMaskCoverage = ({
       outside.push(candidate);
     }
   });
-  const corners = inside.filter((candidate) => candidate.keypoint.bootstrapOnly !== true);
-  const bootstrap = inside.filter((candidate) => candidate.keypoint.bootstrapOnly === true);
-
   return [
-    ...distributeTier({ candidates: corners, grid, occupancy }),
-    ...distributeTier({ candidates: bootstrap, grid, occupancy }),
+    ...distributeTier({ candidates: inside, grid, occupancy }),
     ...outside.sort(compareKeypoints).map((candidate) => candidate.keypoint),
   ];
 };
