@@ -972,7 +972,8 @@ test('Lucas-Kanade rejects a point set below the geometric continuity quorum', a
 
   assert.equal(result.success, false);
   assert.equal(result.reason, 'Too few active points: 7 (need at least 8)');
-  assert.equal(result.activePointCount, 7);
+  assert.equal(result.activePointCount, 0);
+  assert.equal(tracker.getCorrespondences().length, 0);
 });
 
 test('candidate Lucas-Kanade preserves temporal motion below the pose geometry quorum', async () => {
@@ -1094,6 +1095,131 @@ test('same-frame grayscale retention advances refresh-plan generation without an
     /stale or already consumed/,
   );
   tracker.dispose();
+});
+
+test('only current image measurements count as active tracking evidence', async () => {
+  const cv = await loadOpenCvForNode();
+  for (const visibleCount of [8, 2]) {
+    const tracker = new KeypointTracker();
+    tracker.initialize(cv);
+    try {
+      const first = tracker.acquireGrayFrame(cv);
+      first.create(120, 160, cv.CV_8UC1);
+      let random = 12345;
+      for (let index = 0; index < first.data.length; index++) {
+        random = (Math.imul(random, 1664525) + 1013904223) >>> 0;
+        first.data[index] = random >>> 24;
+      }
+      const keypoints = Array.from({ length: 24 }, (_, index) => ({
+        pt: { x: 25 + (index % 6) * 20, y: 25 + Math.floor(index / 6) * 20 },
+        response: 1,
+      }));
+      tracker.initializeTracking(cv, keypoints, first, { tapPosition: { x: 75, y: 55 } });
+      for (const point of tracker.trackedPoints.slice(visibleCount)) {
+        point.status = 'outlier';
+        point.errorHistory = [1];
+      }
+      const current = tracker.acquireGrayFrame(cv);
+      current.create(120, 160, cv.CV_8UC1);
+      current.data.set(first.data);
+
+      const result = tracker.trackFrame(cv, current);
+      const expectedActive = visibleCount >= 8 ? visibleCount : 0;
+      assert.equal(result.activePointCount, expectedActive);
+      assert.equal(tracker.getCorrespondences().length, expectedActive);
+      assert.equal(tracker.trackedPoints.length, keypoints.length, 'Recovery memory is retained');
+
+      const matches = keypoints.map((point, id) => ({ id, reference: point.pt, point: point.pt }));
+      const restored = tracker.restoreFromRelocalizationMatches(current, matches, {
+        anchorPoint: { x: 75, y: 55 },
+        confidence: 0.9,
+        averageResidual: 0,
+      });
+      assert.equal(restored.restored, keypoints.length);
+      assert.equal(tracker.getCorrespondences().length, keypoints.length);
+    } finally {
+      tracker.dispose();
+    }
+  }
+});
+
+test('descriptor recovery retains unmatched owned points only if measured in the same frame', () => {
+  for (const sameFrame of [false, true]) {
+    const tracker = new KeypointTracker();
+    const previous = { delete() {} };
+    const current = { delete() {} };
+    tracker.grayFrameSlots = [previous, current];
+    tracker.previousGray = sameFrame ? current : previous;
+    tracker.trackedPoints = Array.from({ length: 16 }, (_, id) => ({
+      ...createTrackedPoint(
+        id,
+        { x: 30 + (id % 4) * 20, y: 30 + Math.floor(id / 4) * 20 },
+        {
+          tx: 0,
+          ty: 0,
+          scale: 1,
+          rotation: 0,
+        },
+      ),
+      objectOwned: true,
+    }));
+    const matches = tracker.trackedPoints.slice(0, 8).map((point) => ({
+      id: point.id,
+      reference: point.original,
+      point: point.current,
+    }));
+    const restored = tracker.restoreFromRelocalizationMatches(current, matches, {
+      anchorPoint: { x: 60, y: 60 },
+      confidence: 0.9,
+      averageResidual: 0,
+    });
+    assert.equal(restored.active, sameFrame ? 16 : 8);
+    assert.equal(tracker.getCorrespondences().length, sameFrame ? 16 : 8);
+    assert.equal(tracker.trackedPoints.length, 16);
+  }
+});
+
+test('refreshing a new image does not carry unmeasured points into pose support', () => {
+  const tracker = new KeypointTracker();
+  tracker.initialized = true;
+  tracker.previousGray = { delete() {} };
+  tracker.trackedPoints = Array.from({ length: 16 }, (_, id) =>
+    createTrackedPoint(
+      id,
+      { x: 30 + (id % 4) * 20, y: 30 + Math.floor(id / 4) * 20 },
+      {
+        tx: 0,
+        ty: 0,
+        scale: 1,
+        rotation: 0,
+      },
+    ),
+  );
+  tracker.nextPointId = 16;
+  tracker.anchorOriginalPosition = { x: 60, y: 60 };
+  const current = { cols: 240, rows: 200, empty: () => false };
+  const detector = {
+    extractKeypoints: () => ({
+      keypoints: Array.from({ length: 8 }, (_, id) => ({
+        pt: { x: 130 + (id % 4) * 20, y: 130 + Math.floor(id / 4) * 20 },
+        response: 1,
+      })),
+    }),
+  };
+  const refreshed = executeKeypointRefresh(
+    tracker,
+    {},
+    current,
+    detector,
+    { x: 0, y: 0, width: 240, height: 200 },
+    null,
+    { minNewKeypoints: 8 },
+  );
+  assert.equal(refreshed.success, true);
+  assert.equal(refreshed.added, 8);
+  assert.equal(refreshed.active, 8);
+  assert.ok(tracker.getCorrespondences().every((point) => point.id >= 16));
+  assert.equal(tracker.trackedPoints.length, 24);
 });
 
 test('real OpenCV Lucas-Kanade writes translated flow into the session workspace', async () => {
@@ -1376,6 +1502,8 @@ test('keypoint refresh spends limited map capacity on under-covered mask cells',
       keypoints: [...denseCandidates, ...uncoveredCandidates].map((point) => ({ pt: point, response: 1 })),
     }),
   };
+  tracker.grayFrameSlots = [tracker.previousGray, currentGray];
+  tracker.previousGray = currentGray;
 
   const refreshed = executeKeypointRefresh(
     tracker,
@@ -2437,8 +2565,8 @@ test('recovery-prior refresh reactivates matching map landmarks instead of disca
 
   assert.equal(refreshed.success, true);
   assert.equal(refreshed.referenceTransformSource, 'recovery-prior');
-  assert.equal(refreshed.recovered, 10);
-  assert.equal(refreshed.recoveryCandidateMatches, 10);
+  assert.equal(refreshed.recovered, 12);
+  assert.equal(refreshed.recoveryCandidateMatches, 12);
   assert.ok(refreshed.recoveryMedianReferenceResidual < 1e-9);
   assert.equal(tracker.trackedPoints.length, referenceCandidates.length);
   assert.ok(tracker.trackedPoints.every((point) => point.status === 'active'));

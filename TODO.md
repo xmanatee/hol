@@ -7,8 +7,6 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
 
 ### Observation validity
 
-- **P1 · Measurement provenance:** Distinguish current image measurements from stale/reactivated landmarks; retain recovery memory without counting it as fresh pose or readiness evidence before image revalidation.
-  [LK measurement status](https://docs.opencv.org/4.x/dc/d6b/group__video__track.html)
 - **P1 · Independent ownership:** Track segmentation observation age/source separately from mask reprojection age; tracker-propagated masks may gate points but must not independently confirm the same motion or mature its map.
   [Self-update drift](https://www.robots.ox.ac.uk/~tvg/publications/2016/staple.pdf)
 - **P1 · Objectness:** Reject background-only discovery using independently labelled negative videos; a confident point-prompt mask is not proof of a distinct object.

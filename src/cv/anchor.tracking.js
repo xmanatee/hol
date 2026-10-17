@@ -192,6 +192,19 @@ export class KeypointTracker {
     );
   }
 
+  _invalidateUnmeasuredPoints(currentGray) {
+    // Active coordinates belong to the retained image until fresh flow or matches replace them.
+    if (currentGray === this.previousGray) return;
+    for (const point of this.trackedPoints) {
+      if (point.status !== 'active') continue;
+      point.status = 'lost';
+      point.recentDropout = true;
+      point.successfulTrackingStreak = 0;
+      point.isStable = false;
+      this.updateLandmarkQuality(point);
+    }
+  }
+
   _replacePreviousGray(grayImage) {
     if (!this.grayFrameSlots?.includes(grayImage)) {
       throw new Error('Retained grayscale frame must belong to the tracker workspace');
@@ -254,10 +267,11 @@ export class KeypointTracker {
     }
 
     if (activePoints.length < minimumActivePoints) {
+      this._invalidateUnmeasuredPoints(currentGray);
       return {
         success: false,
         reason: `Too few active points: ${activePoints.length} (need at least ${minimumActivePoints})`,
-        activePointCount: activePoints.length,
+        activePointCount: this.trackedPoints.filter((point) => point.status === 'active').length,
         successRate: 0,
         averageError: 999,
       };
@@ -433,11 +447,6 @@ export class KeypointTracker {
     const successRate = successCount / activePoints.length;
     const avgError = successCount > 0 ? totalError / successCount : 999;
 
-    const finalActiveCount = this.trackedPoints.filter((pt) => pt.status === 'active').length;
-    if (finalActiveCount < 12) {
-      this._recoverOutlierPoints();
-    }
-
     this._cleanupInactiveKeypoints();
 
     const success = successRate >= 0.5;
@@ -544,82 +553,6 @@ export class KeypointTracker {
         protectedStable: protectedCount,
         outlierRate: `${((outlierCount / activePoints.length) * 100).toFixed(1)}%`,
       });
-    }
-  }
-
-  /**
-   * Attempt to recover outlier points when active count is too low
-   */
-  _recoverOutlierPoints() {
-    const outlierPoints = this.trackedPoints.filter((pt) => pt.status === 'outlier');
-
-    if (outlierPoints.length === 0) return;
-    const activePoints = this.trackedPoints.filter(
-      (pt) => pt.status === 'active' && isConfirmedObjectOwnedLandmark(pt),
-    );
-    const transformation =
-      activePoints.length >= 3 ? this._estimateReferenceTransformation(activePoints) : null;
-
-    logger.debugEvery(
-      'KeypointTracker',
-      'recover-outlier-points',
-      1000,
-      'Attempting to recover outlier points:',
-      {
-        outlierCount: outlierPoints.length,
-        activeCount: this.trackedPoints.filter((pt) => pt.status === 'active').length,
-      },
-    );
-
-    if (transformation) {
-      let recoveredByGeometry = 0;
-      outlierPoints.forEach((point) => {
-        const residual = this._transformationResidual(point, transformation);
-        if (residual < 10) {
-          point.status = 'active';
-          point.stabilityScore = Math.max(point.stabilityScore, 0.45);
-          this._restoreEstablishedObjectOwnership(point);
-          recoveredByGeometry++;
-        }
-      });
-
-      if (recoveredByGeometry > 0) {
-        logger.info(
-          'KeypointTracker',
-          `Recovered ${recoveredByGeometry} outlier points from similarity transform`,
-        );
-        return;
-      }
-    }
-
-    // Recover up to 5 outlier points that have the best error history
-    const recoverablePoints = outlierPoints
-      .filter((pt) => pt.errorHistory.length > 0)
-      .sort((a, b) => {
-        const avgErrorA = a.errorHistory.reduce((sum, err) => sum + err, 0) / a.errorHistory.length;
-        const avgErrorB = b.errorHistory.reduce((sum, err) => sum + err, 0) / b.errorHistory.length;
-        const qualityDelta = this.getLandmarkQuality(b) - this.getLandmarkQuality(a);
-        return Math.abs(qualityDelta) > 1e-6 ? qualityDelta : avgErrorA - avgErrorB;
-      })
-      .slice(0, 5);
-
-    let recoveredCount = 0;
-    for (const point of recoverablePoints) {
-      // Only recover points with reasonable error history
-      const avgError = point.errorHistory.reduce((sum, err) => sum + err, 0) / point.errorHistory.length;
-      if (avgError < 60) {
-        // More lenient than normal threshold
-        point.status = 'active';
-        point.recoveryCount = (point.recoveryCount || 0) + 1;
-        point.recentDropout = false;
-        this._restoreEstablishedObjectOwnership(point);
-        this.updateLandmarkQuality(point);
-        recoveredCount++;
-      }
-    }
-
-    if (recoveredCount > 0) {
-      logger.info('KeypointTracker', `Recovered ${recoveredCount} outlier points back to active`);
     }
   }
 
@@ -1207,6 +1140,7 @@ export class KeypointTracker {
     candidateOrder,
     reactivateReferenceMatches = false,
   }) {
+    this._invalidateUnmeasuredPoints(currentGray);
     const coverageEnabled =
       candidateOrder === 'mask-coverage' && objectSupportMask?.bbox && !reactivateReferenceMatches;
     const coveragePointsBefore = coverageEnabled
@@ -1420,6 +1354,7 @@ export class KeypointTracker {
 
   restoreFromRelocalizationMatches(currentGray, inlierMatches, relocalization = {}) {
     this.breakObjectPoseContinuity();
+    this._invalidateUnmeasuredPoints(currentGray);
     const matchesById = new Map(inlierMatches.map((match) => [match.id, match]));
     let restored = 0;
 
