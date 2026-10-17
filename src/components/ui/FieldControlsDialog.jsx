@@ -52,12 +52,12 @@ const FieldControlsDialog = ({ busy = false, children, onOpenChange }) => {
     >
       <div className="flex shrink-0 items-center gap-3 border-b border-white/10 px-4 py-2">
         <h2 id="field-controls-title" className="min-w-0 text-sm font-semibold">
-          Field controls
+          Camera controls
         </h2>
         <button
           ref={closeButtonRef}
           type="button"
-          aria-label="Close debug drawer"
+          aria-label="Close controls"
           onClick={() => onOpenChange(false)}
           className="ml-auto min-h-11 rounded-md border border-white/10 bg-white/5 px-3 text-sm hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
         >

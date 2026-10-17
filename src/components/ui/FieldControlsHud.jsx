@@ -29,7 +29,7 @@ export const FieldControlsHud = ({
   return (
     <div className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-[max(0.5rem,env(safe-area-inset-left))] right-[max(0.5rem,env(safe-area-inset-right))] z-40 mx-auto max-h-[calc(100dvh_-_max(1rem,env(safe-area-inset-bottom))_-_max(1rem,env(safe-area-inset-top)))] max-w-[42rem] overflow-y-auto overscroll-contain text-white">
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-black/70 p-2 shadow-2xl backdrop-blur-md">
-        <MetricPill label="Anchor" value={anchorLabel} tone={anchorTone} />
+        <MetricPill label="Object" value={anchorLabel} tone={anchorTone} />
         <MetricPill
           label="Voice"
           value={ttsData.isSynthesizing ? 'preparing' : voiceActive ? 'live' : 'idle'}
@@ -45,10 +45,10 @@ export const FieldControlsHud = ({
             onClick={() => onMicrophoneModeChange(!microphoneMode)}
           />
           {hasActiveAnchor && (
-            <IconButton label="Clear anchor" icon={RotateCcw} tone="good" onClick={onClearAnchor} />
+            <IconButton label="Choose another object" icon={RotateCcw} tone="good" onClick={onClearAnchor} />
           )}
           <IconButton
-            label="Debug drawer"
+            label="Controls"
             icon={SlidersHorizontal}
             buttonRef={triggerRef}
             aria-controls="field-controls-drawer"

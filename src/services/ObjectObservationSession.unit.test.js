@@ -27,9 +27,11 @@ const fixture = () => {
   let now = 1310;
   let trackingMode = 'sparse-reconstruction';
   let observation = {};
+  let preparationFailure = null;
   const manager = {
     prepareObjectAtPoint: async () => {
       creations++;
+      if (preparationFailure) return { success: false, reason: preparationFailure };
       activeAnchor = {
         position: { x: 160, y: 120 },
         createdAt: 123,
@@ -93,12 +95,28 @@ const fixture = () => {
     setRefresh: (value) => {
       pendingRefresh = value;
     },
+    setPreparationFailure: (value) => {
+      preparationFailure = value;
+    },
   };
 };
 
 const prepare = async (session) => {
   for (const time of [1000, 1100, 1200, 1300]) await session.processFrame(frame(time));
 };
+
+test('discovery preserves preparation failures until a new object is successfully prepared', async () => {
+  const { session, setPreparationFailure } = fixture();
+  setPreparationFailure('No distinct object at the focus point');
+  const rejected = await session.processFrame(frame(1000));
+  assert.equal(rejected.reason, 'No distinct object at the focus point');
+  assert.equal(session.getState().discoveryReason, rejected.reason);
+  assert.equal(session.getState().candidate, null);
+  setPreparationFailure(null);
+  await session.processFrame(frame(1800));
+  assert.equal(session.getState().candidate.status, 'segmented');
+  assert.equal(session.getState().discoveryReason, null);
+});
 
 test('selection commits the prepared subject without recreating landmarks or keyframes', async () => {
   const { session, creations } = fixture();

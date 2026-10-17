@@ -18,9 +18,11 @@ const hasSameStatePayload = (previous, next) =>
   previous.mode === next.mode &&
   previous.activeAnchor === next.activeAnchor &&
   previous.candidate === next.candidate &&
+  previous.discoveryReason === next.discoveryReason &&
   previous.anchorState === next.anchorState &&
   previous.segmentationRefresh === next.segmentationRefresh &&
   previous.error === next.error &&
+  previous.requiresReload === next.requiresReload &&
   previous.trackingMode === next.trackingMode &&
   previous.initialized === next.initialized;
 
@@ -30,6 +32,8 @@ const hasStructuralChange = (previous, next) => {
     previous.observationExpired !== next.observationExpired ||
     previous.initialized !== next.initialized ||
     previous.error !== next.error ||
+    previous.requiresReload !== next.requiresReload ||
+    previous.discoveryReason !== next.discoveryReason ||
     previous.trackingMode !== next.trackingMode ||
     previous.candidate?.id !== next.candidate?.id ||
     previous.candidate?.status !== next.candidate?.status ||

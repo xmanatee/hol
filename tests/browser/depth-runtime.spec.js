@@ -41,17 +41,13 @@ test('depth model load failures surface once without retrying a different execut
   expect(result.state).toMatchObject({ state: 'error', provider: null, error: result.error });
 });
 
-test('cancelled depth imports cannot start or orphan a superseded runtime', async ({ page, browserName }) => {
+test('camera and face controls do not load experimental depth runtimes', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');
 
-  const serviceUrl = productionDepthServiceUrl();
-  let releaseDepthChunk;
-  let markDepthChunkRequested;
-  const depthChunkReleased = new Promise((resolve) => {
-    releaseDepthChunk = resolve;
-  });
-  const depthChunkRequested = new Promise((resolve) => {
-    markDepthChunkRequested = resolve;
+  const depthRequests = [];
+  page.on('request', (request) => {
+    if (/DepthEstimationService-|depth\.worker-|depth-anything/.test(request.url()))
+      depthRequests.push(request.url());
   });
 
   await page.addInitScript(() => {
@@ -72,41 +68,21 @@ test('cancelled depth imports cannot start or orphan a superseded runtime', asyn
       },
     });
   });
-  await page.route(`**${serviceUrl}`, async (route) => {
-    markDepthChunkRequested();
-    await depthChunkReleased;
-    await route.continue();
-  });
-
   await page.goto('/');
   await page.getByRole('button', { name: 'Start Camera' }).click();
-  await expect(page.locator('canvas')).toHaveCSS('pointer-events', 'auto', { timeout: 10_000 });
-  await page.getByRole('button', { name: 'Debug drawer' }).click();
-  await page.getByRole('tab', { name: 'model', exact: true }).click();
+  await expect(page.locator('video')).toBeVisible({ timeout: 10_000 });
+  await page.getByRole('button', { name: 'Controls' }).click();
+  await page.getByRole('tab', { name: 'Face', exact: true }).click();
 
-  await page.getByRole('button', { name: 'Depth Fusion' }).click();
-  await depthChunkRequested;
-  await page.getByRole('button', { name: 'Object pose', exact: true }).click();
-  await page.getByRole('button', { name: 'Depth Fusion' }).click();
-  releaseDepthChunk();
-
-  await expect
-    .poll(() => page.evaluate(() => window.__depthWorkerLifecycle.created), { timeout: 10_000 })
-    .toBeGreaterThan(0);
-  await page.evaluate(
-    () =>
-      new Promise((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(resolve));
-      }),
-  );
-
+  await expect(page.getByRole('button', { name: 'Depth Fusion' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Stop camera', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Start Camera' })).toBeVisible();
+  expect(depthRequests).toEqual([]);
   expect(await page.evaluate(() => window.__depthWorkerLifecycle)).toEqual({
-    created: 1,
+    created: 0,
     terminated: 0,
   });
-
-  await page.getByRole('button', { name: 'Object pose', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => window.__depthWorkerLifecycle.terminated)).toBe(1);
 });
 
 test('production depth service runs real worker inference in a mobile browser', async ({ page }) => {

@@ -1,4 +1,3 @@
-import { calculateTemplateRegion } from './templateRegion.js';
 import { shouldRenderAnchorOverlay } from './overlayVisibility.js';
 
 const STATE_STYLES = {
@@ -382,84 +381,4 @@ export const renderDebugStats = (ctx, { fps, cameraFrameCost, processingTime, ob
   ctx.fillText(`Camera: ${cameraFrameCost.toFixed(1)}ms`, 15, 40);
   ctx.fillText(`Tracking: ${processingTime.toFixed(1)}ms`, 15, 55);
   ctx.fillText(`Objects: ${objectCount}`, 15, 70);
-};
-
-/**
- * Render tracked keypoints on canvas
- * @param {CanvasRenderingContext2D} ctx - Canvas context
- * @param {Object} anchorSystem - Anchor system state with keypoint data
- */
-export const renderKeypoints = (ctx, anchorSystem) => {
-  if (!anchorSystem?.keypointTracker?.trackedPoints) return;
-
-  const keypoints = anchorSystem.keypointTracker.trackedPoints;
-
-  // Only render active keypoints to avoid visual clutter from fixed lost/outlier points
-  const activeKeypoints = keypoints.filter((point) => point.status === 'active');
-
-  activeKeypoints.forEach((point, index) => {
-    const { current } = point;
-
-    if (!current || current.x === undefined || current.y === undefined) return;
-
-    // Draw active keypoint in green
-    ctx.fillStyle = '#00ff00'; // Green for active points
-    ctx.beginPath();
-    ctx.arc(current.x, current.y, 3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Add subtle border for visibility
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // Show point ID for debugging (every 10th point to avoid clutter)
-    if (index % 10 === 0) {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-      ctx.font = '10px monospace';
-      ctx.fillText(`${point.id}`, current.x + 5, current.y - 5);
-    }
-  });
-};
-
-/**
- * Render template region preview on click/hover
- * @param {CanvasRenderingContext2D} ctx - Canvas context
- * @param {Object} tapPosition - {x, y} position of tap/hover
- * @param {Object} boundingBox - Optional selected-object bounding box
- * @param {number} canvasWidth - Canvas width
- * @param {number} canvasHeight - Canvas height
- */
-export const renderTemplatePreview = (ctx, tapPosition, boundingBox, canvasWidth, canvasHeight) => {
-  if (!tapPosition) return;
-
-  const region = calculateTemplateRegion(tapPosition, boundingBox, canvasWidth, canvasHeight);
-
-  // Draw template region outline
-  ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)'; // Cyan
-  ctx.lineWidth = 2;
-  ctx.setLineDash([5, 5]); // Dashed line
-  ctx.strokeRect(region.x, region.y, region.width, region.height);
-  ctx.setLineDash([]); // Reset line dash
-
-  // Draw center crosshair
-  const centerX = region.x + region.width / 2;
-  const centerY = region.y + region.height / 2;
-  const crossSize = 10;
-
-  ctx.strokeStyle = 'rgba(255, 255, 0, 0.9)'; // Yellow
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(centerX - crossSize, centerY);
-  ctx.lineTo(centerX + crossSize, centerY);
-  ctx.moveTo(centerX, centerY - crossSize);
-  ctx.lineTo(centerX, centerY + crossSize);
-  ctx.stroke();
-
-  // Add label
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-  ctx.fillRect(region.x, region.y - 20, 120, 18);
-  ctx.fillStyle = '#00ffff';
-  ctx.font = '12px monospace';
-  ctx.fillText('Template Region', region.x + 2, region.y - 6);
 };

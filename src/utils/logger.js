@@ -51,6 +51,11 @@ export const LOG_TAG_PRESETS = Object.freeze({
 });
 
 const getBrowserStorage = () => (typeof localStorage === 'undefined' ? null : localStorage);
+const assertLogTags = (tags) => {
+  if (!Array.isArray(tags) || !tags.every((tag) => typeof tag === 'string' && tag.trim().length > 0)) {
+    throw new TypeError('Log tags must be an array of non-empty strings');
+  }
+};
 
 export class TaggedLogger {
   constructor({
@@ -79,6 +84,7 @@ export class TaggedLogger {
       const saved = this.storage.getItem('logger-enabled-tags');
       if (saved) {
         const enabledArray = JSON.parse(saved);
+        assertLogTags(enabledArray);
         this.enabledTags = new Set(enabledArray);
         enabledArray.forEach((tag) => {
           this.discoveredTags.add(tag);
@@ -108,11 +114,7 @@ export class TaggedLogger {
 
   notifyListeners() {
     this.listeners.forEach((callback) => {
-      try {
-        callback(this.getAllTags(), this.getEnabledTags());
-      } catch (error) {
-        this.consoleTarget.warn('Logger listener error:', error);
-      }
+      callback(this.getAllTags(), this.getEnabledTags());
     });
   }
 
@@ -148,6 +150,7 @@ export class TaggedLogger {
   }
 
   setEnabledTags(tags) {
+    assertLogTags(tags);
     this.enabledTags = new Set(tags);
     tags.forEach((tag) => {
       this.discoveredTags.add(tag);

@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { FieldControlsAnchor } from './FieldControlsAnchor.jsx';
-import { FieldControlsModel } from './FieldControlsModel.jsx';
+import { FieldControlsFace } from './FieldControlsFace.jsx';
 import { FieldControlsSystem } from './FieldControlsSystem.jsx';
 import { FieldControlsVoice } from './FieldControlsVoice.jsx';
 import { cx } from './uiClassNames.js';
@@ -8,7 +8,12 @@ import FieldControlsDialog from './FieldControlsDialog.jsx';
 import { AnchorStatusMessage } from './AnchorStatusMessage.jsx';
 import { DrawerSection, SpeechStopButton } from './FieldControlPrimitives.jsx';
 
-const TAB_IDS = ['anchor', 'voice', 'model', 'system'];
+const TABS = [
+  { id: 'object', label: 'Object' },
+  { id: 'voice', label: 'Voice' },
+  { id: 'face', label: 'Face' },
+  { id: 'system', label: 'System' },
+];
 
 const FieldControlsDrawer = ({
   activeTab,
@@ -27,7 +32,6 @@ const FieldControlsDrawer = ({
   microphoneMode,
   microphoneTelemetryStore,
   onActiveTabChange,
-  onAnchorTrackingModeChange,
   onClearAnchor,
   onGeneratePersonality,
   onMeshVisibilityChange,
@@ -44,6 +48,7 @@ const FieldControlsDrawer = ({
   onStopSpeech,
   onVoiceActivityThresholdChange,
   personalityData,
+  release,
   rotation,
   showStats,
   ttsData,
@@ -54,19 +59,19 @@ const FieldControlsDrawer = ({
   const handleTabKeyDown = (event, currentIndex) => {
     let nextIndex;
     if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-      nextIndex = (currentIndex + 1) % TAB_IDS.length;
+      nextIndex = (currentIndex + 1) % TABS.length;
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-      nextIndex = (currentIndex - 1 + TAB_IDS.length) % TAB_IDS.length;
+      nextIndex = (currentIndex - 1 + TABS.length) % TABS.length;
     } else if (event.key === 'Home') {
       nextIndex = 0;
     } else if (event.key === 'End') {
-      nextIndex = TAB_IDS.length - 1;
+      nextIndex = TABS.length - 1;
     } else {
       return;
     }
 
     event.preventDefault();
-    onActiveTabChange(TAB_IDS[nextIndex]);
+    onActiveTabChange(TABS[nextIndex].id);
     tabRefs.current[nextIndex].focus();
   };
 
@@ -77,7 +82,7 @@ const FieldControlsDrawer = ({
         aria-label="Field control sections"
         className="grid shrink-0 grid-cols-4 border-b border-white/10"
       >
-        {TAB_IDS.map((tab, index) => (
+        {TABS.map(({ id: tab, label }, index) => (
           <button
             key={tab}
             ref={(element) => {
@@ -92,11 +97,11 @@ const FieldControlsDrawer = ({
             onClick={() => onActiveTabChange(tab)}
             onKeyDown={(event) => handleTabKeyDown(event, index)}
             className={cx(
-              'min-h-11 min-w-0 [overflow-wrap:anywhere] border-r border-white/10 text-xs capitalize last:border-r-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70',
+              'min-h-11 min-w-0 [overflow-wrap:anywhere] border-r border-white/10 text-xs last:border-r-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70',
               activeTab === tab ? 'bg-white text-black' : 'bg-transparent text-gray-300 hover:bg-white/10',
             )}
           >
-            {tab}
+            {label}
           </button>
         ))}
       </div>
@@ -110,7 +115,7 @@ const FieldControlsDrawer = ({
       >
         <div
           className={
-            activeTab === 'anchor' ||
+            activeTab === 'object' ||
             anchorStatus.status === 'error' ||
             anchorStatus.status === 'initializing' ||
             (hasActiveAnchor && anchorStatus.severity !== 'good')
@@ -126,7 +131,7 @@ const FieldControlsDrawer = ({
             />
           </DrawerSection>
         </div>
-        {activeTab === 'anchor' && (
+        {activeTab === 'object' && (
           <FieldControlsAnchor
             anchorSystemState={anchorSystemState}
             anchorTrackingMode={anchorTrackingMode}
@@ -156,10 +161,8 @@ const FieldControlsDrawer = ({
           />
         )}
 
-        {activeTab === 'model' && (
-          <FieldControlsModel
-            anchorTrackingMode={anchorTrackingMode}
-            onAnchorTrackingModeChange={onAnchorTrackingModeChange}
+        {activeTab === 'face' && (
+          <FieldControlsFace
             discoveredMeshes={discoveredMeshes}
             hiddenMeshes={hiddenMeshes}
             rotation={rotation}
@@ -170,6 +173,7 @@ const FieldControlsDrawer = ({
 
         {activeTab === 'system' && (
           <FieldControlsSystem
+            release={release}
             showStats={showStats}
             onShowStatsChange={onShowStatsChange}
             cameraMetricsStore={cameraMetricsStore}
@@ -190,7 +194,7 @@ const FieldControlsDrawer = ({
             onClick={onClearAnchor}
             className="min-h-11 rounded-md border border-emerald-500/40 bg-emerald-950/50 text-sm text-emerald-100 hover:bg-emerald-900/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
           >
-            Clear anchor
+            Choose another object
           </button>
         )}
         <button

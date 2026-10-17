@@ -96,13 +96,11 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
 
 - **P2 · Live-scene legibility:** Test candidate outlines and attachment markers on bright, dark, and same-hue footage; provide contrasting boundaries and redundant readiness cues where existing overlays disappear.
   [Non-text contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html), [Use of color](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html)
-- **P2 · Task grouping:** Separate Tracking from Face controls in the current drawer; collapse rig tools and experimental modes, and replace debug vocabulary with task-oriented labels and capability/cost explanations.
-  [Progressive disclosure](https://www.nngroup.com/articles/progressive-disclosure/)
-- **P2 · Shared controls:** Bring persona actions, 40px mode buttons, mesh labels, and sliders onto shared focus/disabled/error and 44px touch conventions; retain readable text without adding another UI kit.
+- **P2 · Shared controls:** Bring persona actions, log presets, and sliders onto shared focus/disabled/error and 44px touch conventions; retain readable text without adding another UI kit.
   [Touch targets](https://www.w3.org/WAI/WCAG22/Understanding/target-size-enhanced.html)
 - **P2 · Native dark controls:** Declare the dark color scheme and consolidate semantic status/action colors; align native sliders, checkboxes, and scrollbars with the camera overlay instead of adding decorative themes.
   [Native color scheme](https://developer.mozilla.org/en-US/docs/Web/CSS/color-scheme), [Interface guidelines](https://github.com/vercel-labs/web-interface-guidelines)
-- **P2 · Action prerequisites:** Explain unavailable microphone/persona/depth actions before the user attempts them; distinguish missing selection, missing configuration, unsupported execution, and work in progress.
+- **P2 · Action prerequisites:** Explain unavailable microphone/persona actions before the user attempts them; distinguish missing selection, missing configuration, unsupported execution, and work in progress.
   [Interaction states](https://www.w3.org/WAI/ARIA/apg/practices/keyboard-interface/#kbd_disabled_controls)
 
 ## Architecture and contracts
@@ -146,7 +144,7 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
 
 - **P2 · Resource endurance:** Stress repeated camera/mode/retry/context-loss cycles; verify WASM Mats, workers, GPU assets, bitmaps, streams, and audio contexts return to a bounded baseline.
   [WebGL resource lifecycle](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices)
-- **P2 · Local diagnostics:** Validate persisted logger settings and expose bounded fault/stage summaries independently of debug tags; never retain camera/audio payloads or enable remote telemetry.
+- **P2 · Local diagnostics:** Expose bounded fault/stage summaries independently of debug tags; never retain camera/audio payloads or enable remote telemetry.
   [Runtime error reporting](https://developer.mozilla.org/en-US/docs/Web/API/Worker/error_event)
 
 ### Distribution and optional services

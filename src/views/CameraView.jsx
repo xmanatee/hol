@@ -5,6 +5,7 @@ import { ANCHOR_SELECTION_IN_PROGRESS_REASON } from '../services/AnchorSelection
 import { useCameraMetrics } from '../hooks/useCameraMetrics.js';
 import { useMicrophoneRuntime } from '../hooks/useMicrophoneRuntime.js';
 import { useTransientFeedback } from '../hooks/useTransientFeedback.js';
+import { useAppRelease } from '../hooks/useAppRelease.js';
 
 import CameraVideo from '../components/CameraVideo.jsx';
 import CameraCanvas from '../components/CameraCanvas.jsx';
@@ -16,7 +17,6 @@ import {
   renderAnchorOverlay,
   renderDiscoveryOverlay,
   renderDebugStats,
-  renderKeypoints,
 } from '../utils/anchorOverlayRenderer.js';
 import { logger } from '../utils/logger.js';
 import { isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
@@ -45,7 +45,7 @@ const getStartButtonLabel = (cameraState) => {
   return 'Start Camera';
 };
 
-const StartScreen = ({ cameraState, cameraError, onStartCamera }) => {
+const StartScreen = ({ cameraState, cameraError, onStartCamera, release }) => {
   if (cameraState === 'active') return null;
   const isRequesting = cameraState === 'requesting';
 
@@ -71,6 +71,7 @@ const StartScreen = ({ cameraState, cameraError, onStartCamera }) => {
         <div role="status" aria-live="polite" aria-atomic="true" className="mt-6 text-sm text-gray-400">
           {cameraError || 'Allow camera permissions when prompted'}
         </div>
+        <p className="mt-6 text-xs text-gray-400">Build {release.build}</p>
       </div>
     </section>
   );
@@ -118,6 +119,7 @@ const CameraView = () => {
   const [manualRotation, setManualRotation] = useState({ x: 0, y: 0, z: 0 });
   const { feedback: anchorFeedback, showFeedback: showAnchorFeedback } = useTransientFeedback();
   const [fieldControlsOpen, setFieldControlsOpen] = useState(false);
+  const release = useAppRelease();
 
   const cameraMetricsStore = useCameraMetrics();
 
@@ -146,7 +148,6 @@ const CameraView = () => {
     synthesizeSpeech,
     stopTTS,
     speakGreeting,
-    setAnchorTrackingMode,
   } = useCameraSystem();
   const anchorStatus = useMemo(
     () => describeAnchorStatus({ cameraState, anchorSystemState }),
@@ -454,7 +455,6 @@ const CameraView = () => {
           renderAnchorOverlay(ctx, {
             anchor: state.activeAnchor,
             anchorState: state.anchorState,
-            trackedPoints: services.anchor?.imageAnchorService?.keypointTracker?.trackedPoints || [],
             showObjectSupport: true,
           });
         }
@@ -468,12 +468,9 @@ const CameraView = () => {
           processingTime: state.anchorState?.metrics?.processingTime ?? 0,
           objectCount: state.activeAnchor ? 1 : 0,
         });
-        if (state.anchorState?.anchored && observationFresh) {
-          renderKeypoints(ctx, services.anchor?.imageAnchorService);
-        }
       }
     },
-    [services.anchor, services.camera, showStats],
+    [services.camera, showStats],
   );
 
   useEffect(() => {
@@ -583,6 +580,7 @@ const CameraView = () => {
       <CameraCanvas
         cameraState={cameraState}
         selectionMode={anchorSystemState.mode}
+        selectionReady={anchorSystemState.candidate?.status === 'ready'}
         onSelect={handleCanvasSelect}
         onCanvasReady={handleCanvasReady}
         mirrored={CAMERA_PRESENTATION_MIRRORED}
@@ -652,7 +650,27 @@ const CameraView = () => {
       )}
 
       {/* Start Screen - only when camera is not active */}
-      <StartScreen cameraState={cameraState} cameraError={cameraError} onStartCamera={handleStartClick} />
+      <StartScreen
+        cameraState={cameraState}
+        cameraError={cameraError}
+        onStartCamera={handleStartClick}
+        release={release}
+      />
+      {release.status === 'update' && (
+        <div
+          role="status"
+          className="fixed top-[max(1rem,env(safe-area-inset-top))] left-1/2 z-50 w-[min(90vw,26rem)] -translate-x-1/2 rounded-lg border border-amber-500 bg-zinc-950 p-3 text-sm text-white"
+        >
+          <p>A newer version is available. Reload to use it; this restarts the camera.</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-2 min-h-11 rounded border border-white/30 px-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          >
+            Reload app
+          </button>
+        </div>
+      )}
 
       {cameraState === 'active' && (
         <FieldControls
@@ -661,8 +679,8 @@ const CameraView = () => {
           onShowStatsChange={setShowStats}
           onClearAnchor={handleClearAnchor}
           onStopCamera={handleStopClick}
-          onAnchorTrackingModeChange={setAnchorTrackingMode}
           cameraMetricsStore={cameraMetricsStore}
+          release={release}
           depthStateStore={depthStateStore}
           cameraState={cameraState}
           anchorSystemState={anchorSystemState}

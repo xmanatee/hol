@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 const waitForActiveCamera = async (page) => {
   const canvas = page.locator('canvas');
   const video = page.locator('video');
-  await expect(canvas).toHaveCSS('pointer-events', 'auto', { timeout: 10_000 });
+  await expect(video).toBeVisible({ timeout: 10_000 });
   await expect
     .poll(() => video.evaluate((element) => Boolean(element.srcObject)), { timeout: 10_000 })
     .toBe(true);
@@ -179,8 +179,8 @@ for (const [dependency, runtimeUrl] of [
     await page.evaluate(() => {
       window.__originalCameraStream = document.querySelector('video').srcObject;
     });
-    await page.getByRole('button', { name: 'Debug drawer' }).click();
-    const drawer = page.getByRole('dialog', { name: 'Field controls' });
+    await page.getByRole('button', { name: 'Controls' }).click();
+    const drawer = page.getByRole('dialog', { name: 'Camera controls' });
     await expect(drawer.getByRole('alert')).toContainText('Object discovery unavailable');
     await expect(drawer.getByText('Loading on-device vision', { exact: true })).toHaveCount(0);
     await expect(drawer.getByText('Keypoints', { exact: true })).toHaveCount(0);
@@ -193,7 +193,7 @@ for (const [dependency, runtimeUrl] of [
     expect(
       await page.evaluate(() => document.querySelector('video').srcObject === window.__originalCameraStream),
     ).toBe(true);
-    await page.getByRole('button', { name: 'Close debug drawer' }).click();
+    await page.getByRole('button', { name: 'Close controls' }).click();
     await expect(discovery).toBeVisible();
   });
 }
@@ -219,13 +219,13 @@ test('slow first model download remains loading without capturing stale camera f
   const discovery = page.getByTestId('object-discovery');
   await expect(discovery).toHaveAttribute('data-stage', 'initializing');
   await expect(discovery).toContainText('Loading on-device vision');
-  await page.getByRole('button', { name: 'Debug drawer' }).click();
-  const drawer = page.getByRole('dialog', { name: 'Field controls' });
+  await page.getByRole('button', { name: 'Controls' }).click();
+  const drawer = page.getByRole('dialog', { name: 'Camera controls' });
   await expect(drawer.getByText('Loading on-device vision', { exact: true })).toBeVisible();
   await expect(drawer.getByText('Keypoints', { exact: true })).toHaveCount(0);
-  await drawer.getByRole('tab', { name: 'model', exact: true }).click();
-  await drawer.getByRole('button', { name: 'Surface Fit', exact: true }).click();
-  await drawer.getByRole('tab', { name: 'anchor', exact: true }).click();
+  await drawer.getByRole('tab', { name: 'Face', exact: true }).click();
+  await expect(drawer.getByRole('button', { name: 'Surface Fit', exact: true })).toHaveCount(0);
+  await drawer.getByRole('tab', { name: 'Object', exact: true }).click();
   // Intentionally exceed the former 6 s cold inference deadline; this is a delayed network fault, not a readiness sleep.
   await expect.poll(() => Date.now() - requestedAt, { timeout: 10_000 }).toBeGreaterThan(6500);
   await expect(drawer.getByText('Loading on-device vision', { exact: true })).toBeVisible();
@@ -246,11 +246,8 @@ test('slow first model download remains loading without capturing stale camera f
   download.resolve();
   await expect(discovery).not.toHaveAttribute('data-stage', /initializing|error/, { timeout: 30_000 });
   await expect.poll(() => page.evaluate(() => window.__holCameraCaptures.length)).toBeGreaterThan(0);
-  await drawer.getByRole('tab', { name: 'model', exact: true }).click();
-  await expect(drawer.getByRole('button', { name: 'Surface Fit', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await drawer.getByRole('tab', { name: 'Face', exact: true }).click();
+  await expect(drawer.getByText('The face follows the selected surface automatically.')).toBeVisible();
 });
 
 test('stopping during model loading retires startup and a new camera session loads cleanly', async ({

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { expectReachableButton, expectWithinViewport } from './layoutAssertions.js';
 
 const countGreenPixels = (canvas) => {
-  const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  const pixels = window.__holInspectCanvasPixels(canvas);
   let green = 0;
   for (let index = 0; index < pixels.length; index += 4) {
     if (pixels[index] < 150 && pixels[index + 1] > 200 && pixels[index + 2] < 180) green++;
@@ -17,9 +17,9 @@ for (const [scenario, failedUrl, title] of [
   ['slow-head', null, 'face loading stays visible until the actual head asset is ready'],
   ['resize', null, 'intrinsic camera resize rebuilds object coordinates without replacing the video stream'],
   [
-    'depth',
-    '**/anchor.depthFusion-*.js',
-    'a failed reconstruction import retires tracking and shows an actionable error',
+    'worker',
+    '**/anchor.worker-*.js',
+    'a failed tracking module offers an explicit reload instead of a cached import retry loop',
   ],
   [
     'overlay',
@@ -72,14 +72,14 @@ for (const [scenario, failedUrl, title] of [
     // Segmentation, worker tracking, readiness, selection and the GLB renderer are unmodified.
     await page.addInitScript(() => {
       const NativeWorker = window.Worker;
-      window.__holDepthSourcePairs = [];
-      window.__holModeSnapshots = [];
       window.__holSelectionCommands = [];
       window.__holCameraReadbacks = 0;
       window.__holAnchorFrameCommands = 0;
       window.__holInitializations = [];
       window.__holWrongRasterFrames = 0;
       const getImageData = CanvasRenderingContext2D.prototype.getImageData;
+      window.__holInspectCanvasPixels = (canvas) =>
+        getImageData.call(canvas.getContext('2d'), 0, 0, canvas.width, canvas.height).data;
       CanvasRenderingContext2D.prototype.getImageData = function (...args) {
         window.__holCameraReadbacks++;
         return getImageData.apply(this, args);
@@ -114,28 +114,10 @@ for (const [scenario, failedUrl, title] of [
                   pageTimeOrigin: performance.timeOrigin,
                 });
               }
-              const context = message.payload?.depthContext;
-              if (context?.depthRequestTimestamp != null) {
-                window.__holDepthSourcePairs.push([
-                  message.payload.capturedAt,
-                  context.depthRequestTimestamp,
-                ]);
-              }
-              const result = postMessage(message, transfers);
-              if (context?.depthFrame) {
-                window.__holDepthTransferred = context.depthFrame.data.buffer.byteLength === 0;
-              }
-              return result;
+              return postMessage(message, transfers);
             };
             worker.addEventListener('message', ({ data }) => {
               window.__holLatestAnchorState = data.state;
-              if (data.state?.activeAnchor) {
-                window.__holModeSnapshots.push([
-                  data.state.trackingMode,
-                  data.state.activeAnchor.trackingMode,
-                  data.state.anchorState.metrics.trackingMode,
-                ]);
-              }
             });
           }
           return worker;
@@ -238,7 +220,8 @@ for (const [scenario, failedUrl, title] of [
               const sourceX = Math.floor((x * 320) / canvas.width);
               const localX = sourceX - shift;
               const localY = Math.floor((y * 240) / canvas.height);
-              const inside = ((localX - 160) / 96) ** 2 + ((localY - 120) / 72) ** 2 <= 1;
+              const inside =
+                !window.__holBlankScene && ((localX - 160) / 96) ** 2 + ((localY - 120) / 72) ** 2 <= 1;
               let noise = Math.imul(localX, 374761393) ^ Math.imul(localY, 668265263);
               noise = (noise ^ (noise >>> 13)) & 127;
               const offset = (y * canvas.width + x) * 4;
@@ -248,6 +231,11 @@ for (const [scenario, failedUrl, title] of [
                 ? 15 + (noise >> 3)
                 : 108 + (((sourceX >> 3) ^ (localY >> 3)) & 1) * 14;
               frame.data[offset + 3] = 255;
+              if (window.__holBlankScene) {
+                frame.data[offset] = 128;
+                frame.data[offset + 1] = 128;
+                frame.data[offset + 2] = 128;
+              }
             }
           }
           ctx.putImageData(frame, 0, 0);
@@ -263,16 +251,47 @@ for (const [scenario, failedUrl, title] of [
         return stream;
       };
     });
+    if (scenario === null)
+      await page.addInitScript(() => {
+        window.__holBlankScene = true;
+      });
     await page.goto('/');
     if (scenario === 'static') expect(await page.evaluate(() => crossOriginIsolated)).toBe(false);
     await page.getByRole('button', { name: 'Start Camera' }).click();
     const discovery = page.getByTestId('object-discovery');
+    const selectionCanvas = page.getByRole('button', { name: 'Select the object at the camera center' });
+    if (scenario === 'worker') {
+      await expect(discovery).toHaveAttribute('data-stage', 'error');
+      await expect(discovery).toContainText('Object discovery unavailable');
+      await expect(selectionCanvas).toBeDisabled();
+      await page.evaluate(() => {
+        window.__holOriginalStream = document.querySelector('video').srcObject;
+      });
+      await browserContext.unroute(failedUrl);
+      await expect(page.getByRole('button', { name: 'Retry vision', exact: true })).toHaveCount(0);
+      await page.getByRole('button', { name: 'Reload app', exact: true }).click();
+      await expect(page.getByRole('button', { name: 'Start Camera' })).toBeVisible();
+      expect(navigations).toBe(2);
+      await page.getByRole('button', { name: 'Start Camera' }).click();
+    }
+    if (scenario === null) {
+      await expect
+        .poll(() => page.evaluate(() => window.__holAnchorFrameCommands), { timeout: 90_000 })
+        .toBeGreaterThanOrEqual(3);
+      await expect(selectionCanvas).toBeDisabled();
+      expect(await selectionCanvas.evaluate(countGreenPixels)).toBe(0);
+      await selectionCanvas.dispatchEvent('click', { detail: 0 });
+      expect(await page.evaluate(() => window.__holSelectionCommands)).toEqual([]);
+      await expect(page.locator('.overlay-scene')).toHaveCount(0);
+      await page.evaluate(() => {
+        window.__holBlankScene = false;
+      });
+    }
     await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
     await page.evaluate(() => {
       window.__holOriginalStream = document.querySelector('video').srcObject;
     });
     await expect(page.locator('.overlay-scene')).toHaveCount(0);
-    const selectionCanvas = page.getByRole('button', { name: 'Select the object at the camera center' });
     if (scenario === null) {
       await selectionCanvas.evaluate((canvas) => {
         const rect = canvas.getBoundingClientRect();
@@ -322,7 +341,8 @@ for (const [scenario, failedUrl, title] of [
         window.__holAnchorFrameCommands,
         window.__holCameraReadbacks,
       ]);
-      await selectionCanvas.click();
+      await expect(selectionCanvas).toBeDisabled();
+      await selectionCanvas.dispatchEvent('click', { detail: 0 });
       await expect(discovery).toHaveAttribute('data-stage', 'stale');
       await expect(page.locator('.overlay-scene')).toHaveCount(0);
       expect(await page.evaluate(() => window.__holSelectionCommands)).toEqual([]);
@@ -349,7 +369,7 @@ for (const [scenario, failedUrl, title] of [
     if (scenario === 'overlay' || scenario === 'head') {
       await expect(page.getByRole('alert')).toContainText('3D overlay unavailable');
       await page.screenshot({ path: testInfo.outputPath('overlay-error.png') });
-      await expect(page.getByRole('button', { name: 'Clear anchor', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Choose another object', exact: true })).toBeVisible();
       expect(navigations).toBe(1);
       expect(
         await page.evaluate(() => {
@@ -385,7 +405,7 @@ for (const [scenario, failedUrl, title] of [
       capturedAt: expect.any(Number),
       tapPosition: expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
     });
-    await expect(page.getByRole('button', { name: 'Clear anchor' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Choose another object' })).toBeVisible();
     if (scenario === null) {
       const selectedId = await page.evaluate(() => window.__holLatestAnchorState.activeAnchor.id);
       await expect(selectionCanvas).toBeDisabled();
@@ -580,20 +600,20 @@ for (const [scenario, failedUrl, title] of [
     ).toBeHidden();
     await expectWithinViewport(recoveryGuidance.getByRole('status'));
     await page.screenshot({ path: testInfo.outputPath('selected-tracking-expired.png') });
-    await page.getByRole('button', { name: 'Debug drawer', exact: true }).click();
+    await page.getByRole('button', { name: 'Controls', exact: true }).click();
     await expect(recoveryGuidance).toBeHidden();
     await expect(
       page.getByRole('dialog').getByText('Waiting for fresh tracking', { exact: true }),
     ).toBeVisible();
     await expect(page.getByText('Last tracking diagnostics (expired)', { exact: true })).toBeVisible();
-    for (const tab of ['voice', 'model', 'system']) {
+    for (const tab of ['Voice', 'Face', 'System']) {
       await page.getByRole('tab', { name: tab, exact: true }).click();
       const guidance = page.getByRole('dialog').getByText('Waiting for fresh tracking', { exact: true });
       await expect(guidance).toHaveCount(1);
       await expect(guidance).toBeVisible();
     }
-    await page.getByRole('tab', { name: 'anchor', exact: true }).click();
-    await page.getByRole('button', { name: 'Close debug drawer', exact: true }).click();
+    await page.getByRole('tab', { name: 'Object', exact: true }).click();
+    await page.getByRole('button', { name: 'Close controls', exact: true }).click();
     await page.evaluate(() => window.__holResumeObjectVideo());
     await expect
       .poll(() => page.evaluate(() => performance.now() - window.__holLastDrawAt))
@@ -610,7 +630,7 @@ for (const [scenario, failedUrl, title] of [
         document.documentElement.style.fontSize = '200%';
       });
       await expectWithinViewport(page.getByRole('button', { name: 'Stop camera', exact: true }));
-      for (const label of ['Enable microphone mode', 'Clear anchor', 'Debug drawer', 'Stop camera']) {
+      for (const label of ['Enable microphone mode', 'Choose another object', 'Controls', 'Stop camera']) {
         await expectReachableButton(page.getByRole('button', { name: label, exact: true }));
       }
       await page.evaluate(() => {
@@ -618,9 +638,9 @@ for (const [scenario, failedUrl, title] of [
       });
       await page.setViewportSize({ width: 390, height: 844 });
     }
-    await page.getByRole('button', { name: 'Debug drawer' }).click();
+    await page.getByRole('button', { name: 'Controls' }).click();
     if (scenario === null) {
-      await page.getByRole('tab', { name: 'voice', exact: true }).click();
+      await page.getByRole('tab', { name: 'Voice', exact: true }).click();
       await expect(page.getByText('AI personality is not configured.', { exact: false })).toBeVisible();
       await expect(page.getByText('Microphone mode animates the face', { exact: false })).toBeVisible();
       await page.evaluate(() => {
@@ -655,61 +675,13 @@ for (const [scenario, failedUrl, title] of [
       );
       expect(optionalAIRequests).toEqual([]);
     }
-    await page.getByRole('tab', { name: 'model', exact: true }).click();
-    await page.getByRole('button', { name: 'Depth Fusion', exact: true }).click();
-    if (scenario === 'depth') {
-      await expect(discovery).toHaveAttribute('data-stage', 'error');
-      await expect(discovery).toContainText('Object discovery unavailable');
-      await expect(
-        page.getByRole('dialog').getByRole('button', { name: 'Retry vision', exact: true }),
-      ).toBeVisible();
-      await expect(page.locator('.overlay-scene')).toHaveCount(0);
-      await browserContext.unroute('**/anchor.depthFusion-*.js');
-      await page.getByRole('dialog').getByRole('button', { name: 'Retry vision', exact: true }).click();
-      await expect(discovery).not.toHaveAttribute('data-stage', /initializing|error/, { timeout: 30_000 });
-      await expect(page.getByRole('button', { name: 'Depth Fusion', exact: true })).toHaveAttribute(
-        'aria-pressed',
-        'true',
-      );
-      await page.getByRole('button', { name: 'Object pose', exact: true }).click();
-      await page.keyboard.press('Escape');
-      expect(
-        await page.evaluate(() => document.querySelector('video').srcObject === window.__holOriginalStream),
-      ).toBe(true);
-      await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
-      await page.getByRole('button', { name: 'Select the object at the camera center' }).click();
-      await expect(page.locator('.overlay-scene canvas')).toBeVisible();
-      expect(errors).toEqual([]);
-      return;
+    await page.getByRole('tab', { name: 'Face', exact: true }).click();
+    for (const label of ['Object pose', 'Sparse SfM', 'Surface Fit', 'Photometric', 'Depth Fusion']) {
+      await expect(page.getByRole('button', { name: label, exact: true })).toHaveCount(0);
     }
-    await expect
-      .poll(
-        () =>
-          page.evaluate(
-            () => window.__holLatestAnchorState.anchorState?.metrics.reconstructionDepthFrameTimestamp || 0,
-          ),
-        { timeout: 90_000 },
-      )
-      .toBeGreaterThan(0);
-    const depthSources = await page.evaluate(() => window.__holDepthSourcePairs);
-    expect(depthSources.length).toBeGreaterThan(0);
-    expect(depthSources.every(([capturedAt, requestedAt]) => capturedAt === requestedAt)).toBe(true);
-    expect(await page.evaluate(() => window.__holDepthTransferred)).toBe(true);
-    for (const [label, mode] of [
-      ['Sparse SfM', 'sparse-reconstruction'],
-      ['Surface Fit', 'parametric-surface'],
-      ['Photometric', 'direct-photometric'],
-      ['Object pose', 'object-pose'],
-      ['Depth Fusion', 'depth-fusion'],
-    ]) {
-      await page.getByRole('button', { name: label, exact: true }).click();
-      await expect.poll(() => page.evaluate(() => window.__holLatestAnchorState.trackingMode)).toBe(mode);
-    }
-    expect(
-      await page.evaluate(() => window.__holModeSnapshots.every((modes) => new Set(modes).size === 1)),
-    ).toBe(true);
+    expect(await page.evaluate(() => window.__holLatestAnchorState.trackingMode)).toBe('object-pose');
     await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: 'Clear anchor' }).click();
+    await page.getByRole('button', { name: 'Choose another object' }).click();
     await expect(discovery).toBeVisible();
     if (scenario === null) {
       await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
@@ -718,7 +690,7 @@ for (const [scenario, failedUrl, title] of [
       await page.keyboard.press('Enter');
       await expect(discovery).toHaveCount(0);
       await expect(page.locator('.overlay-scene canvas')).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Clear anchor' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Choose another object' })).toBeVisible();
     }
     expect(errors).toEqual([]);
   });

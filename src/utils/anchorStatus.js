@@ -23,7 +23,10 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
       status: 'error',
       severity: 'bad',
       message: 'Object discovery unavailable',
-      recommendation: 'Check your connection, then retry vision or stop and restart the camera.',
+      recommendation: anchorSystemState.requiresReload
+        ? 'Tracking code could not be loaded. Reload the app to retry; this stops the camera.'
+        : 'Check your connection, then retry vision or stop and restart the camera.',
+      recoveryAction: anchorSystemState.requiresReload ? 'reload' : 'retry',
     };
   }
 
@@ -41,7 +44,7 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
     return {
       status: candidate?.status || 'searching',
       severity: candidate?.status === 'ready' ? 'good' : 'idle',
-      message: candidate?.reason || 'Point the camera at an object',
+      message: candidate?.reason || anchorSystemState.discoveryReason || 'Point the camera at an object',
       recommendation:
         candidate?.status === 'ready'
           ? 'Keep the object visible as you tap.'
@@ -67,7 +70,7 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
       status: 'recovering',
       severity: 'warn',
       message: 'Looking for your object',
-      recommendation: 'Bring the original object back into view or use Clear anchor to select another.',
+      recommendation: 'Bring the original object back into view, or choose another object.',
     };
   }
 

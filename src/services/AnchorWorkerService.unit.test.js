@@ -7,6 +7,7 @@ import { createAnchorStateStore } from '../utils/anchorStateStore.js';
 import { describeAnchorStatus } from '../utils/anchorStatus.js';
 import { getRenderableAnchorOverlay } from '../utils/overlayVisibility.js';
 import { getCurrentObjectCaptureRegion } from '../utils/cameraFrameCapture.js';
+import { TaggedLogger } from '../utils/logger.js';
 
 class FakeAnchorWorker {
   static instances = [];
@@ -65,18 +66,46 @@ const createState = (overrides = {}) => ({
   mode: 'selection',
   activeAnchor: null,
   candidate: null,
+  discoveryReason: null,
   nextObservationAt: 0,
   anchorState: null,
   segmentationRefresh: null,
   trackingMode: 'object-pose',
   initialized: false,
   error: null,
+  requiresReload: false,
   sampledAt: null,
   observationExpired: false,
   ...overrides,
 });
 
 const waitForWorkerPost = () => setImmediate();
+
+test('logging preferences reach the owning worker without renewing an observation and stop at disposal', async (t) => {
+  FakeAnchorWorker.instances = [];
+  const logging = new TaggedLogger({ storage: null, knownTags: [] });
+  logging.setEnabledTags(['ImageAnchor']);
+  const service = new AnchorWorkerService({ logging, loadWorkerClass: async () => FakeAnchorWorker });
+  t.after(() => service.dispose());
+  const initialization = service.initialize(null, 320, 240);
+  await waitForWorkerPost();
+  const worker = FakeAnchorWorker.instances[0];
+  assert.deepEqual(worker.messages[0].payload.logTags, ['ImageAnchor']);
+  worker.reply({ id: worker.messages[0].id, result: true, state: createState({ initialized: true }) });
+  await initialization;
+  logging.setEnabledTags(['KeypointTracker']);
+  await waitForWorkerPost();
+  const command = worker.messages.at(-1);
+  assert.equal(command.command, 'configureLogging');
+  assert.deepEqual(command.payload.tags, ['KeypointTracker']);
+  worker.reply({ id: command.id, result: true, state: createState({ initialized: true }) });
+  await waitForWorkerPost();
+  assert.equal(service.getState().sampledAt, null);
+  service.dispose();
+  logging.setEnabledTags([]);
+  await waitForWorkerPost();
+  assert.equal(worker.messages.at(-1), command);
+});
 
 const waitForRequestHandlers = () => setImmediate();
 
@@ -500,6 +529,7 @@ test('anchor worker initialization sends the active tracking mode and applies st
       viewportHeight: 240,
       fov: 70,
       trackingMode: 'depth-fusion',
+      logTags: [],
     },
   });
 
@@ -726,6 +756,7 @@ test('anchor reset cancels lazy worker creation and starts only the latest calib
     viewportHeight: 360,
     fov: 70,
     trackingMode: 'object-pose',
+    logTags: [],
   });
 
   FakeAnchorWorker.instances[0].reply({
@@ -1031,6 +1062,7 @@ test('anchor reset restarts camera calibration and ignores every stale worker ca
     viewportHeight: 640,
     fov: 63,
     trackingMode: 'direct-photometric',
+    logTags: [],
   });
   secondWorker.reply({
     id: secondWorker.messages[0].id,

@@ -6,13 +6,14 @@ const MAX_TAP_MOVEMENT = 10;
 const CameraCanvas = ({
   cameraState,
   selectionMode,
+  selectionReady,
   onSelect,
   onCanvasReady,
   mirrored = false,
   style = {},
 }) => {
   const isActive = cameraState === 'active';
-  const canSelect = isActive && selectionMode === 'selection';
+  const canSelect = isActive && selectionMode === 'selection' && selectionReady;
   const pendingTap = useRef(null);
 
   useEffect(() => {

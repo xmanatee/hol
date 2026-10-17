@@ -9,7 +9,7 @@ const FieldControlsDrawerStatus = ({ error = null, onOpenChange }) => (
   <FieldControlsDialog busy={error === null} onOpenChange={onOpenChange}>
     <div className="min-h-0 overflow-y-auto p-4">
       {error ? (
-        <FeatureError name="Field controls" error={error} />
+        <FeatureError name="Camera controls" error={error} />
       ) : (
         <p role="status" className="text-xs text-gray-300">
           Loading controls…
@@ -33,7 +33,7 @@ const FieldControls = (props) => {
     open,
     ttsData,
   } = props;
-  const [activeTab, setActiveTab] = useState('anchor');
+  const [activeTab, setActiveTab] = useState('object');
   const triggerRef = useRef(null);
   const wasOpenRef = useRef(false);
 

@@ -2,7 +2,7 @@
 
 HOL is a mobile-first, privacy-preserving camera app. Point at an object, wait for its green highlight, then tap to attach an animated talking face. Discovery and object-owned landmark tracking start before selection; tapping commits the prepared object without rebuilding its map.
 
-The default camera and animation path is fully local. Object-pose tracking is the phone-demo default; reconstruction modes are explicit experiments, not an automatic quality upgrade. Optional object understanding, persona generation, and speech use keyless OpenAI-compatible HTTP contracts pointed at infrastructure you control.
+The camera and animation path is fully local and uses object-pose tracking. Reconstruction engines remain research/benchmark APIs, not camera settings. Optional object understanding, persona generation, and speech use keyless OpenAI-compatible HTTP contracts pointed at infrastructure you control.
 
 ## Runtime architecture
 

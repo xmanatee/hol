@@ -36,6 +36,7 @@ test('production nginx serves ONNX runtime modules as JavaScript', () => {
 });
 
 test('production nginx caches only content-hashed assets as immutable', () => {
+  assert.match(nginxConfig, /default\s+"no-store";/);
   assert.match(nginxConfig, /~\^\/assets\/\s+"public, max-age=31536000, immutable";/);
   assert.match(nginxConfig, /location\s+=\s+\/sw\.js/);
 });

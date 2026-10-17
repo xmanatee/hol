@@ -51,11 +51,12 @@ export const AnchorStatusMessage = ({ status, error, onRetry }) => {
             type="button"
             onClick={() => {
               messageRef.current.focus();
-              onRetry();
+              if (status.recoveryAction === 'reload') window.location.reload();
+              else onRetry();
             }}
             className="pointer-events-auto mt-3 min-h-11 w-full rounded-md border border-red-300/50 bg-red-900/60 px-3 text-sm font-medium hover:bg-red-800/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-100"
           >
-            Retry vision
+            {status.recoveryAction === 'reload' ? 'Reload app' : 'Retry vision'}
           </button>
           <details className="pointer-events-auto mt-3 text-xs">
             <summary className="min-h-11 cursor-pointer py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-100">

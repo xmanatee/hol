@@ -106,7 +106,7 @@ const CameraMetrics = ({ store }) => {
   );
 };
 
-export const FieldControlsSystem = ({ showStats, onShowStatsChange, cameraMetricsStore }) => {
+export const FieldControlsSystem = ({ showStats, onShowStatsChange, cameraMetricsStore, release }) => {
   const [runtimeCapabilities, setRuntimeCapabilities] = useState(null);
   const capabilitiesCollectedRef = useRef(false);
 
@@ -121,6 +121,18 @@ export const FieldControlsSystem = ({ showStats, onShowStatsChange, cameraMetric
   return (
     <DrawerSection title="System">
       <div className="space-y-3">
+        <div className="text-xs text-gray-300">
+          <p>Build {release.build}</p>
+          <p>
+            {release.status === 'error'
+              ? release.error
+              : release.status === 'update'
+                ? 'Update available'
+                : release.status === 'checking'
+                  ? 'Checking for updates…'
+                  : 'Current version'}
+          </p>
+        </div>
         {runtimeCapabilities ? (
           <RuntimeCapabilities checks={runtimeCapabilities} />
         ) : (

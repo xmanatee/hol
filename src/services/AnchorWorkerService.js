@@ -4,7 +4,18 @@ import { prepareImageDataTransfer } from '../utils/imageDataTransfer.js';
 import { assertWorkerRequestTimeout, WorkerRequestRegistry } from '../utils/workerRequestRegistry.js';
 import { isObjectObservationFresh, MAX_OBJECT_OBSERVATION_AGE_MS } from '../utils/cvScheduling.js';
 
-const loadAnchorWorkerClass = () => import('../cv/anchor.worker.js?worker').then((module) => module.default);
+const loadAnchorWorkerClass = () =>
+  import('../cv/anchor.worker.js?worker').then(
+    (module) => module.default,
+    (cause) => {
+      const error = new Error(
+        `Tracking code could not be loaded: ${cause instanceof Error ? cause.message : String(cause)}`,
+        { cause },
+      );
+      error.requiresReload = true;
+      throw error;
+    },
+  );
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 45_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 8_000;
 const OBSERVATIONS_PAUSED_REASON = 'Camera observations are paused while the page is hidden';
@@ -21,6 +32,7 @@ export class AnchorWorkerService {
     scheduleRequestTimeout,
     now = () => performance.now(),
     scheduleObservationExpiry = scheduleExpiry,
+    logging = logger,
   } = {}) {
     this.now = now;
     this.scheduleObservationExpiry = scheduleObservationExpiry;
@@ -28,9 +40,11 @@ export class AnchorWorkerService {
     this.runsInWorker = true;
     this.initialized = false;
     this.error = null;
+    this.requiresReload = false;
     this.mode = 'selection';
     this.activeAnchor = null;
     this.candidate = null;
+    this.discoveryReason = null;
     this.nextObservationAt = 0;
     this.anchorState = null;
     this.segmentationRefresh = null;
@@ -59,6 +73,14 @@ export class AnchorWorkerService {
     this.frameCapturedAt = null;
     this.frameUpdatesAnchor = false;
     this.listeners = new Set();
+    this.logging = logging;
+    this.logTagsSignature = JSON.stringify(logging.getEnabledTags());
+    this.removeLogListener = logging.addListener((_allTags, tags) => {
+      const signature = JSON.stringify(tags);
+      if (signature === this.logTagsSignature) return;
+      this.logTagsSignature = signature;
+      if (this.initialized) this._send('configureLogging', { tags });
+    });
   }
 
   addListener(listener) {
@@ -75,17 +97,25 @@ export class AnchorWorkerService {
     if (!this.initializationPromise) {
       const workerGeneration = this.workerGeneration;
       const trackingMode = this.trackingMode;
+      const logTags = this.logging.getEnabledTags();
       const initializationPromise = this._request('initialize', {
         viewportWidth,
         viewportHeight,
         fov,
         trackingMode,
+        logTags,
       })
         .then(async (result) => {
           let appliedMode = trackingMode;
           while (workerGeneration === this.workerGeneration && appliedMode !== this.trackingMode) {
             appliedMode = this.trackingMode;
             await this._request('setTrackingMode', { mode: appliedMode });
+          }
+          if (
+            workerGeneration === this.workerGeneration &&
+            JSON.stringify(logTags) !== JSON.stringify(this.logging.getEnabledTags())
+          ) {
+            await this._request('configureLogging', { tags: this.logging.getEnabledTags() });
           }
           return result;
         })
@@ -228,11 +258,13 @@ export class AnchorWorkerService {
             }
           : this.candidate,
       nextObservationAt: this.nextObservationAt,
+      discoveryReason: this.discoveryReason,
       anchorState: this.anchorState,
       segmentationRefresh: this.segmentationRefresh,
       trackingMode: this.trackingMode,
       initialized: this.initialized,
       error: this.error,
+      requiresReload: this.requiresReload,
       sampledAt: this.sampledAt,
       observationExpired: this.mode === 'anchor' && !isObjectObservationFresh(this.sampledAt, this.now()),
     };
@@ -244,6 +276,7 @@ export class AnchorWorkerService {
   }
 
   dispose() {
+    this.removeLogListener();
     this._resetRuntime('Anchor worker disposed');
     this.listeners.clear();
   }
@@ -265,9 +298,11 @@ export class AnchorWorkerService {
     this.frameUpdatesAnchor = false;
     this.initialized = false;
     this.error = null;
+    this.requiresReload = false;
     this.mode = 'selection';
     this.activeAnchor = null;
     this.candidate = null;
+    this.discoveryReason = null;
     this.nextObservationAt = 0;
     this.anchorState = null;
     this.segmentationRefresh = null;
@@ -378,6 +413,7 @@ export class AnchorWorkerService {
     this.candidate =
       admitObservation && state.candidate?.capturedAt >= this.minimumObservationAt ? state.candidate : null;
     this.nextObservationAt = state.nextObservationAt;
+    this.discoveryReason = state.discoveryReason ?? null;
     this.anchorState = state.anchorState;
     this.segmentationRefresh = state.segmentationRefresh;
     this.initialized = state.initialized;
@@ -413,9 +449,10 @@ export class AnchorWorkerService {
 
   _handleWorkerFailure(error) {
     const message = error?.message || 'Anchor worker failed';
-    logger.error('AnchorWorker', message);
+    this.logging.error('AnchorWorker', message);
     this._resetRuntime(message);
     this.error = message;
+    this.requiresReload = error?.requiresReload === true;
     this._notifyUpdate();
   }
 }

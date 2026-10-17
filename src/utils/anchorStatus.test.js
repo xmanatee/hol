@@ -72,6 +72,15 @@ test('vision failures take precedence over initialization and previous tracking 
   }
 });
 
+test('failed app modules require a reload rather than a vision retry', () => {
+  const status = describeAnchorStatus({
+    cameraState: 'active',
+    anchorSystemState: { error: 'Tracking module unavailable', requiresReload: true },
+  });
+  assert.equal(status.recoveryAction, 'reload');
+  assert.match(status.recommendation, /Reload the app/);
+});
+
 test('tracking labels alone cannot report a ready face', () => {
   for (const state of ['stable', 'tracking']) {
     assert.deepEqual(describeTrackedState({ state }), {
@@ -251,7 +260,7 @@ test('keeps candidate, mapping, degraded, lost, and unknown guidance exact', () 
     status: 'recovering',
     severity: 'warn',
     message: 'Looking for your object',
-    recommendation: 'Bring the original object back into view or use Clear anchor to select another.',
+    recommendation: 'Bring the original object back into view, or choose another object.',
   });
   assert.deepEqual(describeTrackedState({ state: 'unavailable' }), {
     status: 'unknown',

@@ -26,11 +26,13 @@ const createIdleAnchorState = () => ({
   mode: 'selection',
   activeAnchor: null,
   candidate: null,
+  discoveryReason: null,
   anchorState: null,
   sampledAt: null,
   trackingMode: OBJECT_POSE_MODEL,
   initialized: false,
   error: null,
+  requiresReload: false,
 });
 
 const createIdlePersonalityData = () => ({

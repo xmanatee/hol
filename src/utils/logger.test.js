@@ -71,6 +71,20 @@ test('logger exposes tags enabled through setEnabledTags', () => {
   assert.ok(logger.getEnabledTags().includes('FutureWorker'));
 });
 
+test('malformed persisted or requested log tags never partially enable logging', () => {
+  for (const invalid of ['ImageAnchor', { tag: 'ImageAnchor' }, ['ImageAnchor', 7], ['']]) {
+    const storage = createMemoryStorage();
+    storage.setItem('logger-enabled-tags', JSON.stringify(invalid));
+    const consoleTarget = createConsoleCapture();
+    const logger = new TaggedLogger({ storage, consoleTarget });
+    assert.deepEqual(logger.getEnabledTags(), []);
+    assert.equal(consoleTarget.entries.length, 1);
+    assert.equal(consoleTarget.entries[0][0], 'warn');
+    assert.throws(() => logger.setEnabledTags(invalid), TypeError);
+    assert.deepEqual(logger.getEnabledTags(), []);
+  }
+});
+
 test('logger emits errors regardless of enabled tags and gates other levels by tag', () => {
   const consoleTarget = createConsoleCapture();
   const logger = new TaggedLogger({

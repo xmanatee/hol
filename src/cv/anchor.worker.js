@@ -6,6 +6,7 @@ import { createAnchorWorkerSnapshot } from './anchorWorkerSnapshot.js';
 import { createXFeatWorkerRelocalizer } from './xfeatWorkerProvider.js';
 import { ObjectObservationSession } from '../services/ObjectObservationSession.js';
 import { InteractiveSegmenterService } from '../services/InteractiveSegmenterService.js';
+import { logger } from '../utils/logger.js';
 
 let manager = null;
 let initializationStarted = false;
@@ -17,11 +18,12 @@ const ensureManager = () => {
   return manager;
 };
 
-const createManager = async ({ viewportWidth, viewportHeight, fov, trackingMode }) => {
+const createManager = async ({ viewportWidth, viewportHeight, fov, trackingMode, logTags = [] }) => {
   if (initializationStarted) {
     throw new Error('Anchor worker initialization already started');
   }
   initializationStarted = true;
+  logger.setEnabledTags(logTags);
 
   const interactiveSegmenterService = new InteractiveSegmenterService();
   const [cv] = await Promise.all([loadOpenCVRuntimeInWorker(), interactiveSegmenterService.initialize()]);
@@ -51,6 +53,10 @@ const handlers = {
   },
   setTrackingMode: async ({ mode }) => {
     await ensureManager().setTrackingMode(mode);
+    return true;
+  },
+  configureLogging: ({ tags }) => {
+    logger.setEnabledTags(tags);
     return true;
   },
   dispose: () => {

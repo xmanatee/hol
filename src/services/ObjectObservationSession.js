@@ -19,6 +19,7 @@ export class ObjectObservationSession {
     this.nextObjectId = 1;
     this.lastCapturedAt = -Infinity;
     this.nextDiscoveryAt = 0;
+    this.discoveryReason = null;
     this.disposed = false;
   }
 
@@ -49,9 +50,11 @@ export class ObjectObservationSession {
       );
       this._assertActive();
       if (!result.success || result.objectSupportMaskSource !== 'interactive-segmenter') {
+        this.discoveryReason = result.reason || 'Keep a distinct object near the center';
         this.manager.clearAnchor();
-        return { success: false, reason: 'Keep a distinct object near the center' };
+        return { success: false, reason: this.discoveryReason };
       }
+      this.discoveryReason = null;
       this.subject = {
         id: this.nextObjectId++,
         capturedAt,
@@ -152,7 +155,7 @@ export class ObjectObservationSession {
   }
 
   getState() {
-    const state = { ...this.manager.getState(), nextObservationAt: 0 };
+    const state = { ...this.manager.getState(), nextObservationAt: 0, discoveryReason: this.discoveryReason };
     if (!this.subject || !state.activeAnchor) {
       return {
         ...state,
@@ -215,6 +218,7 @@ export class ObjectObservationSession {
     this.manager.clearAnchor();
     this.subject = null;
     this.selected = false;
+    this.discoveryReason = null;
   }
 
   _resetTrackingEvidence() {
