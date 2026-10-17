@@ -74,6 +74,16 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
     };
   }
 
+  if (metrics.objectSupportConflict) {
+    return {
+      status: 'recovering',
+      severity: 'warn',
+      message: 'Checking the object outline',
+      recommendation:
+        'Hold the original object steady. Its face is hidden while the outline and tracking disagree.',
+    };
+  }
+
   if (shouldRenderAnchorOverlay(anchorSystemState)) {
     return {
       status: metrics.surfaceAttachment ? 'attached' : 'tracking',

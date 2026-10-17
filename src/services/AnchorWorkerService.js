@@ -3,7 +3,6 @@ import { OBJECT_POSE_MODEL } from '../cv/anchor.reconstructionModes.js';
 import { prepareImageDataTransfer } from '../utils/imageDataTransfer.js';
 import { assertWorkerRequestTimeout, WorkerRequestRegistry } from '../utils/workerRequestRegistry.js';
 import { isObjectObservationFresh, MAX_OBJECT_OBSERVATION_AGE_MS } from '../utils/cvScheduling.js';
-import { getTargetScenario } from '../cv/targetScenario.js';
 
 const loadAnchorWorkerClass = () =>
   import('../cv/anchor.worker.js?worker').then(
@@ -90,8 +89,7 @@ export class AnchorWorkerService {
     return () => this.listeners.delete(callback);
   }
 
-  initialize(_cv, viewportWidth, viewportHeight, fov = 63, targetScenario = 'general') {
-    getTargetScenario(targetScenario);
+  initialize(_cv, viewportWidth, viewportHeight, fov = 63) {
     if (this.initialized) {
       return Promise.resolve();
     }
@@ -105,7 +103,6 @@ export class AnchorWorkerService {
         viewportHeight,
         fov,
         trackingMode,
-        targetScenario,
         logTags,
       })
         .then(async (result) => {

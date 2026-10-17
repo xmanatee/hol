@@ -92,6 +92,22 @@ test('tracking labels alone cannot report a ready face', () => {
   }
 });
 
+test('a conflicting outline explains hidden presentation without disguising target loss', () => {
+  const status = describeTrackedState({
+    state: 'tracking',
+    metrics: { targetPresent: true, objectSupportConflict: 'expanded-mask' },
+  });
+  assert.equal(status.status, 'recovering');
+  assert.equal(status.severity, 'warn');
+  assert.equal(status.message, 'Checking the object outline');
+  assert.match(status.recommendation, /steady/);
+  const lost = describeTrackedState({
+    state: 'lost',
+    metrics: { targetPresent: false, objectSupportConflict: 'expanded-mask' },
+  });
+  assert.equal(lost.message, 'Looking for your object');
+});
+
 test('loss guidance is stable across recovery attempts and takes precedence over map preparation', () => {
   const expected = describeTrackedState({ state: 'lost', metrics: { recoveryAttempts: 1 } });
   assert.equal(expected.message, 'Looking for your object');

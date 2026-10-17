@@ -99,6 +99,7 @@ const main = async () => {
     anchorPoint: referenceFrame.groundTruth.anchor,
   });
   const xfeatStorage = await xfeatRelocalizer.storeReference({
+    objectSupportMask: null,
     imageData: referenceFrame.imageData,
     trackedPoints: landmarks,
     anchorPoint: referenceFrame.groundTruth.anchor,

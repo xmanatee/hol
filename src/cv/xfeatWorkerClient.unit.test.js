@@ -83,6 +83,7 @@ test('XFeat worker client owns transferred copies and preserves both live refere
   const queryImage = imageData();
 
   const stored = await relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: referenceImage,
     trackedPoints: [],
     anchorPoint: { x: 4, y: 4 },
@@ -115,6 +116,7 @@ test('real transfer semantics cannot detach or mutate the caller RGB during lear
   const frame = imageData();
   frame.data.fill(19);
   const stored = await relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: frame,
     trackedPoints: [],
     anchorPoint: { x: 4, y: 4 },
@@ -146,11 +148,13 @@ test('a rejected memory extension preserves an already published XFeat reference
   const relocalizer = new XFeatWorkerRelocalizer({ createWorker: () => worker });
 
   const first = await relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: imageData(),
     trackedPoints: [],
     anchorPoint: { x: 4, y: 4 },
   });
   const extension = await relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: imageData(),
     trackedPoints: [],
     anchorPoint: { x: 5, y: 4 },
@@ -171,6 +175,7 @@ test('reported XFeat inference faults retire the runtime and reject every pendin
     },
   });
   const storing = relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: imageData(),
     trackedPoints: [],
     anchorPoint: { x: 4, y: 4 },
@@ -188,6 +193,7 @@ test('reported XFeat inference faults retire the runtime and reject every pendin
   assert.equal(workers[0].terminated, true);
   assert.equal(relocalizer.pendingRequests.size, 0);
   const retry = relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: imageData(),
     trackedPoints: [],
     anchorPoint: { x: 4, y: 4 },
@@ -201,6 +207,7 @@ test('XFeat worker client clears runtime state and terminates the worker on disp
   const worker = new FakeWorker();
   const relocalizer = new XFeatWorkerRelocalizer({ createWorker: () => worker });
   await relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: imageData(),
     trackedPoints: [],
     anchorPoint: { x: 4, y: 4 },
@@ -219,6 +226,7 @@ test('XFeat clear supersedes in-flight reference publication while preserving th
   const worker = new ControlledWorker();
   const relocalizer = new XFeatWorkerRelocalizer({ createWorker: () => worker });
   const storing = relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: imageData(),
     trackedPoints: [],
     anchorPoint: { x: 4, y: 4 },
@@ -250,6 +258,7 @@ test('late failures from a retired XFeat worker cannot terminate its successor',
     },
   });
   const firstStore = relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: imageData(),
     trackedPoints: [],
     anchorPoint: { x: 4, y: 4 },
@@ -258,6 +267,7 @@ test('late failures from a retired XFeat worker cannot terminate its successor',
   await assert.rejects(firstStore, /first worker failed/);
 
   const secondStore = relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: imageData(),
     trackedPoints: [],
     anchorPoint: { x: 4, y: 4 },
@@ -285,6 +295,7 @@ test('XFeat request deadline retires a stalled worker and starts retries in a cl
   });
 
   const stalled = relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: imageData(),
     trackedPoints: [],
     anchorPoint: { x: 4, y: 4 },
@@ -297,6 +308,7 @@ test('XFeat request deadline retires a stalled worker and starts retries in a cl
   assert.equal(relocalizer.hasReference(), false);
 
   const retry = relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: imageData(),
     trackedPoints: [],
     anchorPoint: { x: 4, y: 4 },

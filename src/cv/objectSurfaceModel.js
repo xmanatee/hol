@@ -130,7 +130,7 @@ export class ObjectSurfaceModel {
       observationSource: objectSupportMask.observationSource,
       observationFrame: objectSupportMask.observationSource ? objectSupportMask.createdAtFrame : null,
       projectionFrame: objectSupportMask.updatedAtFrame,
-      surfacePrior: modelFromRegion(bbox, targetClass),
+      surfacePrior: targetClass ? modelFromRegion(bbox, targetClass) : 'unknown',
       bounds: {
         min: { x: bbox.x, y: bbox.y },
         max: { x: bbox.x + bbox.width, y: bbox.y + bbox.height },

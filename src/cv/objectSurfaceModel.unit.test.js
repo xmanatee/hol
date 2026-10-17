@@ -46,6 +46,17 @@ const point = ({
   errorHistory: [residual],
 });
 
+test('mask proportions alone do not assign a plane or cylinder to an unknown object', () => {
+  const model = new ObjectSurfaceModel();
+  for (const bbox of [
+    { x: 20, y: 10, width: 30, height: 100 },
+    { x: 20, y: 20, width: 100, height: 80 },
+  ]) {
+    const state = model.update({ frameIndex: 0, objectSupportMask: createMask({ bbox }) });
+    assert.equal(state.surfacePrior, 'unknown');
+  }
+});
+
 test('propagated and aged masks constrain support but cannot confirm silhouette fit or authorize growth', () => {
   const model = new ObjectSurfaceModel();
   const mask = createMask();

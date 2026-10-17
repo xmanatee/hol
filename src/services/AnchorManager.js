@@ -10,7 +10,6 @@ import {
 import { hasPosePositionDropout } from '../cv/poseDropoutRecovery.js';
 import { logger } from '../utils/logger.js';
 import { isFaceObservationReady } from '../utils/overlayVisibility.js';
-import { getTargetScenario } from '../cv/targetScenario.js';
 
 const TAP_SEGMENTATION_TIMEOUT_MS = 6000;
 const RECOVERY_SEGMENTATION_TIMEOUT_MS = 1400;
@@ -149,8 +148,7 @@ export class AnchorManager {
    * @param {ImageData} imageData - Current frame
    * @returns {Object} Creation result
    */
-  async prepareObjectAtPoint(tapPosition, imageData, targetScenario = 'general') {
-    const scenario = getTargetScenario(targetScenario);
+  async prepareObjectAtPoint(tapPosition, imageData) {
     if (this.disposed) {
       throw new Error('Anchor manager is disposed');
     }
@@ -178,9 +176,6 @@ export class AnchorManager {
     const selectionRegion = {
       ...this._createSelectionRegion(objectSupportMask),
       objectSupportMask,
-      targetScenario: scenario.id,
-      surfaceHint: scenario.surfaceHint,
-      geometryBasis: scenario.surfaceHint ? 'user-prior' : 'unknown',
     };
 
     const result = await this.imageAnchorService.createAnchor(imageData, tapPosition, selectionRegion);
@@ -289,6 +284,9 @@ export class AnchorManager {
           ? { accepted: false, reason: outcomeReason }
           : this._evaluateSegmentationRefresh(objectSupportMask);
         if (!evaluation.accepted) {
+          if (evaluation.reason === 'expanded-mask' || evaluation.reason === 'discontinuous-mask') {
+            this.imageAnchorService.rejectObjectSupportObservation(evaluation.reason);
+          }
           this._setSegmentationRefresh({
             status: 'rejected',
             trigger,

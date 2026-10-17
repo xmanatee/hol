@@ -17,6 +17,7 @@ const requests = {
     new AnchorWorkerService({ loadWorkerClass: async () => FailedWorker }).initialize(null, 320, 240),
   XFeat: () =>
     new XFeatWorkerRelocalizer({ createWorker: () => new FailedWorker() }).storeReference({
+      objectSupportMask: null,
       imageData: { width: 1, height: 1, data: new Uint8ClampedArray(4) },
       trackedPoints: [],
       anchorPoint: { x: 0, y: 0 },

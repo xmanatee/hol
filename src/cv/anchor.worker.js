@@ -18,14 +18,7 @@ const ensureManager = () => {
   return manager;
 };
 
-const createManager = async ({
-  viewportWidth,
-  viewportHeight,
-  fov,
-  trackingMode,
-  targetScenario,
-  logTags = [],
-}) => {
+const createManager = async ({ viewportWidth, viewportHeight, fov, trackingMode, logTags = [] }) => {
   if (initializationStarted) {
     throw new Error('Anchor worker initialization already started');
   }
@@ -46,7 +39,6 @@ const createManager = async ({
     manager: nextManager,
     width: viewportWidth,
     height: viewportHeight,
-    targetScenario,
   });
   return true;
 };

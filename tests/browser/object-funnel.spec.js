@@ -366,7 +366,7 @@ for (const [scenario, failedUrl, title] of [
         window.__holBlankScene = true;
       });
     await page.goto('/');
-    await page.getByRole('combobox', { name: 'Target surface' }).selectOption(targetScenario);
+    await expect(page.getByRole('combobox')).toHaveCount(0);
     if (scenario === 'static') expect(await page.evaluate(() => crossOriginIsolated)).toBe(false);
     await page.getByRole('button', { name: 'Start Camera' }).click();
     const discovery = page.getByTestId('object-discovery');
@@ -383,7 +383,6 @@ for (const [scenario, failedUrl, title] of [
       await page.getByRole('button', { name: 'Reload app', exact: true }).click();
       await expect(page.getByRole('button', { name: 'Start Camera' })).toBeVisible();
       expect(navigations).toBe(2);
-      await page.getByRole('combobox', { name: 'Target surface' }).selectOption(targetScenario);
       await page.getByRole('button', { name: 'Start Camera' }).click();
     }
     if (scenario === null) {
@@ -493,7 +492,6 @@ for (const [scenario, failedUrl, title] of [
       await page.getByRole('button', { name: 'Reload app', exact: true }).click();
       await expect(page.getByRole('button', { name: 'Start Camera', exact: true })).toBeVisible();
       expect(navigations).toBe(2);
-      await page.getByRole('combobox', { name: 'Target surface' }).selectOption(targetScenario);
       await page.getByRole('button', { name: 'Start Camera' }).click();
       await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
       await selectionCanvas.click();
@@ -537,9 +535,7 @@ for (const [scenario, failedUrl, title] of [
     await page.screenshot({ path: testInfo.outputPath('ready.png') });
     if (targetScenario !== 'general') {
       const selection = await page.evaluate(() => window.__holLatestAnchorState.activeAnchor.selectionRegion);
-      expect(selection.targetScenario).toBe(targetScenario);
-      expect(selection.geometryBasis).toBe('user-prior');
-      expect(selection.surfaceHint).toBe(targetScenario === 'bottle-label' ? 'bottle' : targetScenario);
+      expect(selection.surfaceHint).toBeUndefined();
       const samples = [];
       for (const pose of [
         { cameraX: 18, cameraY: -12, yaw: 0.04, lightX: 0.2 },

@@ -308,7 +308,7 @@ test('anchor manager disposes every runtime it owns', () => {
   assert.equal(manager.initialized, false);
 });
 
-test('anchor manager attaches whole segmentation and the explicit bottle-label prior before tracking', async () => {
+test('anchor manager prepares the whole segmented object without requiring its category', async () => {
   const maskData = new Uint8Array(100 * 80);
   for (let y = 8; y < 72; y++) {
     for (let x = 6; x < 94; x++) {
@@ -355,14 +355,12 @@ test('anchor manager attaches whole segmentation and the explicit bottle-label p
   const result = await manager.prepareObjectAtPoint(
     { x: 50, y: 40 },
     { width: 100, height: 80, data: new Uint8ClampedArray(100 * 80 * 4) },
-    'bottle-label',
   );
 
   assert.equal(result.success, true);
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'interactive-segmenter');
   assert.deepEqual(receivedSelectionRegion.objectSupportMask.bbox, { x: 6, y: 8, width: 88, height: 64 });
-  assert.equal(receivedSelectionRegion.surfaceHint, 'bottle');
-  assert.equal(receivedSelectionRegion.geometryBasis, 'user-prior');
+  assert.equal(receivedSelectionRegion.surfaceHint, undefined);
 });
 
 test('anchor manager creates a free-tap anchor when segmentation succeeds', async () => {
@@ -423,8 +421,7 @@ test('anchor manager creates a free-tap anchor when segmentation succeeds', asyn
   assert.deepEqual(result.objectSupportSelection, { outcome: 'segmenter-mask' });
   assert.equal(manager.mode, 'anchor');
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'interactive-segmenter');
-  assert.equal(manager.activeAnchor.selectionRegion.surfaceHint, null);
-  assert.equal(manager.activeAnchor.selectionRegion.geometryBasis, 'unknown');
+  assert.equal(manager.activeAnchor.selectionRegion.surfaceHint, undefined);
   assert.equal(manager.activeAnchor.selectionRegion.x1, 4);
   assert.equal(manager.activeAnchor.selectionRegion.y1, 24);
   assert.equal(manager.activeAnchor.selectionRegion.x2, 37);

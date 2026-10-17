@@ -365,6 +365,24 @@ test('presence loss between motion updates cannot advertise a ready selection', 
   assert.equal(session.getState().candidate.reason, 'Keep the object visible');
 });
 
+test('outline disagreement explains unready discovery without discarding its identity', async () => {
+  const { session, setObservation } = fixture();
+  await prepare(session);
+  const id = session.getState().candidate.id;
+  setObservation({
+    metrics: {
+      targetPresent: true,
+      objectSupportConflict: 'discontinuous-mask',
+      readiness: { faceReady: false, attachmentReady: false, poseReady: true },
+    },
+  });
+  const { candidate } = session.getState();
+  assert.equal(candidate.id, id);
+  assert.notEqual(candidate.status, 'ready');
+  assert.match(candidate.reason, /outline.*steady/);
+  assert.equal(session.selectCandidate(selectionAt(id, 1310)).success, false);
+});
+
 test('tracking continuity uses the last measurement at every gap boundary and refresh cadence', async () => {
   for (const gap of [599, 600, 600.001]) {
     for (const refreshCount of [0, 1, 8]) {

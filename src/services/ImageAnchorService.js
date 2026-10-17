@@ -5,7 +5,11 @@
  */
 
 import { KeypointDetector } from '../cv/anchor.keypoints.js';
-import { CANDIDATE_TRACKING_MIN_POINTS, KeypointTracker } from '../cv/anchor.tracking.js';
+import {
+  CANDIDATE_TRACKING_MIN_POINTS,
+  POSE_TRACKING_MIN_POINTS,
+  KeypointTracker,
+} from '../cv/anchor.tracking.js';
 import { OrbKeyframeRelocalizer } from '../cv/anchor.relocalization.js';
 import { HomographyEstimator } from '../cv/anchor.homography.js';
 import { AffineParallaxPoseEstimator } from '../cv/anchor.affinePose.js';
@@ -47,7 +51,6 @@ import {
   createObjectSupportMaskPreview,
   isIndependentObjectSupportObservation,
   isPointInsideObjectSupport,
-  OBJECT_SUPPORT_MASK_SOURCES,
   warpObjectSupportMask,
 } from '../cv/objectSupportMask.js';
 import { calculateTapLocalTemplateRegion, calculateTemplateRegion } from '../utils/templateRegion.js';
@@ -74,9 +77,6 @@ const SURFACE_CLASS_HINT_PATTERN =
   /shelf|shelves|bookcase|cabinet|drawer|rack|wardrobe|closet|box|package|crate|face|head|portrait|mask|book|notebook|paper|document|poster|photo|picture|painting|card|ticket|label|badge|laptop|keyboard|cell phone|smartphone|phone|tablet|tv|screen|sign|whiteboard|cup|mug|vase|ball|sphere|round|can|bottle|jar|container/i;
 const CAN_LIKE_TARGET_CLASS_PATTERN = /can|jar|container/i;
 const MIN_GENERIC_PRIMITIVE_MASK_FILL_RATIO = 0.58;
-const MIN_GENERIC_PLANAR_MASK_FILL_RATIO = 0.94;
-const MIN_GENERIC_PLANAR_MASK_ASPECT = 0.4;
-const MAX_GENERIC_PLANAR_MASK_ASPECT = 2.5;
 const MIN_OBJECT_WIDE_RELOCALIZATION_MASK_CONFIDENCE = 0.8;
 const TEXTURED_PLANAR_RECOVERY_EXCLUSION_PATTERN = /book|notebook/i;
 const CANDIDATE_MIN_TRACKABLE_POINTS = 8;
@@ -85,12 +85,12 @@ const RELOCALIZATION_MAP_GROWTH_TARGET = 24;
 const RELOCALIZATION_MAP_GROWTH_MIN_CANDIDATES = 12;
 const LEARNED_RELOCALIZATION_INTERVAL = 2;
 const LEARNED_REFERENCE_REFRESH_KEYFRAME_COUNT = 3;
-const MIN_LOCAL_RELOCALIZATION_INLIERS = 5;
-const MIN_GLOBAL_RELOCALIZATION_INLIERS = 8;
-const MIN_LEARNED_RELOCALIZATION_INLIERS = 8;
+const MIN_LOCAL_CONTINUITY_INLIERS = 5;
 const COVERAGE_BALANCED_REFRESH_REASONS = new Set(['mapping-growth', 'map-growth']);
 const FACE_READINESS_REASON_RECONSTRUCTION = 'Build more object landmarks before showing the face';
 const FACE_READINESS_REASON_POSE_RECOVERY = 'Recovering object pose before showing the face';
+const FACE_READINESS_REASON_SUPPORT_CONFLICT =
+  'Object outline disagrees with tracking; hold still to recover';
 const MIN_ATTACHMENT_POSE_INLIERS = 8;
 const MIN_PLANAR_ATTACHMENT_POSE_INLIERS = 20;
 const MIN_RECONSTRUCTION_ATTACHMENT_POSE_INLIERS = 12;
@@ -338,6 +338,7 @@ export class ImageAnchorService {
       lostFrameCount: 0,
       keypointFailureCount: 0,
       targetPresent: false,
+      objectSupportConflict: null,
       poseModel: OBJECT_POSE_MODEL,
       trackingMode: this.trackingMode,
       poseSource: null,
@@ -490,6 +491,7 @@ export class ImageAnchorService {
 
     const startTime = this.now();
     this.anchorState = 'initializing';
+    this.metrics.objectSupportConflict = null;
     this.planarDominanceScore = 0;
     this.homographyEstimator.resetTracking();
     this._notifyStateChange();
@@ -514,7 +516,7 @@ export class ImageAnchorService {
         imageData.width,
         imageData.height,
       );
-      this.rigidPlanarRecoveryEligible = this._isRigidPlanarRecoverySelection(targetClass, objectSupportMask);
+      this.rigidPlanarRecoveryEligible = RIGID_PLANAR_TARGET_CLASS_PATTERN.test(targetClass || '');
 
       const keypointResult = this._extractObjectKeypoints(gray, templateRegion, objectSupportMask, {
         minKeypoints: this.minAnchorKeypoints,
@@ -701,6 +703,7 @@ export class ImageAnchorService {
       this.anchorState = bootstrapState;
       this.framesSinceRefresh = 0;
       this.metrics = {
+        objectSupportConflict: null,
         keypointCount: trackingKeypoints.length,
         activeLandmarks: trackingKeypoints.length,
         objectOwnedLandmarks: evidence.objectOwnedLandmarks,
@@ -767,7 +770,7 @@ export class ImageAnchorService {
         createdAt: Date.now(),
       };
 
-      if (this.learnedRelocalizer && this.rigidPlanarRecoveryEligible && trackingKeypoints.length > 0) {
+      if (this.learnedRelocalizer && keyframeResult.success) {
         this._storeLearnedReference(imageData);
       } else {
         this.learnedReferencePromise = null;
@@ -808,6 +811,19 @@ export class ImageAnchorService {
     }
   }
 
+  rejectObjectSupportObservation(reason) {
+    this.metrics.objectSupportConflict = reason;
+    this.metrics.readiness = {
+      ...this.metrics.readiness,
+      selectionReady: false,
+      surfaceReady: false,
+      attachmentReady: false,
+      faceReady: false,
+      reason: FACE_READINESS_REASON_SUPPORT_CONFLICT,
+    };
+    this._notifyStateChange();
+  }
+
   updateObjectSupportMask(objectSupportMask, { reason }) {
     if (!objectSupportMask || objectSupportMask.bbox.width <= 0 || objectSupportMask.bbox.height <= 0) {
       return false;
@@ -831,6 +847,12 @@ export class ImageAnchorService {
     };
 
     this.objectSupportMask = anchoredSupportMask;
+    if (
+      isIndependentObjectSupportObservation(anchoredSupportMask) &&
+      anchoredSupportMask.createdAtFrame === this.frameIndex
+    ) {
+      this.metrics.objectSupportConflict = null;
+    }
     this.currentObjectSupportMask = anchoredSupportMask;
     this.objectSupportProjectionCache = null;
     this.expandedObjectSupportRegion = true;
@@ -1450,6 +1472,7 @@ export class ImageAnchorService {
     let relocalizationAttempted = false;
     let relocalizedThisUpdate = false;
     let relocalizationFrameFeatures = null;
+    let mapRefreshed = false;
     let anchorPositionEvaluation;
     const attemptRelocalization = async (reason, { searchRegion = null } = {}) => {
       if (relocalizationAttempted) {
@@ -1462,9 +1485,7 @@ export class ImageAnchorService {
       relocalizationAttempted = true;
       const relocalizationStart = this._startUpdateTiming(updateTimings);
       const result = await this._attemptKeyframeRelocalization(grayImage, reason, searchRegion, imageData, {
-        minimumInliers: requireGlobalRelocalization
-          ? MIN_GLOBAL_RELOCALIZATION_INLIERS
-          : MIN_LOCAL_RELOCALIZATION_INLIERS,
+        minimumInliers: requireGlobalRelocalization ? POSE_TRACKING_MIN_POINTS : MIN_LOCAL_CONTINUITY_INLIERS,
       });
       relocalizationFrameFeatures = result.frameFeatures || null;
       if (result.success) {
@@ -1553,7 +1574,29 @@ export class ImageAnchorService {
     this._recordUpdateTiming(updateTimings, 'landmarkMetricsMs', stageStart);
 
     const minSuccessRate = 0.45;
-    const minActivePoints = 8;
+    const minActivePoints = POSE_TRACKING_MIN_POINTS;
+
+    // Grow descriptor recovery before the pose quorum gate, not behind it.
+    // Fresh points cannot supply pose evidence until independently confirmed.
+    const relocalizationGrowth =
+      relocalizedThisUpdate &&
+      this.metrics.keypointCount >= MIN_LOCAL_CONTINUITY_INLIERS &&
+      this.metrics.keypointCount < RELOCALIZATION_MAP_GROWTH_TARGET;
+    if (relocalizationGrowth) {
+      this.metrics.landmarkRefreshReason = 'relocalization-growth';
+      const growth = this._refreshKeypoints(grayImage, {
+        adaptive: true,
+        minNewKeypoints: RELOCALIZATION_MAP_GROWTH_MIN_CANDIDATES,
+        updateTimings,
+      });
+      if (growth.success) {
+        mapRefreshed = true;
+        this.framesSinceRefresh = 0;
+        trackingResult.activePointCount = this._activeTrackedPointCount();
+        this.metrics.keypointCount = trackingResult.activePointCount;
+        this._recordLandmarkMetrics();
+      }
+    }
 
     const partialOcclusionSupported =
       trackingResult.admission === 'partial-occlusion-consensus' &&
@@ -2045,29 +2088,7 @@ export class ImageAnchorService {
     this.anchorState = this._selectTrackingState({ overallQuality, poseInliers });
     this._recordUpdateTiming(updateTimings, 'poseSelectionMs', poseSelectionStart);
 
-    // Descriptor relocalization restores pose from a deliberately small, strict inlier set.
-    // Grow the LK map once in that recovered coordinate frame so the next occlusion does not
-    // depend on the same sparse descriptor subset.
     this.framesSinceRefresh++;
-    const relocalizationGrowth =
-      relocalizedThisUpdate &&
-      this.metrics.activeLandmarkCount >= 5 &&
-      this.metrics.activeLandmarkCount < RELOCALIZATION_MAP_GROWTH_TARGET;
-    if (relocalizationGrowth) {
-      this.metrics.landmarkRefreshReason = 'relocalization-growth';
-      const refreshOutcome = this._refreshKeypoints(grayImage, {
-        adaptive: true,
-        minNewKeypoints: RELOCALIZATION_MAP_GROWTH_MIN_CANDIDATES,
-        storeFreshRelocalizationKeyframe: true,
-        frameFeatures: relocalizationFrameFeatures,
-        ...(imageData ? { learnedImageData: imageData } : {}),
-        anchorPositionEvaluation,
-        updateTimings,
-      });
-      if (refreshOutcome.success) {
-        this.framesSinceRefresh = 0;
-      }
-    }
 
     // Periodic keypoint refresh grows the persistent landmark map while tracking is usable.
     if (!relocalizationGrowth && this._shouldRefreshKeypoints({ overallQuality, poseInliers })) {
@@ -2080,8 +2101,6 @@ export class ImageAnchorService {
       const refreshOutcome = this._refreshKeypoints(grayImage, {
         adaptive: adaptiveRefresh,
         minNewKeypoints: adaptiveRefresh ? CANDIDATE_MIN_TRACKABLE_POINTS : 15,
-        frameFeatures: relocalizationFrameFeatures,
-        ...(imageData ? { learnedImageData: imageData } : {}),
         anchorPositionEvaluation,
         updateTimings,
       });
@@ -2107,10 +2126,13 @@ export class ImageAnchorService {
         }
       }
       if (refreshOutcome.success || reinitializationOutcome?.success) {
+        mapRefreshed = true;
         this.framesSinceRefresh = 0;
       }
     }
     this._storeRelocalizationKeyframe(grayImage, {
+      force: mapRefreshed,
+      includeFreshLandmarks: mapRefreshed && relocalizedThisUpdate,
       frameFeatures: relocalizationFrameFeatures,
       ...(imageData ? { learnedImageData: imageData } : {}),
       updateTimings,
@@ -2282,7 +2304,7 @@ export class ImageAnchorService {
     failureReason,
     searchRegion = null,
     imageData = null,
-    { minimumInliers = MIN_LOCAL_RELOCALIZATION_INLIERS } = {},
+    { minimumInliers = MIN_LOCAL_CONTINUITY_INLIERS } = {},
   ) {
     const hasOrbKeyframes = this.relocalizer.hasKeyframes();
     if (!hasOrbKeyframes && !this.learnedReferencePromise) {
@@ -2304,16 +2326,19 @@ export class ImageAnchorService {
           inlierCount: 0,
         };
     let relocalizationResult = orbResult;
-    let learnedResult = null;
     const learnedRelocalizationDue =
       this.frameIndex - this.lastLearnedRelocalizationAttemptFrame >= LEARNED_RELOCALIZATION_INTERVAL;
-    if (!orbResult.success && this.learnedReferencePromise && imageData && learnedRelocalizationDue) {
+    const orbReady = orbResult.success && orbResult.inlierCount >= POSE_TRACKING_MIN_POINTS;
+    if (!orbReady && this.learnedReferencePromise && imageData && learnedRelocalizationDue) {
       this.lastLearnedRelocalizationAttemptFrame = this.frameIndex;
       this.metrics.learnedRelocalizationAttempted = true;
       await this.learnedReferencePromise;
       if (this.learnedRelocalizer.hasReference()) {
-        learnedResult = await this.learnedRelocalizer.relocalize(imageData);
-        if (learnedResult.success) {
+        const learnedResult = await this.learnedRelocalizer.relocalize(imageData);
+        if (
+          learnedResult.success &&
+          (!orbResult.success || learnedResult.inlierCount >= POSE_TRACKING_MIN_POINTS)
+        ) {
           relocalizationResult = {
             ...learnedResult,
             frameFeatures: orbResult.frameFeatures || null,
@@ -2321,9 +2346,10 @@ export class ImageAnchorService {
         }
       }
     }
-    const requiredInliers = learnedResult?.success
-      ? Math.max(minimumInliers, MIN_LEARNED_RELOCALIZATION_INLIERS)
-      : minimumInliers;
+    const requiredInliers =
+      relocalizationResult.method === 'xfeat-keyframe-relocalization'
+        ? Math.max(minimumInliers, POSE_TRACKING_MIN_POINTS)
+        : minimumInliers;
     this.metrics.relocalizationKeyframes =
       relocalizationResult.keyframeCount || this.metrics.relocalizationKeyframes || 0;
     this.metrics.relocalizationQueryKeypoints = relocalizationResult.queryFeatureCount || 0;
@@ -2418,6 +2444,7 @@ export class ImageAnchorService {
       imageData,
       trackedPoints: this.keypointTracker.trackedPoints,
       anchorPoint: this.currentPosition,
+      objectSupportMask: this._getCurrentObjectSupportMask(),
     });
     this.learnedReferencePromise = request;
     // Reference extraction is detached from frame processing; surface its failure on the next frame.
@@ -2514,15 +2541,7 @@ export class ImageAnchorService {
    */
   _refreshKeypoints(
     grayImage,
-    {
-      adaptive = false,
-      minNewKeypoints = 15,
-      storeFreshRelocalizationKeyframe = false,
-      frameFeatures = null,
-      learnedImageData = null,
-      anchorPositionEvaluation = null,
-      updateTimings = null,
-    } = {},
+    { adaptive = false, minNewKeypoints = 15, anchorPositionEvaluation = null, updateTimings = null } = {},
   ) {
     if (!this.currentPosition) {
       return {
@@ -2603,13 +2622,6 @@ export class ImageAnchorService {
     if (refreshOutcome.success) {
       this._recordLandmarkMetrics();
       this._recordUpdateTiming(updateTimings, 'keypointRefreshMs', stageStart);
-      this._storeRelocalizationKeyframe(grayImage, {
-        force: true,
-        includeFreshLandmarks: storeFreshRelocalizationKeyframe,
-        frameFeatures,
-        learnedImageData,
-        updateTimings,
-      });
       return refreshOutcome;
     }
 
@@ -3604,26 +3616,6 @@ export class ImageAnchorService {
 
   _extractSurfaceHint(selectionRegion) {
     return selectionRegion?.surfaceHint || null;
-  }
-
-  _isRigidPlanarRecoverySelection(targetClass, objectSupportMask) {
-    if (RIGID_PLANAR_TARGET_CLASS_PATTERN.test(targetClass || '')) {
-      return true;
-    }
-    if (targetClass && !GENERIC_TARGET_CLASS_PATTERN.test(targetClass)) {
-      return false;
-    }
-    if (objectSupportMask?.source !== OBJECT_SUPPORT_MASK_SOURCES.INTERACTIVE_SEGMENTER) {
-      return false;
-    }
-    const bboxArea = objectSupportMask.bbox.width * objectSupportMask.bbox.height;
-    const fillRatio = objectSupportMask.pixelCount / Math.max(1, bboxArea);
-    const aspect = objectSupportMask.bbox.width / Math.max(1, objectSupportMask.bbox.height);
-    return (
-      fillRatio >= MIN_GENERIC_PLANAR_MASK_FILL_RATIO &&
-      aspect >= MIN_GENERIC_PLANAR_MASK_ASPECT &&
-      aspect <= MAX_GENERIC_PLANAR_MASK_ASPECT
-    );
   }
 
   _hasTrustedObjectWideRelocalizationSupport(objectSupportMask) {
@@ -6356,7 +6348,8 @@ export class ImageAnchorService {
     poseForeshortening = null,
   }) {
     const reconstructionMode = isReconstructionMode(this.trackingMode);
-    const selectionReady = state !== 'inactive' && state !== 'lost';
+    const supportConsistent = !this.metrics.objectSupportConflict;
+    const selectionReady = state !== 'inactive' && state !== 'lost' && supportConsistent;
     const trackingReady = state === 'tracking' || state === 'stable';
     const strongPlanarPose = poseSource === 'planar-homography';
     const strongReconstructionPose =
@@ -6372,9 +6365,9 @@ export class ImageAnchorService {
       poseForeshortening,
     });
     const poseReady = trackingReady && posePathReady && poseQualityReady;
-    const surfaceReady = reconstructionMode
-      ? poseReady && (strongReconstructionPose || strongPlanarPose)
-      : poseReady;
+    const surfaceReady =
+      supportConsistent &&
+      (reconstructionMode ? poseReady && (strongReconstructionPose || strongPlanarPose) : poseReady);
     const attachmentSourceReady = this._isAttachmentSourceReady({
       poseSource,
       positionSource,
@@ -6392,9 +6385,11 @@ export class ImageAnchorService {
       (!posePathReady || !poseQualityReady || !attachmentSourceReady);
     const reason = faceReady
       ? 'Face overlay is ready'
-      : poseRecovery
-        ? FACE_READINESS_REASON_POSE_RECOVERY
-        : FACE_READINESS_REASON_RECONSTRUCTION;
+      : !supportConsistent
+        ? FACE_READINESS_REASON_SUPPORT_CONFLICT
+        : poseRecovery
+          ? FACE_READINESS_REASON_POSE_RECOVERY
+          : FACE_READINESS_REASON_RECONSTRUCTION;
 
     return {
       faceReady,

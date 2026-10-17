@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createObjectSupportMask } from './objectSupportMask.js';
 import {
   matchXFeatDescriptors,
   postprocessXFeatOutputs,
@@ -12,6 +13,62 @@ const descriptor = (channel) => {
   values[channel] = 1;
   return values;
 };
+
+test('object-owned landmarks cannot borrow XFeat descriptor support from background holes', async () => {
+  const width = 160;
+  const height = 120;
+  const landmarks = Array.from({ length: 8 }, (_, id) => ({
+    id,
+    status: 'active',
+    objectOwned: true,
+    objectOwnedStreak: 5,
+    original: { x: 24 + (id % 4) * 28, y: 32 + Math.floor(id / 4) * 36 },
+    current: { x: 24 + (id % 4) * 28, y: 32 + Math.floor(id / 4) * 36 },
+    totalSuccessfulFrames: 8,
+    successfulTrackingStreak: 8,
+    landmarkQuality: 0.9,
+    response: 0.8,
+  }));
+  const features = landmarks.map((landmark) => ({
+    point: { x: landmark.current.x + 12, y: landmark.current.y },
+    descriptor: descriptor(landmark.id),
+    response: 0.9,
+  }));
+  const data = new Uint8Array(width * height).fill(255);
+  for (const feature of features) data[feature.point.y * width + feature.point.x + 8] = 0;
+  const objectSupportMask = createObjectSupportMask({
+    width,
+    height,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.95,
+    referencePoint: { x: 80, y: 60 },
+    createdAtFrame: 0,
+  });
+  for (const mask of [null, objectSupportMask]) {
+    const relocalizer = new XFeatKeyframeRelocalizer({ extractFeatures: async () => features });
+    const result = await relocalizer.storeReference({
+      imageData: { width, height },
+      trackedPoints: landmarks,
+      anchorPoint: { x: 80, y: 60 },
+      objectSupportMask: mask,
+    });
+    assert.equal(result.success, mask === null);
+    assert.equal(result.descriptorCount, mask === null ? 8 : 0);
+    relocalizer.dispose();
+  }
+  const invalidRaster = new XFeatKeyframeRelocalizer({
+    extractFeatures: () => assert.fail('must reject before inference'),
+  });
+  await assert.rejects(
+    invalidRaster.storeReference({
+      imageData: { width: 320, height: 240 },
+      objectSupportMask,
+    }),
+    /same.*raster|share.*raster/,
+  );
+  invalidRaster.dispose();
+});
 
 test('XFeat preprocessing produces normalized planar RGB with center-aligned resize', () => {
   const imageData = {
@@ -122,6 +179,7 @@ test('XFeat relocalizer associates learned features with landmarks and restores 
   });
 
   const stored = await relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: { width: 160, height: 120, data: new Uint8ClampedArray(160 * 120 * 4) },
     trackedPoints: landmarks,
     anchorPoint: { x: 66, y: 50 },
@@ -181,6 +239,7 @@ test('XFeat descriptor consensus cannot recover a sheared collapse or a line of 
     const extracted = [referenceFeatures, queryFeatures];
     const relocalizer = new XFeatKeyframeRelocalizer({ extractFeatures: async () => extracted.shift() });
     const stored = await relocalizer.storeReference({
+      objectSupportMask: null,
       imageData: { width: 240, height: 180 },
       trackedPoints: landmarks,
       anchorPoint: { x: 66, y: 50 },
@@ -235,16 +294,19 @@ test('XFeat memory keeps initial and mature views and selects the strongest geom
   });
 
   const initial = await relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: { width: 160, height: 120 },
     trackedPoints: initialLandmarks,
     anchorPoint: { x: 66, y: 50 },
   });
   const mature = await relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: { width: 160, height: 120 },
     trackedPoints: matureLandmarks,
     anchorPoint: { x: 86, y: 55 },
   });
   const rejectedThirdView = await relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: { width: 160, height: 120 },
     trackedPoints: matureLandmarks,
     anchorPoint: { x: 88, y: 56 },
@@ -297,11 +359,13 @@ test('a rejected second XFeat view preserves the initial geometry', async () => 
   });
 
   const initial = await relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: { width: 160, height: 120 },
     trackedPoints: landmarks,
     anchorPoint: { x: 66, y: 50 },
   });
   const rejected = await relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: { width: 160, height: 120 },
     trackedPoints: landmarks,
     anchorPoint: { x: 70, y: 52 },
@@ -341,6 +405,7 @@ test('XFeat relocalizer releases a runtime that finishes initializing after disp
     response: 0.8,
   }));
   const storage = relocalizer.storeReference({
+    objectSupportMask: null,
     imageData: { width: 160, height: 120, data: new Uint8ClampedArray(160 * 120 * 4) },
     trackedPoints: landmarks,
     anchorPoint: { x: 66, y: 50 },
@@ -371,6 +436,7 @@ test('clearing or disposing a reference during extraction cannot publish recover
       extractFeatures: () => (++extractionCount === 1 ? features : pending.promise),
     });
     const stored = await relocalizer.storeReference({
+      objectSupportMask: null,
       imageData: { width: 160, height: 120 },
       anchorPoint: { x: 66, y: 50 },
       trackedPoints: features.map((feature, id) => ({

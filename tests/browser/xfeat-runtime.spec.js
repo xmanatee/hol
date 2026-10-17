@@ -184,6 +184,7 @@ test('production XFeat recovers a transformed fixture through a nested worker', 
         'storeReference',
         {
           imageData: referenceFrame,
+          objectSupportMask: null,
           trackedPoints: fixture.trackedPoints,
           anchorPoint: fixture.referenceAnchor,
         },

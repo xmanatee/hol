@@ -13,6 +13,7 @@ import {
   XFEAT_ASSET_URL,
   XFEAT_DATA_ASSET_URL,
 } from '../runtime/capabilityPacks.js';
+import { isPatchInsideObjectSupport } from './objectSupportMask.js';
 
 export const XFEAT_INPUT_WIDTH = 256;
 export const XFEAT_INPUT_HEIGHT = 192;
@@ -26,6 +27,8 @@ const MAX_REFERENCE_KEYFRAMES = 2;
 const ASSOCIATION_RADIUS = 16;
 const MIN_MATCHES = RELOCALIZATION_DEFAULTS.minMatches;
 const MIN_COSINE_SIMILARITY = 0.82;
+// Bicubic interpolation spans two cells of the backbone's stride-eight descriptor grid.
+const DESCRIPTOR_SAMPLE_RADIUS = 16;
 
 const clamp01 = (value) => Math.max(0, Math.min(1, value));
 
@@ -325,7 +328,16 @@ export class XFeatKeyframeRelocalizer {
     });
   }
 
-  async storeReference({ imageData, trackedPoints, anchorPoint }) {
+  async storeReference({ imageData, trackedPoints, anchorPoint, objectSupportMask }) {
+    if (objectSupportMask === undefined) {
+      throw new TypeError('XFeat reference requires an explicit object mask or null');
+    }
+    if (
+      objectSupportMask &&
+      (objectSupportMask.width !== imageData.width || objectSupportMask.height !== imageData.height)
+    ) {
+      throw new RangeError('XFeat reference mask must share the source image raster');
+    }
     const epoch = ++this.referenceEpoch;
     if (this.references.length >= MAX_REFERENCE_KEYFRAMES) {
       return {
@@ -349,11 +361,21 @@ export class XFeatKeyframeRelocalizer {
     }
     const startedAt = performance.now();
     const features = await this._extract(imageData, MAX_REFERENCE_FEATURES);
+    const supportRadius = Math.ceil(
+      DESCRIPTOR_SAMPLE_RADIUS *
+        Math.max(imageData.width / XFEAT_INPUT_WIDTH, imageData.height / XFEAT_INPUT_HEIGHT),
+    );
+    const eligibleFeatures = objectSupportMask
+      ? Uint8Array.from(features, (feature) =>
+          Number(isPatchInsideObjectSupport(objectSupportMask, feature.point, supportRadius)),
+        )
+      : null;
     const associations = associateLandmarkCoordinateIndexes(
       Float64Array.from(features, (feature) => feature.point.x),
       Float64Array.from(features, (feature) => feature.point.y),
       landmarks,
       ASSOCIATION_RADIUS,
+      eligibleFeatures,
     );
     const entries = associations.map(({ landmarkIndex, featureIndex }) => {
       const landmark = landmarks[landmarkIndex];

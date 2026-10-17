@@ -212,7 +212,7 @@ export const useCameraSystem = (config = {}) => {
           return false;
         }
         const { width, height } = videoDimensions;
-        await session.anchor.initialize(null, width, height, 63, config.targetScenario ?? 'can');
+        await session.anchor.initialize(null, width, height, 63);
         if (
           !mountedRef.current ||
           sessionRef.current !== session ||
@@ -239,7 +239,7 @@ export const useCameraSystem = (config = {}) => {
 
     visionInitializationRef.current = initialization;
     return initialization;
-  }, [anchorStateStore, cameraState, config.targetScenario, session, videoDimensions]);
+  }, [anchorStateStore, cameraState, session, videoDimensions]);
 
   const retryVision = useCallback(() => {
     anchorSelectionGate.reset();

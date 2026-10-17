@@ -1,23 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TARGET_SCENARIOS, getTargetScenario } from './targetScenario.js';
-import { normalForSurfaceModel, pointForSurfaceModel, modelFromRegion } from './anchor.parametricGeometry.js';
+import { normalForSurfaceModel, pointForSurfaceModel } from './anchor.parametricGeometry.js';
 import { createObjectSupportMask, evaluateObjectSupportContinuity } from './objectSupportMask.js';
-
-test('demo scenarios are explicit priors; a wrapped label never routes to flat-label geometry', () => {
-  for (const [id, expected] of [
-    ['can', 'cylinder'],
-    ['bottle-label', 'cylinder'],
-    ['paper', 'plane'],
-  ]) {
-    const { surfaceHint } = getTargetScenario(id);
-    assert.equal(modelFromRegion({ width: 80, height: 120 }, surfaceHint), expected);
-  }
-  assert.equal(getTargetScenario('general').surfaceHint, null);
-  assert.ok(TARGET_SCENARIOS.every(Object.isFrozen));
-  for (const id of [undefined, null, {}, 'auto', 'glass'])
-    assert.throws(() => getTargetScenario(id), /Unsupported/);
-});
 
 test('cylinder reference pixels recover the actual visible circular cross-section and material normal', () => {
   const radius = 70;

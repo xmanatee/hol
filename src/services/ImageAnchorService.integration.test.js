@@ -33,6 +33,61 @@ test('native optical-flow failure rejects the frame instead of entering object r
   assert.equal(metrics.trackingSuccessRate, null);
 });
 
+test('a contradictory object outline withdraws face readiness until independent support returns', async (t) => {
+  const cv = await loadOpenCvForNode();
+  const sequence = createCylindricalCanSequence({ frameCount: 2, occlusionFrames: [] });
+  const frame = sequence.frames[0];
+  const service = new ImageAnchorService();
+  t.after(() => service.dispose());
+  await service.initialize(cv, sequence.camera);
+  const { width, height } = frame.imageData;
+  const region = sequence.boundingBox;
+  const support = (createdAtFrame) =>
+    createObjectSupportMask({
+      width,
+      height,
+      data: Uint8Array.from({ length: width * height }, (_, index) => {
+        const x = index % width;
+        const y = Math.floor(index / width);
+        return x >= region.x1 && x <= region.x2 && y >= region.y1 && y <= region.y2 ? 255 : 0;
+      }),
+      source: 'interactive-segmenter',
+      confidence: 0.95,
+      referencePoint: sequence.tap,
+      createdAtFrame,
+    });
+  await service.createAnchor(frame.imageData, sequence.tap, {
+    ...sequence.boundingBox,
+    objectSupportMask: support(0),
+  });
+  for (let i = 0; i < 6; i++) await service.updateAnchor(frame.imageData);
+  assert.equal(
+    service.getState().metrics.readiness.faceReady,
+    true,
+    JSON.stringify(service.getState().metrics.readiness),
+  );
+
+  service.rejectObjectSupportObservation('expanded-mask');
+  assert.equal(service.getState().metrics.readiness.faceReady, false);
+  for (let i = 0; i < 6; i++) await service.updateAnchor(frame.imageData);
+  const rejected = service.getState();
+  assert.equal(rejected.anchored, true);
+  assert.equal(rejected.metrics.readiness.faceReady, false);
+  assert.match(rejected.metrics.readiness.reason, /outline disagrees/);
+
+  service.updateObjectSupportMask(support(0), { reason: 'periodic-segmentation-refresh' });
+  await service.updateAnchor(frame.imageData);
+  assert.equal(
+    service.getState().metrics.readiness.faceReady,
+    false,
+    'an aged mask cannot renew authorization',
+  );
+  const mask = support(service.frameIndex);
+  assert.equal(service.updateObjectSupportMask(mask, { reason: 'periodic-segmentation-refresh' }), true);
+  await service.updateAnchor(frame.imageData);
+  assert.equal(service.getState().metrics.readiness.faceReady, true);
+});
+
 test('physical plane presentation owns an immutable initial footprint and retires after reference replacement', () => {
   const service = new ImageAnchorService();
   service.cameraParams = { fx: 200, fy: 200, cx: 160, cy: 120 };
@@ -217,33 +272,6 @@ test('large selections create a tap-local template instead of seeding the whole 
   assert.ok(Math.abs(center.y - tap.y) <= 2);
   assert.ok(center.x < 360);
   assert.ok(center.y < 300);
-});
-
-test('learned recovery accepts semantic planes and segmented generic rectangles only', () => {
-  const service = new ImageAnchorService();
-  const rectangle = {
-    source: 'interactive-segmenter',
-    bbox: { x: 20, y: 30, width: 120, height: 80 },
-    pixelCount: 9200,
-  };
-  const roundedObject = {
-    source: 'interactive-segmenter',
-    bbox: { x: 20, y: 20, width: 100, height: 100 },
-    pixelCount: 7800,
-  };
-
-  assert.equal(service._isRigidPlanarRecoverySelection('card', null), true);
-  assert.equal(service._isRigidPlanarRecoverySelection(null, rectangle), true);
-  assert.equal(service._isRigidPlanarRecoverySelection('generic-object', rectangle), true);
-  assert.equal(service._isRigidPlanarRecoverySelection(null, roundedObject), false);
-  assert.equal(service._isRigidPlanarRecoverySelection('cup', rectangle), false);
-  assert.equal(
-    service._isRigidPlanarRecoverySelection(null, {
-      ...rectangle,
-      source: 'tap-local',
-    }),
-    false,
-  );
 });
 
 test('learned recovery eligibility does not reclassify generic object geometry', () => {
@@ -3945,31 +3973,6 @@ test('keypoint failure recovers through descriptor keyframe relocalization befor
   assert.equal(updateTimings.relocalizationKeyframeSearchMs, 2.25);
   assert.ok(updateTimings.relocalizationMs >= 0);
   assert.equal(relocalizationGrowthOptions.options.updateTimings, updateTimings);
-  assert.equal(
-    relocalizationGrowthOptions.options.anchorPositionEvaluation.attachmentEvidence.testStub,
-    true,
-  );
-  assert.deepEqual(
-    {
-      ...relocalizationGrowthOptions,
-      options: {
-        ...relocalizationGrowthOptions.options,
-        anchorPositionEvaluation: undefined,
-        updateTimings: undefined,
-      },
-    },
-    {
-      grayImage: { cols: 320, rows: 240 },
-      options: {
-        adaptive: true,
-        minNewKeypoints: 12,
-        storeFreshRelocalizationKeyframe: true,
-        frameFeatures,
-        anchorPositionEvaluation: undefined,
-        updateTimings: undefined,
-      },
-    },
-  );
   assert.equal(service.metrics.landmarkRefreshReason, 'relocalization-growth');
 });
 
@@ -4970,13 +4973,10 @@ test('XFeat recovery rejects a local-strength consensus before mutating landmark
     return { restored: 6, active: 12 };
   };
 
-  const result = await service._attemptKeyframeRelocalization(
-    { cols: 640, rows: 480 },
-    'Target lost',
-    null,
-    { width: 640, height: 480 },
-    { minimumInliers: 5 },
-  );
+  const result = await service._attemptKeyframeRelocalization({ cols: 640, rows: 480 }, 'Target lost', null, {
+    width: 640,
+    height: 480,
+  });
 
   assert.equal(result.success, false);
   assert.equal(result.reason, 'Descriptor relocalization found only 6 inliers; 8 required');
@@ -9613,7 +9613,6 @@ test('normal tracking refreshes keypoints to grow the landmark map before stable
   assert.equal(result.success, true);
   assert.equal(result.state, 'tracking');
   assert.equal(refreshes, 1);
-  assert.equal(refreshOptions.frameFeatures, frameFeatures);
   assert.equal(refreshOptions.anchorPositionEvaluation, currentAnchorPositionEvaluation);
 });
 

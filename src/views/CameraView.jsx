@@ -6,7 +6,6 @@ import { useCameraMetrics } from '../hooks/useCameraMetrics.js';
 import { useMicrophoneRuntime } from '../hooks/useMicrophoneRuntime.js';
 import { useTransientFeedback } from '../hooks/useTransientFeedback.js';
 import { useAppRelease } from '../hooks/useAppRelease.js';
-import { TARGET_SCENARIOS } from '../cv/targetScenario.js';
 
 import CameraVideo from '../components/CameraVideo.jsx';
 import CameraCanvas from '../components/CameraCanvas.jsx';
@@ -38,21 +37,6 @@ import {
 
 const OverlayScene = lazy(() => import('../scenes/OverlayScene.jsx'));
 const CAMERA_PRESENTATION_MIRRORED = false;
-const TARGET_GUIDANCE = {
-  can: ['Printed can', 'Center the printed body, away from the rims. Use soft, even light.'],
-  'bottle-label': [
-    'Bottle label',
-    'Center the printed label; keep the bottle body visible. Avoid clear glass and the neck.',
-  ],
-  paper: [
-    'Rectangular paper',
-    'Keep the whole flat sheet visible. Printed detail is currently required for tracking.',
-  ],
-  general: [
-    'Other object (experimental)',
-    'Center one distinct, textured object. Its surface shape is not known.',
-  ],
-};
 
 const getStartButtonLabel = (cameraState) => {
   if (cameraState === 'requesting') return 'Starting Camera...';
@@ -61,14 +45,7 @@ const getStartButtonLabel = (cameraState) => {
   return 'Start Camera';
 };
 
-const StartScreen = ({
-  cameraState,
-  cameraError,
-  onStartCamera,
-  release,
-  targetScenario,
-  onTargetScenarioChange,
-}) => {
+const StartScreen = ({ cameraState, cameraError, onStartCamera, release }) => {
   if (cameraState === 'active') return null;
   const isRequesting = cameraState === 'requesting';
 
@@ -82,26 +59,6 @@ const StartScreen = ({
           High on Life
         </h1>
         <p className="text-base mb-6 text-gray-400">Point at an object. Tap when its outline turns green.</p>
-        <label className="block mb-2 text-sm text-gray-200" htmlFor="target-surface">
-          Target surface
-        </label>
-        <select
-          id="target-surface"
-          value={targetScenario}
-          disabled={isRequesting || cameraState === 'blocked'}
-          onChange={(event) => onTargetScenarioChange(event.target.value)}
-          className="min-h-11 w-full rounded-lg border border-zinc-600 bg-zinc-900 px-3 text-base text-white focus-visible:outline-2 focus-visible:outline-white"
-          aria-describedby="target-surface-guide"
-        >
-          {TARGET_SCENARIOS.map(({ id }) => (
-            <option key={id} value={id}>
-              {TARGET_GUIDANCE[id][0]}
-            </option>
-          ))}
-        </select>
-        <p id="target-surface-guide" className="mt-2 mb-6 text-sm text-gray-400">
-          {TARGET_GUIDANCE[targetScenario][1]} Surface type is your assumption, not automatic recognition.
-        </p>
         <button
           type="button"
           onClick={onStartCamera}
@@ -157,7 +114,6 @@ const CameraView = () => {
   const captureFpsRef = useRef(0);
 
   const [showStats, setShowStats] = useState(false);
-  const [targetScenario, setTargetScenario] = useState('can');
   const [discoveredMeshes, setDiscoveredMeshes] = useState([]);
   const [hiddenMeshes, setHiddenMeshes] = useState(new Set());
   const [manualRotation, setManualRotation] = useState({ x: 0, y: 0, z: 0 });
@@ -198,7 +154,7 @@ const CameraView = () => {
     synthesizeSpeech,
     stopTTS,
     speakGreeting,
-  } = useCameraSystem({ targetScenario });
+  } = useCameraSystem();
   const anchorStatus = useMemo(
     () => describeAnchorStatus({ cameraState, anchorSystemState }),
     [cameraState, anchorSystemState],
@@ -686,8 +642,6 @@ const CameraView = () => {
         cameraError={cameraError}
         onStartCamera={handleStartClick}
         release={release}
-        targetScenario={targetScenario}
-        onTargetScenarioChange={setTargetScenario}
       />
       {release.status === 'update' && (
         <div

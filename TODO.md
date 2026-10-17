@@ -8,7 +8,7 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
 
 ### Detection and geometry
 
-- **P1 · Scenario recognition:** Verify can/body, bottle/label, and paper hypotheses before routing; preserve unknown when the chosen scenario disagrees with observations. Keep general-object discovery secondary and explicit, never a silent replacement for failed scenario tracking.
+- **P1 · Scenario recognition:** Add independently verified can/body, bottle/label, and paper hypotheses where observable; keep unknown otherwise. Preserve the single point-and-select flow: no required category menu, shape guessed from mask proportions, or silent identity change between estimators.
   [MediaPipe scope](https://ai.google.dev/edge/mediapipe/solutions/vision/interactive_segmenter), [Temporal segmentation](https://github.com/facebookresearch/sam2)
 - **P1 · Part/whole ownership:** Separate object identity, label mask, and rigid attachment patch; reject initial foreground/background merges as well as refresh expansion. Test multicolored printing and touching, differently colored objects: a color boundary is a cue, not an instance boundary.
   [Prompt ambiguity](https://arxiv.org/abs/2304.02643), [Point-mask scope](https://ai.google.dev/edge/mediapipe/solutions/vision/interactive_segmenter)
@@ -21,9 +21,9 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
 
 ### Acceptance and alternatives
 
-- **P1 · Recovery consistency:** Resolve the five-inlier local recovery/eight-landmark pose deadlock; do not starve stronger matching behind weak ORB success. Require verified material-point identity before extending XFeat recovery to curved targets, not merely more descriptor inliers.
+- **P1 · Material-point recovery:** Validate local and learned recovery against the original attachment on curved targets; masked feature sampling and descriptor consensus still do not prove material-point identity. Cover repeated printing, glare, reference growth, and competing views without weakening acceptance floors.
   [XFeat](https://github.com/verlab/accelerated_features), [Geometric evidence](https://docs.opencv.org/4.x/d9/dab/tutorial_homography.html)
-- **P1 · Negative evidence:** Reconcile repeated mask/pose disagreement without merging neighboring objects, retaining a wrong reference, or presenting an indefinitely green attachment; cover recovery after glare rather than accepting a mask merely because it contains the anchor.
+- **P1 · Disagreement recovery:** Restore the original material reference after mask/pose conflict, not merely visibility after a later matching outline. Cover glare, neighboring objects, and wrong recovery references without resetting the face to mask-relative coordinates.
   [Temporal segmentation](https://github.com/facebookresearch/sam2)
 - **P1 · Scoped acceptance:** Pass all four fresh-frame camera/glare browser cases, then held-out printed cans, partial wine/champagne labels, full drink wraps, and blank/printed paper. Require continuous tremor, correct initial normals, visible attached-face motion, turns, occlusion/recovery, and no false green; never supply oracle masks to discovery.
   [Tracking evaluation](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md), [Physical rendering](https://github.com/DLR-RM/BlenderProc)

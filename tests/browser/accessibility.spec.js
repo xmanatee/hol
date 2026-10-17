@@ -387,9 +387,6 @@ test('camera controls and field drawer support keyboard navigation', async ({ pa
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Start Camera' })).toBeVisible();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('combobox', { name: 'Target surface' })).toBeFocused();
-  await expect(page.getByRole('combobox', { name: 'Target surface' })).toHaveValue('can');
-  await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Start Camera' })).toBeFocused();
   await startCamera(page);
 
