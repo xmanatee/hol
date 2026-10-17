@@ -1,12 +1,18 @@
+export class TapVidQualityRegression extends Error {}
+
 const assertMinimum = (owner, metrics, metricName, floor, floorName) => {
   if (!Number.isFinite(metrics[metricName]) || metrics[metricName] < floor[floorName]) {
-    throw new Error(`${owner}${metricName} ${metrics[metricName]} is below ${floor[floorName]}`);
+    throw new TapVidQualityRegression(
+      `${owner}${metricName} ${metrics[metricName]} is below ${floor[floorName]}`,
+    );
   }
 };
 
 const assertMaximum = (owner, metrics, metricName, floor, floorName) => {
   if (!Number.isFinite(metrics[metricName]) || metrics[metricName] > floor[floorName]) {
-    throw new Error(`${owner}${metricName} ${metrics[metricName]} exceeds ${floor[floorName]}`);
+    throw new TapVidQualityRegression(
+      `${owner}${metricName} ${metrics[metricName]} exceeds ${floor[floorName]}`,
+    );
   }
 };
 

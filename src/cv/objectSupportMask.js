@@ -110,8 +110,11 @@ const assembleObjectSupportMask = ({
 });
 
 export const isIndependentObjectSupportObservation = (mask) =>
-  mask?.source === OBJECT_SUPPORT_MASK_SOURCES.INTERACTIVE_SEGMENTER &&
-  mask.observationSource === OBJECT_SUPPORT_MASK_SOURCES.INTERACTIVE_SEGMENTER &&
+  typeof mask?.source === 'string' &&
+  mask.source.length > 0 &&
+  mask.source !== OBJECT_SUPPORT_MASK_SOURCES.TAP_LOCAL &&
+  mask.source !== OBJECT_SUPPORT_MASK_SOURCES.WARPED_MASK &&
+  mask.observationSource === mask.source &&
   Number.isSafeInteger(mask.createdAtFrame) &&
   mask.createdAtFrame >= 0 &&
   mask.updatedAtFrame === mask.createdAtFrame;

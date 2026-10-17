@@ -75,6 +75,7 @@ const compactFixture = (report) => ({
 });
 
 export const compactAnnotatedVisionBenchmarkOutput = (output) => ({
+  qualityFailures: output.qualityFailures,
   summary: output.summary,
   aggregate: output.aggregate,
   reports: output.reports.map(compactFixture),
@@ -82,6 +83,7 @@ export const compactAnnotatedVisionBenchmarkOutput = (output) => ({
 
 const artifactSummary = (output, outputPath) => ({
   outputPath,
+  qualityFailureCount: output.qualityFailures.length,
   fixtures: output.summary.fixtures,
   frames: output.summary.frames,
   independentQueries: output.summary.independentQueries,

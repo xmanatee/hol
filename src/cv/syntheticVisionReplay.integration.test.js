@@ -140,6 +140,9 @@ const createPerfectHeadPoseReplay = () => {
         metrics: {
           templateRegion,
           poseModel: 'object-pose',
+          poseSource: 'object-pose-affine',
+          targetPresent: true,
+          readiness: { poseReady: true, attachmentReady: true, faceReady: true },
         },
       })),
     },

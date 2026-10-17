@@ -6414,11 +6414,14 @@ export class ImageAnchorService {
 
     const activeLandmarks = measuredActiveLandmarks;
     const objectOwnedLandmarks = this.metrics.objectOwnedLandmarks ?? activeLandmarks;
-    if (activeLandmarks < 8) {
+    if (objectOwnedLandmarks < 8) {
       return false;
     }
-
-    return objectOwnedLandmarks / Math.max(1, activeLandmarks) >= 0.65;
+    // Unconfirmed refresh candidates cannot supply pose evidence or dilute established support.
+    const probationary = this.keypointTracker.trackedPoints.filter(
+      (point) => point.status === 'active' && isProbationaryObjectOwnedLandmark(point),
+    ).length;
+    return objectOwnedLandmarks / Math.max(1, activeLandmarks - probationary) >= 0.65;
   }
 
   _isAttachmentSourceReady({

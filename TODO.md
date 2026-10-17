@@ -50,7 +50,7 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
   [Measurement uncertainty](https://homepages.inf.ed.ac.uk/rbf/CVonline/LOCAL_COPIES/WELCH/kalman.1.html)
 - **P1 · Reference continuity:** Correct refreshed-mask bases jointly with landmark and surface references; retain the original attachment through reinitialization and verified relocalization.
   [Projective reference transforms](https://docs.opencv.org/4.x/d9/dab/tutorial_homography.html)
-- **P1 · Identity recovery:** Test similar-object crossings, repeated logos, full turns, and distant re-entry; verify material-point identity, not merely a plausible ORB/XFeat match.
+- **P1 · Identity recovery:** Establish verified recovery-reference coverage before early occlusion; test similar-object crossings, repeated logos, full turns, and distant re-entry against material-point identity, not merely plausible descriptor matches.
   [XFeat](https://github.com/verlab/accelerated_features), [TAP-Vid](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md)
 - **P1 · Selection under load:** Reproduce green-to-tap rejections in concurrent browser flows; measure queue/observation age and prioritize commitment without accepting stale evidence.
   [Frame timestamps](https://developer.mozilla.org/en-US/docs/Web/API/HTMLVideoElement/requestVideoFrameCallback)
@@ -65,7 +65,7 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
   [BlenderProc](https://github.com/DLR-RM/BlenderProc)
 - **P1 · Product targets:** Define acceptance limits for false green, attachment drift/jitter, wrong identity, outages, and recovery latency; preserve regression floors without treating them as product readiness.
   [Tracking metrics](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md)
-- **P1 · Replay failure diagnosis:** Reproduce Perception Test false visibility, long outages, and re-entry fragmentation against current code before tuning; preserve every query floor rather than relying on historical reports or aggregate gains.
+- **P1 · Replay regression gates:** Restore synthetic early/repeated-occlusion recovery and normal/scale accuracy, plus every annotated query's visibility and re-entry floors; distinguish safe face hiding from successful tracking and never weaken failing-case baselines.
   [Fixture protocol](tests/fixtures/annotated-vision/README.md), [TAP-Vid evaluation](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md)
 - **P1 · Held-out evaluation:** Separate tuning clips from acceptance clips; ablate class-specific thresholds and recovery exceptions, retaining only improvements that generalize across surfaces and modes.
   [Benchmark protocol](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md)

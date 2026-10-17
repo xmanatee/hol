@@ -22,12 +22,22 @@ import {
 import { aggregateAnnotatedVisionFixtureMetrics } from '../src/cv/annotatedVisionAggregateMetrics.js';
 import { decodeAnnotatedVisionRgbDeltaInPlace } from '../src/cv/annotatedVisionFrameCodec.js';
 import { ANCHOR_TRACKING_INTERVAL_MS } from '../src/utils/cvScheduling.js';
+import { TapVidQualityRegression } from '../src/cv/tapVidQualityFloor.js';
 
 const fixtureDir = fileURLToPath(new URL('../tests/fixtures/annotated-vision/', import.meta.url));
 const manifestPath = join(fixtureDir, 'manifest.json');
 const RGB_CHANNELS = 3;
 const RGBA_CHANNELS = 4;
 const DEFAULT_NORMAL = Object.freeze({ x: 0, y: 0, z: 1 });
+const qualityFailures = [];
+const recordQualityCheck = (owner, check) => {
+  try {
+    check();
+  } catch (error) {
+    if (!(error instanceof TapVidQualityRegression)) throw error;
+    qualityFailures.push({ owner, message: error.message });
+  }
+};
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -262,10 +272,9 @@ const evaluateQuerySet = async ({ fixture, querySet, annotations, imageFrames, o
       framesPerSecond: fixture.frames.framesPerSecond,
       tracks: [metricTrack],
     });
-    assertTapVidQueryQualityFloor(
-      `${fixture.id}/${querySet.id}/${track.id}`,
-      queryMetrics,
-      querySet.queries[trackIndex].qualityFloor,
+    const queryId = `${fixture.id}/${querySet.id}/${track.id}`;
+    recordQualityCheck(queryId, () =>
+      assertTapVidQueryQualityFloor(queryId, queryMetrics, querySet.queries[trackIndex].qualityFloor),
     );
     queries.push({
       id: track.id,
@@ -290,7 +299,9 @@ const evaluateQuerySet = async ({ fixture, querySet, annotations, imageFrames, o
     framesPerSecond: fixture.frames.framesPerSecond,
     tracks: metricTracks,
   });
-  assertTapVidAggregateQualityFloor(metrics, querySet.aggregateFloor);
+  recordQualityCheck(`${fixture.id}/${querySet.id}`, () =>
+    assertTapVidAggregateQualityFloor(metrics, querySet.aggregateFloor),
+  );
   return { id: querySet.id, metrics, queries, metricTracks };
 };
 
@@ -340,8 +351,10 @@ const reports = [];
 for (const fixture of manifest.fixtures) reports.push(await evaluateFixture({ fixture }));
 
 const output = {
+  qualityFailures,
   summary: summarizeAnnotatedVisionFixtureManifest(manifest),
   aggregate: aggregateAnnotatedVisionFixtureMetrics(reports),
   reports,
 };
 console.log(await formatAnnotatedVisionBenchmarkOutput(output, { outputPath }));
+if (qualityFailures.length > 0) process.exitCode = 1;

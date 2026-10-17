@@ -21,6 +21,7 @@ const temporalMetrics = {
 };
 
 const output = {
+  qualityFailures: [],
   summary: {
     fixtures: 1,
     frames: 250,
@@ -144,6 +145,7 @@ test('annotated benchmark writes full evidence only for an explicit artifact', a
   assert.deepEqual(JSON.parse(await readFile(outputPath, 'utf8')), output);
   assert.deepEqual(JSON.parse(stdout), {
     outputPath,
+    qualityFailureCount: 0,
     fixtures: 1,
     frames: 250,
     independentQueries: 3,
@@ -156,4 +158,13 @@ test('annotated benchmark writes full evidence only for an explicit artifact', a
     maximumMissedVisibleDurationMs: 600,
     visibleTrackFragmentationCount: 4,
   });
+});
+
+test('annotated output retains named quality failures even when every fixture completed', async () => {
+  const failed = {
+    ...output,
+    qualityFailures: [{ owner: 'fixture/set/track', message: 'averageJaccard is below its floor' }],
+  };
+  const report = JSON.parse(await formatAnnotatedVisionBenchmarkOutput(failed));
+  assert.deepEqual(report.qualityFailures, failed.qualityFailures);
 });

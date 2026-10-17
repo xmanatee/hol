@@ -143,9 +143,10 @@ const createSyntheticObjectSupportMask = ({ sequence, frame, referencePoint, upd
       height: sequence.height,
       data: frame.objectMask.data,
       source: 'synthetic-object-mask',
+      observationSource: 'synthetic-object-mask',
       confidence: 0.96,
       referencePoint,
-      createdAtFrame: 0,
+      createdAtFrame: updatedAtFrame,
       updatedAtFrame,
     });
   }
@@ -158,9 +159,10 @@ const createSyntheticObjectSupportMask = ({ sequence, frame, referencePoint, upd
       height: sequence.height,
       data,
       source: 'synthetic-object-mask',
+      observationSource: 'synthetic-object-mask',
       confidence: 0.96,
       referencePoint,
-      createdAtFrame: 0,
+      createdAtFrame: updatedAtFrame,
       updatedAtFrame,
     });
   }
@@ -183,9 +185,10 @@ const createSyntheticObjectSupportMask = ({ sequence, frame, referencePoint, upd
     height: sequence.height,
     data,
     source: 'synthetic-object-mask',
+    observationSource: 'synthetic-object-mask',
     confidence: 0.96,
     referencePoint,
-    createdAtFrame: 0,
+    createdAtFrame: updatedAtFrame,
     updatedAtFrame,
   });
 };
@@ -204,6 +207,7 @@ const shouldRefreshSyntheticObjectSupport = ({
   enabled,
   frame,
   index,
+  lastRefreshIndex,
   metrics,
   interval,
   targetClass,
@@ -220,9 +224,7 @@ const shouldRefreshSyntheticObjectSupport = ({
   const recoveryRefresh =
     hasPosePositionDropout(metrics, { targetClass, trackingMode }) ||
     needsCurvedObjectRecovery(metrics, targetClass);
-  return (
-    index % interval === 0 || (recoveryRefresh && index % OBJECT_SUPPORT_RECOVERY_REFRESH_INTERVAL === 1)
-  );
+  return index - lastRefreshIndex >= (recoveryRefresh ? OBJECT_SUPPORT_RECOVERY_REFRESH_INTERVAL : interval);
 };
 
 const syntheticObjectSupportRefreshReason = (metrics, targetClass, trackingMode, { index, interval }) => {
@@ -281,6 +283,7 @@ export const replayImageAnchorSequence = async ({
   setupOpenCvGlobals(cv);
 
   let replayTime = 1000;
+  let lastSupportRefreshIndex = 0;
   const service = new ImageAnchorService({
     now: () => replayTime,
     profileUpdates: true,
@@ -378,22 +381,24 @@ export const replayImageAnchorSequence = async ({
     let state = service.getState();
     if (
       useObjectSupportMask &&
+      admittedUpdate &&
       shouldRefreshSyntheticObjectSupport({
         enabled: refreshObjectSupportMask,
         frame,
         index,
+        lastRefreshIndex: lastSupportRefreshIndex,
         metrics: state.metrics,
         interval: objectSupportRefreshInterval,
         targetClass,
         trackingMode,
       })
     ) {
-      service.updateObjectSupportMask(
+      const refreshed = service.updateObjectSupportMask(
         createSyntheticObjectSupportMask({
           sequence,
           frame,
           referencePoint: result.position || state.position || sequence.tap,
-          updatedAtFrame: index,
+          updatedAtFrame: service.frameIndex,
         }),
         {
           reason: syntheticObjectSupportRefreshReason(state.metrics, targetClass, trackingMode, {
@@ -402,6 +407,7 @@ export const replayImageAnchorSequence = async ({
           }),
         },
       );
+      if (refreshed) lastSupportRefreshIndex = index;
       state = service.getState();
     }
     const transform = result.planarTransform || state.planarTransform || {};

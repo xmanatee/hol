@@ -67,6 +67,29 @@ test('mask projection and cropping preserve the original segmentation source and
   assert.equal(isIndependentObjectSupportObservation(prior), false);
 });
 
+test('independent observations require explicit matching provenance, not a particular segmentation vendor', () => {
+  const mask = createObjectSupportMask({
+    width: 30,
+    height: 30,
+    data: new Uint8Array(900).fill(255),
+    source: 'labelled-mask',
+    observationSource: 'labelled-mask',
+    confidence: 1,
+    referencePoint: { x: 15, y: 15 },
+    createdAtFrame: 4,
+  });
+  assert.equal(isIndependentObjectSupportObservation(mask), true);
+  for (const modified of [
+    { observationSource: null },
+    { observationSource: 'another-source' },
+    { updatedAtFrame: 5 },
+    { createdAtFrame: -1 },
+    { source: 'tap-local', observationSource: 'tap-local' },
+    { source: 'warped-mask', observationSource: 'warped-mask' },
+  ])
+    assert.equal(isIndependentObjectSupportObservation({ ...mask, ...modified }), false);
+});
+
 const referenceWarpObjectSupportMask = (objectSupportMask, { position, scale, rotation, updatedAtFrame }) => {
   const data = new Uint8Array(objectSupportMask.width * objectSupportMask.height);
   const cos = Math.cos(rotation);
