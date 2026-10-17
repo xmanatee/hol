@@ -1,6 +1,7 @@
 import { fitRobustAffine2D, fitRobustSimilarity } from './anchor.reconstructionRobust.js';
 import { isReconstructionEligibleLandmark } from './landmarkOwnership.js';
 import { isPatchInsideObjectSupport } from './objectSupportMask.js';
+import { assessRelocalizationGeometry, RELOCALIZATION_GEOMETRY_DEFAULTS } from './relocalizationGeometry.js';
 
 const ORB_DESCRIPTOR_WORDS = 8;
 const ORB_EDGE_THRESHOLD = 23;
@@ -30,11 +31,7 @@ const DEFAULT_CONFIG = Object.freeze({
   maxDescriptorDistance: 72,
   inlierThreshold: 10,
   associationRadius: 16,
-  minSpatialSpread: 18,
-  minLinearScale: 0.3,
-  maxLinearScale: 3,
-  maxAffineAnisotropy: 2.4,
-  maxAverageResidual: 5.5,
+  ...RELOCALIZATION_GEOMETRY_DEFAULTS,
   minObservations: 5,
   minTrackingStreak: 3,
   minLandmarkQuality: 0.48,
@@ -515,62 +512,6 @@ const applyAffine = (point, transform) => ({
   y: transform.rowY[0] * point.x + transform.rowY[1] * point.y + transform.rowY[2],
 });
 
-const pointSetSpread = (entries, selectPoint) => {
-  const points = entries.map(selectPoint);
-  const xs = points.map((point) => point.x);
-  const ys = points.map((point) => point.y);
-  return Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
-};
-
-export const assessOrbGeometry = (
-  fit,
-  {
-    minSpatialSpread = DEFAULT_CONFIG.minSpatialSpread,
-    minLinearScale = DEFAULT_CONFIG.minLinearScale,
-    maxLinearScale = DEFAULT_CONFIG.maxLinearScale,
-    maxAffineAnisotropy = DEFAULT_CONFIG.maxAffineAnisotropy,
-    maxAverageResidual = DEFAULT_CONFIG.maxAverageResidual,
-    methodLabel = 'ORB',
-  } = {},
-) => {
-  const [a, b] = fit.transform.rowX;
-  const [c, d] = fit.transform.rowY;
-  const determinant = a * d - b * c;
-  const firstAxisScale = Math.hypot(a, c);
-  const secondAxisScale = Math.hypot(b, d);
-  const minScale = Math.min(firstAxisScale, secondAxisScale);
-  const maxScale = Math.max(firstAxisScale, secondAxisScale);
-  const anisotropy = maxScale / Math.max(minScale, 1e-6);
-  const referenceSpread = pointSetSpread(fit.inliers, (inlier) => inlier.reference);
-  const querySpread = pointSetSpread(fit.inliers, (inlier) => inlier.current || inlier.point);
-
-  let reason = null;
-  if (![determinant, firstAxisScale, secondAxisScale].every(Number.isFinite)) {
-    reason = `${methodLabel} geometry contains non-finite affine coefficients`;
-  } else if (determinant <= 0) {
-    reason = `${methodLabel} geometry implies a reflected or collapsed view`;
-  } else if (minScale < minLinearScale || maxScale > maxLinearScale) {
-    reason = `${methodLabel} geometry scale ${minScale.toFixed(2)}-${maxScale.toFixed(2)} is implausible`;
-  } else if (anisotropy > maxAffineAnisotropy) {
-    reason = `${methodLabel} affine anisotropy ${anisotropy.toFixed(2)} is implausible`;
-  } else if (referenceSpread < minSpatialSpread || querySpread < minSpatialSpread) {
-    reason = `${methodLabel} inliers are spatially concentrated (${referenceSpread.toFixed(1)}px/${querySpread.toFixed(1)}px)`;
-  } else if (fit.averageResidual > maxAverageResidual) {
-    reason = `${methodLabel} geometric residual ${fit.averageResidual.toFixed(2)}px is too high`;
-  }
-
-  return {
-    valid: reason == null,
-    reason,
-    determinant,
-    firstAxisScale,
-    secondAxisScale,
-    anisotropy,
-    referenceSpread,
-    querySpread,
-  };
-};
-
 const relocalizeAgainstKeyframe = (keyframe, queryFeatureSet, config) => {
   const matches = matchOrbFeatureSet(keyframe.entries, queryFeatureSet, config);
   if (matches.length < config.minMatches) {
@@ -613,10 +554,10 @@ const relocalizeAgainstKeyframe = (keyframe, queryFeatureSet, config) => {
         }
       : null;
   const affineAssessment = unvalidatedAffineCandidate
-    ? assessOrbGeometry(unvalidatedAffineCandidate, config)
+    ? assessRelocalizationGeometry(unvalidatedAffineCandidate, config)
     : null;
   const similarityAssessment = unvalidatedSimilarityCandidate
-    ? assessOrbGeometry(unvalidatedSimilarityCandidate, config)
+    ? assessRelocalizationGeometry(unvalidatedSimilarityCandidate, config)
     : null;
   const affineCandidate = affineAssessment?.valid
     ? { ...unvalidatedAffineCandidate, geometry: affineAssessment }

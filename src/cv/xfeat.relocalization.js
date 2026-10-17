@@ -1,9 +1,9 @@
 import { fitRobustAffine2D, fitRobustSimilarity } from './anchor.reconstructionRobust.js';
 import {
   associateLandmarkCoordinateIndexes,
-  assessOrbGeometry,
   selectRelocalizationLandmarks,
 } from './anchor.relocalization.js';
+import { assessRelocalizationGeometry } from './relocalizationGeometry.js';
 import {
   ORT_WASM_ASSET_URL,
   ORT_WASM_LOADER_ASSET_URL,
@@ -254,10 +254,10 @@ const fitXFeatMatches = (matches) => {
         }
       : null;
   const validAffine = affine
-    ? { ...affine, geometry: assessOrbGeometry(affine, { methodLabel: 'XFeat' }) }
+    ? { ...affine, geometry: assessRelocalizationGeometry(affine, { methodLabel: 'XFeat' }) }
     : null;
   const validSimilarity = similarity
-    ? { ...similarity, geometry: assessOrbGeometry(similarity, { methodLabel: 'XFeat' }) }
+    ? { ...similarity, geometry: assessRelocalizationGeometry(similarity, { methodLabel: 'XFeat' }) }
     : null;
   const candidates = [validAffine, validSimilarity].filter((candidate) => candidate?.geometry.valid);
   return (

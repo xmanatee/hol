@@ -37,7 +37,7 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
   [PnP and surface coordinates](https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html)
 - **P1 · Ambiguity:** Represent planar flip ambiguity and unobservable rotation on symmetric textureless objects; smoothing or silhouette agreement must not invent missing evidence.
   [IPPE ambiguity](https://github.com/tobycollins/IPPE#resolving-the-flip-ambiguity), [Symmetry-aware pose evaluation](https://bop.felk.cvut.cz/challenges/bop-challenge-2019/)
-- **P1 · Local pose support:** Gate the face footprint against correspondence geometry and projection sensitivity; a high inlier count on a tiny or nearly collinear patch must not authorize a large extrapolated attachment.
+- **P1 · Local pose support:** Gate the face footprint against actual pose-inlier geometry and projection sensitivity in every tracking mode; well-conditioned descriptor recovery alone cannot authorize a large extrapolated attachment.
   [Pose geometry](https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html), [Degenerate samples](https://docs.opencv.org/4.x/de/d3e/tutorial_usac.html)
 - **P2 · Resolution semantics:** Define residual thresholds against working-raster scale and localization noise; test equivalent motion across resolutions rather than assuming fixed pixel thresholds mean equal confidence.
   [Reprojection thresholds](https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html)

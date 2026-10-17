@@ -145,6 +145,55 @@ test('XFeat relocalizer associates learned features with landmarks and restores 
   );
 });
 
+test('XFeat descriptor consensus cannot recover a sheared collapse or a line of landmarks', async () => {
+  for (const scenario of ['shear', 'line']) {
+    const referenceFeatures = [];
+    const queryFeatures = [];
+    const landmarks = [];
+    for (let index = 0; index < 8; index++) {
+      const point =
+        scenario === 'line'
+          ? { x: 24 + index * 12, y: 24 + index * 12 + (index % 2) * 0.1 }
+          : { x: 24 + (index % 4) * 28, y: 32 + Math.floor(index / 4) * 36 };
+      referenceFeatures.push({ point, descriptor: descriptor(index), response: 0.9 });
+      queryFeatures.push({
+        point:
+          scenario === 'shear'
+            ? { x: point.x + point.y + 12, y: point.y * 0.02 + 10 }
+            : { x: point.x + 12, y: point.y + 10 },
+        descriptor: descriptor(index),
+        response: 0.9,
+      });
+      landmarks.push({
+        id: index,
+        status: 'active',
+        objectOwned: true,
+        objectOwnedStreak: 5,
+        recentDropout: false,
+        original: point,
+        current: point,
+        totalSuccessfulFrames: 8,
+        successfulTrackingStreak: 8,
+        landmarkQuality: 0.9,
+        response: 0.8,
+      });
+    }
+    const extracted = [referenceFeatures, queryFeatures];
+    const relocalizer = new XFeatKeyframeRelocalizer({ extractFeatures: async () => extracted.shift() });
+    const stored = await relocalizer.storeReference({
+      imageData: { width: 240, height: 180 },
+      trackedPoints: landmarks,
+      anchorPoint: { x: 66, y: 50 },
+    });
+    assert.equal(stored.success, true);
+    const result = await relocalizer.relocalize({ width: 240, height: 180 });
+    assert.equal(result.success, false, scenario);
+    assert.equal(result.matchCount, 8, 'descriptor identities match; geometry must reject the recovery');
+    assert.equal(result.anchorPoint, undefined);
+    relocalizer.dispose();
+  }
+});
+
 test('XFeat memory keeps initial and mature views and selects the strongest geometry', async () => {
   const initialFeatures = [];
   const matureFeatures = [];

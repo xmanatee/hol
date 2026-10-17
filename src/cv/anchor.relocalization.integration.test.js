@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   associateLandmarkCoordinateIndexes,
-  assessOrbGeometry,
   OrbKeyframeRelocalizer,
   matchOrbDescriptors,
   selectRelocalizationLandmarks,
 } from './anchor.relocalization.js';
+import { assessRelocalizationGeometry } from './relocalizationGeometry.js';
 import { loadOpenCvForNode } from './synthetic/opencvNodeLoader.js';
 
 const makeDescriptor = (byte) => new Uint8Array(32).fill(byte);
@@ -395,14 +395,14 @@ test('ORB geometry validation rejects reflections, collapse, and concentrated ma
     { reference: { x: 60, y: 45 }, current: { x: 25, y: 60 } },
     { reference: { x: 60, y: 95 }, current: { x: -25, y: 60 } },
   ];
-  const valid = assessOrbGeometry({
+  const valid = assessRelocalizationGeometry({
     transform: { rowX: [0, -1, 70], rowY: [1, 0, 0] },
     inliers,
     averageResidual: 1.4,
   });
   assert.equal(valid.valid, true, valid.reason);
 
-  const reflected = assessOrbGeometry({
+  const reflected = assessRelocalizationGeometry({
     transform: { rowX: [-1, 0, 140], rowY: [0, 1, 0] },
     inliers,
     averageResidual: 1.4,
@@ -410,7 +410,7 @@ test('ORB geometry validation rejects reflections, collapse, and concentrated ma
   assert.equal(reflected.valid, false);
   assert.match(reflected.reason, /reflected|collapsed/i);
 
-  const concentrated = assessOrbGeometry({
+  const concentrated = assessRelocalizationGeometry({
     transform: { rowX: [1, 0, 4], rowY: [0, 1, 6] },
     inliers: inliers.map((inlier, index) => ({
       reference: { x: index, y: index % 2 },
