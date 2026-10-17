@@ -798,9 +798,10 @@ test('anchor position filters adapt quickly enough to follow real object motion'
   assert.ok(jumped < 100);
 });
 
-test('absolute global relocalization bypasses stale pose filters and step limits', () => {
+test('absolute global relocalization retires stale filters and the old frame motion envelope', () => {
   const service = new ImageAnchorService();
   service.currentPosition = { x: 40, y: 50, z: 0 };
+  service.frameStartPosition = { ...service.currentPosition };
   service.currentPlanarTransform = {
     scale: 1,
     rotation: 0,
@@ -837,6 +838,26 @@ test('absolute global relocalization bypasses stale pose filters and step limits
   assert.equal(transform.scale, 1.42);
   assert.equal(transform.rotation, 0.7);
   assert.equal(service.metrics.positionFilterAdjustment, 'absolute-relocalization');
+
+  service.currentPosition = position;
+  service.currentPlanarTransform = transform;
+  service.templateRegion = { x: 200, y: 120, width: 60, height: 80 };
+  service.objectSupportAnchorUv = { u: 0.5, v: 0.5 };
+  const data = new Uint8Array(320 * 240);
+  for (let y = 140; y < 180; y++) {
+    for (let x = 210; x < 250; x++) data[y * 320 + x] = 1;
+  }
+  const mask = createObjectSupportMask({
+    width: 320,
+    height: 240,
+    data,
+    source: 'interactive-segmenter',
+    confidence: 0.95,
+    referencePoint: position,
+    createdAtFrame: 0,
+  });
+  assert.equal(service.updateObjectSupportMask(mask, { reason: 'periodic-segmentation-refresh' }), true);
+  assert.ok(Math.hypot(service.currentPosition.x - 220, service.currentPosition.y - 155) <= 6 + 1e-6);
 });
 
 test('position filtering preserves the evidence owned by the selected source', () => {

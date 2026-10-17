@@ -45,6 +45,7 @@ import {
   calculateTapLocalRadius,
   createTapLocalObjectSupportMask,
   createObjectSupportMaskPreview,
+  isIndependentObjectSupportObservation,
   isPointInsideObjectSupport,
   OBJECT_SUPPORT_MASK_SOURCES,
   warpObjectSupportMask,
@@ -283,7 +284,7 @@ export class ImageAnchorService {
     this.planarScaleFilter = createPlanarScaleFilter();
     this.curvedScaleFilter = createCurvedScaleFilter();
     this.planarRotationFilter = createPlanarRotationFilter();
-    this.normalStabilizer = new SurfaceNormalStabilizer();
+    this.normalStabilizer = new SurfaceNormalStabilizer({ now });
     this.framesWithoutNormalPose = 0;
     this.lastNormalPoseSource = null;
 
@@ -603,8 +604,10 @@ export class ImageAnchorService {
       });
       const tapDescriptorRecoveryEligible =
         this.rigidPlanarRecoveryEligible ||
-        (this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
-          MUG_TARGET_CLASS_PATTERN.test(targetClass || '') &&
+        ((this.trackingMode === OBJECT_POSE_MODEL ||
+          (this.trackingMode === RECONSTRUCTION_POSE_MODEL &&
+            MUG_TARGET_CLASS_PATTERN.test(targetClass || ''))) &&
+          isIndependentObjectSupportObservation(objectSupportMask) &&
           this._hasTrustedObjectWideRelocalizationSupport(objectSupportMask));
       const keyframeResult =
         trackingKeypoints.length > 0 && tapDescriptorRecoveryEligible
@@ -5534,6 +5537,7 @@ export class ImageAnchorService {
 
   _filterPositionCandidate(position, timestamp, method, { absoluteRelocalization = false } = {}) {
     if (absoluteRelocalization) {
+      this.frameStartPosition = { x: position.x, y: position.y, z: position.z ?? 0 };
       this.positionFilterX = createPositionFilter();
       this.positionFilterY = createPositionFilter();
       this.positionFilterX.filter(position.x, timestamp);

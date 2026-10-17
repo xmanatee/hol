@@ -2,9 +2,50 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SurfaceNormalStabilizer, angularDistanceBetweenNormals } from './normalStabilizer.js';
 
+const createStabilizer = (options = {}) => {
+  let time = 0;
+  return new SurfaceNormalStabilizer({
+    now: () => {
+      time += 1000 / 30;
+      return time;
+    },
+    ...options,
+  });
+};
+
+test('surface normal follows a sustained moderate turn with validated eight-point support', () => {
+  let time = 0;
+  const stabilizer = createStabilizer({ now: () => time });
+  stabilizer.reset({ x: 0, y: 0, z: 1 });
+  let expected;
+  for (let index = 1; index <= 10; index++) {
+    time = (index * 1000) / 15;
+    const angle = index * 0.04;
+    expected = { x: Math.sin(angle), y: 0, z: Math.cos(angle) };
+    stabilizer.update(expected, { confidence: 0.9, inliers: 8, foreshortening: expected.z });
+  }
+  assert.ok(angularDistanceBetweenNormals(stabilizer.getNormal(), expected) < 0.1);
+});
+
+test('surface normal response follows elapsed time rather than the number of CV updates', () => {
+  const normals = [15, 30, 60].map((frequency) => {
+    let time = 0;
+    const stabilizer = createStabilizer({ now: () => time });
+    stabilizer.reset({ x: 0, y: 0, z: 1 });
+    for (let index = 1; index <= frequency / 5; index++) {
+      time = (index * 1000) / frequency;
+      stabilizer.update({ x: 0.2, y: 0, z: Math.sqrt(0.96) }, { confidence: 0.8, inliers: 10 });
+    }
+    return stabilizer.getNormal();
+  });
+  for (const normal of normals.slice(1)) {
+    assert.ok(angularDistanceBetweenNormals(normals[0], normal) < 0.01);
+  }
+});
+
 test('surface normal stabilizer suppresses one-frame pose outliers', () => {
-  const stabilizer = new SurfaceNormalStabilizer({
-    historySize: 7,
+  const stabilizer = createStabilizer({
+    historyDurationMs: 7000 / 30,
     deadbandRadians: 0.02,
     outlierRadians: 0.18,
     baseAlpha: 0.08,
@@ -31,8 +72,8 @@ test('surface normal stabilizer suppresses one-frame pose outliers', () => {
 });
 
 test('surface normal stabilizer follows sustained object turns without snap jitter', () => {
-  const stabilizer = new SurfaceNormalStabilizer({
-    historySize: 7,
+  const stabilizer = createStabilizer({
+    historyDurationMs: 7000 / 30,
     deadbandRadians: 0.02,
     outlierRadians: 0.2,
     baseAlpha: 0.1,
@@ -61,7 +102,7 @@ test('surface normal stabilizer follows sustained object turns without snap jitt
 });
 
 test('surface normal stabilizer accepts confident foreshortened turns after face-on tracking', () => {
-  const stabilizer = new SurfaceNormalStabilizer();
+  const stabilizer = createStabilizer();
 
   for (let i = 0; i < 3; i++) {
     stabilizer.update({ x: 0, y: 0, z: 1 }, { confidence: 0.97, inliers: 25, foreshortening: 0.99 });
@@ -77,7 +118,7 @@ test('surface normal stabilizer accepts confident foreshortened turns after face
 });
 
 test('surface normal stabilizer returns toward face-on after confident frontal pose', () => {
-  const stabilizer = new SurfaceNormalStabilizer();
+  const stabilizer = createStabilizer();
 
   for (let i = 0; i < 3; i++) {
     stabilizer.update({ x: 0, y: 0, z: 1 }, { confidence: 0.97, inliers: 25, foreshortening: 0.99 });
@@ -97,8 +138,8 @@ test('surface normal stabilizer returns toward face-on after confident frontal p
 });
 
 test('surface normal stabilizer reacquires pose after a tracking gap', () => {
-  const stabilizer = new SurfaceNormalStabilizer({
-    historySize: 7,
+  const stabilizer = createStabilizer({
+    historyDurationMs: 7000 / 30,
     outlierRadians: 0.2,
   });
 
@@ -116,8 +157,8 @@ test('surface normal stabilizer reacquires pose after a tracking gap', () => {
 });
 
 test('surface normal stabilizer trusts mature reconstruction corrections', () => {
-  const stabilizer = new SurfaceNormalStabilizer({
-    historySize: 7,
+  const stabilizer = createStabilizer({
+    historyDurationMs: 7000 / 30,
     outlierRadians: 0.2,
   });
 
@@ -135,8 +176,8 @@ test('surface normal stabilizer trusts mature reconstruction corrections', () =>
 });
 
 test('surface normal stabilizer follows a confident wide turn from face-on with modest homography inliers', () => {
-  const stabilizer = new SurfaceNormalStabilizer({
-    historySize: 7,
+  const stabilizer = createStabilizer({
+    historyDurationMs: 7000 / 30,
     outlierRadians: 0.2,
   });
 
@@ -161,8 +202,8 @@ test('surface normal stabilizer follows a confident wide turn from face-on with 
 });
 
 test('surface normal stabilizer rejects an abrupt mirrored homography turn after a stable turned pose', () => {
-  const stabilizer = new SurfaceNormalStabilizer({
-    historySize: 7,
+  const stabilizer = createStabilizer({
+    historyDurationMs: 7000 / 30,
     outlierRadians: 0.2,
   });
 
@@ -182,8 +223,8 @@ test('surface normal stabilizer rejects an abrupt mirrored homography turn after
 });
 
 test('surface normal stabilizer rejects high-inlier mirror flips when foreshortening is still moderate', () => {
-  const stabilizer = new SurfaceNormalStabilizer({
-    historySize: 7,
+  const stabilizer = createStabilizer({
+    historyDurationMs: 7000 / 30,
     outlierRadians: 0.2,
   });
 
@@ -204,8 +245,8 @@ test('surface normal stabilizer rejects high-inlier mirror flips when foreshorte
 });
 
 test('surface normal stabilizer holds through repeated ambiguous low-confidence mirror poses', () => {
-  const stabilizer = new SurfaceNormalStabilizer({
-    historySize: 7,
+  const stabilizer = createStabilizer({
+    historyDurationMs: 7000 / 30,
     outlierRadians: 0.2,
   });
 
@@ -242,8 +283,8 @@ test('surface normal stabilizer holds through repeated ambiguous low-confidence 
 });
 
 test('surface normal stabilizer recenters quickly on modest-inlier face-on evidence', () => {
-  const stabilizer = new SurfaceNormalStabilizer({
-    historySize: 7,
+  const stabilizer = createStabilizer({
+    historyDurationMs: 7000 / 30,
     outlierRadians: 0.2,
   });
 

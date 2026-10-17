@@ -1,4 +1,5 @@
 const DEFAULT_NORMAL = { x: 0, y: 0, z: 1 };
+const REFERENCE_INTERVAL_MS = 1000 / 30;
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -45,7 +46,8 @@ export const angularDistanceBetweenNormals = (a, b) => {
 
 export class SurfaceNormalStabilizer {
   constructor(options = {}) {
-    this.historySize = options.historySize ?? 9;
+    this.now = options.now ?? (() => performance.now());
+    this.historyDurationMs = options.historyDurationMs ?? 300;
     this.deadbandRadians = options.deadbandRadians ?? 0.028;
     this.outlierRadians = options.outlierRadians ?? 0.22;
     this.baseAlpha = options.baseAlpha ?? 0.07;
@@ -53,11 +55,13 @@ export class SurfaceNormalStabilizer {
     this.fastAngleRadians = options.fastAngleRadians ?? 0.42;
     this.history = [];
     this.current = null;
+    this.lastUpdatedAt = null;
   }
 
   reset(normal = null) {
     this.history = [];
     this.current = normal ? normalize(normal) : null;
+    this.lastUpdatedAt = this.now();
   }
 
   getNormal() {
@@ -65,6 +69,10 @@ export class SurfaceNormalStabilizer {
   }
 
   update(normal, options = {}) {
+    const timestamp = this.now();
+    const elapsedMs = this.lastUpdatedAt === null ? REFERENCE_INTERVAL_MS : timestamp - this.lastUpdatedAt;
+    if (elapsedMs <= 0) return this.getNormal();
+    this.lastUpdatedAt = timestamp;
     const measurement = normalize(normal ?? DEFAULT_NORMAL);
     const confidence = clamp(options.confidence ?? 1, 0, 1);
     const inlierWeight = clamp((options.inliers ?? 0) / 25, 0, 1);
@@ -87,8 +95,7 @@ export class SurfaceNormalStabilizer {
     ) {
       return this.getNormal();
     }
-    const confidentForeshortenedTurn =
-      foreshortening < 0.9 && confidence >= 0.5 && (options.inliers ?? 0) >= 12 && measurementTilt > 0.18;
+    const confidentForeshortenedTurn = foreshortening < 0.96 && weight >= 0.68 && measurementTilt > 0.18;
     const confidentWideTurn =
       foreshortening < 0.72 &&
       confidence >= 0.55 &&
@@ -108,12 +115,12 @@ export class SurfaceNormalStabilizer {
       reacquiredPose ||
       trustedExternalPose;
 
-    this.history.push({ normal: measurement, weight, trustedPoseChange });
-    if (this.history.length > this.historySize) {
+    this.history.push({ normal: measurement, weight, trustedPoseChange, timestamp });
+    while (this.history[0].timestamp <= timestamp - this.historyDurationMs) {
       this.history.shift();
     }
     if (reacquiredPose) {
-      this.history = [{ normal: measurement, weight, trustedPoseChange }];
+      this.history = [{ normal: measurement, weight, trustedPoseChange, timestamp }];
     }
 
     const componentMedian = normalize({
@@ -157,6 +164,7 @@ export class SurfaceNormalStabilizer {
     if (reacquiredPose) {
       alpha = Math.max(alpha, 0.82 * (0.75 + confidence * 0.25));
     }
+    alpha = 1 - (1 - alpha) ** (elapsedMs / REFERENCE_INTERVAL_MS);
 
     this.current = normalize({
       x: this.current.x + (target.x - this.current.x) * alpha,
