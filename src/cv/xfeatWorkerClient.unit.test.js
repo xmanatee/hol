@@ -161,6 +161,42 @@ test('a rejected memory extension preserves an already published XFeat reference
   assert.equal(relocalizer.hasReference(), true);
 });
 
+test('reported XFeat inference faults retire the runtime and reject every pending request', async () => {
+  const workers = [];
+  const relocalizer = new XFeatWorkerRelocalizer({
+    createWorker: () => {
+      const worker = new ControlledWorker();
+      workers.push(worker);
+      return worker;
+    },
+  });
+  const storing = relocalizer.storeReference({
+    imageData: imageData(),
+    trackedPoints: [],
+    anchorPoint: { x: 4, y: 4 },
+  });
+  workers[0].respond({ success: true, descriptorCount: 24 });
+  await storing;
+  const first = relocalizer.relocalize(imageData());
+  const second = relocalizer.relocalize(imageData());
+  const rejected = Promise.all(
+    [first, second].map((request) => assert.rejects(request, /XFeat.*inference failed/)),
+  );
+  workers[0].onmessage({ data: { id: workers[0].requests[1].message.id, error: 'inference failed' } });
+  await rejected;
+  assert.equal(relocalizer.hasReference(), false);
+  assert.equal(workers[0].terminated, true);
+  assert.equal(relocalizer.pendingRequests.size, 0);
+  const retry = relocalizer.storeReference({
+    imageData: imageData(),
+    trackedPoints: [],
+    anchorPoint: { x: 4, y: 4 },
+  });
+  workers[1].respond({ success: true, descriptorCount: 24 });
+  assert.equal((await retry).success, true);
+  relocalizer.dispose();
+});
+
 test('XFeat worker client clears runtime state and terminates the worker on disposal', async () => {
   const worker = new FakeWorker();
   const relocalizer = new XFeatWorkerRelocalizer({ createWorker: () => worker });

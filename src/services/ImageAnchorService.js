@@ -117,11 +117,6 @@ const vectorMagnitude = (vector) => Math.hypot(vector.x, vector.y);
 const pointDistance = (left, right) => Math.hypot(left.x - right.x, left.y - right.y);
 const openCvRuntimeError = (cv, error) =>
   typeof error === 'number' ? new Error(cv.exceptionFromPtr(error).msg, { cause: error }) : error;
-const learnedRuntimeFailure = (error) => ({
-  success: false,
-  reason: `XFeat runtime failure: ${error.message}`,
-  runtimeFailure: true,
-});
 const SCALE_STEP_LOG_LIMIT = 0.1;
 const RECONSTRUCTION_POSITION_STEP_RATIO = 0.08;
 const MATURE_CURVED_RECOVERY_POSITION_STEP_RATIO = 0.12;
@@ -275,6 +270,7 @@ export class ImageAnchorService {
     this.relocalizer = new OrbKeyframeRelocalizer();
     this.learnedRelocalizer = learnedRelocalizer;
     this.learnedReferencePromise = null;
+    this.learnedReferenceFailure = null;
     this.homographyEstimator = new HomographyEstimator();
     this.affinePoseEstimator = new AffineParallaxPoseEstimator();
     this.reconstructor = new SparseObjectReconstructor();
@@ -1242,6 +1238,7 @@ export class ImageAnchorService {
     let src = null;
 
     try {
+      if (this.learnedReferenceFailure) throw this.learnedReferenceFailure;
       src = this.cv.matFromImageData(imageData);
       const gray = this.keypointTracker.acquireGrayFrame(this.cv);
       this.cv.cvtColor(src, gray, this.cv.COLOR_RGBA2GRAY);
@@ -2310,14 +2307,9 @@ export class ImageAnchorService {
     if (!orbResult.success && this.learnedReferencePromise && imageData && learnedRelocalizationDue) {
       this.lastLearnedRelocalizationAttemptFrame = this.frameIndex;
       this.metrics.learnedRelocalizationAttempted = true;
-      const learnedReference = await this.learnedReferencePromise;
-      if (learnedReference.runtimeFailure) {
-        logger.warn('ImageAnchor', learnedReference.reason);
-      }
+      await this.learnedReferencePromise;
       if (this.learnedRelocalizer.hasReference()) {
-        learnedResult = await this.learnedRelocalizer
-          .relocalize(imageData)
-          .then((result) => result, learnedRuntimeFailure);
+        learnedResult = await this.learnedRelocalizer.relocalize(imageData);
         if (learnedResult.success) {
           relocalizationResult = {
             ...learnedResult,
@@ -2325,9 +2317,6 @@ export class ImageAnchorService {
           };
         }
       }
-    }
-    if (learnedResult?.runtimeFailure) {
-      logger.warn('ImageAnchor', learnedResult.reason);
     }
     const requiredInliers = learnedResult?.success
       ? Math.max(minimumInliers, MIN_LEARNED_RELOCALIZATION_INLIERS)
@@ -2422,14 +2411,18 @@ export class ImageAnchorService {
     if (!accepted || !this.learnedRelocalizer || (this.learnedReferencePromise && !extend)) {
       return this.learnedReferencePromise;
     }
-    this.learnedReferencePromise = this.learnedRelocalizer
-      .storeReference({
-        imageData,
-        trackedPoints: this.keypointTracker.trackedPoints,
-        anchorPoint: this.currentPosition,
-      })
-      .then((result) => result, learnedRuntimeFailure);
-    return this.learnedReferencePromise;
+    const request = this.learnedRelocalizer.storeReference({
+      imageData,
+      trackedPoints: this.keypointTracker.trackedPoints,
+      anchorPoint: this.currentPosition,
+    });
+    this.learnedReferencePromise = request;
+    // Reference extraction is detached from frame processing; surface its failure on the next frame.
+    request.catch((error) => {
+      if (this.learnedReferencePromise !== request) return;
+      this.learnedReferenceFailure = new Error(`XFeat reference failed: ${error.message}`, { cause: error });
+    });
+    return request;
   }
 
   _storeRelocalizationKeyframe(
@@ -6856,6 +6849,9 @@ export class ImageAnchorService {
    * Clear current anchor
    */
   clearAnchor() {
+    this.learnedReferencePromise = null;
+    this.learnedReferenceFailure = null;
+    this.learnedRelocalizer?.clear();
     if (this.anchored) {
       this.anchored = false;
       this.anchorState = 'inactive';
@@ -6901,8 +6897,6 @@ export class ImageAnchorService {
       this.homographyEstimator.resetTracking();
       this.reconstructor.reset({ anchorReference: { x: 0, y: 0 } });
       this.relocalizer.clear();
-      this.learnedRelocalizer?.clear();
-      this.learnedReferencePromise = null;
 
       this._notifyStateChange();
     }

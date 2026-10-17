@@ -4165,7 +4165,7 @@ test('rejected ORB keyframes cannot arm learned recovery', () => {
   assert.equal(service.learnedReferencePromise, null);
 });
 
-test('XFeat runtime failure preserves the original ORB failure and disables learned recovery', async () => {
+test('XFeat inference faults reject recovery instead of becoming an ordinary ORB miss', async () => {
   const service = new ImageAnchorService();
   service.cv = { runtime: 'opencv' };
   service.relocalizer = {
@@ -4184,16 +4184,57 @@ test('XFeat runtime failure preserves the original ORB failure and disables lear
     relocalize: () => Promise.reject(new Error('worker crashed')),
   };
 
-  const result = await service._attemptKeyframeRelocalization(
-    { cols: 320, rows: 240 },
-    'tracking failed',
-    null,
-    { width: 320, height: 240, data: new Uint8ClampedArray(320 * 240 * 4) },
+  await assert.rejects(
+    service._attemptKeyframeRelocalization({ cols: 320, rows: 240 }, 'tracking failed', null, {
+      width: 320,
+      height: 240,
+      data: new Uint8ClampedArray(320 * 240 * 4),
+    }),
+    /worker crashed/,
   );
-
-  assert.equal(result.success, false);
-  assert.equal(result.reason, 'No robust ORB geometric consensus');
 });
+
+for (const retired of [false, true]) {
+  test(`a failed ${retired ? 'retired' : 'current'} XFeat reference cannot silently corrupt tracking`, async (t) => {
+    const cv = await loadOpenCvForNode();
+    const sequence = createCylindricalCanSequence({ frameCount: 2, occlusionFrames: [] });
+    const pending = Promise.withResolvers();
+    const service = new ImageAnchorService({
+      learnedRelocalizer: {
+        storeReference: () => pending.promise,
+        clear() {},
+        dispose() {},
+      },
+    });
+    t.after(() => service.dispose());
+    await service.initialize(cv, sequence.camera);
+    const create = () =>
+      service.createAnchor(sequence.frames[0].imageData, sequence.tap, {
+        ...sequence.boundingBox,
+        surfaceHint: 'unknown',
+      });
+    await create();
+    const storing = service._storeLearnedReference(sequence.frames[0].imageData);
+    if (retired) {
+      service.clearAnchor();
+      await create();
+    }
+    pending.reject(new Error('model initialization failed'));
+    await assert.rejects(storing, /model initialization failed/);
+    if (!retired) {
+      await assert.rejects(
+        service.updateAnchor(sequence.frames[1].imageData),
+        /XFeat reference failed: model initialization failed/,
+      );
+      assert.equal(service.getState().metrics.lastFailureStage, 'update-exception');
+      assert.equal(service.getState().metrics.targetPresent, false);
+      assert.equal(service.getState().metrics.readiness.faceReady, false);
+      service.clearAnchor();
+      await create();
+    }
+    assert.equal((await service.updateAnchor(sequence.frames[1].imageData)).success, true);
+  });
+}
 
 test('learned recovery runs at a bounded cadence while ORB continues every frame', async () => {
   const service = new ImageAnchorService();

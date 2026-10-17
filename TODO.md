@@ -148,8 +148,6 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
 
 ### Runtime health
 
-- **P1 · Learned-runtime faults:** Expose XFeat initialization/inference failures as capability errors with explicit retry; current warning-only conversion must not look like an ordinary missed match.
-  [ORT diagnosis](https://onnxruntime.ai/docs/tutorials/web/performance-diagnosis.html)
 - **P2 · Resource endurance:** Stress repeated camera/mode/retry/context-loss cycles; verify WASM Mats, workers, GPU assets, bitmaps, streams, and audio contexts return to a bounded baseline.
   [WebGL resource lifecycle](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices)
 - **P2 · Background scheduling:** Stop optional inference and animation while hidden, discard aged results on return, and resume only after fresh visual evidence; verify this separately from media-track interruption handling.

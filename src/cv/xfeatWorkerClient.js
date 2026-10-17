@@ -114,7 +114,13 @@ export class XFeatWorkerRelocalizer {
 
   _handleMessage(message) {
     if (Object.hasOwn(message, 'error')) {
-      this.pendingRequests.reject(message.id, new Error(message.error));
+      if (this.pendingRequests.has(message.id)) {
+        this._handleFailure(
+          new Error(`XFeat runtime failed: ${message.error}`),
+          this.worker,
+          this.workerGeneration,
+        );
+      }
     } else {
       this.pendingRequests.resolve(message.id, message.result);
     }
