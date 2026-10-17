@@ -86,7 +86,6 @@ const segmentFrame = async (message) => {
       threshold: MASK_THRESHOLD,
       referencePoint: message.tapPosition,
       createdAtFrame: message.createdAtFrame,
-      maxRadius: message.maxRadius,
     });
 
     self.postMessage(

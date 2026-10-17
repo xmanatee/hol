@@ -22,7 +22,7 @@ export const getSegmentationBackend = (id) => {
 };
 
 // The exact same point-prompt boundary applies to every execution backend.
-export const assertSegmentationInput = ({ imageData, tapPosition, createdAtFrame, maxRadius }) => {
+export const assertSegmentationInput = ({ imageData, tapPosition, createdAtFrame }) => {
   const { width, height, data } = imageData;
   if (
     !Number.isSafeInteger(width) ||
@@ -48,6 +48,4 @@ export const assertSegmentationInput = ({ imageData, tapPosition, createdAtFrame
   }
   if (!Number.isSafeInteger(createdAtFrame) || createdAtFrame < 0)
     throw new RangeError('Segmentation frame ID must be a non-negative integer');
-  if (maxRadius !== null && (!Number.isFinite(maxRadius) || maxRadius <= 0))
-    throw new RangeError('Segmentation radius must be null or positive');
 };

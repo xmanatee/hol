@@ -10,7 +10,6 @@ const input = () => ({
   imageData: { width: 4, height: 3, data: new Uint8ClampedArray(48) },
   tapPosition: { x: 2, y: 1 },
   createdAtFrame: 0,
-  maxRadius: null,
 });
 
 test('backend selection is explicit, immutable and distinguishes WebGL from WebGPU', () => {
@@ -53,6 +52,4 @@ test('all segmentation backends reject malformed frames and fractional out-of-ra
   }
   for (const createdAtFrame of [-1, 0.2, Infinity])
     assert.throws(() => assertSegmentationInput({ ...input(), createdAtFrame }), /frame ID/);
-  for (const maxRadius of [0, -1, NaN, undefined])
-    assert.throws(() => assertSegmentationInput({ ...input(), maxRadius }), /radius/);
 });

@@ -1,5 +1,6 @@
 import { isObjectObservationFresh } from '../utils/cvScheduling.js';
 import { isFaceObservationReady } from '../utils/overlayVisibility.js';
+import { getTargetScenario } from '../cv/targetScenario.js';
 
 const DISCOVERY_INTERVAL_MS = 750;
 const MIN_TRACKING_OBSERVATIONS = 3;
@@ -9,11 +10,18 @@ const FOCUS_RELEASE_MS = 700;
 
 // The manager owns CV buffers and geometry. This session owns subject identity and user commitment.
 export class ObjectObservationSession {
-  constructor({ manager, width, height, now = () => performance.timeOrigin + performance.now() }) {
+  constructor({
+    manager,
+    width,
+    height,
+    targetScenario = 'general',
+    now = () => performance.timeOrigin + performance.now(),
+  }) {
     this.manager = manager;
     this.width = width;
     this.height = height;
     this.now = now;
+    this.targetScenario = getTargetScenario(targetScenario);
     this.selected = false;
     this.subject = null;
     this.nextObjectId = 1;
@@ -47,6 +55,7 @@ export class ObjectObservationSession {
       const result = await this.manager.prepareObjectAtPoint(
         { x: this.width / 2, y: this.height / 2 },
         imageData,
+        this.targetScenario.id,
       );
       this._assertActive();
       if (!result.success || result.objectSupportMaskSource !== 'interactive-segmenter') {

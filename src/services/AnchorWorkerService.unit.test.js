@@ -515,7 +515,7 @@ test('anchor worker initialization sends the active tracking mode and applies st
   });
 
   let resolvedState = null;
-  const initialized = service.initialize(null, 320, 240, 70).then(() => {
+  const initialized = service.initialize(null, 320, 240, 70, 'bottle-label').then(() => {
     resolvedState = service.getState();
   });
 
@@ -529,6 +529,7 @@ test('anchor worker initialization sends the active tracking mode and applies st
       viewportHeight: 240,
       fov: 70,
       trackingMode: 'depth-fusion',
+      targetScenario: 'bottle-label',
       logTags: [],
     },
   });
@@ -756,6 +757,7 @@ test('anchor reset cancels lazy worker creation and starts only the latest calib
     viewportHeight: 360,
     fov: 70,
     trackingMode: 'object-pose',
+    targetScenario: 'general',
     logTags: [],
   });
 
@@ -1062,6 +1064,7 @@ test('anchor reset restarts camera calibration and ignores every stale worker ca
     viewportHeight: 640,
     fov: 63,
     trackingMode: 'direct-photometric',
+    targetScenario: 'general',
     logTags: [],
   });
   secondWorker.reply({

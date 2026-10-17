@@ -250,7 +250,6 @@ export const runSegmentationExperiment = async ({ workerUrl, backendId, model, r
           imageData: { ...imageData, data },
           tapPosition,
           createdAtFrame: frameId,
-          maxRadius: null,
         },
         [data.buffer],
       );

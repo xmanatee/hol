@@ -19,7 +19,7 @@ export const renderDiscoveryOverlay = (ctx, candidate) => {
   ctx.fillStyle = ready ? 'rgba(74,222,128,0.22)' : 'rgba(226,232,240,0.12)';
   ctx.lineWidth = 2;
   const preview = candidate?.maskPreview;
-  if (preview && candidate.status !== 'lost') {
+  if (preview?.points.length >= 3 && candidate.status !== 'lost' && candidate.status !== 'stale') {
     ctx.beginPath();
     preview.points.forEach((point, index) => {
       if (index === 0) ctx.moveTo(point.x, point.y);
@@ -28,15 +28,19 @@ export const renderDiscoveryOverlay = (ctx, candidate) => {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    const { position } = candidate;
-    ctx.beginPath();
-    ctx.arc(position.x, position.y, 12, 0, 2 * Math.PI);
-    ctx.stroke();
   } else {
     const x = ctx.canvas.width / 2;
     const y = ctx.canvas.height / 2;
+    const halfSize = Math.min(ctx.canvas.width, ctx.canvas.height) * 0.16;
+    const corner = halfSize * 0.25;
     ctx.beginPath();
-    ctx.arc(x, y, 18, 0, 2 * Math.PI);
+    for (const dx of [-1, 1]) {
+      for (const dy of [-1, 1]) {
+        ctx.moveTo(x + dx * (halfSize - corner), y + dy * halfSize);
+        ctx.lineTo(x + dx * halfSize, y + dy * halfSize);
+        ctx.lineTo(x + dx * halfSize, y + dy * (halfSize - corner));
+      }
+    }
     ctx.stroke();
   }
   ctx.restore();

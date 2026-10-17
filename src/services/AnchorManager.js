@@ -1,7 +1,7 @@
 import { ImageAnchorService } from './ImageAnchorService.js';
 import { InteractiveSegmenterService } from './InteractiveSegmenterService.js';
 import { HomographyEstimator } from '../cv/anchor.homography.js';
-import { calculateTapLocalRadius, isPointInsideObjectSupport } from '../cv/objectSupportMask.js';
+import { evaluateObjectSupportContinuity, isPointInsideObjectSupport } from '../cv/objectSupportMask.js';
 import {
   CURVED_OBJECT_RECOVERY_REASON,
   needsCurvedObjectRecovery,
@@ -10,6 +10,7 @@ import {
 import { hasPosePositionDropout } from '../cv/poseDropoutRecovery.js';
 import { logger } from '../utils/logger.js';
 import { isFaceObservationReady } from '../utils/overlayVisibility.js';
+import { getTargetScenario } from '../cv/targetScenario.js';
 
 const TAP_SEGMENTATION_TIMEOUT_MS = 6000;
 const RECOVERY_SEGMENTATION_TIMEOUT_MS = 1400;
@@ -148,7 +149,8 @@ export class AnchorManager {
    * @param {ImageData} imageData - Current frame
    * @returns {Object} Creation result
    */
-  async prepareObjectAtPoint(tapPosition, imageData) {
+  async prepareObjectAtPoint(tapPosition, imageData, targetScenario = 'general') {
+    const scenario = getTargetScenario(targetScenario);
     if (this.disposed) {
       throw new Error('Anchor manager is disposed');
     }
@@ -176,6 +178,9 @@ export class AnchorManager {
     const selectionRegion = {
       ...this._createSelectionRegion(objectSupportMask),
       objectSupportMask,
+      targetScenario: scenario.id,
+      surfaceHint: scenario.surfaceHint,
+      geometryBasis: scenario.surfaceHint ? 'user-prior' : 'unknown',
     };
 
     const result = await this.imageAnchorService.createAnchor(imageData, tapPosition, selectionRegion);
@@ -209,7 +214,7 @@ export class AnchorManager {
   }
 
   containsSourcePoint(point) {
-    const mask = this.imageAnchorService._getCurrentObjectSupportMask();
+    const mask = this.imageAnchorService.getObjectSupportMask();
     return Boolean(mask && isPointInsideObjectSupport(mask, point));
   }
 
@@ -257,7 +262,6 @@ export class AnchorManager {
     }
 
     const position = this.anchorState.position || this.activeAnchor.position;
-    const refreshRadius = this._getSegmentationRefreshRadius(imageData);
 
     this.segmentationRefreshInFlight = true;
     const requestId = ++this.segmentationRefreshRequestId;
@@ -272,7 +276,6 @@ export class AnchorManager {
     this.segmentationRefreshTask = this._segmentTapObject({
       imageData,
       tapPosition: position,
-      maxRadius: refreshRadius,
       createdAtFrame: this.imageAnchorService.frameIndex,
       timeoutMs: RECOVERY_SEGMENTATION_TIMEOUT_MS,
     })
@@ -284,7 +287,7 @@ export class AnchorManager {
         const { objectSupportMask, outcomeReason } = segmentationResult;
         const evaluation = outcomeReason
           ? { accepted: false, reason: outcomeReason }
-          : this._evaluateSegmentationRefresh(objectSupportMask, position, refreshRadius);
+          : this._evaluateSegmentationRefresh(objectSupportMask);
         if (!evaluation.accepted) {
           this._setSegmentationRefresh({
             status: 'rejected',
@@ -348,11 +351,10 @@ export class AnchorManager {
     return true;
   }
 
-  async _segmentTapObject({ imageData, tapPosition, maxRadius, createdAtFrame, timeoutMs }) {
+  async _segmentTapObject({ imageData, tapPosition, createdAtFrame, timeoutMs }) {
     const objectSupportMask = await this.interactiveSegmenterService.segmentTap({
       imageData,
       tapPosition,
-      maxRadius,
       createdAtFrame,
       timeoutMs,
     });
@@ -416,32 +418,7 @@ export class AnchorManager {
     return shouldDeferSparseMugPoseDropoutRecovery(metrics, targetClass, trackingMode);
   }
 
-  _getSegmentationRefreshRadius(imageData) {
-    const baseRadius = calculateTapLocalRadius({
-      width: imageData.width,
-      height: imageData.height,
-    });
-    const metrics = this.anchorState?.metrics || {};
-    const active = metrics.activeLandmarkCount ?? metrics.keypointCount ?? 0;
-    const owned = metrics.objectOwnedLandmarks ?? active;
-    const ownershipRatio = owned / Math.max(1, active);
-    const state = this.anchorState?.state;
-    const growthScale = this._hasLowObjectOwnership()
-      ? 1.75
-      : this._hasPoseDropout()
-        ? 3.25
-        : state === 'stable' || metrics.reconstructionReady
-          ? 3.25
-          : active >= 24 && ownershipRatio >= 0.7
-            ? 2.75
-            : active >= 12 && ownershipRatio >= 0.65
-              ? 2.25
-              : 1.5;
-
-    return Math.min(baseRadius * growthScale, Math.hypot(imageData.width, imageData.height) * 0.28);
-  }
-
-  _evaluateSegmentationRefresh(objectSupportMask, position, continuityRadius) {
+  _evaluateSegmentationRefresh(objectSupportMask) {
     if (!this._hasUsableObjectSupportMask(objectSupportMask)) {
       return { accepted: false, reason: 'empty-mask' };
     }
@@ -455,51 +432,7 @@ export class AnchorManager {
       return { accepted: false, reason: 'oversized-mask' };
     }
 
-    const currentBounds =
-      this.anchorState?.metrics?.currentObjectSupportMaskBounds ||
-      this.anchorState?.metrics?.objectSupportMaskBounds ||
-      this.activeAnchor?.selectionRegion?.objectSupportMask?.bbox ||
-      null;
-    if (!currentBounds) {
-      return isPointInsideObjectSupport(objectSupportMask, position)
-        ? { accepted: true, reason: 'anchor-contained' }
-        : { accepted: false, reason: 'discontinuous-mask' };
-    }
-
-    const center = {
-      x: objectSupportMask.bbox.x + objectSupportMask.bbox.width / 2,
-      y: objectSupportMask.bbox.y + objectSupportMask.bbox.height / 2,
-    };
-    const previousCenter = {
-      x: currentBounds.x + currentBounds.width / 2,
-      y: currentBounds.y + currentBounds.height / 2,
-    };
-    const overlapX = Math.max(
-      0,
-      Math.min(
-        objectSupportMask.bbox.x + objectSupportMask.bbox.width,
-        currentBounds.x + currentBounds.width,
-      ) - Math.max(objectSupportMask.bbox.x, currentBounds.x),
-    );
-    const overlapY = Math.max(
-      0,
-      Math.min(
-        objectSupportMask.bbox.y + objectSupportMask.bbox.height,
-        currentBounds.y + currentBounds.height,
-      ) - Math.max(objectSupportMask.bbox.y, currentBounds.y),
-    );
-    const overlapArea = overlapX * overlapY;
-    const smallerArea = Math.min(maskArea, currentBounds.width * currentBounds.height);
-    if (isPointInsideObjectSupport(objectSupportMask, position)) {
-      return { accepted: true, reason: 'anchor-contained' };
-    }
-    if (overlapArea / Math.max(1, smallerArea) >= 0.18) {
-      return { accepted: true, reason: 'mask-overlap' };
-    }
-    if (Math.hypot(center.x - previousCenter.x, center.y - previousCenter.y) <= continuityRadius) {
-      return { accepted: true, reason: 'center-continuity' };
-    }
-    return { accepted: false, reason: 'discontinuous-mask' };
+    return evaluateObjectSupportContinuity(this.imageAnchorService.getObjectSupportMask(), objectSupportMask);
   }
 
   _setSegmentationRefresh(segmentationRefresh) {

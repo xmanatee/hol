@@ -72,7 +72,6 @@ test('production interactive segmenter runs real tap inference in a mobile brows
             imageData: { width, height, data },
             tapPosition,
             createdAtFrame: 17,
-            maxRadius: null,
           },
           [sourceBuffer],
         );

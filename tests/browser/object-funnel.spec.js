@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { expectReachableButton, expectWithinViewport } from './layoutAssertions.js';
 import { productionAssetUrl } from './productionAsset.js';
+import { renderDemoTarget } from '../fixtures/demoTargetScene.js';
 
 const countGreenPixels = (canvas) => {
   const pixels = window.__holInspectCanvasPixels(canvas);
@@ -11,7 +12,39 @@ const countGreenPixels = (canvas) => {
   return green;
 };
 
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.status === testInfo.expectedStatus) return;
+  await testInfo.attach('tracking-failure', {
+    body: JSON.stringify(
+      await page.evaluate(() => ({
+        state: window.__holLatestAnchorState,
+        pose: window.__holDemoPose,
+        truth: window.__holAttachmentTruth,
+      })),
+      null,
+      2,
+    ),
+    contentType: 'application/json',
+  });
+});
+
 for (const [scenario, failedUrl, title] of [
+  [
+    'can',
+    null,
+    'printed cylinder reaches a visible face and preserves its material point under camera shake and glare',
+  ],
+  ['bottle-label', null, 'bottle label uses curved support and keeps a visible face under camera shake'],
+  [
+    'bottle-label-partial',
+    null,
+    'partial bottle label keeps its material point under camera shake and changing glare',
+  ],
+  [
+    'paper',
+    null,
+    'oblique rectangular paper reaches a visible face and keeps its surface point under camera shake',
+  ],
   [null, null, 'rendered object video reaches green readiness before tap and mounts a surface-attached face'],
   ['stale', null, 'frozen discovery removes its green outline and resumes the same selectable object'],
   ['static', null, 'camera-to-face flow works under static hosting CSP without isolation headers'],
@@ -34,6 +67,17 @@ for (const [scenario, failedUrl, title] of [
     test.skip(browserName !== 'chromium', 'Canvas video capture is a Chromium fixture');
     test.setTimeout(120_000);
     const errors = [];
+    const targetScenario =
+      scenario === 'bottle-label-partial'
+        ? 'bottle-label'
+        : ['can', 'bottle-label', 'paper'].includes(scenario)
+          ? scenario
+          : 'general';
+    if (targetScenario !== 'general') {
+      await page.addInitScript({
+        content: `window.__holRenderDemoTarget = ${renderDemoTarget.toString()}; window.__holTargetScenario = ${JSON.stringify(targetScenario)}; window.__holLabelCoverage = ${JSON.stringify(scenario === 'bottle-label-partial' ? 'partial' : 'full')}; window.__holObserveFaceVisibility = true;`,
+      });
+    }
     const faceDownload = Promise.withResolvers();
     const optionalAIRequests = [];
     page.on('request', (request) => {
@@ -129,6 +173,7 @@ for (const [scenario, failedUrl, title] of [
           if (/\/anchor\.worker-[\w-]+\.js$/.test(String(args[0]))) {
             window.__holAnchorWorker = worker;
             let raster;
+            const observations = new Map();
             const postMessage = worker.postMessage.bind(worker);
             worker.postMessage = (message, transfers) => {
               if (message.command === 'initialize') {
@@ -140,6 +185,7 @@ for (const [scenario, failedUrl, title] of [
               }
               if (message.command === 'processFrame') {
                 window.__holAnchorFrameCommands++;
+                if (message.payload.update) observations.set(message.id, message.payload.capturedAt);
                 if (
                   message.payload.imageData.width !== raster.width ||
                   message.payload.imageData.height !== raster.height
@@ -158,6 +204,10 @@ for (const [scenario, failedUrl, title] of [
             };
             worker.addEventListener('message', ({ data }) => {
               window.__holLatestAnchorState = data.state;
+              if (observations.has(data.id)) {
+                if (!data.error) window.__holLatestObservationAt = observations.get(data.id);
+                observations.delete(data.id);
+              }
             });
           }
           return worker;
@@ -254,6 +304,26 @@ for (const [scenario, failedUrl, title] of [
         };
         const render = () => {
           if (window.__holFreezeObjectVideo) return;
+          if (window.__holRenderDemoTarget) {
+            const rendered = window.__holRenderDemoTarget({
+              scenario: window.__holTargetScenario,
+              labelCoverage: window.__holLabelCoverage,
+              ...window.__holDemoPose,
+            });
+            window.__holAttachmentTruth = rendered.attachment;
+            const version = window.__holDemoPoseVersion || 0;
+            if (window.__holRenderedPoseVersion !== version) {
+              window.__holRenderedPoseVersion = version;
+              window.__holRenderedPoseAt = performance.now();
+            }
+            ctx.putImageData(
+              new ImageData(rendered.imageData.data, rendered.imageData.width, rendered.imageData.height),
+              0,
+              0,
+            );
+            if (canvas.__stream?.active) requestAnimationFrame(render);
+            return;
+          }
           const shift = window.__holObjectShift || 0;
           for (let y = 0; y < canvas.height; y++) {
             for (let x = 0; x < canvas.width; x++) {
@@ -296,6 +366,7 @@ for (const [scenario, failedUrl, title] of [
         window.__holBlankScene = true;
       });
     await page.goto('/');
+    await page.getByRole('combobox', { name: 'Target surface' }).selectOption(targetScenario);
     if (scenario === 'static') expect(await page.evaluate(() => crossOriginIsolated)).toBe(false);
     await page.getByRole('button', { name: 'Start Camera' }).click();
     const discovery = page.getByTestId('object-discovery');
@@ -312,6 +383,7 @@ for (const [scenario, failedUrl, title] of [
       await page.getByRole('button', { name: 'Reload app', exact: true }).click();
       await expect(page.getByRole('button', { name: 'Start Camera' })).toBeVisible();
       expect(navigations).toBe(2);
+      await page.getByRole('combobox', { name: 'Target surface' }).selectOption(targetScenario);
       await page.getByRole('button', { name: 'Start Camera' }).click();
     }
     if (scenario === null) {
@@ -421,6 +493,7 @@ for (const [scenario, failedUrl, title] of [
       await page.getByRole('button', { name: 'Reload app', exact: true }).click();
       await expect(page.getByRole('button', { name: 'Start Camera', exact: true })).toBeVisible();
       expect(navigations).toBe(2);
+      await page.getByRole('combobox', { name: 'Target surface' }).selectOption(targetScenario);
       await page.getByRole('button', { name: 'Start Camera' }).click();
       await expect(discovery).toHaveAttribute('data-stage', 'ready', { timeout: 90_000 });
       await selectionCanvas.click();
@@ -462,6 +535,64 @@ for (const [scenario, failedUrl, title] of [
       .poll(() => page.evaluate(() => window.__holLastDrawAt - window.__holFirstDrawAt))
       .toBeGreaterThan(500);
     await page.screenshot({ path: testInfo.outputPath('ready.png') });
+    if (targetScenario !== 'general') {
+      const selection = await page.evaluate(() => window.__holLatestAnchorState.activeAnchor.selectionRegion);
+      expect(selection.targetScenario).toBe(targetScenario);
+      expect(selection.geometryBasis).toBe('user-prior');
+      expect(selection.surfaceHint).toBe(targetScenario === 'bottle-label' ? 'bottle' : targetScenario);
+      const samples = [];
+      for (const pose of [
+        { cameraX: 18, cameraY: -12, yaw: 0.04, lightX: 0.2 },
+        { cameraX: -18, cameraY: 12, yaw: -0.04, lightX: -0.6 },
+        { cameraX: 0, cameraY: 0, yaw: 0, lightX: -0.5 },
+      ]) {
+        const poseVersion = await page.evaluate((nextPose) => {
+          window.__holDemoPose = nextPose;
+          window.__holDemoPoseVersion = (window.__holDemoPoseVersion || 0) + 1;
+          return window.__holDemoPoseVersion;
+        }, pose);
+        await page.waitForFunction((version) => window.__holRenderedPoseVersion === version, poseVersion);
+        await expect
+          .poll(
+            () =>
+              page.evaluate(() => {
+                const state = window.__holLatestAnchorState;
+                if (
+                  !(window.__holLatestObservationAt > window.__holRenderedPoseAt) ||
+                  !state?.anchorState?.metrics?.readiness?.faceReady
+                )
+                  return Infinity;
+                const point = state.anchorState.position;
+                const truth = window.__holAttachmentTruth;
+                return Math.hypot(point.x - truth.x, point.y - truth.y);
+              }),
+            { timeout: 15_000 },
+          )
+          .toBeLessThan(6);
+        await expect
+          .poll(() => page.evaluate(() => performance.now() - window.__holLastVisibleFaceAt))
+          .toBeLessThan(300);
+        samples.push(
+          await page.evaluate(() => ({
+            truth: window.__holAttachmentTruth,
+            position: window.__holLatestAnchorState.anchorState.position,
+            id: window.__holLatestAnchorState.activeAnchor.id,
+            recoveryMethod: window.__holLatestAnchorState.anchorState.metrics.relocalizationMethod,
+            learnedRecoveryAttempted:
+              window.__holLatestAnchorState.anchorState.metrics.learnedRelocalizationAttempted,
+          })),
+        );
+      }
+      expect(samples.every(({ id }) => id === commit.shownId)).toBe(true);
+      await testInfo.attach('material-point-tracking', {
+        body: JSON.stringify(samples, null, 2),
+        contentType: 'application/json',
+      });
+      await page.screenshot({ path: testInfo.outputPath(`${targetScenario}-tracking.png`) });
+      expect(errors).toEqual([]);
+      expect(optionalAIRequests).toEqual([]);
+      return;
+    }
     if (scenario === 'refresh-fault') {
       await page.evaluate(() => {
         window.__holAnchorWorker.postMessage({ type: 'fail-next-segment' });

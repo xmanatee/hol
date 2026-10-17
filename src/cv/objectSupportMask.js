@@ -50,6 +50,44 @@ const summarizePositivePixels = ({ width, height, data }) => {
 
 export const getObjectSupportBounds = (objectSupportMask) => summarizePositivePixels(objectSupportMask).bbox;
 
+// Compare the observation with the previous mask projected into the SAME camera frame.
+// Containing an anchor or overlapping bounding boxes does not establish object identity.
+export const evaluateObjectSupportContinuity = (projectedMask, observedMask) => {
+  if (observedMask.pixelCount === 0) {
+    return { accepted: false, reason: 'empty-mask' };
+  }
+  if (!projectedMask || projectedMask.pixelCount === 0) {
+    return { accepted: false, reason: 'missing-projected-support' };
+  }
+  if (projectedMask.width !== observedMask.width || projectedMask.height !== observedMask.height) {
+    throw new RangeError('Object support continuity requires the same source raster');
+  }
+  const left = Math.max(projectedMask.bbox.x, observedMask.bbox.x);
+  const top = Math.max(projectedMask.bbox.y, observedMask.bbox.y);
+  const right = Math.min(
+    projectedMask.bbox.x + projectedMask.bbox.width,
+    observedMask.bbox.x + observedMask.bbox.width,
+  );
+  const bottom = Math.min(
+    projectedMask.bbox.y + projectedMask.bbox.height,
+    observedMask.bbox.y + observedMask.bbox.height,
+  );
+  let intersection = 0;
+  for (let y = top; y < bottom; y++) {
+    for (let x = left; x < right; x++) {
+      const index = y * observedMask.width + x;
+      if (projectedMask.data[index] && observedMask.data[index]) intersection++;
+    }
+  }
+  if (intersection / projectedMask.pixelCount < 0.65) {
+    return { accepted: false, reason: 'discontinuous-mask' };
+  }
+  if (intersection / observedMask.pixelCount < 0.65) {
+    return { accepted: false, reason: 'expanded-mask' };
+  }
+  return { accepted: true, reason: 'mask-consensus' };
+};
+
 export const keepConnectedComponentContainingPoint = ({ width, height, data, point }) => {
   const output = new Uint8Array(width * height);
   const start = Math.trunc(point.y) * width + Math.trunc(point.x);
@@ -195,54 +233,6 @@ export const createTapLocalObjectSupportMask = ({
     referencePoint: { x: centerX, y: centerY },
     createdAtFrame,
     updatedAtFrame: createdAtFrame,
-  });
-};
-
-export const constrainObjectSupportMaskToTapLocalCircle = ({
-  objectSupportMask,
-  referencePoint,
-  radius = calculateTapLocalRadius(objectSupportMask),
-  source = objectSupportMask.source,
-  confidence = objectSupportMask.confidence,
-  updatedAtFrame = objectSupportMask.updatedAtFrame,
-}) => {
-  const data = new Uint8Array(objectSupportMask.width * objectSupportMask.height);
-  const centerX = Math.round(clamp(referencePoint.x, 0, objectSupportMask.width - 1));
-  const centerY = Math.round(clamp(referencePoint.y, 0, objectSupportMask.height - 1));
-  const localRadius = Math.round(
-    clamp(radius, 1, Math.min(objectSupportMask.width, objectSupportMask.height)),
-  );
-  const radiusSquared = localRadius * localRadius;
-
-  for (
-    let y = Math.max(0, centerY - localRadius);
-    y <= Math.min(objectSupportMask.height - 1, centerY + localRadius);
-    y++
-  ) {
-    const rowOffset = y * objectSupportMask.width;
-    for (
-      let x = Math.max(0, centerX - localRadius);
-      x <= Math.min(objectSupportMask.width - 1, centerX + localRadius);
-      x++
-    ) {
-      const dx = x - centerX;
-      const dy = y - centerY;
-      if (dx * dx + dy * dy <= radiusSquared && objectSupportMask.data[rowOffset + x] > 0) {
-        data[rowOffset + x] = 255;
-      }
-    }
-  }
-
-  return createObjectSupportMask({
-    width: objectSupportMask.width,
-    height: objectSupportMask.height,
-    data,
-    source,
-    confidence,
-    referencePoint: { x: centerX, y: centerY },
-    createdAtFrame: objectSupportMask.createdAtFrame,
-    updatedAtFrame,
-    observationSource: objectSupportMask.observationSource,
   });
 };
 

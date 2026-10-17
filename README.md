@@ -2,6 +2,10 @@
 
 HOL is a mobile-first, privacy-preserving camera app. Point at an object, wait for its green highlight, then tap to attach an animated talking face. Discovery and object-owned landmark tracking start before selection; tapping commits the prepared object without rebuilding its map.
 
+The demo starts with an explicit surface choice: printed can (default), bottle label, rectangular paper, or experimental general object. These are user-supplied shape priors, not automatic category recognition. Bottle labels use curved-object tracking, never flat-label PnP. Start with printed detail, soft light, and the front body/label visible; blank paper and arbitrary initial 3D orientation are not yet solved.
+
+Segmentation retains the complete prompt-connected component. Refreshes compare actual foreground pixels against the previous mask projected into the same frame, rejecting major shrinkage, jumps, and adjacent-object expansion; an anchor inside a mask or overlapping boxes is not enough. The search brackets are only an aiming guide; the measured contour alone becomes green. Analytic browser fixtures cover tapered cans, partial/full bottle-label wraps, and oblique textured paper through actual model inference, selection, and visible face pixels, with independent material-point checks after camera/light changes. These are acceptance tests, not a stability certificate: motion/glare failures remain open. They do not certify full turns, physical-device quality, or correct initial surface normals.
+
 The camera and animation path is fully local and uses object-pose tracking. Reconstruction engines remain research/benchmark APIs, not camera settings. Optional object understanding, persona generation, and speech use keyless OpenAI-compatible HTTP contracts pointed at infrastructure you control.
 
 ## Runtime architecture
@@ -142,7 +146,7 @@ The 60 FPS frame budget is 16.67 ms:
 - R3F render plus lip-sync: at most 6 ms;
 - safety margin: at least 4 ms.
 
-Discovery segmentation, XFeat warm-up, XFeat recovery, and depth inference are worker-owned tasks outside the steady-state frame path. XFeat runs in a dedicated nested worker, warms immediately only for conservatively proven planes and otherwise builds a bounded initial/mature two-view memory from accepted unknown/generic ORB keyframes; it never replaces a valid ORB recovery. Known curved classes retain their class-specific paths. Learned inference runs on at most every second admitted failed-ORB update. Both reference storage and recovery queries transfer adapter-owned frame copies so tracking, same-frame segmentation and depth fusion retain the live RGB buffer.
+Discovery segmentation, XFeat warm-up, XFeat recovery, and depth inference are worker-owned tasks outside the steady-state frame path. XFeat runs in a dedicated nested worker, warms immediately only for conservatively proven planes and otherwise builds a bounded initial/mature two-view memory from accepted unknown/generic ORB keyframes; it never replaces a valid ORB recovery. Known curved classes retain their class-specific paths. Learned inference runs on at most every second admitted failed-ORB update. Both reference storage and recovery queries transfer adapter-owned frame copies so tracking, same-frame segmentation and depth fusion retain the live RGB buffer. The renderer reads current observations directly from their owner; delayed UI snapshots cannot feed older timestamps back into motion prediction.
 
 Synthetic Node timing can identify ownership and reject an over-budget candidate, but only physical-iPhone Safari/Chromium measurements can establish the mobile budget. A 15 Hz update that takes 12 ms has 12 ms active latency but contributes 3 ms per 60 Hz display frame; both values matter, and either can expose a different failure mode.
 

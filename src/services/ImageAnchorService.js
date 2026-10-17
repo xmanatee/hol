@@ -3646,6 +3646,10 @@ export class ImageAnchorService {
     });
   }
 
+  getObjectSupportMask() {
+    return this._getCurrentObjectSupportMask();
+  }
+
   _getCurrentObjectSupportMask() {
     if (!this.objectSupportMask || !this.currentPosition || !this.currentPlanarTransform) {
       return this.objectSupportMask;

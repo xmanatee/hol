@@ -308,7 +308,7 @@ test('anchor manager disposes every runtime it owns', () => {
   assert.equal(manager.initialized, false);
 });
 
-test('anchor manager attaches tap-time segmenter mask before creating image anchor', async () => {
+test('anchor manager attaches whole segmentation and the explicit bottle-label prior before tracking', async () => {
   const maskData = new Uint8Array(100 * 80);
   for (let y = 8; y < 72; y++) {
     for (let x = 6; x < 94; x++) {
@@ -342,9 +342,8 @@ test('anchor manager attaches tap-time segmenter mask before creating image anch
     },
   };
   const interactiveSegmenterService = {
-    segmentTap: async ({ tapPosition, maxRadius, timeoutMs }) => {
+    segmentTap: async ({ tapPosition, timeoutMs }) => {
       assert.deepEqual(tapPosition, { x: 50, y: 40 });
-      assert.equal(maxRadius, undefined);
       assert.equal(timeoutMs, 6000);
       return objectSupportMask;
     },
@@ -356,11 +355,14 @@ test('anchor manager attaches tap-time segmenter mask before creating image anch
   const result = await manager.prepareObjectAtPoint(
     { x: 50, y: 40 },
     { width: 100, height: 80, data: new Uint8ClampedArray(100 * 80 * 4) },
+    'bottle-label',
   );
 
   assert.equal(result.success, true);
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'interactive-segmenter');
   assert.deepEqual(receivedSelectionRegion.objectSupportMask.bbox, { x: 6, y: 8, width: 88, height: 64 });
+  assert.equal(receivedSelectionRegion.surfaceHint, 'bottle');
+  assert.equal(receivedSelectionRegion.geometryBasis, 'user-prior');
 });
 
 test('anchor manager creates a free-tap anchor when segmentation succeeds', async () => {
@@ -421,7 +423,8 @@ test('anchor manager creates a free-tap anchor when segmentation succeeds', asyn
   assert.deepEqual(result.objectSupportSelection, { outcome: 'segmenter-mask' });
   assert.equal(manager.mode, 'anchor');
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'interactive-segmenter');
-  assert.equal('surfaceHint' in manager.activeAnchor.selectionRegion, false);
+  assert.equal(manager.activeAnchor.selectionRegion.surfaceHint, null);
+  assert.equal(manager.activeAnchor.selectionRegion.geometryBasis, 'unknown');
   assert.equal(manager.activeAnchor.selectionRegion.x1, 4);
   assert.equal(manager.activeAnchor.selectionRegion.y1, 24);
   assert.equal(manager.activeAnchor.selectionRegion.x2, 37);
@@ -569,12 +572,13 @@ test('anchor manager refreshes segmentation when object-owned landmark ratio dro
     }
   }
   refreshedMask.bbox = { x: 70, y: 50, width: 21, height: 21 };
+  refreshedMask.pixelCount = 21 * 21;
 
   let updateReason = null;
-  let receivedMaxRadius = null;
   const manager = new AnchorManager({
     imageAnchorService: {
       trackingMode: 'sparse-reconstruction',
+      getObjectSupportMask: () => createObjectSupportMask(refreshedMask),
       updateObjectSupportMask: (mask, { reason }) => {
         updateReason = reason;
         assert.equal(mask, refreshedMask);
@@ -582,9 +586,8 @@ test('anchor manager refreshes segmentation when object-owned landmark ratio dro
       },
     },
     interactiveSegmenterService: {
-      segmentTap: async ({ tapPosition, maxRadius }) => {
+      segmentTap: async ({ tapPosition }) => {
         assert.deepEqual(tapPosition, { x: 80, y: 60, z: 0 });
-        receivedMaxRadius = maxRadius;
         return refreshedMask;
       },
     },
@@ -613,7 +616,6 @@ test('anchor manager refreshes segmentation when object-owned landmark ratio dro
   await waitForTask();
 
   assert.equal(updateReason, 'object-ownership-recovery');
-  assert.ok(receivedMaxRadius > 28);
   assert.equal(manager.activeAnchor.objectSupportMaskSource, 'interactive-segmenter');
 });
 
@@ -702,6 +704,7 @@ test('the frame transaction waits until its exact segmentation result has been a
     imageAnchorService: {
       trackingMode: 'sparse-reconstruction',
       frameIndex: 7,
+      getObjectSupportMask: createTapMask,
       updateObjectSupportMask: () => {
         applied = true;
         return true;
@@ -760,6 +763,7 @@ test('pose dropout records accepted and service-rejected overlapping support ref
     }
   }
   refreshedMask.bbox = { x: 52, y: 46, width: 61, height: 41 };
+  refreshedMask.pixelCount = 61 * 41;
 
   let updateReason = null;
   let receivedTap = null;
@@ -767,6 +771,7 @@ test('pose dropout records accepted and service-rejected overlapping support ref
   const manager = new AnchorManager({
     imageAnchorService: {
       trackingMode: 'sparse-reconstruction',
+      getObjectSupportMask: () => createObjectSupportMask(refreshedMask),
       updateObjectSupportMask: (mask, { reason }) => {
         assert.equal(mask, refreshedMask);
         updateReason = reason;
@@ -823,7 +828,7 @@ test('pose dropout records accepted and service-rejected overlapping support ref
   assert.deepEqual(manager.getState().segmentationRefresh, {
     status: 'accepted',
     trigger: 'pose-dropout-recovery',
-    outcomeReason: 'mask-overlap',
+    outcomeReason: 'mask-consensus',
     maskSource: 'interactive-segmenter',
     errorMessage: null,
   });
@@ -1007,11 +1012,13 @@ test('curved motion hold requests recovery segmentation before interval elapses'
     }
   }
   refreshedMask.bbox = { x: 52, y: 46, width: 61, height: 41 };
+  refreshedMask.pixelCount = 61 * 41;
 
   let updateReason = null;
   const manager = new AnchorManager({
     imageAnchorService: {
       trackingMode: 'sparse-reconstruction',
+      getObjectSupportMask: () => createObjectSupportMask(refreshedMask),
       updateObjectSupportMask: (mask, { reason }) => {
         assert.equal(mask, refreshedMask);
         updateReason = reason;
@@ -1066,7 +1073,7 @@ test('curved motion hold requests recovery segmentation before interval elapses'
   assert.deepEqual(manager.getState().segmentationRefresh, {
     status: 'accepted',
     trigger: 'curved-object-recovery',
-    outcomeReason: 'mask-overlap',
+    outcomeReason: 'mask-consensus',
     maskSource: 'interactive-segmenter',
     errorMessage: null,
   });
@@ -1226,45 +1233,24 @@ test('pose dropout recovery distinguishes orientation loss from measured positio
   assert.equal(manager._hasPoseDropout(), true);
 });
 
-test('segmentation refresh radius starts local and grows with object evidence', () => {
-  const manager = new AnchorManager({
-    imageAnchorService: {
-      trackingMode: 'sparse-reconstruction',
-    },
-    interactiveSegmenterService: {},
-  });
-  const imageData = {
-    width: 640,
-    height: 480,
-  };
-
-  manager.anchorState = {
-    state: 'mapping',
-    metrics: {
-      activeLandmarkCount: 8,
-      objectOwnedLandmarks: 8,
-    },
-  };
-  const bootstrapRadius = manager._getSegmentationRefreshRadius(imageData);
-
-  manager.anchorState = {
-    state: 'stable',
-    metrics: {
-      activeLandmarkCount: 36,
-      objectOwnedLandmarks: 34,
-      reconstructionReady: true,
-    },
-  };
-  const grownRadius = manager._getSegmentationRefreshRadius(imageData);
-
-  assert.ok(bootstrapRadius <= 43);
-  assert.ok(grownRadius > bootstrapRadius * 2);
-});
-
 test('anchor manager explains oversized and discontinuous segmentation refresh rejections', () => {
   const manager = new AnchorManager({
     imageAnchorService: {
       trackingMode: 'sparse-reconstruction',
+      getObjectSupportMask: () =>
+        createObjectSupportMask({
+          width: 200,
+          height: 160,
+          data: Uint8Array.from({ length: 200 * 160 }, (_, index) => {
+            const x = index % 200;
+            const y = Math.floor(index / 200);
+            return x >= 70 && x < 130 && y >= 50 && y < 110 ? 255 : 0;
+          }),
+          source: 'interactive-segmenter',
+          confidence: 0.9,
+          referencePoint: { x: 100, y: 80 },
+          createdAtFrame: 1,
+        }),
     },
     interactiveSegmenterService: {},
   });
@@ -1296,11 +1282,11 @@ test('anchor manager explains oversized and discontinuous segmentation refresh r
     updatedAtFrame: 1,
   });
 
-  assert.deepEqual(manager._evaluateSegmentationRefresh(oversizedMask, { x: 100, y: 80 }, 42), {
+  assert.deepEqual(manager._evaluateSegmentationRefresh(oversizedMask), {
     accepted: false,
     reason: 'oversized-mask',
   });
-  assert.deepEqual(manager._evaluateSegmentationRefresh(discontinuousMask, { x: 100, y: 80 }, 42), {
+  assert.deepEqual(manager._evaluateSegmentationRefresh(discontinuousMask), {
     accepted: false,
     reason: 'discontinuous-mask',
   });

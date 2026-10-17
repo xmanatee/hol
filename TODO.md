@@ -4,14 +4,38 @@ P1: demo correctness, safety, and accessibility. P2: consolidation and measured 
 Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep the visual demo local and backend-free.
 Prioritize trustworthy tracking evidence, correct surface geometry, and consistent observation expiry. Research is an experiment, not a commitment to another framework, model, or backend.
 
+## Scoped demo: cans, bottle labels, rectangular paper
+
+### Detection and geometry
+
+- **P1 · Scenario recognition:** Replace the explicit user prior with verified can/body, bottle/label, and paper hypotheses; preserve unknown and reject merged objects. Point-prompt confidence is neither instance identity nor shape evidence.
+  [MediaPipe scope](https://ai.google.dev/edge/mediapipe/solutions/vision/interactive_segmenter), [Temporal segmentation](https://github.com/facebookresearch/sam2)
+- **P1 · Can body:** Fit the central cylinder separately from rims/taper; estimate its axis and visible tangent under camera tilt, and track printed material rather than highlight motion. Do not infer azimuth from an axisymmetric outline.
+  [Cylinder target constraints](https://developer.vuforia.com/library/vuforia-engine/images-and-objects/cylinder-targets/cylinder-targets/)
+- **P1 · Bottle labels:** Separate whole-bottle identity, body radius/axis, and label support; cover partial rectangular labels and full wraps without using label width as bottle diameter. Exclude neck, shoulder, transparent glass, and refracted background from attachment evidence.
+  [Cylinder geometry](https://developer.vuforia.com/library/vuforia-engine/images-and-objects/cylinder-targets/cylinder-targets/)
+- **P1 · Paper reference:** Detect and persist four boundary corners, rectify the initial oblique view under an explicit rectangle prior and intrinsics, and support blank sheets. A projected quadrilateral alone cannot prove a rectangle rather than a rhombus.
+  [Homography and calibration](https://docs.opencv.org/4.x/d9/dab/tutorial_homography.html)
+
+### Acceptance and alternatives
+
+- **P1 · Recovery consistency:** Resolve the five-inlier local recovery/eight-landmark pose deadlock; do not starve stronger matching behind weak ORB success. Validate XFeat against material-point identity before extending it to curved targets; broad routing produced a false bottle attachment in the analytic camera/glare test.
+  [XFeat](https://github.com/verlab/accelerated_features), [Geometric evidence](https://docs.opencv.org/4.x/d9/dab/tutorial_homography.html)
+- **P1 · Negative evidence:** Reconcile repeated mask/pose disagreement without merging neighboring objects, retaining a wrong reference, or presenting an indefinitely green attachment; cover recovery after glare rather than accepting a mask merely because it contains the anchor.
+  [Temporal segmentation](https://github.com/facebookresearch/sam2)
+- **P1 · Scoped acceptance:** Make all four fresh-frame analytic camera/glare browser cases pass, then add held-out real cans and both label wraps; measure continuous tremor, initial-normal error, leakage, turns, occlusion, and false green. Rendered inputs must not supply oracle masks to discovery.
+  [Tracking evaluation](https://github.com/google-deepmind/tapnet/blob/main/tapnet/tapvid/README.md), [Physical rendering](https://github.com/DLR-RM/BlenderProc)
+- **Research · Geometry cues:** Compare calibrated primitive fitting, temporal segmentation, relative depth, and multiview reconstruction on the same scoped clips; require actual benefit, latency, and licensing evidence. Depth or a point cloud alone does not establish instance identity or metric pose.
+  [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2), [EdgeTAM](https://github.com/facebookresearch/EdgeTAM)
+
 ## Tracking and surface attachment
 
 ### Observation validity
 
 - **P1 · Objectness:** Reject background-only discovery using independently labelled negative videos; a confident point-prompt mask is not proof of a distinct object.
   [MediaPipe segmentation](https://ai.google.dev/edge/mediapipe/solutions/vision/interactive_segmenter/web_js)
-- **P1 · Pyramid support:** Bound background influence on coarse LK initialization; fine-level measurement and stored ORB descriptor patches are mask-contained, but coarse windows can still cross object boundaries.
-  [LK windows](https://docs.opencv.org/4.x/dc/d6b/group__video__track.html)
+- **P1 · Feature support:** Bound background influence on coarse LK and learned descriptor receptive fields; fine-level LK and stored ORB patches are mask-contained, but a mask-contained keypoint does not establish ownership of its entire feature support.
+  [LK windows](https://docs.opencv.org/4.x/dc/d6b/group__video__track.html), [XFeat](https://github.com/verlab/accelerated_features)
 - **P1 · Reflections:** Reject moving glare on printed cans using persistent appearance and geometric agreement; test clipping separately from exposure changes.
   [Specular motion](https://www.cs.cmu.edu/~ILIM/projects/IM/aagrawal/cvpr10/Specular/SpecularSurfaceReconstruction.pdf)
 - **P1 · Transparency:** Distinguish glass-surface evidence from refracted/background features; mask membership alone must not establish landmark ownership.
@@ -25,14 +49,8 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
 
 - **P1 · Reconstruction evidence:** Separate primitive-imposed depth from observed geometry; require informative view change and conditioning, and bound the orthographic factorization's perspective error before claiming reconstructed shape.
   [Shape/motion factorization](https://publications.ri.cmu.edu/shape-and-motion-from-image-streams-under-orthography-a-factorization-method)
-- **P1 · Plane coordinates:** Separate reference-image pixels from Euclidean plane coordinates; rectify oblique references before claiming physical PnP orientation or scale.
-  [PnP coordinate requirements](https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html)
 - **P1 · Camera model:** Quantify the fixed 63° FOV/zero-distortion error on target cameras; support measured intrinsics or explicitly bounded approximate attachment.
   [Camera calibration](https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html)
-- **P1 · Shape selection:** Replace class/aspect-only plane/cylinder decisions with measured fit evidence and an explicit unknown state; avoid forcing arbitrary objects into primitives.
-  [Object-pose evaluation](https://bop.felk.cvut.cz/datasets/)
-- **P1 · Blank planes:** Add quadrilateral/edge tracking for paper and one laptop surface, with persistent corner identities and readiness independent of generic eight-landmark thresholds.
-  [Planar geometry](https://docs.opencv.org/4.x/d9/dab/tutorial_homography.html)
 - **P1 · Curved attachments:** Preserve a material-point reference through cylinder rotation, feature turnover, and hand occlusion; whole-object affine motion is not cylinder 6DoF.
   [PnP and surface coordinates](https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html)
 - **P1 · Ambiguity:** Represent planar flip ambiguity and unobservable rotation on symmetric textureless objects; smoothing or silhouette agreement must not invent missing evidence.

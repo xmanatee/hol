@@ -68,16 +68,17 @@ const boxPoint = (reference, bounds) => {
 const cylinderPoint = (reference, bounds, model) => {
   const width = Math.max(1, bounds.max.x - bounds.min.x);
   const height = Math.max(1, bounds.max.y - bounds.min.y);
-  const u = clamp((reference.x - bounds.min.x) / width, 0, 1);
   const v = clamp((reference.y - bounds.min.y) / height, 0, 1);
-  const angle = (u - 0.5) * Math.PI * 0.92;
-  const baseRadius = width * 0.34;
+  // A reference pixel is a projected chord coordinate, NOT a linear arc angle.
+  // This is an explicit frontal, weak-perspective shape prior, not measured depth.
+  const baseRadius = width * 0.5;
   const radius = model === SURFACE_MODEL_TAPERED_CYLINDER ? baseRadius * (0.86 + v * 0.28) : baseRadius;
+  const x = clamp(reference.x - (bounds.min.x + bounds.max.x) / 2, -radius, radius);
 
   return {
-    x: Math.sin(angle) * radius,
+    x,
     y: (v - 0.5) * height,
-    z: Math.cos(angle) * radius - radius,
+    z: Math.sqrt(Math.max(0, radius * radius - x * x)) - baseRadius,
   };
 };
 
@@ -172,13 +173,19 @@ export const normalForSurfaceModel = (reference, bounds, model) => {
   }
 
   const width = Math.max(1, bounds.max.x - bounds.min.x);
-  const u = clamp((reference.x - bounds.min.x) / width, 0, 1);
-  const angle = (u - 0.5) * Math.PI * 0.92;
+  const height = Math.max(1, bounds.max.y - bounds.min.y);
+  const v = clamp((reference.y - bounds.min.y) / height, 0, 1);
+  const baseRadius = width * 0.5;
+  const radius = model === SURFACE_MODEL_TAPERED_CYLINDER ? baseRadius * (0.86 + v * 0.28) : baseRadius;
+  const x = clamp((reference.x - (bounds.min.x + bounds.max.x) / 2) / radius, -1, 1);
+  const z = Math.sqrt(Math.max(0, 1 - x * x));
+  const slope = model === SURFACE_MODEL_TAPERED_CYLINDER ? (baseRadius * 0.28) / height : 0;
+  const taperLength = Math.hypot(1, slope);
 
   return {
-    x: Math.sin(angle),
-    y: 0,
-    z: Math.cos(angle),
+    x: x / taperLength,
+    y: -slope / taperLength,
+    z: z / taperLength,
   };
 };
 

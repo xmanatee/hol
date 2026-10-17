@@ -40,15 +40,9 @@ export class InteractiveSegmenterService {
     return this.initializationPromise;
   }
 
-  segmentTap({
-    imageData,
-    tapPosition,
-    createdAtFrame,
-    maxRadius = null,
-    timeoutMs = this.requestTimeoutMs,
-  }) {
+  segmentTap({ imageData, tapPosition, createdAtFrame, timeoutMs = this.requestTimeoutMs }) {
     assertWorkerRequestTimeout(timeoutMs, 'Interactive segmenter request timeout');
-    assertSegmentationInput({ imageData, tapPosition, createdAtFrame, maxRadius });
+    assertSegmentationInput({ imageData, tapPosition, createdAtFrame });
     const copiedImageData = copyImageData(imageData);
     return this._request(
       {
@@ -57,7 +51,6 @@ export class InteractiveSegmenterService {
         imageData: copiedImageData,
         tapPosition: { ...tapPosition },
         createdAtFrame,
-        maxRadius,
       },
       timeoutMs,
       [copiedImageData.data.buffer],

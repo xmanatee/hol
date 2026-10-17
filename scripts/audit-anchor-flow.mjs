@@ -4,7 +4,6 @@ import parser from '@babel/parser';
 
 const ROOTS = ['src/services', 'src/cv', 'src/utils', 'src/views'];
 const IMPORTANT_OPTIONS = new Set([
-  'maxRadius',
   'allowExpansion',
   'adaptive',
   'minNewKeypoints',
@@ -32,18 +31,6 @@ const STRICT_OPTIONS_WITHOUT_DEFAULTS = new Set([
   'trackingMode',
 ]);
 const ALLOWED_OMISSIONS = [
-  {
-    callFile: 'src/services/AnchorManager.js',
-    callee: '_segmentTapObject',
-    definitionFile: 'src/services/AnchorManager.js',
-    missing: 'maxRadius',
-  },
-  {
-    callFile: 'src/services/AnchorManager.js',
-    callee: 'createTapLocalObjectSupportMask',
-    definitionFile: 'src/cv/objectSupportMask.js',
-    missing: 'radius',
-  },
   {
     callFile: 'src/services/ImageAnchorService.js',
     callee: '_calculateObjectEvidence',

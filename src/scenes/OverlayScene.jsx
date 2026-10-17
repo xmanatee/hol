@@ -1,15 +1,6 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { DoubleSide } from 'three';
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react';
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import HeadAnchor from '../components/organisms/HeadAnchor.jsx';
 import { logger } from '../utils/logger.js';
 import { computeAnchorOverlayTransform } from '../utils/anchorProjection.js';
@@ -125,7 +116,7 @@ const LiveAnchorGroup = ({
   fov,
   cameraDistance,
   mirrored,
-  anchorSystemState,
+  getAnchorSystemState,
   subscribeAnchorSystemState,
   children,
 }) => {
@@ -137,31 +128,19 @@ const LiveAnchorGroup = ({
   const appearedAtRef = useRef(0);
   const [motionPreference] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)'));
   const invalidate = useThree((state) => state.invalidate);
-  const liveStateRef = useRef(anchorSystemState);
   const sampledAtRef = useRef(null);
   const anchorIdentityRef = useRef(null);
   const [motionPredictor] = useState(() => new AnchorMotionPredictor());
 
-  const updateObservation = useCallback(
-    (state) => {
-      liveStateRef.current = state;
-      invalidate();
-    },
-    [invalidate],
-  );
-
-  useLayoutEffect(() => {
-    updateObservation(anchorSystemState);
-  }, [anchorSystemState, updateObservation]);
-
   useEffect(() => {
-    return subscribeAnchorSystemState(updateObservation);
-  }, [subscribeAnchorSystemState, updateObservation]);
+    invalidate();
+    return subscribeAnchorSystemState(() => invalidate());
+  }, [subscribeAnchorSystemState, invalidate]);
 
   useFrame(() => {
     const now = performance.now();
     const group = groupRef.current;
-    const liveState = liveStateRef.current;
+    const liveState = getAnchorSystemState();
     const activeAnchor = getRenderableAnchorOverlay(liveState, now);
     const anchorIdentity = activeAnchor ? (activeAnchor.createdAt ?? activeAnchor.id) : null;
     if (!activeAnchor) {
@@ -258,7 +237,7 @@ const OverlayScene = ({
   microphoneMode = false,
   microphoneService,
   ttsService,
-  anchorSystemState,
+  getAnchorSystemState,
   subscribeAnchorSystemState,
   mirrored = false,
   facialExpression = 'neutral',
@@ -321,7 +300,7 @@ const OverlayScene = ({
           fov={fov}
           cameraDistance={cameraDistance}
           mirrored={mirrored}
-          anchorSystemState={anchorSystemState}
+          getAnchorSystemState={getAnchorSystemState}
           subscribeAnchorSystemState={subscribeAnchorSystemState}
         >
           <HeadAnchor

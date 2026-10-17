@@ -55,7 +55,7 @@ test('an empty selected component cannot borrow confidence from foreground elsew
   );
 });
 
-test('confidence excludes foreground removed by the explicit radius constraint', () => {
+test('segmentation preserves the entire connected object, not a circle around the prompt', () => {
   const mask = createInteractiveObjectSupportMask({
     confidenceData: new Float32Array([0.51, 0.51, 0.99, 0.99, 0.99]),
     maskWidth: 5,
@@ -65,8 +65,7 @@ test('confidence excludes foreground removed by the explicit radius constraint',
     threshold: 0.5,
     referencePoint: { x: 0, y: 0 },
     createdAtFrame: 1,
-    maxRadius: 1,
   });
-  assert.ok(Math.abs(mask.confidence - 0.51) < 1e-6);
-  assert.equal(mask.pixelCount, 2);
+  assert.ok(Math.abs(mask.confidence - 0.798) < 1e-6);
+  assert.equal(mask.pixelCount, 5);
 });

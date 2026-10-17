@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   calculateTapLocalRadius,
-  constrainObjectSupportMaskToTapLocalCircle,
   createObjectSupportMask,
   createObjectSupportMaskPreview,
   createRegionOpenCvMask,
@@ -29,7 +28,7 @@ test('patch ownership excludes background, holes, and thin foreground even when 
   assert.throws(() => isPatchInsideObjectSupport(mask, { x: 15, y: 15 }, 1.5), RangeError);
 });
 
-test('mask projection and cropping preserve the original segmentation source and observation frame', () => {
+test('mask projection preserves the original segmentation source and observation frame', () => {
   const observed = createObjectSupportMask({
     width: 40,
     height: 30,
@@ -46,12 +45,7 @@ test('mask projection and cropping preserve the original segmentation source and
     rotation: 0,
     updatedAtFrame: 9,
   });
-  const cropped = constrainObjectSupportMaskToTapLocalCircle({
-    objectSupportMask: projected,
-    referencePoint: projected.referencePoint,
-    radius: 8,
-  });
-  for (const derived of [projected, cropped]) {
+  for (const derived of [projected]) {
     assert.equal(derived.observationSource, 'interactive-segmenter');
     assert.equal(derived.createdAtFrame, 3);
     assert.equal(derived.updatedAtFrame, 9);
@@ -429,32 +423,6 @@ test('tap-local object support is centered on the click and clipped to the frame
   assert.equal(mask.bbox.y, 0);
   assert.ok(mask.bbox.width <= 23);
   assert.ok(mask.bbox.height <= 24);
-});
-
-test('interactive support can be constrained to the tap-local circle', () => {
-  const data = new Uint8Array(120 * 80).fill(255);
-  const mask = createObjectSupportMask({
-    width: 120,
-    height: 80,
-    data,
-    source: 'interactive-segmenter',
-    confidence: 0.84,
-    referencePoint: { x: 60, y: 40 },
-    createdAtFrame: 1,
-    updatedAtFrame: 1,
-  });
-
-  const constrained = constrainObjectSupportMaskToTapLocalCircle({
-    objectSupportMask: mask,
-    referencePoint: { x: 60, y: 40 },
-    radius: 12,
-  });
-
-  assert.equal(constrained.source, 'interactive-segmenter');
-  assert.equal(isPointInsideObjectSupport(constrained, { x: 60, y: 40 }), true);
-  assert.equal(isPointInsideObjectSupport(constrained, { x: 20, y: 40 }), false);
-  assert.ok(constrained.bbox.width <= 25);
-  assert.ok(constrained.bbox.height <= 25);
 });
 
 test('object support preview samples mask boundary instead of rectangular background', () => {
