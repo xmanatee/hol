@@ -1581,8 +1581,8 @@ test('keypoint refresh spends limited map capacity on under-covered mask cells',
     y: 35 + Math.floor(index / 6) * 4,
   }));
   const uncoveredCandidates = [
-    { x: 50, y: 8 },
-    { x: 92, y: 8 },
+    { x: 50, y: 10 },
+    { x: 92, y: 10 },
     { x: 58, y: 22 },
     { x: 100, y: 22 },
     { x: 68, y: 34 },

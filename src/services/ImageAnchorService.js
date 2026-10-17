@@ -611,6 +611,7 @@ export class ImageAnchorService {
       const keyframeResult =
         trackingKeypoints.length > 0 && tapDescriptorRecoveryEligible
           ? this.relocalizer.storeKeyframe({
+              objectSupportMask,
               cv: this.cv,
               grayImage: gray,
               trackedPoints: this.keypointTracker.trackedPoints,
@@ -2466,6 +2467,7 @@ export class ImageAnchorService {
     }
 
     const result = this.relocalizer.storeKeyframe({
+      objectSupportMask: this._getCurrentObjectSupportMask(),
       cv: this.cv,
       grayImage,
       trackedPoints: this.keypointTracker.trackedPoints,

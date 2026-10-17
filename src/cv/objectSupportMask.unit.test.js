@@ -9,10 +9,25 @@ import {
   createTapLocalObjectSupportMask,
   getObjectSupportBounds,
   isPointInsideObjectSupport,
+  isPatchInsideObjectSupport,
   isIndependentObjectSupportObservation,
   keepConnectedComponentContainingPoint,
   warpObjectSupportMask,
 } from './objectSupportMask.js';
+
+test('patch ownership excludes background, holes, and thin foreground even when the center is owned', () => {
+  const mask = { width: 31, height: 31, data: new Uint8Array(31 * 31).fill(255) };
+  assert.equal(isPatchInsideObjectSupport(mask, { x: 15.2, y: 15.2 }, 9), true);
+  assert.equal(isPatchInsideObjectSupport(mask, { x: 8, y: 15 }, 9), false);
+  mask.data[10 * 31 + 10] = 0;
+  assert.equal(isPointInsideObjectSupport(mask, { x: 15, y: 15 }), true);
+  assert.equal(isPatchInsideObjectSupport(mask, { x: 15, y: 15 }, 9), false);
+  mask.data.fill(0);
+  for (let y = 0; y < 31; y++) mask.data[y * 31 + 15] = 255;
+  assert.equal(isPointInsideObjectSupport(mask, { x: 15, y: 15 }), true);
+  assert.equal(isPatchInsideObjectSupport(mask, { x: 15, y: 15 }, 9), false);
+  assert.throws(() => isPatchInsideObjectSupport(mask, { x: 15, y: 15 }, 1.5), RangeError);
+});
 
 test('mask projection and cropping preserve the original segmentation source and observation frame', () => {
   const observed = createObjectSupportMask({

@@ -157,6 +157,72 @@ const detectOrbPoints = (cv, image) => {
   return points;
 };
 
+test('ORB recovery stores only object-contained descriptors, including cached frame features', async () => {
+  const cv = await loadOpenCvForNode();
+  const image = createTexturedImage(cv);
+  const trackedPoints = detectOrbPoints(cv, image).map((keypoint, id) => ({
+    id,
+    original: { ...keypoint.pt },
+    current: { ...keypoint.pt },
+    status: 'active',
+    objectOwned: true,
+    objectOwnedStreak: 2,
+    totalSuccessfulFrames: 36,
+    successfulTrackingStreak: 30,
+    age: 36,
+    stabilityScore: 0.82,
+    landmarkQuality: 0.86,
+    response: keypoint.response,
+  }));
+  const fullMask = { width: 240, height: 240, data: new Uint8Array(240 * 240).fill(255) };
+  const thinMask = { ...fullMask, data: new Uint8Array(240 * 240) };
+  for (const point of trackedPoints) {
+    thinMask.data[Math.round(point.current.y) * 240 + Math.round(point.current.x)] = 255;
+  }
+  const relocalizers = Array.from(
+    { length: 3 },
+    () =>
+      new OrbKeyframeRelocalizer({
+        maxStorageFeatures: 420,
+        maxQueryFeatures: 420,
+      }),
+  );
+  const input = { cv, grayImage: image, trackedPoints, anchorPoint: { x: 120, y: 120 }, timestamp: 1000 };
+  try {
+    const stored = relocalizers[0].storeKeyframe({ ...input, objectSupportMask: fullMask });
+    assert.equal(stored.success, true);
+    assert.ok(stored.descriptorCount >= 8);
+    const { frameFeatures } = relocalizers[0].relocalize(cv, image);
+    assert.ok(frameFeatures);
+    for (const [index, features] of [null, frameFeatures].entries()) {
+      const rejected = relocalizers[index + 1].storeKeyframe({
+        ...input,
+        frameFeatures: features,
+        objectSupportMask: thinMask,
+      });
+      assert.equal(rejected.success, false);
+      assert.equal(rejected.descriptorCount, 0);
+      assert.equal(relocalizers[index + 1].keyframes.length, 0);
+    }
+  } finally {
+    for (const relocalizer of relocalizers) relocalizer.dispose();
+    image.delete();
+  }
+});
+
+test('an unowned descriptor cannot steal a landmark association from an owned neighbor', () => {
+  assert.deepEqual(
+    associateLandmarkCoordinateIndexes(
+      new Float64Array([10, 12]),
+      new Float64Array([10, 10]),
+      [{ current: { x: 10, y: 10 } }],
+      5,
+      new Uint8Array([0, 1]),
+    ),
+    [{ landmarkIndex: 0, featureIndex: 1 }],
+  );
+});
+
 test('relocalization landmark selection accepts only mature object-owned observations', () => {
   const eligible = {
     id: 1,

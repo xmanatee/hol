@@ -18,10 +18,11 @@ import {
   disposeHomographyWorkspace,
   prepareHomographyWorkspace,
 } from './anchor.homographyWorkspace.js';
-import { isIndependentObjectSupportObservation, isPointInsideObjectSupport } from './objectSupportMask.js';
+import { isIndependentObjectSupportObservation, isPatchInsideObjectSupport } from './objectSupportMask.js';
 import { seedHomographyRansac } from './opencvRng.js';
 import {
   LK_WINDOW_SIZE,
+  LK_PATCH_RADIUS,
   createLucasKanadeWorkspace,
   disposeLucasKanadeWorkspace,
   prepareLucasKanadeWorkspace,
@@ -1115,7 +1116,7 @@ export class KeypointTracker {
       }
 
       const current = { x: kp.pt.x, y: kp.pt.y };
-      if (objectSupportMask && !isPointInsideObjectSupport(objectSupportMask, current)) {
+      if (objectSupportMask && !isPatchInsideObjectSupport(objectSupportMask, current, LK_PATCH_RADIUS)) {
         rejectedByMask++;
         continue;
       }
@@ -1422,7 +1423,7 @@ export class KeypointTracker {
     for (const point of this.trackedPoints) {
       if (point.status !== 'active') continue;
 
-      if (isPointInsideObjectSupport(objectSupportMask, point.current)) {
+      if (isPatchInsideObjectSupport(objectSupportMask, point.current, LK_PATCH_RADIUS)) {
         const previousStreak = point.objectOwnedStreak;
         point.outsideObjectFrames = 0;
         point.objectOwned = true;

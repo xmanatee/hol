@@ -1,9 +1,17 @@
 import { fitRobustAffine2D, fitRobustSimilarity } from './anchor.reconstructionRobust.js';
 import { isReconstructionEligibleLandmark } from './landmarkOwnership.js';
+import { isPatchInsideObjectSupport } from './objectSupportMask.js';
 
 const ORB_DESCRIPTOR_WORDS = 8;
 const ORB_EDGE_THRESHOLD = 23;
+const ORB_PATCH_SIZE = 23;
+const ORB_SCALE_FACTOR = 1.2;
 const ORB_FAST_THRESHOLD = 6;
+const orbPatchRadius = (size) => {
+  const scale = size / ORB_PATCH_SIZE;
+  // Rotated BRIEF square, Gaussian support and cumulative pyramid interpolation.
+  return Math.ceil((size * Math.SQRT2) / 2 + 4 * scale + (scale - 1) / (ORB_SCALE_FACTOR - 1));
+};
 const RICH_VIEW_REDUNDANT_KEYFRAME_MOTION = 5;
 const MIN_RICH_VIEW_LANDMARKS = 13;
 const TRANSLATION_INVARIANT_REDUNDANT_KEYFRAME_MOTION = 4;
@@ -197,10 +205,10 @@ export const selectRelocalizationLandmarks = (
 const createOrbDetector = (cv, maxFeatures) => {
   const detector = new cv.ORB();
   detector.setMaxFeatures(maxFeatures);
-  detector.setScaleFactor(1.2);
+  detector.setScaleFactor(ORB_SCALE_FACTOR);
   detector.setNLevels(8);
   detector.setEdgeThreshold(ORB_EDGE_THRESHOLD);
-  detector.setPatchSize(ORB_EDGE_THRESHOLD);
+  detector.setPatchSize(ORB_PATCH_SIZE);
   detector.setFastThreshold(ORB_FAST_THRESHOLD);
   return detector;
 };
@@ -279,6 +287,7 @@ const extractOrbFeatureSet = (cv, grayImage, { workspace, maxFeatures, searchReg
         y: keypoint.pt.y + (normalizedSearchRegion?.y || 0),
       },
       response: keypoint.response,
+      patchRadius: orbPatchRadius(keypoint.size),
     };
     queryFeatures[index] = feature;
     return feature;
@@ -329,11 +338,18 @@ const matchOrbFeatureSet = (references, featureSet, config) =>
     config,
   );
 
-export const associateLandmarkCoordinateIndexes = (featureX, featureY, landmarks, associationRadius) => {
+export const associateLandmarkCoordinateIndexes = (
+  featureX,
+  featureY,
+  landmarks,
+  associationRadius,
+  eligibleFeatures = null,
+) => {
   const maxDistanceSquared = associationRadius * associationRadius;
   const cellSize = associationRadius;
   const rows = new Map();
   for (let featureIndex = 0; featureIndex < featureX.length; featureIndex++) {
+    if (eligibleFeatures && !eligibleFeatures[featureIndex]) continue;
     const cellX = Math.floor(featureX[featureIndex] / cellSize);
     const cellY = Math.floor(featureY[featureIndex] / cellSize);
     let row = rows.get(cellY);
@@ -392,19 +408,22 @@ const readOrbFeatureColumns = (featureSet) => {
   const x = new Float64Array(featureSet.count);
   const y = new Float64Array(featureSet.count);
   const response = new Float64Array(featureSet.count);
+  const patchRadius = new Float64Array(featureSet.count);
   for (let index = 0; index < featureSet.count; index++) {
     const keypoint = featureSet.keypoints.get(index);
     x[index] = keypoint.pt.x + featureSet.pointOffset.x;
     y[index] = keypoint.pt.y + featureSet.pointOffset.y;
     response[index] = keypoint.response;
+    patchRadius[index] = orbPatchRadius(keypoint.size);
   }
-  return { x, y, response };
+  return { x, y, response, patchRadius };
 };
 
 const readFeatureColumns = (features) => ({
   x: Float64Array.from(features, (feature) => feature.point.x),
   y: Float64Array.from(features, (feature) => feature.point.y),
   response: Float64Array.from(features, (feature) => feature.response),
+  patchRadius: Float64Array.from(features, (feature) => feature.patchRadius),
 });
 
 const createKeyframeEntries = (featureSet, associations, landmarks, featureColumns) => {
@@ -446,10 +465,32 @@ const createKeyframeEntries = (featureSet, associations, landmarks, featureColum
   });
 };
 
-const associateFeatureColumnsWithLandmarks = (featureSet, featureColumns, landmarks, associationRadius) =>
+const associateFeatureColumnsWithLandmarks = (
+  featureSet,
+  featureColumns,
+  landmarks,
+  associationRadius,
+  objectSupportMask,
+) =>
   createKeyframeEntries(
     featureSet,
-    associateLandmarkCoordinateIndexes(featureColumns.x, featureColumns.y, landmarks, associationRadius),
+    associateLandmarkCoordinateIndexes(
+      featureColumns.x,
+      featureColumns.y,
+      landmarks,
+      associationRadius,
+      objectSupportMask
+        ? Uint8Array.from(featureColumns.x, (x, index) =>
+            Number(
+              isPatchInsideObjectSupport(
+                objectSupportMask,
+                { x, y: featureColumns.y[index] },
+                featureColumns.patchRadius[index],
+              ),
+            ),
+          )
+        : null,
+    ),
     landmarks,
     featureColumns,
   );
@@ -697,6 +738,7 @@ export class OrbKeyframeRelocalizer {
     includeFreshLandmarks = false,
     frameFeatures = null,
     translationInvariantRedundancy = false,
+    objectSupportMask = null,
   }) {
     const landmarks = selectRelocalizationLandmarks(trackedPoints || [], {
       minObservations: this.config.minObservations,
@@ -751,6 +793,7 @@ export class OrbKeyframeRelocalizer {
       featureColumns,
       landmarks,
       this.config.associationRadius,
+      objectSupportMask,
     );
     const extractionTiming = featureExtractionMs == null ? {} : { featureExtractionMs };
 

@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { KeypointDetector } from './anchor.keypoints.js';
-import { createObjectSupportMask, createRegionOpenCvMask } from './objectSupportMask.js';
+import {
+  createObjectSupportMask,
+  createRegionOpenCvMask,
+  isPatchInsideObjectSupport,
+} from './objectSupportMask.js';
+import { LK_PATCH_RADIUS } from './anchor.lkWorkspace.js';
 import { loadOpenCvForNode } from './synthetic/opencvNodeLoader.js';
 
 const makeGridKeypoints = (offsetX = 0, offsetY = 0) => {
@@ -198,7 +203,7 @@ test('masked keypoint extraction preserves full-region GFTT corners while boundi
   const expected = Array.from({ length: referenceCorners.rows }, (_, index) => ({
     x: referenceCorners.data32F[index * 2] + region.x,
     y: referenceCorners.data32F[index * 2 + 1] + region.y,
-  }));
+  })).filter((point) => isPatchInsideObjectSupport(objectSupportMask, point, LK_PATCH_RADIUS));
 
   const result = detector.extractKeypoints(cv, image, region, objectSupportMask);
 

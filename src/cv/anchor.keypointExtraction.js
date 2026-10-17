@@ -1,5 +1,5 @@
-import { createRegionOpenCvMask, isPointInsideObjectSupport } from './objectSupportMask.js';
-import { LK_WINDOW_SIZE } from './anchor.lkWorkspace.js';
+import { createRegionOpenCvMask, isPatchInsideObjectSupport } from './objectSupportMask.js';
+import { LK_WINDOW_SIZE, LK_PATCH_RADIUS } from './anchor.lkWorkspace.js';
 
 const GFTT_GRADIENT_RADIUS = 1;
 const GFTT_NON_MAXIMUM_SUPPRESSION_RADIUS = 1;
@@ -97,7 +97,10 @@ class GfttExtractionSession {
         octave: 0,
         class_id: -1,
       };
-      if (this.objectSupportMask && !isPointInsideObjectSupport(this.objectSupportMask, keypoint.pt)) {
+      if (
+        this.objectSupportMask &&
+        !isPatchInsideObjectSupport(this.objectSupportMask, keypoint.pt, LK_PATCH_RADIUS)
+      ) {
         rejectedByMask++;
         continue;
       }

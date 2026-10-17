@@ -253,6 +253,29 @@ export const isPointInsideObjectSupport = (objectSupportMask, point) => {
   return objectSupportMask.data[y * objectSupportMask.width + x] > 0;
 };
 
+export const isPatchInsideObjectSupport = (mask, point, radius) => {
+  if (!Number.isSafeInteger(radius) || radius < 0)
+    throw new RangeError('Patch radius must be a non-negative integer');
+  const x = Math.round(point.x);
+  const y = Math.round(point.y);
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    x - radius < 0 ||
+    y - radius < 0 ||
+    x + radius >= mask.width ||
+    y + radius >= mask.height
+  )
+    return false;
+  for (let row = y - radius; row <= y + radius; row++) {
+    const offset = row * mask.width;
+    for (let column = x - radius; column <= x + radius; column++) {
+      if (mask.data[offset + column] === 0) return false;
+    }
+  }
+  return true;
+};
+
 export const createRegionOpenCvMask = (cv, objectSupportMask, region) => {
   const mask = cv.Mat.zeros(region.height, region.width, cv.CV_8UC1);
   for (let y = 0; y < region.height; y++) {

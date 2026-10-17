@@ -1,4 +1,6 @@
 export const LK_WINDOW_SIZE = 15;
+// Finest-level measurement window plus derivative/interpolation support; coarse levels only initialize flow.
+export const LK_PATCH_RADIUS = Math.floor(LK_WINDOW_SIZE / 2) + 2;
 
 export const createLucasKanadeWorkspace = (cv) => ({
   previousPoints: new cv.Mat(),

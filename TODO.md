@@ -12,7 +12,7 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
   [MediaPipe segmentation](https://ai.google.dev/edge/mediapipe/solutions/vision/interactive_segmenter/web_js)
 - **P1 · Flow verification:** Add bounded forward–backward and appearance checks to `anchor.tracking.js`; test long edges, repetitive letters, blur, exposure changes, and large inter-frame motion.
   [OpenCV optical flow](https://docs.opencv.org/4.x/d4/dee/tutorial_optical_flow.html)
-- **P1 · Patch ownership:** Account for the whole LK/descriptor patch, not just its center's mask membership; prevent paper edges, handles, and thin objects from tracking background texture.
+- **P1 · Pyramid support:** Bound background influence on coarse LK initialization; fine-level measurement and stored ORB descriptor patches are mask-contained, but coarse windows can still cross object boundaries.
   [LK windows](https://docs.opencv.org/4.x/dc/d6b/group__video__track.html)
 - **P1 · Reflections:** Reject moving glare on printed cans using persistent appearance and geometric agreement; test clipping separately from exposure changes.
   [Specular motion](https://www.cs.cmu.edu/~ILIM/projects/IM/aagrawal/cvpr10/Specular/SpecularSurfaceReconstruction.pdf)

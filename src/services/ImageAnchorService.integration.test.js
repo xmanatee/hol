@@ -3620,14 +3620,16 @@ test('mask rejection immediately removes background landmarks from pose ownershi
   const rejected = service._rejectTrackedPointsOutsideObjectSupport();
   const correspondences = service.keypointTracker.getCorrespondences({ maxCount: 30 });
 
-  assert.equal(rejected, 6);
+  assert.equal(rejected, 9);
   assert.equal(
     service.keypointTracker.trackedPoints.filter((point) => point.objectOwned === false).length,
-    6,
+    9,
   );
-  assert.equal(service.keypointTracker.trackedPoints.filter((point) => point.status === 'outlier').length, 6);
-  assert.equal(correspondences.length, 10);
-  assert.ok(correspondences.every((correspondence) => correspondence.curr.x <= 68));
+  assert.equal(service.keypointTracker.trackedPoints.filter((point) => point.status === 'outlier').length, 9);
+  assert.equal(correspondences.length, 7);
+  assert.ok(
+    correspondences.every((correspondence) => correspondence.curr.x >= 39 && correspondence.curr.x <= 59),
+  );
 });
 
 test('weak tap-local evidence records candidate diagnostics instead of failing creation', async () => {
