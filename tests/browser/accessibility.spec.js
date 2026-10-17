@@ -170,64 +170,75 @@ for (const fault of ['network', 'evaluation']) {
   });
 }
 
-test('runtime readiness creates and releases its WebGL probe only when System controls open', async ({
-  page,
-  browserName,
-}) => {
-  test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');
-  const localAITransportRequests = [];
-  page.on('request', (request) => {
-    if (/\/localAIClient-[^/]+\.js$/.test(new URL(request.url()).pathname)) {
-      localAITransportRequests.push(request.url());
-    }
-  });
-  await page.addInitScript(() => {
-    window.__holWebGLReadinessProbe = { contexts: 0, releases: 0 };
-    const originalGetContext = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
-      const context = originalGetContext.call(this, type, ...args);
-      if (type === 'webgl' || type === 'webgl2') {
-        window.__holWebGLReadinessProbe.contexts += 1;
+for (const webgl2Available of [true, false]) {
+  test(`browser capabilities report WebGL 2 ${webgl2Available ? 'available' : 'unavailable'} and release probes`, async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');
+    const localAITransportRequests = [];
+    page.on('request', (request) => {
+      if (/\/localAIClient-[^/]+\.js$/.test(new URL(request.url()).pathname)) {
+        localAITransportRequests.push(request.url());
       }
-      return context;
-    };
-
-    const wrapLoseContext = (prototype) => {
-      const originalGetExtension = prototype.getExtension;
-      prototype.getExtension = function (name) {
-        const extension = originalGetExtension.call(this, name);
-        if (name !== 'WEBGL_lose_context' || !extension) {
-          return extension;
+    });
+    await page.addInitScript((available) => {
+      window.__holWebGLReadinessProbe = { contexts: 0, releases: 0 };
+      const originalGetContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+        const context = type === 'webgl2' && !available ? null : originalGetContext.call(this, type, ...args);
+        if (type === 'webgl' || type === 'webgl2') {
+          window.__holWebGLReadinessProbe.contexts += 1;
         }
-        return {
-          loseContext() {
-            window.__holWebGLReadinessProbe.releases += 1;
-            extension.loseContext();
-          },
-          restoreContext() {
-            extension.restoreContext();
-          },
+        return context;
+      };
+
+      const wrapLoseContext = (prototype) => {
+        const originalGetExtension = prototype.getExtension;
+        prototype.getExtension = function (name) {
+          const extension = originalGetExtension.call(this, name);
+          if (name !== 'WEBGL_lose_context' || !extension) {
+            return extension;
+          }
+          return {
+            loseContext() {
+              window.__holWebGLReadinessProbe.releases += 1;
+              extension.loseContext();
+            },
+            restoreContext() {
+              extension.restoreContext();
+            },
+          };
         };
       };
-    };
 
-    wrapLoseContext(WebGLRenderingContext.prototype);
-    if (window.WebGL2RenderingContext) {
-      wrapLoseContext(WebGL2RenderingContext.prototype);
-    }
+      wrapLoseContext(WebGLRenderingContext.prototype);
+      if (window.WebGL2RenderingContext) {
+        wrapLoseContext(WebGL2RenderingContext.prototype);
+      }
+    }, webgl2Available);
+
+    await page.goto('/');
+    await expect(page.getByRole('button', { name: 'Start Camera' })).toBeVisible();
+    await startCamera(page);
+    expect(await page.evaluate(() => window.__holWebGLReadinessProbe)).toEqual({ contexts: 0, releases: 0 });
+
+    await page.getByRole('button', { name: 'Debug drawer' }).click();
+    await page.getByRole('tab', { name: 'System' }).click();
+    await expect(page.getByRole('heading', { name: 'Browser capabilities' })).toBeVisible();
+    await expect(
+      page.getByText('API support only; camera, tracking, and face loading report their own status.'),
+    ).toBeVisible();
+    await expect(
+      page.getByText(webgl2Available ? 'Required 3D API is available' : 'The 3D face requires WebGL 2', {
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(await page.evaluate(() => window.__holWebGLReadinessProbe.releases)).toBe(webgl2Available ? 1 : 0);
+    expect(await page.evaluate(() => window.__holWebGLReadinessProbe.contexts)).toBe(1);
+    expect(localAITransportRequests).toEqual([]);
   });
-
-  await page.goto('/');
-  await page.waitForLoadState('networkidle');
-  await startCamera(page);
-  expect(await page.evaluate(() => window.__holWebGLReadinessProbe)).toEqual({ contexts: 0, releases: 0 });
-
-  await page.getByRole('button', { name: 'Debug drawer' }).click();
-  await page.getByRole('tab', { name: 'System' }).click();
-  await expect.poll(() => page.evaluate(() => window.__holWebGLReadinessProbe.releases)).toBe(1);
-  expect(await page.evaluate(() => window.__holWebGLReadinessProbe.contexts)).toBe(1);
-  expect(localAITransportRequests).toEqual([]);
-});
+}
 
 test('every field-control section meets the supported WCAG A and AA rules', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'Fake camera capture is a Chromium release gate');

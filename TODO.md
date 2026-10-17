@@ -134,8 +134,6 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
 
 ## Reliability, assets, and security
 
-- **P1 · Capability parity:** Require WebGL 2 for the pinned Three.js renderer; WebGL 1 availability must not pass preflight, and capability readiness must remain distinct from active-session health.
-  [Renderer requirements](https://threejs.org/docs/pages/WebGLRenderer.html)
 - **P1 · Learned-runtime faults:** Expose XFeat initialization/inference failures as capability errors with explicit retry; current warning-only conversion must not look like an ordinary missed match.
   [ORT diagnosis](https://onnxruntime.ai/docs/tutorials/web/performance-diagnosis.html)
 - **P2 · Resource endurance:** Stress repeated camera/mode/retry/context-loss cycles; verify WASM Mats, workers, GPU assets, bitmaps, streams, and audio contexts return to a bounded baseline.

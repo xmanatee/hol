@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { LOG_TAG_PRESETS, logger } from '../../utils/logger.js';
-import { collectRuntimeReadiness } from '../../utils/runtimeReadiness.js';
+import { collectRuntimeCapabilities } from '../../utils/runtimeCapabilities.js';
 import { DrawerSection, DynamicText, MetricPill } from './FieldControlPrimitives.jsx';
 import { cx } from './uiClassNames.js';
 
-const RuntimeReadiness = ({ readiness }) => (
+const RuntimeCapabilities = ({ checks }) => (
   <div className="space-y-1 text-xs">
-    {readiness.checks.map((check) => (
+    <h4 className="font-medium">Browser capabilities</h4>
+    <p className="text-gray-400">
+      API support only; camera, tracking, and face loading report their own status.
+    </p>
+    {checks.map((check) => (
       <div
         key={check.id}
         className={cx(
@@ -28,9 +32,9 @@ const RuntimeReadiness = ({ readiness }) => (
   </div>
 );
 
-const RuntimeReadinessLoading = () => (
+const RuntimeCapabilitiesLoading = () => (
   <div role="status" aria-live="polite" className="rounded-md border border-white/10 px-2 py-2 text-xs">
-    Checking runtime readiness…
+    Checking browser capabilities…
   </div>
 );
 
@@ -103,21 +107,25 @@ const CameraMetrics = ({ store }) => {
 };
 
 export const FieldControlsSystem = ({ showStats, onShowStatsChange, cameraMetricsStore }) => {
-  const [runtimeReadiness, setRuntimeReadiness] = useState(null);
-  const readinessCollectedRef = useRef(false);
+  const [runtimeCapabilities, setRuntimeCapabilities] = useState(null);
+  const capabilitiesCollectedRef = useRef(false);
 
   useEffect(() => {
-    if (readinessCollectedRef.current) {
+    if (capabilitiesCollectedRef.current) {
       return;
     }
-    readinessCollectedRef.current = true;
-    setRuntimeReadiness(collectRuntimeReadiness());
+    capabilitiesCollectedRef.current = true;
+    setRuntimeCapabilities(collectRuntimeCapabilities());
   }, []);
 
   return (
     <DrawerSection title="System">
       <div className="space-y-3">
-        {runtimeReadiness ? <RuntimeReadiness readiness={runtimeReadiness} /> : <RuntimeReadinessLoading />}
+        {runtimeCapabilities ? (
+          <RuntimeCapabilities checks={runtimeCapabilities} />
+        ) : (
+          <RuntimeCapabilitiesLoading />
+        )}
         <div className="text-xs">
           <button
             type="button"

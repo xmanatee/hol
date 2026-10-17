@@ -5,28 +5,29 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
 const isLocalOrigin = (hostname) => LOCAL_HOSTS.has(hostname);
 
-export const probeWebGLSupport = (documentObject) => {
+export const probeWebGL2Support = (documentObject) => {
   const canvas = documentObject.createElement('canvas');
-  const context = canvas.getContext('webgl2') || canvas.getContext('webgl');
+  const context = canvas.getContext('webgl2');
   if (!context) {
     return false;
   }
 
+  const supported = !context.isContextLost();
   const loseContext = context.getExtension('WEBGL_lose_context');
   if (loseContext) {
     loseContext.loseContext();
   }
-  return true;
+  return supported;
 };
 
-export const assessRuntimeReadiness = ({
+export const assessRuntimeCapabilities = ({
   protocol,
   hostname,
   isSecureContext,
   hasMediaDevices,
   hasGetUserMedia,
   hasVideoFrameCallbacks,
-  hasWebGL,
+  hasWebGL2,
   hasAudioContext,
   crossOriginIsolated,
   localAIBaseUrl,
@@ -77,11 +78,11 @@ export const assessRuntimeReadiness = ({
         : 'requestVideoFrameCallback is missing',
     },
     {
-      id: 'webgl',
-      label: 'WebGL',
-      ok: Boolean(hasWebGL),
+      id: 'webgl2',
+      label: 'WebGL 2',
+      ok: Boolean(hasWebGL2),
       severity: 'blocker',
-      detail: hasWebGL ? '3D overlay can render' : 'WebGL is unavailable',
+      detail: hasWebGL2 ? 'Required 3D API is available' : 'The 3D face requires WebGL 2',
     },
   ];
   const serviceChecks = [
@@ -90,7 +91,7 @@ export const assessRuntimeReadiness = ({
       label: 'AudioContext',
       ok: Boolean(hasAudioContext),
       severity: 'service',
-      detail: hasAudioContext ? 'Audio playback can initialize' : 'AudioContext is unavailable',
+      detail: hasAudioContext ? 'Audio API is available' : 'AudioContext is unavailable',
     },
   ];
   const optionalServiceChecks = [
@@ -124,35 +125,16 @@ export const assessRuntimeReadiness = ({
         : 'ONNX will stay single-threaded without COOP/COEP isolation',
     },
   ];
-  const checks = [...cameraChecks, ...serviceChecks, ...optionalServiceChecks, ...performanceChecks];
-  const cameraReady = cameraChecks.every((check) => check.ok);
-  const serviceReady = serviceChecks.every((check) => check.ok);
-  const optionalServicesReady = optionalServiceChecks.every((check) => check.ok);
-  const performanceReady = performanceChecks.every((check) => check.ok);
-
-  return {
-    status: cameraReady
-      ? serviceReady
-        ? performanceReady
-          ? 'ready'
-          : 'performance-limited'
-        : 'service-setup'
-      : 'blocked',
-    cameraReady,
-    serviceReady,
-    optionalServicesReady,
-    performanceReady,
-    checks,
-  };
+  return [...cameraChecks, ...serviceChecks, ...optionalServiceChecks, ...performanceChecks];
 };
 
-export const collectRuntimeReadiness = () => {
+export const collectRuntimeCapabilities = () => {
   const hasDocument = typeof document !== 'undefined';
   const hasWindow = typeof window !== 'undefined';
   const hasNavigator = typeof navigator !== 'undefined';
-  const hasWebGL = hasDocument && probeWebGLSupport(document);
+  const hasWebGL2 = hasDocument && probeWebGL2Support(document);
 
-  return assessRuntimeReadiness({
+  return assessRuntimeCapabilities({
     protocol: hasWindow ? window.location.protocol : '',
     hostname: hasWindow ? window.location.hostname : '',
     isSecureContext: hasWindow ? window.isSecureContext : false,
@@ -162,7 +144,7 @@ export const collectRuntimeReadiness = () => {
       hasWindow &&
       typeof window.HTMLVideoElement?.prototype.requestVideoFrameCallback === 'function' &&
       typeof window.HTMLVideoElement?.prototype.cancelVideoFrameCallback === 'function',
-    hasWebGL,
+    hasWebGL2,
     hasAudioContext: hasWindow && Boolean(window.AudioContext || window.webkitAudioContext),
     crossOriginIsolated: hasWindow && Boolean(window.crossOriginIsolated),
     localAIBaseUrl: readViteEnv('VITE_LOCAL_AI_BASE_URL'),
