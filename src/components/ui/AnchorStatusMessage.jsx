@@ -20,6 +20,7 @@ export const AnchorStatusMessage = ({ status, error, onRetry }) => {
       ref={messageRef}
       tabIndex={-1}
       role={failed ? 'alert' : 'status'}
+      aria-atomic="true"
       className={cx(
         'min-w-0 rounded-lg border p-3 text-left',
         status.severity === 'bad'

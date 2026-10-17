@@ -485,6 +485,35 @@ for (const [scenario, failedUrl, title] of [
     await expect
       .poll(() => page.evaluate(() => performance.now() - window.__holLastDrawAt))
       .toBeLessThan(150);
+    const recoveryGuidance = page.getByTestId('object-recovery');
+    const trackingStatus = recoveryGuidance.getByRole('status');
+    await expect(trackingStatus).toContainText('Face is tracking the object');
+    await expect(trackingStatus).toHaveAttribute('aria-atomic', 'true');
+    const beforeQuietFrames = await trackingStatus.evaluate((element) => {
+      let previousText = element.textContent;
+      window.__holTrackingAnnouncements = [];
+      window.__holTrackingStatusObserver = new MutationObserver(() => {
+        if (element.textContent !== previousText) {
+          previousText = element.textContent;
+          window.__holTrackingAnnouncements.push(previousText);
+        }
+      });
+      window.__holTrackingStatusObserver.observe(element, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
+      return window.__holAnchorFrameCommands;
+    });
+    await expect
+      .poll(() => page.evaluate(() => window.__holAnchorFrameCommands))
+      .toBeGreaterThan(beforeQuietFrames + 3);
+    expect(
+      await page.evaluate(() => {
+        window.__holTrackingStatusObserver.disconnect();
+        return window.__holTrackingAnnouncements;
+      }),
+    ).toEqual([]);
     const overlayCanvas = await page.locator('.overlay-scene canvas').elementHandle();
     const frozenAt = await page.evaluate(() => {
       window.__holFreezeObjectVideo = true;
@@ -501,14 +530,31 @@ for (const [scenario, failedUrl, title] of [
       )
       .toBe(true);
     await expect(page.getByText('stale', { exact: true })).toBeVisible();
+    await expect(recoveryGuidance).toContainText('Waiting for fresh tracking');
+    await expect(
+      page.getByText('Object selected. Use the microphone button to animate its face.', { exact: true }),
+    ).toBeHidden();
+    await expectWithinViewport(recoveryGuidance.getByRole('status'));
+    await page.screenshot({ path: testInfo.outputPath('selected-tracking-expired.png') });
     await page.getByRole('button', { name: 'Debug drawer', exact: true }).click();
-    await expect(page.getByText('Waiting for fresh tracking', { exact: true })).toBeVisible();
+    await expect(recoveryGuidance).toBeHidden();
+    await expect(
+      page.getByRole('dialog').getByText('Waiting for fresh tracking', { exact: true }),
+    ).toBeVisible();
     await expect(page.getByText('Last tracking diagnostics (expired)', { exact: true })).toBeVisible();
+    for (const tab of ['voice', 'model', 'system']) {
+      await page.getByRole('tab', { name: tab, exact: true }).click();
+      const guidance = page.getByRole('dialog').getByText('Waiting for fresh tracking', { exact: true });
+      await expect(guidance).toHaveCount(1);
+      await expect(guidance).toBeVisible();
+    }
+    await page.getByRole('tab', { name: 'anchor', exact: true }).click();
     await page.getByRole('button', { name: 'Close debug drawer', exact: true }).click();
     await page.evaluate(() => window.__holResumeObjectVideo());
     await expect
       .poll(() => page.evaluate(() => performance.now() - window.__holLastDrawAt))
       .toBeLessThan(150);
+    await expect(recoveryGuidance.getByRole('status')).toContainText('Face is tracking the object');
     expect(
       await page
         .locator('.overlay-scene canvas')

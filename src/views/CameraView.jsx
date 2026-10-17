@@ -587,13 +587,25 @@ const CameraView = () => {
         onCanvasReady={handleCanvasReady}
         mirrored={CAMERA_PRESENTATION_MIRRORED}
       />
-      <AnchorFeedback feedback={anchorFeedback} />
-      {cameraState === 'active' && anchorSystemState.mode === 'selection' && (
+      <AnchorFeedback
+        feedback={
+          anchorSystemState.activeAnchor &&
+          anchorStatus.severity !== 'good' &&
+          anchorFeedback?.severity === 'good'
+            ? null
+            : anchorFeedback
+        }
+      />
+      {cameraState === 'active' && (
         <div
-          data-testid="object-discovery"
+          data-testid={anchorSystemState.mode === 'selection' ? 'object-discovery' : 'object-recovery'}
           data-stage={anchorStatus.status}
           hidden={fieldControlsOpen}
-          className="fixed top-[max(1rem,env(safe-area-inset-top))] left-1/2 z-30 w-[min(90vw,26rem)] -translate-x-1/2 text-white pointer-events-none"
+          className={
+            anchorSystemState.mode === 'anchor' && anchorStatus.severity === 'good'
+              ? 'sr-only'
+              : 'fixed top-[max(1rem,env(safe-area-inset-top))] left-1/2 z-30 w-[min(90vw,26rem)] -translate-x-1/2 text-white pointer-events-none'
+          }
         >
           <AnchorStatusMessage status={anchorStatus} error={visionError} onRetry={retryVision} />
         </div>
@@ -609,7 +621,7 @@ const CameraView = () => {
             </div>
           )}
         >
-          {discoveredMeshes.length === 0 && (
+          {discoveredMeshes.length === 0 && anchorStatus.severity === 'good' && (
             <p
               role="status"
               className="fixed left-1/2 top-[max(1rem,env(safe-area-inset-top))] z-30 w-[min(90vw,26rem)] -translate-x-1/2 rounded-lg border border-white/15 bg-zinc-950/90 p-3 text-sm text-zinc-100 pointer-events-none"

@@ -2,7 +2,6 @@ import { useMemo, useSyncExternalStore } from 'react';
 import { collectAnchorDetails } from '../../utils/anchorDiagnostics.js';
 import { DiagnosticRow } from './DiagnosticRow.jsx';
 import { DrawerSection } from './FieldControlPrimitives.jsx';
-import { AnchorStatusMessage } from './AnchorStatusMessage.jsx';
 import { isReconstructionMode } from '../../cv/anchor.reconstructionModes.js';
 import { ReconstructionPreviewSection } from './ReconstructionPreviewSection.jsx';
 import { formatNumber, formatPercent, formatRegion } from './diagnosticFormat.js';
@@ -102,6 +101,10 @@ const AnchorDiagnostics = ({ details }) => {
       <DiagnosticRow label="Rejected by mask" value={details.landmarkRefreshRejectedByMask} />
       <DiagnosticRow label="LK retention" value={formatPercent(details.trackingSuccessRate)} />
       <DiagnosticRow
+        label="Attachment readiness"
+        value={details.readiness?.faceReady === true ? 'ready' : (details.readiness?.reason ?? 'N/A')}
+      />
+      <DiagnosticRow
         label="Last descriptor inliers"
         value={formatPercent(details.relocalizationInlierRatio)}
       />
@@ -148,13 +151,7 @@ const AnchorDiagnostics = ({ details }) => {
   );
 };
 
-export const FieldControlsAnchor = ({
-  anchorStatus,
-  anchorSystemState,
-  anchorTrackingMode,
-  depthStateStore,
-  onRetryVision,
-}) => {
+export const FieldControlsAnchor = ({ anchorSystemState, anchorTrackingMode, depthStateStore }) => {
   const depthState = useSyncExternalStore(depthStateStore.subscribe, depthStateStore.getSnapshot);
   const details = useMemo(
     () =>
@@ -167,19 +164,16 @@ export const FieldControlsAnchor = ({
 
   return (
     <>
-      <DrawerSection title="Object">
-        <AnchorStatusMessage status={anchorStatus} error={anchorSystemState.error} onRetry={onRetryVision} />
-        {anchorSystemState.anchorState && (
-          <details className="mt-3">
-            <summary className="min-h-11 cursor-pointer py-3 text-sm text-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">
-              {anchorSystemState.observationExpired
-                ? 'Last tracking diagnostics (expired)'
-                : 'Tracking diagnostics'}
-            </summary>
-            <AnchorDiagnostics details={details} />
-          </details>
-        )}
-      </DrawerSection>
+      {anchorSystemState.anchorState && (
+        <details className="px-4 pb-4">
+          <summary className="min-h-11 cursor-pointer py-3 text-sm text-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">
+            {anchorSystemState.observationExpired
+              ? 'Last tracking diagnostics (expired)'
+              : 'Tracking diagnostics'}
+          </summary>
+          <AnchorDiagnostics details={details} />
+        </details>
+      )}
       {anchorSystemState.anchorState && isReconstructionMode(anchorTrackingMode) && (
         <DrawerSection title="3D reconstruction">
           <ReconstructionPreviewSection

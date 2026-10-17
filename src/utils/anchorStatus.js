@@ -1,7 +1,12 @@
 import { isReconstructionMode } from '../cv/anchor.reconstructionModes.js';
 import { shouldRenderAnchorOverlay } from './overlayVisibility.js';
 
-const POSE_RECOVERY_REASON = 'Recovering object pose before showing the face';
+const MAPPING_STATUS = {
+  status: 'mapping',
+  severity: 'warn',
+  message: 'Building 3D object map',
+  recommendation: 'Slowly turn and tilt the object while keeping the selected surface visible.',
+};
 
 export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
   if (cameraState !== 'active') {
@@ -57,45 +62,21 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
     };
   }
 
+  if (serviceState?.state === 'lost' || metrics.targetPresent === false) {
+    return {
+      status: 'recovering',
+      severity: 'warn',
+      message: 'Looking for your object',
+      recommendation: 'Bring the original object back into view or use Clear anchor to select another.',
+    };
+  }
+
   if (shouldRenderAnchorOverlay(anchorSystemState)) {
     return {
       status: metrics.surfaceAttachment ? 'attached' : 'tracking',
       severity: 'good',
-      message: metrics.surfaceAttachment
-        ? 'Face attached to the tracked plane'
-        : 'Face is tracking the object',
+      message: 'Face is tracking the object',
       recommendation: 'Keep the selected surface visible.',
-    };
-  }
-
-  if (reconstructionMode && metrics.readiness?.reason === POSE_RECOVERY_REASON) {
-    return {
-      status: 'recovering',
-      severity: 'warn',
-      message: 'Recovering object pose',
-      recommendation:
-        metrics.poseRejectedReason ||
-        metrics.reconstructionPoseRejectedReason ||
-        'Keep the object visible and move slower until pose support is rebuilt.',
-    };
-  }
-
-  if (serviceState?.state === 'stable' || serviceState?.state === 'tracking') {
-    if (reconstructionMode && !metrics.reconstructionReady) {
-      return {
-        status: 'mapping',
-        severity: 'warn',
-        message: 'Building 3D object map',
-        recommendation: 'Slowly turn and tilt the object while keeping the clicked area visible.',
-      };
-    }
-
-    return {
-      status: 'recovering',
-      severity: 'warn',
-      message: 'Preparing surface attachment',
-      recommendation:
-        metrics.readiness?.reason || 'Keep the selected surface visible while pose support is rebuilt.',
     };
   }
 
@@ -104,47 +85,34 @@ export const describeAnchorStatus = ({ cameraState, anchorSystemState }) => {
       status: 'candidate',
       severity: 'warn',
       message: 'Object selected; building initial support',
-      recommendation:
-        metrics.readiness?.reason || 'Hold the object in view while support landmarks are collected.',
+      recommendation: 'Hold the object in view while support landmarks are collected.',
     };
   }
 
-  if (serviceState?.state === 'mapping') {
+  if (
+    serviceState?.state === 'mapping' ||
+    (reconstructionMode &&
+      !metrics.reconstructionReady &&
+      ['stable', 'tracking', 'degraded'].includes(serviceState?.state))
+  ) {
+    return MAPPING_STATUS;
+  }
+
+  if (serviceState?.state === 'stable' || serviceState?.state === 'tracking') {
     return {
-      status: 'mapping',
+      status: 'recovering',
       severity: 'warn',
-      message: 'Building 3D object map',
-      recommendation:
-        metrics.readiness?.reason || 'Slowly turn and tilt the object while keeping it visible.',
+      message: 'Preparing surface attachment',
+      recommendation: 'Keep the selected surface visible while pose support is rebuilt.',
     };
   }
 
   if (serviceState?.state === 'degraded') {
-    if (reconstructionMode && !metrics.reconstructionReady) {
-      return {
-        status: 'mapping',
-        severity: 'warn',
-        message: '3D map needs more stable observations',
-        recommendation:
-          metrics.reconstructionFailureReason ||
-          'Move slower and keep a textured part of the object in view.',
-      };
-    }
-
     return {
       status: 'weak',
       severity: 'warn',
-      message: 'Weak lock; template recovery is active',
-      recommendation: 'Move closer to a textured label or stronger edge detail.',
-    };
-  }
-
-  if (serviceState?.state === 'lost') {
-    return {
-      status: 'recovering',
-      severity: 'bad',
-      message: `Anchor lost; recovery attempt ${metrics.recoveryAttempts ?? 0}`,
-      recommendation: 'Bring the original object back into view or use Clear anchor to select another.',
+      message: 'Tracking is uncertain',
+      recommendation: 'Keep the selected surface visible and move slowly.',
     };
   }
 

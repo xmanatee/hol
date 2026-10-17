@@ -91,8 +91,6 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
 
 ### Camera interaction
 
-- **P1 · Recovery guidance:** Show and announce concise selected-object loss/recovery instructions outside diagnostics; avoid repeated announcements during steady tracking.
-  [Status messages](https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html)
 - **P2 · Placement intent:** Clarify that tapping selects the object rather than the exact tapped surface pixel; evaluate explicit placement without rebuilding its tracking identity.
   [System/real-world match](https://www.nngroup.com/articles/ten-usability-heuristics/)
 

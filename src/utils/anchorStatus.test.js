@@ -12,12 +12,13 @@ const ACTIVE_SELECTION = {
   },
 };
 
-const describeTrackedState = ({ state, metrics = {}, initialized = true }) =>
+const describeTrackedState = ({ state, metrics = {}, initialized = true, observationExpired = false }) =>
   describeAnchorStatus({
     cameraState: 'active',
     anchorSystemState: {
       mode: 'anchor',
       initialized,
+      observationExpired,
       activeAnchor: { createdAt: 1 },
       anchorState: {
         anchored: true,
@@ -82,6 +83,54 @@ test('tracking labels alone cannot report a ready face', () => {
   }
 });
 
+test('loss guidance is stable across recovery attempts and takes precedence over map preparation', () => {
+  const expected = describeTrackedState({ state: 'lost', metrics: { recoveryAttempts: 1 } });
+  assert.equal(expected.message, 'Looking for your object');
+  assert.equal(expected.severity, 'warn');
+  for (const state of ['tracking', 'stable', 'mapping', 'degraded', 'lost']) {
+    for (const recoveryAttempts of [0, 1, 27]) {
+      assert.deepEqual(
+        describeTrackedState({
+          state,
+          metrics: {
+            targetPresent: false,
+            poseModel: 'depth-fusion',
+            reconstructionReady: false,
+            recoveryAttempts,
+            readiness: { reason: `Diagnostic ${recoveryAttempts}` },
+          },
+        }),
+        expected,
+      );
+    }
+  }
+});
+
+test('changing pose diagnostics cannot repeatedly change recovery announcements', () => {
+  for (const state of ['tracking', 'mapping', 'candidate', 'degraded']) {
+    const metrics = { poseModel: 'depth-fusion', reconstructionReady: false };
+    const expected = describeTrackedState({ state, metrics });
+    for (const reason of [
+      'Need 8 landmarks',
+      'Need 12 landmarks',
+      'Recovering object pose before showing the face',
+    ]) {
+      assert.deepEqual(
+        describeTrackedState({
+          state,
+          metrics: {
+            ...metrics,
+            readiness: { reason },
+            poseRejectedReason: reason,
+            reconstructionFailureReason: reason,
+          },
+        }),
+        expected,
+      );
+    }
+  }
+});
+
 test('accepted face readiness owns the HUD even while optional reconstruction is still mapping', () => {
   for (const surfaceAttachment of [null, { kind: 'planar-pnp' }]) {
     const status = describeTrackedState({
@@ -97,6 +146,7 @@ test('accepted face readiness owns the HUD even while optional reconstruction is
     });
     assert.equal(status.status, surfaceAttachment ? 'attached' : 'tracking');
     assert.equal(status.severity, 'good');
+    assert.equal(status.message, 'Face is tracking the object');
   }
 });
 
@@ -122,7 +172,7 @@ test('keeps reconstruction mapping and pose-recovery states exact', () => {
       status: 'mapping',
       severity: 'warn',
       message: 'Building 3D object map',
-      recommendation: 'Slowly turn and tilt the object while keeping the clicked area visible.',
+      recommendation: 'Slowly turn and tilt the object while keeping the selected surface visible.',
     },
   );
   assert.deepEqual(
@@ -134,7 +184,7 @@ test('keeps reconstruction mapping and pose-recovery states exact', () => {
       status: 'mapping',
       severity: 'warn',
       message: 'Building 3D object map',
-      recommendation: 'Slowly turn and tilt the object while keeping the clicked area visible.',
+      recommendation: 'Slowly turn and tilt the object while keeping the selected surface visible.',
     },
   );
   assert.deepEqual(
@@ -150,8 +200,8 @@ test('keeps reconstruction mapping and pose-recovery states exact', () => {
     {
       status: 'recovering',
       severity: 'warn',
-      message: 'Recovering object pose',
-      recommendation: 'Insufficient pose inliers',
+      message: 'Preparing surface attachment',
+      recommendation: 'Keep the selected surface visible while pose support is rebuilt.',
     },
   );
 });
@@ -163,7 +213,7 @@ test('keeps candidate, mapping, degraded, lost, and unknown guidance exact', () 
       status: 'candidate',
       severity: 'warn',
       message: 'Object selected; building initial support',
-      recommendation: 'Need 8 landmarks',
+      recommendation: 'Hold the object in view while support landmarks are collected.',
     },
   );
   assert.deepEqual(
@@ -172,14 +222,14 @@ test('keeps candidate, mapping, degraded, lost, and unknown guidance exact', () 
       status: 'mapping',
       severity: 'warn',
       message: 'Building 3D object map',
-      recommendation: 'Need wider baseline',
+      recommendation: 'Slowly turn and tilt the object while keeping the selected surface visible.',
     },
   );
   assert.deepEqual(describeTrackedState({ state: 'degraded' }), {
     status: 'weak',
     severity: 'warn',
-    message: 'Weak lock; template recovery is active',
-    recommendation: 'Move closer to a textured label or stronger edge detail.',
+    message: 'Tracking is uncertain',
+    recommendation: 'Keep the selected surface visible and move slowly.',
   });
   assert.deepEqual(
     describeTrackedState({
@@ -193,14 +243,14 @@ test('keeps candidate, mapping, degraded, lost, and unknown guidance exact', () 
     {
       status: 'mapping',
       severity: 'warn',
-      message: '3D map needs more stable observations',
-      recommendation: 'Map reliability is below threshold',
+      message: 'Building 3D object map',
+      recommendation: 'Slowly turn and tilt the object while keeping the selected surface visible.',
     },
   );
   assert.deepEqual(describeTrackedState({ state: 'lost', metrics: { recoveryAttempts: 3 } }), {
     status: 'recovering',
-    severity: 'bad',
-    message: 'Anchor lost; recovery attempt 3',
+    severity: 'warn',
+    message: 'Looking for your object',
     recommendation: 'Bring the original object back into view or use Clear anchor to select another.',
   });
   assert.deepEqual(describeTrackedState({ state: 'unavailable' }), {
@@ -209,4 +259,21 @@ test('keeps candidate, mapping, degraded, lost, and unknown guidance exact', () 
     message: 'Anchor state is unavailable',
     recommendation: 'Return to selection mode and create a new anchor.',
   });
+});
+
+test('expired observations cannot announce a recovered face or mislabel a frozen camera as object loss', () => {
+  for (const state of ['stable', 'lost']) {
+    const status = describeTrackedState({
+      state,
+      observationExpired: true,
+      metrics: {
+        targetPresent: state === 'stable',
+        poseSource: 'planar-homography',
+        readiness: { poseReady: true, attachmentReady: true, faceReady: true },
+      },
+    });
+    assert.equal(status.status, 'stale');
+    assert.equal(status.message, 'Waiting for fresh tracking');
+    assert.match(status.recommendation, /face is hidden/i);
+  }
 });
