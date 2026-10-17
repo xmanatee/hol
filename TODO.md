@@ -7,6 +7,10 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
 
 ### Observation validity
 
+- **P1 · Measurement provenance:** Distinguish current image measurements from stale/reactivated landmarks; retain recovery memory without counting it as fresh pose or readiness evidence before image revalidation.
+  [LK measurement status](https://docs.opencv.org/4.x/dc/d6b/group__video__track.html)
+- **P1 · Independent ownership:** Track segmentation observation age/source separately from mask reprojection age; tracker-propagated masks may gate points but must not independently confirm the same motion or mature its map.
+  [Self-update drift](https://www.robots.ox.ac.uk/~tvg/publications/2016/staple.pdf)
 - **P1 · Objectness:** Reject background-only discovery using independently labelled negative videos; a confident point-prompt mask is not proof of a distinct object.
   [MediaPipe segmentation](https://ai.google.dev/edge/mediapipe/solutions/vision/interactive_segmenter/web_js)
 - **P1 · Feature validity:** Evaluate forward–backward LK checks and patch conditioning; grid seeds, low texture, and long straight edges must not inflate attachment evidence.
@@ -20,6 +24,10 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
 
 ### Geometry and observability
 
+- **P1 · Pose completion:** Treat affine-projected missing landmarks as predictions, not independent observations; exclude their synthetic agreement from pose inlier counts, residual confidence, and readiness.
+  [Prediction versus measurement](https://homepages.inf.ed.ac.uk/rbf/CVonline/LOCAL_COPIES/WELCH/kalman.1.html)
+- **P1 · Reconstruction evidence:** Separate primitive-imposed depth from observed geometry; require informative view change and numerical conditioning, not repeated coherent frames, before claiming reconstructed shape.
+  [Shape/motion factorization](https://publications.ri.cmu.edu/shape-and-motion-from-image-streams-under-orthography-a-factorization-method)
 - **P1 · Plane coordinates:** Separate reference-image pixels from Euclidean plane coordinates; rectify oblique references before claiming physical PnP orientation or scale.
   [PnP coordinate requirements](https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html)
 - **P1 · Camera model:** Quantify the fixed 63° FOV/zero-distortion error on target cameras; support measured intrinsics or explicitly bounded approximate attachment.
@@ -32,6 +40,8 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
   [PnP and surface coordinates](https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html)
 - **P1 · Ambiguity:** Represent planar flip ambiguity and unobservable rotation on symmetric textureless objects; smoothing or silhouette agreement must not invent missing evidence.
   [IPPE ambiguity](https://github.com/tobycollins/IPPE#resolving-the-flip-ambiguity), [Symmetry-aware pose evaluation](https://bop.felk.cvut.cz/challenges/bop-challenge-2019/)
+- **P2 · Resolution semantics:** Define residual thresholds against working-raster scale and localization noise; test equivalent motion across resolutions rather than assuming fixed pixel thresholds mean equal confidence.
+  [Reprojection thresholds](https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html)
 
 ### Temporal estimation and recovery
 
@@ -39,6 +49,8 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
   [Kalman estimation](https://homepages.inf.ed.ac.uk/rbf/CVonline/LOCAL_COPIES/WELCH/kalman.1.html)
 - **P1 · Readiness:** Calibrate projected attachment/normal uncertainty on held-out clips; heuristic confidence and point count must not masquerade as probability or independent evidence.
   [Measurement uncertainty](https://homepages.inf.ed.ac.uk/rbf/CVonline/LOCAL_COPIES/WELCH/kalman.1.html)
+- **P1 · Evidence metrics:** Keep LK retention, descriptor inlier ratio, and pose confidence distinct; remove relocalization's ≥50% substitute for measured flow success from downstream quality decisions.
+  [Optical-flow output semantics](https://docs.opencv.org/4.x/dc/d6b/group__video__track.html)
 - **P1 · Reference continuity:** Correct refreshed-mask bases jointly with landmark and surface references; retain the original attachment through reinitialization and verified relocalization.
   [Projective reference transforms](https://docs.opencv.org/4.x/d9/dab/tutorial_homography.html)
 - **P1 · Identity recovery:** Test similar-object crossings, repeated logos, full turns, and distant re-entry; verify material-point identity, not merely a plausible ORB/XFeat match.
@@ -80,7 +92,7 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
   [Pointer cancellation](https://www.w3.org/WAI/WCAG22/Understanding/pointer-cancellation.html)
 - **P1 · Recovery guidance:** Show and announce concise selected-object loss/recovery instructions outside diagnostics; avoid repeated announcements during steady tracking.
   [Status messages](https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html)
-- **P2 · Placement intent:** Show the prepared attachment point and make clear that tapping selects the object; evaluate explicit surface placement without rebuilding its tracking identity.
+- **P2 · Placement intent:** Clarify that tapping selects the object rather than the exact tapped surface pixel; evaluate explicit placement without rebuilding its tracking identity.
   [System/real-world match](https://www.nngroup.com/articles/ten-usability-heuristics/)
 
 ### Adaptive controls and visual consistency
@@ -89,6 +101,8 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
   [WCAG reflow](https://www.w3.org/WAI/WCAG22/Understanding/reflow.html)
 - **P1 · Sheet focus:** Prevent mobile drawer focus from reaching covered HUD controls; use coherent modal/inert behavior while preserving useful desktop nonmodal interaction.
   [Unobscured focus](https://www.w3.org/WAI/WCAG22/Understanding/focus-not-obscured-minimum.html), [Modal dialogs](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/)
+- **P2 · Live-scene legibility:** Test candidate outlines and attachment markers on bright, dark, and same-hue footage; provide contrasting boundaries and redundant readiness cues where existing overlays disappear.
+  [Non-text contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html), [Use of color](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html)
 - **P2 · Task grouping:** Separate Tracking from Face controls; collapse experimental modes, rig tools, and microphone diagnostics, with plain-language capability/cost labels.
   [Progressive disclosure](https://www.nngroup.com/articles/progressive-disclosure/)
 - **P2 · Shared controls:** Reuse existing button/color/focus primitives for persona and speech actions; align touch sizing and disabled/error states without adding another UI kit.
@@ -100,6 +114,8 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
 
 - **P2 · Owned mechanisms:** Decompose `ImageAnchorService` around observation, estimation, and recovery ownership; replace cross-service private access with narrow public results, not a generic plugin framework.
   [State ownership](https://react.dev/learn/choosing-the-state-structure)
+- **P2 · Mode objectives:** Describe patch-scored geometry separately from direct photometric pose optimization; ablate reconstruction modes against shared acceptance criteria and remove those without independent benefit.
+  [Direct photometric estimation](https://cvg.cit.tum.de/research/vslam/dso)
 - **P1 · Explicit eligibility:** Consolidate selection/render readiness into a positive contract; missing presence, pose, or readiness must never authorize an overlay.
   [Avoid contradictory state](https://react.dev/learn/choosing-the-state-structure)
 - **P2 · Snapshot semantics:** Unify worker/UI diagnostic fields, reference IDs, timestamps, units, and unavailable values; remove duplicated projections and fabricated zero/success defaults.
@@ -115,13 +131,15 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
   [VideoFrame](https://developer.mozilla.org/en-US/docs/Web/API/VideoFrame), [Transfer ownership](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects)
 - **P1 · Time semantics:** Distinguish presented-frame time from available capture/media timestamps; evaluate delayed delivery, rolling shutter, and stabilization before using motion or IMU priors.
   [Video timestamps](https://developer.mozilla.org/en-US/docs/Web/API/HTMLVideoElement/requestVideoFrameCallback)
-- **P2 · Bounded priorities:** Benchmark motion/load-aware CV cadence and resolution; let optional depth/recovery work yield to fresh tracking without weakening evidence or freshness limits.
+- **P2 · Bounded priorities:** Benchmark motion/load-aware cadence and resolution; prioritize fresh tracking while visible and bounded global recovery when lost, with optional depth blocking neither.
   [ORT performance diagnosis](https://onnxruntime.ai/docs/tutorials/web/performance-diagnosis.html)
 - **P2 · Render contention:** Profile face/audio and CV together on target GPUs; tune DPR and render scheduling from measured frame age, not isolated model FPS.
   [R3F performance](https://r3f.docs.pmnd.rs/advanced/scaling-performance), [WebGL budgets](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices)
 
 ## Reliability, assets, and security
 
+- **P1 · Capability parity:** Require WebGL 2 for the pinned Three.js renderer; WebGL 1 availability must not pass preflight, and capability readiness must remain distinct from active-session health.
+  [Renderer requirements](https://threejs.org/docs/pages/WebGLRenderer.html)
 - **P1 · Learned-runtime faults:** Expose XFeat initialization/inference failures as capability errors with explicit retry; current warning-only conversion must not look like an ordinary missed match.
   [ORT diagnosis](https://onnxruntime.ai/docs/tutorials/web/performance-diagnosis.html)
 - **P2 · Resource endurance:** Stress repeated camera/mode/retry/context-loss cycles; verify WASM Mats, workers, GPU assets, bitmaps, streams, and audio contexts return to a bounded baseline.
@@ -146,10 +164,14 @@ Targets: iPad Pro M4 and Xiaomi Chrome; retain iPhone Safari compatibility. Keep
 
 ## Face and audio quality
 
+- **P1 · Microphone liveness:** Propagate track end/mute and suspended/interrupted audio states into UI; provide gesture-based resume where needed and never label an interrupted microphone runtime as live.
+  [Audio states](https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/state), [Track termination](https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamTrack/ended_event)
 - **P2 · Lip-sync evidence:** Benchmark the spectral-centroid heuristic against labelled speech or provider phoneme timing; measure audio-output-to-mouth offset rather than calling energy-driven animation phoneme recognition.
   [Audio output timestamps](https://developer.mozilla.org/en-US/docs/Web/API/AudioContext/getOutputTimestamp)
-- **P2 · Rig acceptance:** Add rendered close-up checks for blink/gaze, extreme combined morphs, neutral recovery, and clipping across attachment angles; named morph targets alone do not establish visual quality.
-  [Morph-target animation](https://threejs.org/docs/#api/en/objects/Mesh.morphTargetInfluences)
+- **P2 · Rig acceptance:** Check blink/gaze, combined morphs, neutral recovery, and angled clipping in rendered close-ups; schedule idle blink/morph settling independently of CV updates without permanent rendering.
+  [Morph targets](https://threejs.org/docs/#api/en/objects/Mesh.morphTargetInfluences), [Demand rendering](https://r3f.docs.pmnd.rs/advanced/scaling-performance)
+- **P2 · Surface emergence:** Define appearance/clipping for supported nonplanar attachments, which currently bypass planar emergence; use verified local geometry rather than pretending to provide full object occlusion.
+  [Material clipping](https://threejs.org/docs/pages/Material.html)
 
 ## Bounded research experiments
 
