@@ -50,8 +50,6 @@ Prioritize trustworthy tracking evidence, correct surface geometry, and consiste
   [Kalman estimation](https://homepages.inf.ed.ac.uk/rbf/CVonline/LOCAL_COPIES/WELCH/kalman.1.html)
 - **P1 · Readiness:** Calibrate projected attachment/normal uncertainty on held-out clips; heuristic confidence and point count must not masquerade as probability or independent evidence.
   [Measurement uncertainty](https://homepages.inf.ed.ac.uk/rbf/CVonline/LOCAL_COPIES/WELCH/kalman.1.html)
-- **P1 · Evidence metrics:** Keep post-consensus LK retention, descriptor inlier ratio, and pose confidence distinct; remove relocalization's ≥50% substitute and bootstrap's fabricated flow-success values from quality decisions.
-  [Optical-flow output semantics](https://docs.opencv.org/4.x/dc/d6b/group__video__track.html)
 - **P1 · Reference continuity:** Correct refreshed-mask bases jointly with landmark and surface references; retain the original attachment through reinitialization and verified relocalization.
   [Projective reference transforms](https://docs.opencv.org/4.x/d9/dab/tutorial_homography.html)
 - **P1 · Identity recovery:** Test similar-object crossings, repeated logos, full turns, and distant re-entry; verify material-point identity, not merely a plausible ORB/XFeat match.

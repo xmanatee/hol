@@ -274,8 +274,8 @@ export class KeypointTracker {
         success: false,
         reason: `Too few active points: ${activePoints.length} (need at least ${minimumActivePoints})`,
         activePointCount: this.trackedPoints.filter((point) => point.status === 'active').length,
-        successRate: 0,
-        averageError: 999,
+        successRate: null,
+        averageError: null,
       };
     }
 

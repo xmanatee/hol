@@ -8,6 +8,24 @@ const collectDetails = (anchorSystemState) =>
     segmentationRefresh: anchorSystemState.segmentationRefresh,
   });
 
+test('LK retention, descriptor inliers and recovery score remain distinct diagnostic evidence', () => {
+  const details = collectDetails({
+    anchorState: {
+      metrics: {
+        trackingSuccessRate: null,
+        relocalizationInlierRatio: 0.7,
+        relocalizationConfidence: 0.32,
+      },
+    },
+  });
+  assert.equal(details.trackingSuccessRate, null);
+  assert.equal(details.relocalizationInlierRatio, 0.7);
+  assert.equal(details.relocalizationConfidence, 0.32);
+  const absent = collectDetails({ anchorState: null });
+  assert.equal(absent.relocalizationInlierRatio, null);
+  assert.equal(absent.relocalizationConfidence, null);
+});
+
 test('segmentation observation provenance remains separate from mask projection time', () => {
   const details = collectDetails({
     anchorState: {

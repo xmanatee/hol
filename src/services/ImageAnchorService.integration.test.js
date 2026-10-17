@@ -18,6 +18,9 @@ test('native optical-flow failure rejects the frame instead of entering object r
     surfaceHint: 'unknown',
   });
   assert.equal(created.success, true);
+  assert.equal(service.getState().metrics.trackingSuccessRate, null);
+  await service.updateAnchor(sequence.frames[1].imageData);
+  assert.ok(Number.isFinite(service.getState().metrics.trackingSuccessRate));
   await assert.rejects(
     service.updateAnchor({ width: 1, height: 1, data: new Uint8ClampedArray([0, 0, 0, 255]) }),
     (error) => error instanceof Error && /OpenCV.*Assertion failed/s.test(error.message),
@@ -27,6 +30,7 @@ test('native optical-flow failure rejects the frame instead of entering object r
   assert.equal(metrics.targetPresent, false);
   assert.equal(metrics.readiness.faceReady, false);
   assert.equal(metrics.keypointFailureCount, 0);
+  assert.equal(metrics.trackingSuccessRate, null);
 });
 
 test('physical plane presentation owns an immutable initial footprint and retires after reference replacement', () => {
@@ -3339,6 +3343,7 @@ test('candidate bootstrap tracks existing landmarks instead of resetting their h
   assert.equal(result.success, true);
   assert.equal(result.state, 'mapping');
   assert.equal(trackCalls, 1);
+  assert.equal(service.getState().metrics.trackingSuccessRate, 1);
   assert.equal(initializeCalls, 0);
   assert.ok(service.keypointTracker.trackedPoints.every((point) => point.age === 5));
 });
@@ -3431,6 +3436,8 @@ test('candidate bootstrap reinitializes when too few landmarks exist for coheren
   assert.equal(result.state, 'mapping');
   assert.equal(initializedCount, 8);
   assert.equal(service.keypointTracker.trackedPoints.length, 8);
+  assert.equal(service.getState().metrics.trackingSuccessRate, null);
+  assert.equal(result.confidence, 0);
 });
 
 test('landmark metrics report zero object ownership after all active points leave the mask', () => {
@@ -3774,6 +3781,7 @@ test('the failure threshold declares target loss without accepting a local templ
 
 test('keypoint failure recovers through descriptor keyframe relocalization before template fallback', async () => {
   const service = new ImageAnchorService();
+  const recoveryScore = 0.32;
   const transform = {
     tx: 24,
     ty: -12,
@@ -3826,10 +3834,11 @@ test('keypoint failure recovers through descriptor keyframe relocalization befor
         success: true,
         method: 'orb-keyframe-relocalization',
         transform,
-        confidence: 0.86,
+        confidence: recoveryScore,
         averageResidual: 1.1,
         matchCount: 22,
         inlierCount: 16,
+        inlierRatio: 16 / 22,
         inlierIds: trackedPoints.map((point) => point.id),
         inlierMatches: trackedPoints.map((point) => ({
           id: point.id,
@@ -3848,7 +3857,7 @@ test('keypoint failure recovers through descriptor keyframe relocalization befor
   };
   Object.assign(service.keypointTracker, {
     trackedPoints,
-    trackFrame: () => ({ success: false, reason: 'LK lost all points' }),
+    trackFrame: () => ({ success: false, successRate: 0, reason: 'LK lost all points' }),
     restoreFromRelocalizationMatches: () => {
       trackedPoints.forEach((point) => {
         point.status = 'active';
@@ -3907,6 +3916,9 @@ test('keypoint failure recovers through descriptor keyframe relocalization befor
   assert.equal(service.metrics.relocalizationResult, 'success');
   assert.equal(service.metrics.relocalizationMatches, 22);
   assert.equal(service.metrics.relocalizationInliers, 16);
+  assert.equal(service.metrics.relocalizationInlierRatio, 16 / 22);
+  assert.equal(service.metrics.relocalizationConfidence, recoveryScore);
+  assert.equal(service.metrics.trackingSuccessRate, 0);
   assert.equal(service.metrics.relocalizationSuccessFrame, 0);
   assert.equal(service.metrics.activeLandmarkCount, 16);
   assert.equal(updateTimings.relocalizationFeatureExtractionMs, 18.5);
@@ -4005,6 +4017,7 @@ test('ORB relocalization searches the full recovery frame instead of a stale obj
 
 test('failed ORB recovery falls through to XFeat and restores only learned inliers', async () => {
   const service = new ImageAnchorService();
+  const recoveryScore = 0.32;
   const learnedMatches = Array.from({ length: 8 }, (_, id) => ({
     id,
     reference: { x: 30 + id * 8, y: 40 + id * 5 },
@@ -4029,10 +4042,11 @@ test('failed ORB recovery falls through to XFeat and restores only learned inlie
     relocalize: async () => ({
       success: true,
       method: 'xfeat-keyframe-relocalization',
-      confidence: 0.88,
+      confidence: recoveryScore,
       averageResidual: 1.4,
       matchCount: 14,
       inlierCount: 8,
+      inlierRatio: 8 / 14,
       inlierMatches: learnedMatches,
       queryFeatureCount: 500,
       keyframeCount: 1,
@@ -4057,6 +4071,10 @@ test('failed ORB recovery falls through to XFeat and restores only learned inlie
   assert.equal(service.metrics.relocalizationMethod, 'xfeat-keyframe-relocalization');
   assert.equal(service.metrics.relocalizationMatches, 14);
   assert.equal(service.metrics.relocalizationInliers, 8);
+  assert.equal(service.metrics.relocalizationInlierRatio, 8 / 14);
+  assert.equal(service.metrics.relocalizationConfidence, recoveryScore);
+  assert.equal(result.trackingResult.successRate, undefined);
+  assert.equal(result.trackingResult.confidence, recoveryScore);
 });
 
 test('a rejected learned-memory extension keeps the first XFeat view available for recovery', async () => {

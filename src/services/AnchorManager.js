@@ -34,6 +34,8 @@ const createActiveAnchorDiagnostics = (metrics, readiness) => ({
   activeLandmarks: metrics.activeLandmarks ?? metrics.activeLandmarkCount ?? 0,
   objectOwnedLandmarks: metrics.objectOwnedLandmarks ?? 0,
   trackingSuccessRate: metrics.trackingSuccessRate ?? null,
+  relocalizationInlierRatio: metrics.relocalizationInlierRatio ?? null,
+  relocalizationConfidence: metrics.relocalizationConfidence ?? null,
   homographyInliers: metrics.homographyInliers ?? 0,
   affinePoseInliers: metrics.affinePoseInliers ?? 0,
   objectPoseInliers: metrics.objectPoseInliers ?? 0,

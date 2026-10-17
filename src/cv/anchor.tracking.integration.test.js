@@ -1069,6 +1069,8 @@ test('Lucas-Kanade rejects a point set below the geometric continuity quorum', a
 
   assert.equal(result.success, false);
   assert.equal(result.reason, 'Too few active points: 7 (need at least 8)');
+  assert.equal(result.successRate, null);
+  assert.equal(result.averageError, null);
   assert.equal(result.activePointCount, 0);
   assert.equal(tracker.getCorrespondences().length, 0);
 });

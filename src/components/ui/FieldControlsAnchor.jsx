@@ -100,7 +100,12 @@ const AnchorDiagnostics = ({ details }) => {
         tone={details.landmarkRefreshAdded > 0 ? 'good' : 'neutral'}
       />
       <DiagnosticRow label="Rejected by mask" value={details.landmarkRefreshRejectedByMask} />
-      <DiagnosticRow label="Tracking success" value={formatPercent(details.trackingSuccessRate)} />
+      <DiagnosticRow label="LK retention" value={formatPercent(details.trackingSuccessRate)} />
+      <DiagnosticRow
+        label="Last descriptor inliers"
+        value={formatPercent(details.relocalizationInlierRatio)}
+      />
+      <DiagnosticRow label="Last recovery score" value={formatNumber(details.relocalizationConfidence, 2)} />
       <DiagnosticRow label="Pose model" value={details.poseModel || 'auto'} />
       <DiagnosticRow label="Pose source" value={details.poseSource || 'N/A'} />
       <DiagnosticRow label="Position candidate" value={details.posePositionCandidateSource || 'N/A'} />

@@ -332,7 +332,9 @@ export class ImageAnchorService {
     // Performance metrics
     this.metrics = {
       keypointCount: 0,
-      trackingSuccessRate: 0,
+      trackingSuccessRate: null,
+      relocalizationInlierRatio: null,
+      relocalizationConfidence: null,
       homographyInliers: 0,
       processingTime: 0,
       recoveryAttempts: 0,
@@ -730,7 +732,7 @@ export class ImageAnchorService {
         templateRegionArea: templateRegion.width * templateRegion.height,
         extractionMethod: keypointResult.method,
         processingTime: this.now() - startTime,
-        trackingSuccessRate: 1.0,
+        trackingSuccessRate: null,
         homographyInliers: 0,
         affinePoseInliers: 0,
         poseInliers: 0,
@@ -748,6 +750,8 @@ export class ImageAnchorService {
         relocalizationDescriptors: keyframeResult.descriptorCount || 0,
         relocalizationMatches: 0,
         relocalizationInliers: 0,
+        relocalizationInlierRatio: null,
+        relocalizationConfidence: null,
         relocalizationSuccessFrame: null,
         relocalizationResult: keyframeResult.success ? 'keyframe-stored' : 'keyframe-skipped',
         relocalizationReason: keyframeResult.reason || null,
@@ -1465,6 +1469,7 @@ export class ImageAnchorService {
       relocalizationFrameFeatures = result.frameFeatures || null;
       if (result.success) {
         relocalizedThisUpdate = true;
+        this.metrics.trackingAdmission = 'descriptor-relocalization';
         // Descriptor restoration replaces the point geometry behind any earlier evaluation.
         anchorPositionEvaluation = null;
       }
@@ -1495,12 +1500,15 @@ export class ImageAnchorService {
       trackingResult = this.keypointTracker.trackFrame(this.cv, grayImage, {
         surfaceModel: this._targetSurfaceModel(),
       });
+      this.metrics.trackingSuccessRate = trackingResult.successRate ?? null;
       this._recordUpdateTiming(updateTimings, 'keypointTrackMs', stageStart);
       if (this._canAdmitPartialFlow(trackingResult)) {
         trackingResult.success = true;
         trackingResult.reason = null;
         trackingResult.admission = 'partial-occlusion-consensus';
       }
+      this.metrics.partialOcclusionFlow = trackingResult.partialFlow ?? null;
+      this.metrics.trackingAdmission = trackingResult.admission ?? 'standard-lk';
     }
     const trackingValidationStart = this._startUpdateTiming(updateTimings);
 
@@ -1535,10 +1543,7 @@ export class ImageAnchorService {
       this.metrics.backgroundRejected = (this.metrics.backgroundRejected || 0) + maskRejected;
     }
 
-    this.metrics.trackingSuccessRate = trackingResult.successRate || 0;
     this.metrics.keypointCount = trackingResult.activePointCount || 0;
-    this.metrics.partialOcclusionFlow = trackingResult.partialFlow;
-    this.metrics.trackingAdmission = trackingResult.admission ?? 'standard-lk';
     stageStart = this._startUpdateTiming(updateTimings);
     this._recordLandmarkMetrics();
     this._updateObjectSurfaceMetrics({
@@ -1554,13 +1559,14 @@ export class ImageAnchorService {
       trackingResult.admission === 'partial-occlusion-consensus' &&
       (this.metrics.objectOwnedLandmarks ?? 0) >= minActivePoints;
     if (
-      (this.metrics.trackingSuccessRate < minSuccessRate && !partialOcclusionSupported) ||
+      (!trackingResult.relocalized &&
+        (this.metrics.trackingSuccessRate ?? 0) < minSuccessRate &&
+        !partialOcclusionSupported) ||
       this.metrics.keypointCount < minActivePoints
     ) {
       const relocalizationResult = await attemptRelocalization('Insufficient keypoint tracking quality');
       if (relocalizationResult.success) {
         trackingResult = relocalizationResult.trackingResult;
-        this.metrics.trackingSuccessRate = trackingResult.successRate || 0;
         this.metrics.keypointCount = trackingResult.activePointCount || 0;
         this._recordLandmarkMetrics();
       } else {
@@ -1622,7 +1628,6 @@ export class ImageAnchorService {
       );
       if (relocalizationResult.success) {
         trackingResult = relocalizationResult.trackingResult;
-        this.metrics.trackingSuccessRate = trackingResult.successRate || 0;
         this.metrics.keypointCount = trackingResult.activePointCount || 0;
         this._recordLandmarkMetrics();
       }
@@ -2033,7 +2038,10 @@ export class ImageAnchorService {
     }
 
     const poseInliers = this.metrics.poseInliers || 0;
-    const overallQuality = (this.metrics.trackingSuccessRate + Math.min(1.0, poseInliers / 30)) / 2;
+    const observationQuality = trackingResult.relocalized
+      ? trackingResult.confidence
+      : (trackingResult.successRate ?? 0);
+    const overallQuality = (observationQuality + Math.min(1.0, poseInliers / 30)) / 2;
     this.anchorState = this._selectTrackingState({ overallQuality, poseInliers });
     this._recordUpdateTiming(updateTimings, 'poseSelectionMs', poseSelectionStart);
 
@@ -2168,7 +2176,7 @@ export class ImageAnchorService {
             {
               scale: anchorPosition.scale ?? this.currentPlanarTransform?.scale ?? 1,
               rotation: anchorPosition.rotation ?? this.currentPlanarTransform?.rotation ?? 0,
-              confidence: anchorPosition.confidence ?? trackingResult.successRate ?? 0.5,
+              confidence: anchorPosition.confidence ?? trackingResult.successRate,
               inlierCount: anchorPosition.inlierCount ?? trackingResult.activePointCount ?? 0,
               method: anchorPosition.method ?? 'candidate-tracking',
             },
@@ -2240,8 +2248,7 @@ export class ImageAnchorService {
       objectOwnedLandmarks: evidence.objectOwnedLandmarks,
       templateQuality: qualityAssessment.overall,
       qualityState: this._getTemplateQualityState(qualityAssessment.overall),
-      trackingSuccessRate:
-        trackingResult?.successRate ?? (activeLandmarks >= CANDIDATE_MIN_TRACKABLE_POINTS ? 0.5 : 0),
+      trackingSuccessRate: trackingResult?.successRate ?? null,
       maskCoverage: evidence.maskCoverage,
       maskConfidence: evidence.maskConfidence,
       keypointDensity: evidence.keypointDensity,
@@ -2257,8 +2264,11 @@ export class ImageAnchorService {
       position: this.currentPosition,
       normal: this.currentNormal,
       planarTransform: this.currentPlanarTransform,
-      confidence:
-        trackingResult?.successRate ?? (activeLandmarks >= CANDIDATE_MIN_TRACKABLE_POINTS ? 0.5 : 0.25),
+      confidence: trackingResult?.success
+        ? trackingResult.successRate
+        : recoveryResult.success
+          ? recoveryResult.confidence
+          : 0,
       method: recoveryResult.success ? 'candidate_template_bootstrap' : 'candidate_landmark_bootstrap',
       state: this.anchorState,
       readiness,
@@ -2334,7 +2344,8 @@ export class ImageAnchorService {
       };
     this.metrics.relocalizationMatches = relocalizationResult.matchCount || 0;
     this.metrics.relocalizationInliers = relocalizationResult.inlierCount || 0;
-    this.metrics.relocalizationConfidence = relocalizationResult.confidence || 0;
+    this.metrics.relocalizationInlierRatio = relocalizationResult.inlierRatio ?? null;
+    this.metrics.relocalizationConfidence = relocalizationResult.confidence ?? null;
     this.metrics.relocalizationAverageResidual = relocalizationResult.averageResidual ?? null;
     this.metrics.relocalizationGeometryModel = relocalizationResult.transform?.model || null;
     this.metrics.relocalizationKeyframeId = relocalizationResult.keyframeId ?? null;
@@ -2399,9 +2410,8 @@ export class ImageAnchorService {
       frameFeatures: relocalizationResult.frameFeatures || null,
       trackingResult: {
         success: true,
-        successRate: Math.max(0.5, Math.min(1, relocalizationResult.confidence)),
+        confidence: relocalizationResult.confidence,
         activePointCount: restore.active,
-        averageError: relocalizationResult.averageResidual,
         method: relocalizationResult.method,
         relocalized: true,
       },
@@ -6608,6 +6618,7 @@ export class ImageAnchorService {
 
   _resetFrameMetrics() {
     this.frameStartPosition = this.currentPosition ? { ...this.currentPosition } : null;
+    this.metrics.trackingSuccessRate = null;
     this.metrics.objectSupportPositionCorrection = null;
     this.metrics.objectSupportPositionSource = null;
     this.metrics.objectSupportPositionDelta = null;

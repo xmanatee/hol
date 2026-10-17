@@ -495,11 +495,17 @@ test('anchor manager propagates live object mask preview into active-anchor diag
       maskConfidence: 0.9,
       backgroundRejected: 4,
       currentObjectSupportMaskPreview: preview,
+      trackingSuccessRate: 0,
+      relocalizationInlierRatio: 0.7,
+      relocalizationConfidence: 0.32,
     },
   });
 
   assert.equal(manager.activeAnchor.evidence.objectSupportMaskPreview, undefined);
   assert.deepEqual(manager.activeAnchor.diagnostics.objectSupportMaskPreview, preview);
+  assert.equal(manager.activeAnchor.diagnostics.trackingSuccessRate, 0);
+  assert.equal(manager.activeAnchor.diagnostics.relocalizationInlierRatio, 0.7);
+  assert.equal(manager.activeAnchor.diagnostics.relocalizationConfidence, 0.32);
 });
 
 test('anchor manager records overlay readiness once and never regresses it during pose loss', () => {
